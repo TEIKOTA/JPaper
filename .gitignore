@@ -1,0 +1,44 @@
+# dependencies
+node_modules/
+
+# build output
+dist/
+build/
+
+# environment variables（.env.example はコミットする）
+.env
+.env.*
+!.env.example
+
+# logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# macOS
+.DS_Store
+
+# editor
+.vscode/*
+!.vscode/extensions.json
+.idea/
+
+# Claude Code のローカル設定（.claude は .agents への symlink）
+.agents/settings.local.json
+
+# TypeScript incremental build info
+*.tsbuildinfo
+
+# テストカバレッジ
+coverage/
+
+# 実行時に生成されるエージェントの証跡・作業領域（input/ の知識 SSOT はコミットする）
+/output/
+
+# 参照用に同梱した別プロジェクト（現行の和訳リポジトリ。JPaper の追跡対象外）
+/資料/
+
+# misc
+*.local

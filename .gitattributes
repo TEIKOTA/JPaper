@@ -1,0 +1,17 @@
+# 改行コードを LF に正規化（リポジトリ内はすべて LF）
+* text=auto eol=lf
+
+# バイナリ（差分・改行変換しない）
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.avif binary
+*.ico binary
+*.woff binary
+*.woff2 binary
+
+# GitHub の言語統計から除外（ドキュメントとロックファイル）
+docs/** linguist-documentation
+pnpm-lock.yaml linguist-generated

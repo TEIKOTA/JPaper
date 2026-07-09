@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# self-test 用の gh スタブ。呼び出しを 1 行ずつ $FAKE_GH_LOG に記録する。
+# `gh label list` だけは $FAKE_GH_LABELS（改行区切りのラベル名）を出力して
+# 既存ラベル一覧の読み取りを模倣する。それ以外は成功を返すだけ。
+set -eu
+
+printf '%s\n' "$*" >> "${FAKE_GH_LOG:?FAKE_GH_LOG が未設定です}"
+
+if [ "${1:-}" = "label" ] && [ "${2:-}" = "list" ]; then
+  if [ -n "${FAKE_GH_LABELS:-}" ]; then
+    printf '%s\n' "${FAKE_GH_LABELS}"
+  fi
+fi
+
+exit 0

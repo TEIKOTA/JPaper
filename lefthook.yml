@@ -1,0 +1,15 @@
+# lefthook で git フックを管理する。
+# 導入: brew install lefthook（または npm/go 経由） → リポジトリ内で `lefthook install`
+commit-msg:
+  commands:
+    check-commit-message:
+      # 件名が日本語 Conventional Commits 形式かを検証する（type 一覧の正本は script 側）
+      run: bash scripts/check-commit-msg.sh {1}
+
+pre-push:
+  commands:
+    check-branch-name:
+      # ブランチ名が <type>/<issue番号>-<slug>（chore は issue なし可）かを検証する
+      run: bash scripts/check-branch-name.sh
+      # Git pre-push が渡す ref 一覧を検査スクリプトへ転送する。
+      use_stdin: true

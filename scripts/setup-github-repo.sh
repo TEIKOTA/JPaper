@@ -1,0 +1,146 @@
+#!/usr/bin/env bash
+# GitHub repo の初期設定を gh CLI で一括適用する。
+#   1. .github/labels.yml のラベルを作成・更新する（upsert）。
+#      --prune 指定時のみ、labels.yml に無い既存ラベル（GitHub デフォルト含む）を削除する。
+#      初回セットアップは --prune 付きで実行してデフォルトラベルを入れ替える。
+#   2. merge 方式を squash のみに固定し、merge 後の head branch 自動削除を有効化する
+# 使い方: scripts/setup-github-repo.sh [--repo <owner>/<name>] [--prune] [--dry-run]
+#   --repo 省略時はカレントリポジトリの origin を使う。
+#   --dry-run は変更コマンドを表示するだけで実行しない（読み取りは行う）。
+set -euo pipefail
+
+REPO=""
+DRY_RUN=0
+PRUNE=0
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --repo) REPO="${2:?--repo には <owner>/<name> が必要です}"; shift 2;;
+    --prune) PRUNE=1; shift;;
+    --dry-run) DRY_RUN=1; shift;;
+    -h|--help) sed -nE 's/^# ?//p' "$0" | sed -n '1,9p'; exit 0;;
+    *) echo "不明な引数: $1" >&2; exit 2;;
+  esac
+done
+
+if [[ -n "$REPO" ]] && ! printf '%s\n' "$REPO" | grep -qE '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$'; then
+  echo "✖ --repo は <owner>/<name> 形式で指定してください: $REPO" >&2
+  exit 2
+fi
+
+command -v gh >/dev/null 2>&1 || { echo "✖ gh CLI が必要です（brew install gh）" >&2; exit 1; }
+command -v python3 >/dev/null 2>&1 || { echo "✖ python3 が必要です" >&2; exit 1; }
+
+LABELS_FILE="$(cd "$(dirname "$0")/.." && pwd)/.github/labels.yml"
+[[ -f "$LABELS_FILE" ]] || { echo "✖ ${LABELS_FILE} がありません" >&2; exit 1; }
+
+run() {
+  if [[ $DRY_RUN -eq 1 ]]; then
+    printf 'dry-run: %s\n' "$*"
+  else
+    "$@"
+  fi
+}
+
+# labels.yml（- name / color / description のフラットな配列限定）を TSV へ変換する。
+# 外部依存を避けるため python3 標準ライブラリのみでパースする。
+parse_labels() {
+  python3 - "$LABELS_FILE" <<'PY'
+import re
+import sys
+
+path = sys.argv[1]
+entries = []
+current = None
+with open(path, encoding="utf-8") as f:
+    for raw in f:
+        line = raw.rstrip("\n")
+        if re.match(r"^\s*(#|$)", line):
+            continue
+        m = re.match(r"^- name:\s*\"?([^\"]+?)\"?\s*$", line)
+        if m:
+            current = {"name": m.group(1)}
+            entries.append(current)
+            continue
+        m = re.match(r"^\s+(color|description):\s*\"?([^\"]*?)\"?\s*$", line)
+        if m and current is not None:
+            current[m.group(1)] = m.group(2)
+            continue
+        sys.exit(f"✖ labels.yml を解釈できない行: {line!r}")
+for e in entries:
+    if not all(k in e for k in ("name", "color", "description")):
+        sys.exit(f"✖ name/color/description が揃っていません: {e}")
+if not entries:
+    sys.exit("✖ labels.yml にラベル定義がありません")
+seen = set()
+for e in entries:
+    if e["name"] in seen:
+        sys.exit(f"✖ label name が重複しています: {e['name']}")
+    seen.add(e["name"])
+    if not re.fullmatch(r"[0-9A-Fa-f]{6}", e["color"]):
+        sys.exit(f"✖ label color は6桁の16進数で指定してください: {e['name']}={e['color']}")
+    print("\t".join((e["name"], e["color"], e["description"])))
+PY
+}
+
+echo "▶ ラベルを labels.yml の定義へ入れ替える"
+labels_tsv="$(parse_labels)"
+if [[ -n "$REPO" ]]; then
+  existing="$(gh label list --repo "$REPO" --limit 1000 --json name --jq '.[].name')"
+else
+  existing="$(gh label list --limit 1000 --json name --jq '.[].name')"
+fi
+
+# 先に全定義を upsert し、途中失敗時に既存ラベルだけが消える状態を避ける。
+while IFS=$'\t' read -r name color desc; do
+  [[ -z "$name" ]] && continue
+  if [[ -n "$REPO" ]]; then
+    run gh label create "$name" --repo "$REPO" --color "$color" --description "$desc" --force
+  else
+    run gh label create "$name" --color "$color" --description "$desc" --force
+  fi
+done <<< "$labels_tsv"
+
+# 定義外ラベルの削除は明示的な --prune の時だけ行う。既定では一覧表示に留め、
+# チームが後から作った運用ラベルを誤って消さない（clarify ADR 参照）。
+while IFS= read -r name; do
+  [[ -z "$name" ]] && continue
+  if ! printf '%s\n' "$labels_tsv" | cut -f1 | grep -qxF "$name"; then
+    if [[ $PRUNE -ne 1 ]]; then
+      printf "  info: 定義外ラベル '%s'（--prune で削除）\n" "$name"
+      continue
+    fi
+    if [[ -n "$REPO" ]]; then
+      run gh label delete "$name" --repo "$REPO" --yes
+    else
+      run gh label delete "$name" --yes
+    fi
+  fi
+done <<< "$existing"
+
+echo "▶ merge 方式を squash のみに設定する"
+if [[ -n "$REPO" ]]; then
+  run gh repo edit "$REPO" \
+    --enable-squash-merge \
+    --enable-merge-commit=false \
+    --enable-rebase-merge=false \
+    --delete-branch-on-merge
+else
+  run gh repo edit \
+    --enable-squash-merge \
+    --enable-merge-commit=false \
+    --enable-rebase-merge=false \
+    --delete-branch-on-merge
+fi
+
+echo "▶ squash commit の件名を PR title に固定する"
+if [[ -n "$REPO" ]]; then
+  run gh api --method PATCH "repos/$REPO" \
+    -f squash_merge_commit_title=PR_TITLE \
+    -f squash_merge_commit_message=PR_BODY
+else
+  run gh api --method PATCH 'repos/{owner}/{repo}' \
+    -f squash_merge_commit_title=PR_TITLE \
+    -f squash_merge_commit_message=PR_BODY
+fi
+
+echo "✔ 完了"
