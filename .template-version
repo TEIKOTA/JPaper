@@ -1,0 +1,4 @@
+# fetch 時点のテンプレート版数。更新取り込みの起点なので削除しない。
+source: /Users/teikota/project-template
+revision: 131f83a686bcab0ddf99844ed717d7d10e3a8b7b
+fetched_at: 2026-07-08T07:00:06Z

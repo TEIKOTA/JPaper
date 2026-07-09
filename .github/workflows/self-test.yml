@@ -1,0 +1,28 @@
+# scripts/ の検査スクリプト群の self-test。macOS(bash 3.2) / Linux の両方で退行を検出する。
+name: self-test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      # pr-checks と異なり、変更されたスクリプト自体を試験するのが目的なので PR head を checkout する。
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: self-test を実行
+        run: |
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            # /bin/bash は 3.2。テンプレの bash 3.2 互換を実証する
+            /bin/bash tests/run-tests.sh
+          else
+            bash tests/run-tests.sh
+          fi
