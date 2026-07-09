@@ -46,3 +46,4 @@
 | 2026-07-09 | [品質ゲートの2層化・再訳契約・組版エラー分類](./20260709-quality-gate-two-layer-and-build-error-triage.md) | accepted |
 | 2026-07-09 | [LLM プロバイダ抽象化: ローカル(Ollama) と cloud(公式 CLI subprocess) を使い分け](./20260709-llm-provider-abstraction-local-ollama-and-cloud-cli.md) | accepted |
 | 2026-07-09 | [用語アーキテクチャ: 2層辞書・4クラス分類・表記方針・proposed 書き戻し](./20260709-terminology-architecture-two-tier-classified-glossary.md) | accepted |
+| 2026-07-09 | [ユーザーインターフェース: ファイル配置・jpaper CLI・GUI は core の薄い皮](./20260709-user-interface-file-layout-and-cli.md) | accepted |
