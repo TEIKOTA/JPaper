@@ -68,7 +68,7 @@
 - `npm install` — 依存の導入（初回）
 - `npm test` — vitest 単体テスト（決定的な検査。LLM を含めない）
 - `npm run build` / `npm run typecheck` — tsc ビルド / 型チェック（emit なし）
-- `npm run dev` — `src/index.ts` を tsx で実行
+- `npm run dev` — `src/cli.ts`（jpaper CLI）を tsx で実行
 - `bash tests/run-tests.sh` — 規約検査スクリプト群の self-test（scripts/ を変更したら必ず実行）
 - `lefthook install` — commit-msg / pre-push フックを有効化する（初回セットアップ必須）
 - `scripts/setup-github-repo.sh [--prune] [--dry-run]` — ラベル同期と squash merge・commit title 固定（repo 作成直後に `--prune` 付きで 1 回。定義外ラベルの削除は `--prune` 時のみ）
