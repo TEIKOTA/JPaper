@@ -93,7 +93,7 @@
   - `extract-pdf`（PDF-only: Nougat → md+LaTeX、native で本文/表を補完）
   - `detect-figures`（pdfimages ＋ bbox → `manifest.csv` 自動）
   - `render-pdf-pages` / `crop-figures`（既存を流用）
-  - `assemble-latex`（訳文＋manifest → `chapters/*.tex`, `main.tex`）
+  - `assemble-latex`（訳文＋manifest → `chapters/*.tex`, `main.tex`）※レイアウト方針は [組版レイアウト ADR](../adr/20260710-typesetting-layout-original-first-hybrid.md)。**既定は原プリアンブル温存（§3 の「元 LaTeX そのもの」を活かしレイアウト忠実）、日本語で組めない論文のみ共通 luatexja テンプレへ明示的フォールバック**（§9 の共通テンプレはベースライン/フォールバックに位置づけ直し）。原→テンプレ切替は `RunSummary.layout` に記録して surface。
 
 ## 11. 再エントリ設計（durable = ファイル checkpoint。ライブラリ不使用）
 

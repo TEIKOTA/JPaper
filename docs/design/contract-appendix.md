@@ -157,7 +157,7 @@ CREATE INDEX idx_term_src ON term(src);
 新B レビューを受け、v1 を2段で発注する。
 
 - **(A) 固定価格 = コア**: 用語 DB（`node:sqlite`）／薄いランタイム＋エージェント配線／節ループ品質ゲート（形式検査＋evaluator＋再訳）／durable checkpoint／CLI・プロバイダ。§1–6・§8 の契約で確定。
-- **(B) 上限付き T&M = 組版・図・引用レイヤ**: `assemble-latex`（訳文＋manifest→`main.tex`/chapters）／共通プリアンブル・引用マクロテンプレ／全文組版ゲートのビルドエラー分類＋エラー行→セグメント逆引き／`.bbl` 番号順パース＋`\cite`→番号対応表／図 manifest／**言語整合 lint（[翻訳一貫性 ADR](../adr/20260710-translation-consistency-brief-style-and-annotations.md) 決定4: 単位 SI 表記・略語初出定義・glossary 外の訳語表記ゆれ・数字表記を決定的に検査。PerfectIt 相当まで許容）**／**訳注レンダリング（決定3: `notes.json`→本文の文書初出のみ `\footnote`＋巻末「訳注一覧」）**。工数の幅が大きいため実費上限方式。
+- **(B) 上限付き T&M = 組版・図・引用レイヤ**: `assemble-latex`（訳文＋manifest→`main.tex`/chapters。**既定は原プリアンブル温存＝レイアウト忠実、日本語で組めない論文は共通 luatexja テンプレへ明示的フォールバックし `RunSummary.layout` に記録**。[組版レイアウト ADR](../adr/20260710-typesetting-layout-original-first-hybrid.md)）／共通プリアンブル・引用マクロ・日本語フォント設定は原プリアンブルへ注入する共有部品／全文組版ゲートのビルドエラー分類＋エラー行→セグメント逆引き／`.bbl` 番号順パース＋`\cite`→番号対応表／図 manifest／**言語整合 lint（[翻訳一貫性 ADR](../adr/20260710-translation-consistency-brief-style-and-annotations.md) 決定4: 単位 SI 表記・略語初出定義・glossary 外の訳語表記ゆれ・数字表記を決定的に検査。PerfectIt 相当まで許容）**／**訳注レンダリング（決定3: `notes.json`→本文の文書初出のみ `\footnote`＋巻末「訳注一覧」）**。工数の幅が大きいため実費上限方式。
 - **Phase2（別フェーズ）**: PDF-only 抽出（Nougat/GPU/Docker/`nougat-ocr`/`pymupdf`/`pdfplumber`）／`.bbl` 著者年スタイル／`glossary.db` 並行実行。
 
 ## 7.5 (A) コアの受け入れ条件（(B) 非依存で定義）
@@ -172,7 +172,7 @@ CREATE INDEX idx_term_src ON term(src);
 ## 8. 追加契約（新B レビュー反映）
 
 - **core API**: `translatePaper(input: JpaperInput, opts: { provider: "ollama"|"claude"; outDir?: string }): Promise<Result>`。`Result = { status: "ok"|"failed"; pdfPath?: string; exitCode: number; summary: RunSummary }`。CLI・GUI はこの1関数を呼ぶ薄い皮（[UI/配置 ADR](../adr/20260709-user-interface-file-layout-and-cli.md) 決定4）。例外は投げず `status/exitCode` で表現（§6 と対応）。
-- **stdout サマリ JSON**: `RunSummary = { paperId, outDir, segments: {total, passed, failed}, revisions: {max, used}, glossary: {proposedAdded}, notes: {total, byTrigger}, buildOk: boolean, exitCode }`（zod 定義を実装時に写経）。`notes` は §1 `TranslatorNote` の件数集計（本体は `notes.json`）。`byTrigger` は `paper-defined-preserve|low-confidence|evaluator-warn` 別の件数。
+- **stdout サマリ JSON**: `RunSummary = { paperId, outDir, segments: {total, passed, failed}, revisions: {max, used}, glossary: {proposedAdded}, notes: {total, byTrigger}, layout: "original"|"template"|null, buildOk: boolean, exitCode }`（zod 定義を実装時に写経）。`layout` は採用した組版モード（[組版レイアウト ADR](../adr/20260710-typesetting-layout-original-first-hybrid.md)。`original`=原プリアンブル温存／`template`=共通テンプレへフォールバック）。組版は (B) のため **(A) 単体では `layout=null`**（`buildOk=null` と同様）。`notes` は §1 `TranslatorNote` の件数集計（本体は `notes.json`）。`byTrigger` は `paper-defined-preserve|low-confidence|evaluator-warn` 別の件数。
 - **訳注の生成契約（[翻訳一貫性 ADR](../adr/20260710-translation-consistency-brief-style-and-annotations.md) 決定3・採否=決定的 / 文面=LLM）**: trigger を次の決定的規則で採る。①`paper-defined` で `rendering∈{keep-original,bilingual}` に確定した語 ②**低確信=`class="established"` かつ global DB に `status="confirmed"` の一致が無く `proposed` のみ or 未ヒットで preserve に倒した語**（DB 状態から決定的に判定）③evaluator の `warn` issue。文面 `text` は term 系＝`ResolvedTerm.note`、warn 系＝`EvalIssue.message`。`firstOccurrence`（文書全体基準）で本文脚注は初出1回のみ、巻末一覧は語ごと1エントリ。
 - **run-context 注入（brief/style）**: system prompt の run-context（設計メモ §13A）に、per-paper 確定辞書＋rendering に加えて **`DocumentBrief`＋`StyleContract` を全 translator へ注入**する。トークン予算は §4 の 30% 圏内で管理（超過時はブリーフを要約して圧縮）。
 - **リトライ（`isTransient`）**: 対象＝ネットワーク瞬断・タイムアウト・HTTP 429/5xx・Ollama 一時的接続不可。回数3・指数バックオフ（初期 1s, ×2, 上限 10s）。それ以外（タスク失敗）はリトライせず surface。
