@@ -123,14 +123,12 @@ export type TranslatorNote = z.infer<typeof TranslatorNote>;
 export const Provider = z.enum(["ollama", "claude"]);
 export type Provider = z.infer<typeof Provider>;
 
-// §8 JpaperInput
 export const JpaperInput = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("path"), path: z.string() }),
   z.object({ kind: z.literal("arxiv"), id: z.string() }),
 ]);
 export type JpaperInput = z.infer<typeof JpaperInput>;
 
-// §8 RunSummary
 export const RunSummary = z.object({
   paperId: z.string(),
   outDir: z.string(),
@@ -151,7 +149,6 @@ export const RunSummary = z.object({
 });
 export type RunSummary = z.infer<typeof RunSummary>;
 
-// §8 core API の戻り値
 export const Result = z.object({
   status: z.enum(["ok", "failed"]),
   pdfPath: z.string().optional(),
@@ -160,7 +157,7 @@ export const Result = z.object({
 });
 export type Result = z.infer<typeof Result>;
 
-// ── §8 LlmClient 境界（型のみ。実装は src/runtime/llm-client.ts） ──
+// ── §8 LlmClient 境界 ──
 export interface LlmRequest {
   model?: string;
   system: string;

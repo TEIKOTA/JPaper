@@ -13,7 +13,7 @@ export class JpaperError extends Error {
   }
 }
 
-// 単一終了コード決定規則（優先順位は契約付録 §8）。
+// 優先順位は契約付録 §8。
 export function resolveExitCode(codes: readonly number[]): number {
   const priority = [2, 3, 4, 5, 1];
   for (const p of priority) {
@@ -22,7 +22,7 @@ export function resolveExitCode(codes: readonly number[]): number {
   return 0;
 }
 
-// リトライしてよい一時的インフラ障害か（分類は契約付録 §8）。
+// 分類は契約付録 §8。
 const TRANSIENT_SYSCODES = new Set([
   "ECONNREFUSED",
   "ECONNRESET",

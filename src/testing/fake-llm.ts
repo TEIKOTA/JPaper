@@ -1,4 +1,4 @@
-// テスト用の LlmClient 実装。npm test を LLM 非含有に保つ DI 縫い目（実 LLM は *.live.test.ts）。
+// テスト用 LlmClient（実 LLM は *.live.test.ts）。
 import type { LlmClient, LlmRequest } from "../types/contract.js";
 
 export type FakeResponder =
