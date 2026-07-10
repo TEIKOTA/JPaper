@@ -129,7 +129,7 @@ CREATE INDEX idx_term_src ON term(src);
   - 訳出予約 `= 1.5 × segmentBudget`、思考余白 `= max(2_000, 0.15 × CW)`、残りを システム/辞書オーバーヘッド＋安全に充てる。
   - `CW` は**プロバイダ設定の定数**（claude subprocess はモデルを渡さないので保守的に既定 `200_000`、Ollama はモデルの context を設定に明記）。実行時に設定から取得。
 - **トークン計測は JPaper 自前の決定的推定器**（プロバイダのトークナイザに依存しない固定実装＝分割・MAX 判定が決定的でテスト可能）。プロバイダを変えても分割結果は変わらない。
-- glossary-builder の「全文1回」も同 30% ルール。超える論文は候補集合を共有したまま確定パスを分割。
+- glossary-builder の「全文1回」も同 30% ルール。超える論文は候補集合を共有したまま確定パスを分割。**分割時の合流規則（[翻訳一貫性 ADR](../adr/20260710-translation-consistency-brief-style-and-annotations.md) 決定1 の大域一貫を守る）**: ①`resolved` の語衝突は**初出パス優先**で確定（後続パスは既確定語を再確定しない）／②`brief`/`style` は**最終統合パスで1回だけ確定**（各分割パスは `resolved` のみ返し brief/style を出さない）。これにより長い論文でも文書ブリーフ・文体契約が1つに定まる。
 
 ## 5. プロバイダ・CLI 契約
 
@@ -166,7 +166,8 @@ CREATE INDEX idx_term_src ON term(src);
 
 - **(A) の成果**: 節ループ品質ゲートを通過した**訳文セグメント群**（`translation/chapters/*` 相当の中間物）＋ per-paper 確定辞書（`glossary.md`）＋ **文書ブリーフ `brief.md`・文体契約 `style.md`**（[翻訳一貫性 ADR](../adr/20260710-translation-consistency-brief-style-and-annotations.md) 決定1）＋ **訳注データ `notes.json`**（決定3。PDF 描画は (B)）＋ `RunSummary`。**組版・PDF は含まない**。
 - **(A) 単体の終了コード**: `0`=全セグメントが節ループ通過（翻訳完了・組版前）／`2`=入力・プロバイダ／`3`=形式検査が MAX 内に通らず failed／`4`=品質未達 failed。`5`（全文組版ゲート）・`pdfPath`・`buildOk` は **(B) 結合後に評価**（(A) 単体では `RunSummary.buildOk = null`）。
-- **(A) の検収**: ①`FakeLlmClient` 注入で配線・段階遷移・checkpoint の idempotent-skip・`MAX_REVISIONS` 到達 failed が決定的に再現、②実 LLM で訳文セグメント＋`glossary.md` が生成され `RunSummary` が返る。組版通過は (B) 検収項目。
+- **(A) の検収**: ①`FakeLlmClient` 注入で配線・段階遷移・checkpoint の idempotent-skip・`MAX_REVISIONS` 到達 failed が決定的に再現（**両プロバイダの配線とも Fake で検収**）、②**実 LLM 検収は `claude` プロバイダ**（会社A の claude code CLI ログインセッション）で訳文セグメント＋`glossary.md`＋`brief.md`/`style.md`＋`notes.json`＋`RunSummary` が生成されること。組版通過は (B) 検収項目。
+- **プロバイダ別の (A) 完了範囲（A-1 決着）**: `ollama` プロバイダの**実装（`LlmClient` 実装・オンデマンド daemon・設定契約）は (A) に含む**が、**実機（実モデル）検証は後回し**（別途）。`claude` を実 LLM 検収の基準プロバイダとする。両者の配線の決定的検収（①）は (A) 必須。
 
 ## 8. 追加契約（新B レビュー反映）
 
@@ -177,11 +178,14 @@ CREATE INDEX idx_term_src ON term(src);
 - **リトライ（`isTransient`）**: 対象＝ネットワーク瞬断・タイムアウト・HTTP 429/5xx・Ollama 一時的接続不可。回数3・指数バックオフ（初期 1s, ×2, 上限 10s）。それ以外（タスク失敗）はリトライせず surface。
 - **形式検査の合否規則（節ループ内・決定的）**: 数式保全＝原文と訳文で `$...$`／`\[...\]`／`\begin{equation|align|...}` の**個数一致**（中身は問わない）。段落欠落なし＝**訳文段落数 ≤ 原文段落数**（日本語で複数段落を自然に統合するのを許容。分割・水増しは不可）。ただし訳文段落数が原文の **50% 未満**なら明らかな欠落として error。`keep-original` 一貫＝当該語が全出現で原形のまま。zod 適合＝§1 スキーマ。（大セグメント `>=3500` がトークン予算 `0.30×CW` を超える場合の段落境界での再分割は §4 の core 実装＝(A) に含む。）
 - **Ollama 設定契約**: 設定に `model`（例 `llama3.1:8b`）・`contextWindow`・`keepAlive`・`port`。`ollama serve` はオンデマンド起動、起動/モデル未 pull 失敗は明示案内＋**終了コード 2**（プロバイダ利用不能）。
-- **claude CLI**: 対応バージョンはレンジで固定（実装時に基準版を pin し統合テストで回帰検知）。抽出は `--output-format json` の `result` フィールド固定。
-- **arXiv ID 取得**: `<input>` が arXiv ID のときソース tarball を取得。ネットワーク不可/取得失敗は明示的失敗（終了コード 2）。取得先・レート制限は実装時に pin。
+- **claude CLI**: **基準バージョンは会社A（発注元）指定の特定版で pin** し、その版の `--output-format json` 出力（`result` フィールド）を契約スナップショットとして統合テストで回帰検知する。**以後の CLI 更新による破壊的変更への追随は (A) 固定価格スコープ外**（変更管理＝別 T&M で対応）。抽出は `result` フィールド固定。
+- **arXiv ID 取得（(A) スコープに含む）**: `<input>` が arXiv ID のときソース tarball を取得。取得先は `export.arxiv.org` の source エンドポイント、**明示的な User-Agent を付与**し、**3 秒間隔以上**のレート制限を守る（arXiv の robots/レート方針準拠）。標準値は会社B が実装しレビューで確定。ネットワーク不可/取得失敗は明示的失敗（終了コード 2）。
 - **`LlmClient` 境界の型（正本）**: `type LlmClient = { complete(req: { model?: string; system: string; user: string }): Promise<string> }`。`model` は claude(subprocess) では未使用＝optional、Ollama/将来 API では必須。戻り値は**JSON テキスト文字列**（呼び出し側が extractJson→zod.parse）。system は §13A の3部品ビルダー出力。
 - **`JpaperInput` 型（正本）**: `type JpaperInput = { kind: "path"; path: string } | { kind: "arxiv"; id: string }`。CLI の `<input>` 文字列を判定してこの discriminated union に正規化。判定不能は終了コード 2。
-- **`paper-defined`/`bilingual` の厳守も機械検査に含む**（§13C の「`値(Value)` 統一を決定的テスト」と整合／G6 の矛盾解消）: 確定 `form` が当該語の**全出現で使われているか**を形式検査で判定（`keep-original` 一貫と同列）。
+- **`paper-defined`/`bilingual` の厳守も機械検査に含む**（rendering 別に規則を分ける。用語ADR決定2 の「bilingual=初出のみ併記」を正とし、旧 §13C 例の「全文統一」は誤りとして訂正）:
+  - `keep-original`（および `paper-defined` で keep-original 確定の語）＝**全出現で原形**が保たれているか。
+  - `bilingual`＝**文書全体で初出のセグメントでは併記形 `form`（例 `値(Value)`）、以降のセグメントでは日本語部分のみ（例 `値`）**が使われているか。初出判定は `firstOccurrence`（文書全体基準の決定的インデクサ）に一致させる。
+  - いずれも「form が全出現で一致」ではなく上記の rendering 別規則で判定する（決定的テスト可）。
 - **単一終了コード決定規則**（1 run で複数原因が混在時）: `2`（入力/プロバイダ）> `3`（形式失敗）> `4`（品質失敗）> `5`（全文ゲート=(B)）の優先順位で1つに決める。
 - **大セグメント再分割後の扱い**: 再分割した各断片で `MAX_REVISIONS` 区分（小/中/大＝絶対トークン閾値）を**断片ごとに再判定**。`firstOccurrence` は断片をまたいでも**文書全体で1回**（決定的インデクサが全文基準で付与、分割の影響を受けない）。
 - **収集[決定的] の v1 最小仕様（(A) 固定スコープ・工数を pin）**: 定義パターンは**固定セット**に限定する — (1) `\newcommand`、(2) `we (call|define|term|denote) X` / `we refer to ... as X`、(3) `X (is|are) defined as`、(4) `\emph{}`/`\textit{}`/`\textbf{}` の初出、(5) 大文字始まりの複合固有名。加えて DB `src` への**最長一致**。**網羅性は求めない**（取りこぼしは全文を読む glossary-builder が補う）。パターン拡充・ネット検索連携は roadmap（本付録 §7 の (B)/Phase2 外の enhancement）。
