@@ -51,6 +51,49 @@ describe("fetchArxivSource", () => {
     expect(sleep).not.toHaveBeenCalled();
   });
 
+  it("一時的な 5xx はバックオフ再試行する", async () => {
+    const statuses = [503, 503, 200];
+    const fetchImpl = vi.fn(async () => {
+      const s = statuses.shift()!;
+      return s === 200 ? okResponse("SRC") : ({ ok: false, status: s } as Response);
+    });
+    const buf = await fetchArxivSource("x", {
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      sleep: async () => {},
+      now: () => 1e9,
+      state: { lastRequestAt: 0 },
+    });
+    expect(buf.toString("utf8")).toBe("SRC");
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
+  });
+
+  it("リトライ上限超過（429 継続）は exit 2", async () => {
+    const fetchImpl = vi.fn(async () => ({ ok: false, status: 429 }) as Response);
+    await expect(
+      fetchArxivSource("x", {
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+        sleep: async () => {},
+        now: () => 1e9,
+        retries: 2,
+        state: { lastRequestAt: 0 },
+      }),
+    ).rejects.toMatchObject({ code: 2 });
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
+  });
+
+  it("恒久エラー（404）は再試行せず exit 2", async () => {
+    const fetchImpl = vi.fn(async () => ({ ok: false, status: 404 }) as Response);
+    await expect(
+      fetchArxivSource("x", {
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+        sleep: async () => {},
+        now: () => 1e9,
+        state: { lastRequestAt: 0 },
+      }),
+    ).rejects.toMatchObject({ code: 2 });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
   it("HTTP エラー・ネットワーク例外は exit 2", async () => {
     await expect(
       fetchArxivSource("x", {

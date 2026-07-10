@@ -1,5 +1,5 @@
-// 契約付録 §8。arXiv ソース tarball を取得（User-Agent 明示・3秒以上間隔）。
-import { JpaperError } from "../types/errors.js";
+// 契約付録 §8。arXiv ソース tarball を取得（UA 明示・3秒間隔・429/5xx/瞬断は指数バックオフ再試行）。
+import { JpaperError, isTransient } from "../types/errors.js";
 
 export interface ArxivDeps {
   fetchImpl?: typeof fetch;
@@ -8,6 +8,7 @@ export interface ArxivDeps {
   userAgent?: string;
   minIntervalMs?: number;
   endpoint?: string;
+  retries?: number;
   state?: { lastRequestAt: number };
 }
 
@@ -15,7 +16,12 @@ const DEFAULT_UA =
   "JPaper/0.1 (+https://github.com/TEIKOTA/JPaper; academic paper translation)";
 const MIN_INTERVAL_MS = 3000;
 const DEFAULT_ENDPOINT = "https://export.arxiv.org/e-print/";
+const MAX_RETRIES = 3;
 const globalState = { lastRequestAt: 0 };
+
+function isTransientStatus(status: number): boolean {
+  return status === 429 || (status >= 500 && status <= 599);
+}
 
 export async function fetchArxivSource(
   id: string,
@@ -27,24 +33,42 @@ export async function fetchArxivSource(
   const ua = deps.userAgent ?? DEFAULT_UA;
   const minInterval = deps.minIntervalMs ?? MIN_INTERVAL_MS;
   const endpoint = deps.endpoint ?? DEFAULT_ENDPOINT;
+  const retries = deps.retries ?? MAX_RETRIES;
   const state = deps.state ?? globalState;
 
-  const wait = state.lastRequestAt + minInterval - now();
-  if (wait > 0) await sleep(wait);
-  state.lastRequestAt = now();
+  let lastErr: unknown;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    if (attempt > 0) await sleep(Math.min(10000, 1000 * 2 ** (attempt - 1)));
+    const wait = state.lastRequestAt + minInterval - now();
+    if (wait > 0) await sleep(wait);
+    state.lastRequestAt = now();
 
-  let res: Response;
-  try {
-    res = await fetchImpl(`${endpoint}${id}`, { headers: { "User-Agent": ua } });
-  } catch (e) {
-    throw new JpaperError(
-      2,
-      "input",
-      `arXiv 取得に失敗: ${String((e as Error)?.message ?? e)}`,
-    );
+    try {
+      const res = await fetchImpl(`${endpoint}${id}`, {
+        headers: { "User-Agent": ua },
+      });
+      if (res.ok) return Buffer.from(await res.arrayBuffer());
+      if (isTransientStatus(res.status)) {
+        lastErr = new Error(`HTTP ${res.status}`);
+        continue;
+      }
+      throw new JpaperError(2, "input", `arXiv 取得に失敗: HTTP ${res.status}`);
+    } catch (e) {
+      if (e instanceof JpaperError) throw e;
+      if (isTransient(e)) {
+        lastErr = e;
+        continue;
+      }
+      throw new JpaperError(
+        2,
+        "input",
+        `arXiv 取得に失敗: ${String((e as Error)?.message ?? e)}`,
+      );
+    }
   }
-  if (!res.ok) {
-    throw new JpaperError(2, "input", `arXiv 取得に失敗: HTTP ${res.status}`);
-  }
-  return Buffer.from(await res.arrayBuffer());
+  throw new JpaperError(
+    2,
+    "input",
+    `arXiv 取得に失敗（リトライ上限）: ${String((lastErr as Error)?.message ?? lastErr)}`,
+  );
 }
