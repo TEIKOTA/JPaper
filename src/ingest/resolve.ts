@@ -32,7 +32,7 @@ function findByBasename(rootDir: string, ref: string): string | null {
 }
 
 function extractGraphicsPath(latex: string): string[] {
-  const all = [...latex.matchAll(/\\graphicspath\{((?:\{[^}]*\})+)\}/g)];
+  const all = [...latex.matchAll(/\\graphicspath\s*\{((?:\{[^}]*\})+)\}/g)];
   const last = all[all.length - 1]; // LaTeX は後の宣言で置換＝最後が有効
   if (!last) return [];
   return [...(last[1] ?? "").matchAll(/\{([^}]*)\}/g)].map((g) => g[1] ?? "");
@@ -61,7 +61,7 @@ export function collectFigures(
 ): string[] {
   const bases = ["", ...extractGraphicsPath(latex)];
   const found = new Set<string>();
-  const re = /\\includegraphics\s*(?:\[[^\]]*\]\s*)?\{([^}]+)\}/g;
+  const re = /\\includegraphics\*?\s*(?:\[[^\]]*\]\s*)?\{([^}]+)\}/g;
   let m: RegExpExecArray | null;
   while ((m = re.exec(latex)) !== null) {
     const ref = (m[1] ?? "").trim();

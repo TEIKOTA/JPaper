@@ -55,6 +55,19 @@ describe("collectFigures", () => {
     ]);
   });
 
+  it("スター付き \\includegraphics* も解決する", () => {
+    const d = tmp(["fig.png"]);
+    expect(collectFigures("\\includegraphics*{fig}", d)).toEqual([
+      path.resolve(d, "fig.png"),
+    ]);
+  });
+
+  it("\\graphicspath と引数の間の空白も許容する", () => {
+    const d = tmp(["images/fig.png", "other/fig.png"]);
+    const latex = "\\graphicspath {{images/}}\\includegraphics{fig}";
+    expect(collectFigures(latex, d)).toEqual([path.resolve(d, "images/fig.png")]);
+  });
+
   it("図が無ければ空配列", () => {
     const d = tmp([]);
     expect(collectFigures("\\includegraphics{none}", d)).toEqual([]);
