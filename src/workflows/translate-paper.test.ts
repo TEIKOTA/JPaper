@@ -111,6 +111,60 @@ describe("translatePaper（検収①）", () => {
     db.close();
   });
 
+  it("style.md の編集を反映して再訳する", async () => {
+    const outDir = path.join(tmp(), "out");
+    const tar = makePaperTar();
+    const db = new GlossaryDb();
+    await translatePaper({ kind: "path", path: tar }, { provider: "claude", outDir }, {
+      client: docClient(),
+      db,
+    });
+    const sPath = path.join(outDir, "style.md");
+    writeFileSync(sPath, readFileSync(sPath, "utf8").replace("時制: a", "時制: 現在形固定"));
+    const client2 = docClient();
+    await translatePaper({ kind: "path", path: tar }, { provider: "claude", outDir }, {
+      client: client2,
+      db,
+    });
+    expect(client2.calls.length).toBeGreaterThan(0);
+    db.close();
+  });
+
+  it("同じ outDir で入力（path 内容）が変わると再取り込みして再訳する", async () => {
+    const outDir = path.join(tmp(), "out");
+    const tar = path.join(tmp(), "p.tar");
+    writeFileSync(
+      tar,
+      makeTar([
+        {
+          name: "main.tex",
+          content: "\\documentclass{a}\\begin{document}\\section{One}Alpha text.\\end{document}",
+        },
+      ]),
+    );
+    const db = new GlossaryDb();
+    await translatePaper({ kind: "path", path: tar }, { provider: "claude", outDir }, {
+      client: docClient(),
+      db,
+    });
+    writeFileSync(
+      tar,
+      makeTar([
+        {
+          name: "main.tex",
+          content: "\\documentclass{a}\\begin{document}\\section{Two}Gamma text here.\\end{document}",
+        },
+      ]),
+    );
+    const client2 = docClient();
+    await translatePaper({ kind: "path", path: tar }, { provider: "claude", outDir }, {
+      client: client2,
+      db,
+    });
+    expect(client2.calls.length).toBeGreaterThan(0);
+    db.close();
+  });
+
   it("入力失敗は例外を投げず exit 2 の Result", async () => {
     const result = await translatePaper(
       { kind: "path", path: path.join(tmp(), "missing.tar") },

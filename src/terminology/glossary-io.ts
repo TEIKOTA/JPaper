@@ -44,6 +44,61 @@ export function parseGlossaryMd(md: string): ResolvedRow[] {
   return out;
 }
 
+function splitSections(md: string): Map<string, string[]> {
+  const sections = new Map<string, string[]>();
+  let current: string[] | null = null;
+  for (const line of md.split("\n")) {
+    const h = /^##\s+(.+)$/.exec(line);
+    if (h) {
+      current = [];
+      sections.set(h[1]!.trim(), current);
+    } else if (current) {
+      current.push(line);
+    }
+  }
+  return sections;
+}
+
+function bullets(lines: string[] | undefined): string[] {
+  return (lines ?? [])
+    .filter((l) => l.trim().startsWith("- "))
+    .map((l) => l.trim().slice(2).trim());
+}
+
+export function parseBriefMd(md: string): DocumentBrief {
+  const s = splitSections(md);
+  return {
+    thesis: (s.get("主張の核") ?? []).join("\n").trim(),
+    sectionRoles: bullets(s.get("節の役割")).map((b) => {
+      const i = b.indexOf(": ");
+      return i === -1
+        ? { id: b, role: "" }
+        : { id: b.slice(0, i).trim(), role: b.slice(i + 2).trim() };
+    }),
+    notationConventions: bullets(s.get("記法規約")),
+    claimStrengthNotes: bullets(s.get("主張強度の注意")),
+  };
+}
+
+export function parseStyleMd(md: string): StyleContract {
+  const kv = new Map<string, string>();
+  for (const line of md.split("\n")) {
+    const m = /^-\s+([^:]+):\s?(.*)$/.exec(line.trim());
+    if (m) kv.set(m[1]!.trim(), m[2]!.trim());
+  }
+  const notes = (kv.get("備考") ?? "")
+    .split(" / ")
+    .map((x) => x.trim())
+    .filter((x) => x !== "");
+  return {
+    register: kv.get("register") === "polite" ? "polite" : "plain",
+    tensePolicy: kv.get("時制") ?? "",
+    headingStyle: kv.get("見出し") ?? "",
+    numberStyle: kv.get("数字・単位") ?? "",
+    notes,
+  };
+}
+
 export function renderBriefMd(b: DocumentBrief): string {
   return [
     "# 文書ブリーフ",

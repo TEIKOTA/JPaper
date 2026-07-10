@@ -1,5 +1,5 @@
 // 契約付録 §7.5・§8。core API（取り込み→用語バリア→並列翻訳→訳注→出力→RunSummary）。
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { z } from "zod";
 import type {
@@ -22,12 +22,14 @@ import { paperOutDir, dbPath, contextWindowFor, type OllamaConfig } from "../con
 import { makeLlmClient } from "../providers/index.js";
 import { ingest, derivePaperId, type IngestDeps } from "../ingest/index.js";
 import { GlossaryDb } from "../terminology/db.js";
-import { buildPaperGlossary } from "../terminology/glossary.js";
+import { buildPaperGlossary, writeBackResolved } from "../terminology/glossary.js";
 import {
   renderGlossaryMd,
   parseGlossaryMd,
   renderBriefMd,
+  parseBriefMd,
   renderStyleMd,
+  parseStyleMd,
   type ResolvedRow,
 } from "../terminology/glossary-io.js";
 import { buildFirstOccurrenceIndex } from "../terminology/first-occurrence.js";
@@ -41,10 +43,6 @@ const IngestCache = z.object({
   figures: z.array(z.string()),
   paperId: z.string(),
   sourceDir: z.string(),
-});
-const GlossaryCache = z.object({
-  out: GlossaryBuilderOut,
-  proposedAdded: z.number().int(),
 });
 const SectionLoopCache = z.object({
   segmentId: z.string(),
@@ -85,30 +83,47 @@ async function loadOrBuildContext(
   paperId: string,
   cleanLatex: string,
 ): Promise<PaperContext> {
-  const built = await checkpoint(runDir, "glossary", GlossaryCache, () =>
-    buildPaperGlossary(client, db, paperId, cleanLatex),
+  const built = await checkpoint(
+    runDir,
+    "glossary",
+    GlossaryBuilderOut,
+    () => buildPaperGlossary(client, db, paperId, cleanLatex),
+    { invalidation: hashContext(cleanLatex) },
   );
+  const proposedAdded = writeBackResolved(db, built, paperId);
   mkdirSync(outDir, { recursive: true });
   const glossaryMd = path.join(outDir, "glossary.md");
   const briefMd = path.join(outDir, "brief.md");
   const styleMd = path.join(outDir, "style.md");
 
-  let resolved: ResolvedRow[] = built.out.resolved;
+  let resolved: ResolvedRow[] = built.resolved;
   if (existsSync(glossaryMd)) {
     const edited = parseGlossaryMd(readFileSync(glossaryMd, "utf8"));
     if (edited.length > 0) resolved = edited;
   } else {
-    writeFileSync(glossaryMd, renderGlossaryMd(built.out.resolved));
+    writeFileSync(glossaryMd, renderGlossaryMd(built.resolved));
   }
-  if (!existsSync(briefMd)) writeFileSync(briefMd, renderBriefMd(built.out.brief));
-  if (!existsSync(styleMd)) writeFileSync(styleMd, renderStyleMd(built.out.style));
 
-  return {
-    resolved,
-    brief: built.out.brief,
-    style: built.out.style,
-    proposedAdded: built.proposedAdded,
-  };
+  let brief = built.brief;
+  if (existsSync(briefMd)) brief = parseBriefMd(readFileSync(briefMd, "utf8"));
+  else writeFileSync(briefMd, renderBriefMd(built.brief));
+
+  let style = built.style;
+  if (existsSync(styleMd)) style = parseStyleMd(readFileSync(styleMd, "utf8"));
+  else writeFileSync(styleMd, renderStyleMd(built.style));
+
+  return { resolved, brief, style, proposedAdded };
+}
+
+// ingest キャッシュの無効化キー: 入力が変わったら再取り込み（path 上書き・arXiv v1/v2 は paperId 共有）。
+function inputSignature(input: JpaperInput): string {
+  if (input.kind === "arxiv") return hashContext("arxiv", input.id);
+  try {
+    const st = statSync(input.path);
+    return hashContext("path", path.resolve(input.path), String(st.mtimeMs), String(st.size));
+  } catch {
+    return hashContext("path", path.resolve(input.path));
+  }
 }
 
 function countByTrigger(notes: TranslatorNote[]): Record<string, number> {
@@ -155,8 +170,12 @@ export async function translatePaper(
       db = new GlossaryDb(loc);
     }
 
-    const ingested = await checkpoint(runDir, "ingest", IngestCache, () =>
-      ingest(input, path.join(runDir, "source"), deps.ingest),
+    const ingested = await checkpoint(
+      runDir,
+      "ingest",
+      IngestCache,
+      () => ingest(input, path.join(runDir, "source"), deps.ingest),
+      { invalidation: inputSignature(input) },
     );
 
     // 用語バリア: 並列翻訳の前に resolved/brief/style を確定する。
