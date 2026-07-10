@@ -46,6 +46,7 @@ describe("evaluator", () => {
     const out = await evaluate(c, { segmentId: "s1", srcLatex: "x", ja: "訳" });
     expect(out.verdict).toBe("pass");
     expect(c.calls[0]!.system).toContain("有意");
+    expect(c.calls[0]!.user).toContain("severity");
   });
 });
 
@@ -66,5 +67,6 @@ describe("glossary-builder", () => {
     expect(out.resolved[0]!.form).toBe("値(Value)");
     expect(out.style.register).toBe("plain");
     expect(c.calls[0]!.user).toContain("v [論文内定義]");
+    expect(c.calls[0]!.user).toContain("rendering");
   });
 });

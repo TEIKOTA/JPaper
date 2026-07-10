@@ -24,7 +24,8 @@ function renderUser(input: EvaluatorIn): string {
     "## 訳文",
     input.ja,
     "## 指示",
-    'verdict（pass/revise/fail）と issues を {"verdict": "…", "issues": [...]} の JSON だけで返す。',
+    'JSON だけを返す。形式: {"verdict":"pass"|"revise"|"fail","issues":[{"severity":"error"|"warn","message":"指摘文","span":"該当箇所(任意)"}]}。' +
+      "指摘が無ければ issues は空配列。issues は必ずこのオブジェクト形式（文字列の配列にしない）。",
   ].join("\n\n");
 }
 

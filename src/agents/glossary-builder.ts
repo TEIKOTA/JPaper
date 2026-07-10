@@ -18,7 +18,11 @@ function renderUser(input: GlossaryBuilderIn): string {
     "## 収集候補（src [論文内定義]: グローバル候補）",
     cands || "（候補なし）",
     "## 指示",
-    "各用語の確定訳・class・rendering を定め、文書ブリーフ・文体契約（既定=である調・常体）とともに、GlossaryBuilderOut スキーマ（resolved/brief/style）の JSON だけで返す。firstOccurrence は付与しない。",
+    "JSON だけを返す。形式:",
+    '{"resolved":[{"src":"原語","form":"確定訳/表記","class":"established"|"paper-defined"|"proper-noun"|"do-not-translate","rendering":"translate"|"bilingual"|"keep-original","note":"訳注(任意)"}],' +
+      '"brief":{"thesis":"主張の核","sectionRoles":[{"id":"節id","role":"役割"}],"notationConventions":["記法規約"],"claimStrengthNotes":["主張強度の注意(任意)"]},' +
+      '"style":{"register":"plain"|"polite","tensePolicy":"時制方針","headingStyle":"見出し方針","numberStyle":"数字/単位方針","notes":["備考(任意)"]}}',
+    "既定文体は register=plain（である調・常体）。firstOccurrence は付与しない（配線側が決定的に付ける）。",
   ].join("\n\n");
 }
 
