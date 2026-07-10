@@ -1,4 +1,4 @@
-// 契約付録 §1-8 の zod 写経（値の正本＝docs/design/contract-appendix.md）。全モジュール統合の縫い目。
+// 契約付録 §1-8 の写経（値の正本＝docs/design/contract-appendix.md）。
 import { z } from "zod";
 
 // ── §1 用語 ───────────────────────────────────────────────
