@@ -1,6 +1,7 @@
 // 設計メモ §3・§6。\includegraphics から図パスを回収（実在するもののみ・決定的ソート）。
 import { existsSync } from "node:fs";
 import path from "node:path";
+import { isInsideDir } from "./paths.js";
 
 const FIG_EXTS = [".pdf", ".png", ".jpg", ".jpeg", ".eps", ".ps", ".gif", ".svg"];
 
@@ -15,7 +16,7 @@ function resolveFigure(dir: string, bases: string[], ref: string): string | null
   for (const base of bases) {
     for (const cand of cands) {
       const abs = path.resolve(dir, base, cand);
-      if (existsSync(abs)) return abs;
+      if (existsSync(abs) && isInsideDir(dir, abs)) return abs;
     }
   }
   return null;

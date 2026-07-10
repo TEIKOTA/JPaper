@@ -40,4 +40,16 @@ describe("collectFigures", () => {
     const d = tmp([]);
     expect(collectFigures("\\includegraphics{none}", d)).toEqual([]);
   });
+
+  it("ソースルート外の図は拒否する", () => {
+    const container = mkdtempSync(path.join(os.tmpdir(), "jpaper-figesc-"));
+    dirs.push(container);
+    writeFileSync(path.join(container, "outside.png"), "IMG");
+    const src = path.join(container, "src");
+    mkdirSync(src);
+    expect(collectFigures("\\includegraphics{../outside.png}", src)).toEqual([]);
+    expect(
+      collectFigures("\\graphicspath{{../}}\n\\includegraphics{outside.png}", src),
+    ).toEqual([]);
+  });
 });

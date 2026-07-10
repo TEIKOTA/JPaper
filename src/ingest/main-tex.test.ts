@@ -67,4 +67,14 @@ describe("expandInputs", () => {
     const d = tmp({ "main.tex": "M\\input{loop}", "loop.tex": "L\\input{main}" });
     expect(expandInputs(d, "main.tex")).toBe("ML");
   });
+
+  it("ソースルート外への \\input は拒否する", () => {
+    const container = mkdtempSync(path.join(os.tmpdir(), "jpaper-esc-"));
+    dirs.push(container);
+    writeFileSync(path.join(container, "secret.tex"), "SECRET");
+    const src = path.join(container, "src");
+    mkdirSync(src);
+    writeFileSync(path.join(src, "main.tex"), "A\\input{../secret}B");
+    expect(expandInputs(src, "main.tex")).toBe("AB");
+  });
 });
