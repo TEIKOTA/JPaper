@@ -1,14 +1,12 @@
-// 決定的テスト用の FakeLlmClient（本番 providers/* の代わりに DI する）。
-// npm test を LLM 非含有に保つための縫い目。実 LLM は *.live.test.ts で別途。
+// テスト用の LlmClient 実装。npm test を LLM 非含有に保つ DI 縫い目（実 LLM は *.live.test.ts）。
 import type { LlmClient, LlmRequest } from "../types/contract.js";
 
 export type FakeResponder =
-  | string // 常に同じ応答
-  | string[] // キュー（呼ばれるたび先頭を返す・尽きたら例外）
-  | ((req: LlmRequest) => string); // req から計算
+  | string
+  | string[]
+  | ((req: LlmRequest) => string);
 
 export class FakeLlmClient implements LlmClient {
-  // 呼び出し履歴（アサーション用）。
   readonly calls: LlmRequest[] = [];
   private readonly queue: string[] | null;
   private readonly fn: ((req: LlmRequest) => string) | null;
