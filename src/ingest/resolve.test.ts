@@ -36,11 +36,20 @@ describe("collectFigures", () => {
     expect(collectFigures(latex, d)).toEqual([path.resolve(d, "images/plot.pdf")]);
   });
 
-  it("複数 \\graphicspath は最後の宣言を有効とする（LaTeX 準拠）", () => {
+  it("連続する \\graphicspath は直後の参照で最後の宣言が有効", () => {
     const d = tmp(["old/fig.png", "new/fig.png"]);
     const latex =
       "\\graphicspath{{old/}}\\graphicspath{{new/}}\\includegraphics{fig}";
     expect(collectFigures(latex, d)).toEqual([path.resolve(d, "new/fig.png")]);
+  });
+
+  it("\\graphicspath を途中で変えると参照ごとに有効パスで解決する", () => {
+    const d = tmp(["a/fig.png", "b/fig.png"]);
+    const latex =
+      "\\graphicspath{{a/}}\\includegraphics{fig}\\graphicspath{{b/}}\\includegraphics{fig}";
+    expect(collectFigures(latex, d)).toEqual(
+      [path.resolve(d, "a/fig.png"), path.resolve(d, "b/fig.png")].sort(),
+    );
   });
 
   it("同名 basename が複数ある場合は曖昧として取りこぼす", () => {

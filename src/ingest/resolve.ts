@@ -31,13 +31,6 @@ function findByBasename(rootDir: string, ref: string): string | null {
   return null;
 }
 
-function extractGraphicsPath(latex: string): string[] {
-  const all = [...latex.matchAll(/\\graphicspath\s*\{((?:\{[^}]*\})+)\}/g)];
-  const last = all[all.length - 1]; // LaTeX は後の宣言で置換＝最後が有効
-  if (!last) return [];
-  return [...(last[1] ?? "").matchAll(/\{([^}]*)\}/g)].map((g) => g[1] ?? "");
-}
-
 function resolveFigure(
   baseDir: string,
   rootDir: string,
@@ -59,12 +52,17 @@ export function collectFigures(
   baseDir: string,
   rootDir: string = baseDir,
 ): string[] {
-  const bases = ["", ...extractGraphicsPath(latex)];
+  let bases = [""]; // \graphicspath 宣言を参照順に追う（後宣言で置換）
   const found = new Set<string>();
-  const re = /\\includegraphics\*?\s*(?:\[[^\]]*\]\s*)?\{([^}]+)\}/g;
+  const re =
+    /\\graphicspath\s*\{((?:\{[^}]*\})+)\}|\\includegraphics\*?\s*(?:\[[^\]]*\]\s*)?\{([^}]+)\}/g;
   let m: RegExpExecArray | null;
   while ((m = re.exec(latex)) !== null) {
-    const ref = (m[1] ?? "").trim();
+    if (m[1] !== undefined) {
+      bases = ["", ...[...m[1].matchAll(/\{([^}]*)\}/g)].map((g) => g[1] ?? "")];
+      continue;
+    }
+    const ref = (m[2] ?? "").trim();
     const resolved =
       resolveFigure(baseDir, rootDir, bases, ref) ?? findByBasename(rootDir, ref);
     if (resolved) found.add(resolved);
