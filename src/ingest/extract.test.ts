@@ -67,6 +67,17 @@ describe("extractArchive", () => {
     }
   });
 
+  it("終端ゼロブロックの無い（切れた）tar は exit 2", () => {
+    const full = makeTar([{ name: "main.tex", content: "abc" }]);
+    const noTrailer = full.subarray(0, 1024);
+    try {
+      extractArchive(noTrailer);
+      throw new Error("should have thrown");
+    } catch (e) {
+      expect((e as { code: number }).code).toBe(2);
+    }
+  });
+
   it("壊れた gzip は exit 2 に変換する", () => {
     const corrupt = Buffer.concat([Buffer.from([0x1f, 0x8b]), Buffer.from("garbage")]);
     expect(() => extractArchive(corrupt)).toThrow(/アーカイブ展開に失敗/);

@@ -27,6 +27,16 @@ describe("detectMainTex", () => {
     expect(detectMainTex(d)).toBe("main.tex");
   });
 
+  it("外部への symlink な main.tex は候補から除外する", () => {
+    const container = mkdtempSync(path.join(os.tmpdir(), "jpaper-symmain-"));
+    dirs.push(container);
+    writeFileSync(path.join(container, "outside.tex"), DOC);
+    const src = path.join(container, "src");
+    mkdirSync(src);
+    symlinkSync(path.join(container, "outside.tex"), path.join(src, "main.tex"));
+    expect(() => detectMainTex(src)).toThrow(/見つかりません/);
+  });
+
   it("複数候補は名前（main.tex 等）で解決", () => {
     const d = tmp({ "a.tex": DOC, "main.tex": DOC });
     expect(detectMainTex(d)).toBe("main.tex");

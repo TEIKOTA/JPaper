@@ -57,17 +57,21 @@ export function parseTar(buf: Buffer): FileMap {
   const files: FileMap = new Map();
   let off = 0;
   let override: string | null = null;
+  let terminated = false;
   while (off + 512 <= buf.length) {
     const name = readStr(buf, off, 100);
-    if (name === "") break;
+    if (name === "") {
+      terminated = true;
+      break;
+    }
     const size = parseInt(readStr(buf, off + 124, 12).trim(), 8) || 0;
     const type = buf[off + 156];
     const dataStart = off + 512;
-    if (dataStart + size > buf.length) {
+    const advance = dataStart + Math.ceil(size / 512) * 512;
+    if (dataStart + size > buf.length || advance > buf.length) {
       throw new JpaperError(2, "input", "tar が途中で切れています");
     }
     const data = buf.subarray(dataStart, dataStart + size);
-    const advance = dataStart + Math.ceil(size / 512) * 512;
     if (type === 0x4c) {
       override = readZ(data); // GNU long name ('L')
     } else if (type === 0x78) {
@@ -83,6 +87,9 @@ export function parseTar(buf: Buffer): FileMap {
       override = null;
     }
     off = advance;
+  }
+  if (!terminated) {
+    throw new JpaperError(2, "input", "tar が途中で切れています");
   }
   return files;
 }

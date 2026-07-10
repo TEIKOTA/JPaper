@@ -20,7 +20,9 @@ export function listTexFiles(dir: string): string[] {
 }
 
 export function detectMainTex(dir: string): string {
-  const texs = listTexFiles(dir);
+  const texs = listTexFiles(dir).filter((f) =>
+    isInsideDirReal(dir, path.join(dir, f)),
+  );
   const read = (f: string) => readFileSync(path.join(dir, f), "utf8");
   const withDoc = texs.filter(
     (f) => /\\documentclass/.test(read(f)) && /\\begin\{document\}/.test(read(f)),
@@ -59,6 +61,7 @@ export function expandInputs(dir: string, mainRel: string): string {
   const stack: string[] = [];
   function load(rel: string): string {
     if (stack.includes(rel)) return "";
+    if (!isInsideDirReal(dir, path.join(dir, rel))) return "";
     stack.push(rel);
     const raw = stripComments(readFileSync(path.join(dir, rel), "utf8"));
     const out = raw.replace(/\\(?:input|include)\s*\{([^}]+)\}/g, (_m, target: string) => {
