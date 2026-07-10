@@ -14,6 +14,9 @@ describe("extractJson", () => {
     expect(extractJson("結果:\n{\"a\":1}\nおわり")).toEqual({ a: 1 });
     expect(extractJson("prefix [1,2,3]")).toEqual([1, 2, 3]);
   });
+  it("無効なブラケットの後にある JSON を見つける", () => {
+    expect(extractJson('Note [draft]\n{"a":1}')).toEqual({ a: 1 });
+  });
   it("文字列内の閉じ括弧を無視する", () => {
     expect(extractJson('x {"s":"a}b"} y')).toEqual({ s: "a}b" });
   });

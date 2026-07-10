@@ -52,6 +52,28 @@ describe("makeOllamaClient", () => {
     }
   });
 
+  it("ollama 実行ファイル欠如は code 2（プロセスを落とさない）", async () => {
+    const fetchImpl = (async () => {
+      throw Object.assign(new Error("fetch failed"), { cause: { code: "ECONNREFUSED" } });
+    }) as unknown as typeof fetch;
+    const spawnImpl = (() => ({
+      on(ev: string, cb: (e: Error) => void) {
+        if (ev === "error") cb(Object.assign(new Error("spawn ENOENT"), { code: "ENOENT" }));
+        return this;
+      },
+      unref() {
+        return this;
+      },
+    })) as unknown as typeof import("node:child_process").spawn;
+    await expect(
+      makeOllamaClient(DEFAULT_OLLAMA, {
+        fetchImpl,
+        spawnImpl,
+        sleep: async () => {},
+      }).complete({ system: "s", user: "u" }),
+    ).rejects.toMatchObject({ code: 2 });
+  });
+
   it("4xx はプロバイダ利用不能 code 2", async () => {
     const fetchImpl = (async () =>
       ({ ok: false, status: 400 }) as Response) as unknown as typeof fetch;

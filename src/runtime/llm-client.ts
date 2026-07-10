@@ -2,16 +2,7 @@
 import type { z } from "zod";
 import type { LlmClient, LlmRequest } from "../types/contract.js";
 
-export function extractJson(text: string): unknown {
-  const fenced = /```(?:json)?\s*([\s\S]*?)```/.exec(text);
-  const body = (fenced ? fenced[1]! : text).trim();
-  try {
-    return JSON.parse(body);
-  } catch {
-    // フェンス内/前後に散文がある場合は最初の balanced な JSON を走査する。
-  }
-  const start = body.search(/[{[]/);
-  if (start === -1) throw new Error("JSON が見つかりません");
+function tryBalanced(body: string, start: number): { value: unknown } | undefined {
   const open = body[start]!;
   const close = open === "{" ? "}" : "]";
   let depth = 0;
@@ -29,10 +20,33 @@ export function extractJson(text: string): unknown {
       depth++;
     } else if (ch === close) {
       depth--;
-      if (depth === 0) return JSON.parse(body.slice(start, i + 1));
+      if (depth === 0) {
+        try {
+          return { value: JSON.parse(body.slice(start, i + 1)) };
+        } catch {
+          return undefined;
+        }
+      }
     }
   }
-  throw new Error("JSON の対応が閉じていません");
+  return undefined;
+}
+
+export function extractJson(text: string): unknown {
+  const fenced = /```(?:json)?\s*([\s\S]*?)```/.exec(text);
+  const body = (fenced ? fenced[1]! : text).trim();
+  try {
+    return JSON.parse(body);
+  } catch {
+    // フェンス内/前後に散文がある場合は最初に parse できる balanced 候補を走査する。
+  }
+  for (let i = 0; i < body.length; i++) {
+    const ch = body[i]!;
+    if (ch !== "{" && ch !== "[") continue;
+    const found = tryBalanced(body, i);
+    if (found) return found.value;
+  }
+  throw new Error("JSON が見つかりません");
 }
 
 export async function runAgent<S extends z.ZodTypeAny>(

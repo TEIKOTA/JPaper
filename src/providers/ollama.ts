@@ -8,6 +8,7 @@ export interface OllamaDeps {
   fetchImpl?: typeof fetch;
   ensureDaemon?: () => Promise<void>;
   sleep?: (ms: number) => Promise<void>;
+  spawnImpl?: typeof spawn;
 }
 
 function isConnRefused(e: unknown): boolean {
@@ -19,9 +20,19 @@ async function defaultEnsureDaemon(
   cfg: OllamaConfig,
   fetchImpl: typeof fetch,
   sleep: (ms: number) => Promise<void>,
+  spawnImpl: typeof spawn,
 ): Promise<void> {
-  spawn("ollama", ["serve"], { detached: true, stdio: "ignore" }).unref();
+  const err: { current: Error | null } = { current: null };
+  const child = spawnImpl("ollama", ["serve"], { detached: true, stdio: "ignore" });
+  // 実行ファイル欠如の 'error' に listener を付けないと Node が落ちる。
+  child.on("error", (e) => {
+    err.current = e;
+  });
+  child.unref();
   for (let i = 0; i < 30; i++) {
+    if (err.current) {
+      throw new JpaperError(2, "provider", `ollama を起動できません: ${err.current.message}`);
+    }
     try {
       const r = await fetchImpl(`http://127.0.0.1:${cfg.port}/api/tags`);
       if (r.ok) return;
@@ -37,7 +48,8 @@ export function makeOllamaClient(cfg: OllamaConfig, deps: OllamaDeps = {}): LlmC
   const fetchImpl = deps.fetchImpl ?? fetch;
   const sleep = deps.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
   const ensureDaemon =
-    deps.ensureDaemon ?? (() => defaultEnsureDaemon(cfg, fetchImpl, sleep));
+    deps.ensureDaemon ??
+    (() => defaultEnsureDaemon(cfg, fetchImpl, sleep, deps.spawnImpl ?? spawn));
   let started = false;
 
   async function call(req: LlmRequest): Promise<string> {
