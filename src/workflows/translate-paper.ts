@@ -1,5 +1,5 @@
 // 契約付録 §7.5・§8。core API（取り込み→用語バリア→並列翻訳→訳注→出力→RunSummary）。
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { z } from "zod";
 import type {
@@ -199,8 +199,9 @@ export async function translatePaper(
         const slice = ctx.resolved
           .filter((t) => seg.latex.includes(t.src))
           .map((t) => ({ ...t, firstOccurrence: firstOcc.get(t.src) === seg.id })) as ResolvedTerm[];
-        // 無効化は注入コンテキスト（当該セグメントの slice＋brief＋style）のハッシュ。
+        // 無効化は原文＋注入コンテキスト（slice＋brief＋style）のハッシュ。失敗結果は永続しない。
         const invalidation = hashContext(
+          seg.latex,
           JSON.stringify(slice),
           JSON.stringify(ctx.brief),
           JSON.stringify(ctx.style),
@@ -210,7 +211,7 @@ export async function translatePaper(
           seg.id,
           SectionLoopCache,
           () => runSectionLoop(client, seg, slice, { brief: ctx.brief, style: ctx.style }),
-          { invalidation },
+          { invalidation, cacheable: (r) => r.passed },
         );
       }),
     );
@@ -226,6 +227,7 @@ export async function translatePaper(
     });
 
     const chaptersDir = path.join(outDir, "translation", "chapters");
+    rmSync(chaptersDir, { recursive: true, force: true }); // 縮小時の古い chapter を残さない
     mkdirSync(chaptersDir, { recursive: true });
     for (const r of results) {
       writeFileSync(path.join(chaptersDir, `${r.segmentId}.tex`), r.ja);

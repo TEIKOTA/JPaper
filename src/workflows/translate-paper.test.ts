@@ -17,7 +17,7 @@ afterEach(() => {
   for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
 });
 
-function docClient(): FakeLlmClient {
+function mkClient(verdict: "pass" | "fail" = "pass"): FakeLlmClient {
   return new FakeLlmClient((req) => {
     if (req.system.includes("編纂者")) {
       return JSON.stringify({
@@ -28,10 +28,11 @@ function docClient(): FakeLlmClient {
         style: { tensePolicy: "a", headingStyle: "b", numberStyle: "c" },
       });
     }
-    if (req.system.includes("審査者")) return '{"verdict":"pass","issues":[]}';
+    if (req.system.includes("審査者")) return `{"verdict":"${verdict}","issues":[]}`;
     return '{"segmentId":"x","ja":"訳文"}';
   });
 }
+const docClient = () => mkClient("pass");
 
 function makePaperTar(): string {
   const p = path.join(tmp(), "p.tar");
@@ -162,6 +163,62 @@ describe("translatePaper（検収①）", () => {
       db,
     });
     expect(client2.calls.length).toBeGreaterThan(0);
+    db.close();
+  });
+
+  it("失敗セグメントはキャッシュせず再実行で再訳を試みる", async () => {
+    const outDir = path.join(tmp(), "out");
+    const tar = makePaperTar();
+    const db = new GlossaryDb();
+    const r1 = await translatePaper({ kind: "path", path: tar }, { provider: "claude", outDir }, {
+      client: mkClient("fail"),
+      db,
+    });
+    expect(r1.exitCode).toBe(4);
+    const client2 = mkClient("fail");
+    await translatePaper({ kind: "path", path: tar }, { provider: "claude", outDir }, {
+      client: client2,
+      db,
+    });
+    expect(client2.calls.length).toBeGreaterThan(0);
+    db.close();
+  });
+
+  it("入力が縮小したら古い chapter を残さない", async () => {
+    const outDir = path.join(tmp(), "out");
+    const tar = path.join(tmp(), "p.tar");
+    const db = new GlossaryDb();
+    writeFileSync(
+      tar,
+      makeTar([
+        {
+          name: "main.tex",
+          content:
+            "\\documentclass{a}\\begin{document}\\section{A}Alpha text.\\section{B}Beta text.\\end{document}",
+        },
+      ]),
+    );
+    await translatePaper({ kind: "path", path: tar }, { provider: "claude", outDir }, {
+      client: docClient(),
+      db,
+    });
+    const seg1 = path.join(outDir, "translation", "chapters", "seg-0001.tex");
+    expect(existsSync(seg1)).toBe(true);
+    writeFileSync(
+      tar,
+      makeTar([
+        {
+          name: "main.tex",
+          content: "\\documentclass{a}\\begin{document}\\section{A}Alpha text only.\\end{document}",
+        },
+      ]),
+    );
+    await translatePaper({ kind: "path", path: tar }, { provider: "claude", outDir }, {
+      client: docClient(),
+      db,
+    });
+    expect(existsSync(path.join(outDir, "translation", "chapters", "seg-0000.tex"))).toBe(true);
+    expect(existsSync(seg1)).toBe(false);
     db.close();
   });
 

@@ -45,6 +45,15 @@ describe("checkpoint", () => {
     expect(await checkpoint(dir, "step", S, async () => ({ v: ++calls }))).toEqual({ v: 1 });
   });
 
+  it("cacheable=false は永続せず毎回再計算", async () => {
+    const dir = tmp();
+    let calls = 0;
+    const fn = async () => ({ v: ++calls });
+    await checkpoint(dir, "s", S, fn, { cacheable: () => false });
+    await checkpoint(dir, "s", S, fn, { cacheable: () => false });
+    expect(calls).toBe(2);
+  });
+
   it("hashContext は決定的で入力差を反映", () => {
     expect(hashContext("a", "b")).toBe(hashContext("a", "b"));
     expect(hashContext("a")).not.toBe(hashContext("b"));

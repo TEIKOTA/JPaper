@@ -10,8 +10,9 @@ export function hashContext(...parts: string[]): string {
   return h.digest("hex").slice(0, 16);
 }
 
-export interface CheckpointOptions {
+export interface CheckpointOptions<T = unknown> {
   invalidation?: string;
+  cacheable?: (result: T) => boolean;
 }
 
 export async function checkpoint<S extends z.ZodTypeAny>(
@@ -19,7 +20,7 @@ export async function checkpoint<S extends z.ZodTypeAny>(
   stepId: string,
   schema: S,
   fn: () => Promise<z.infer<S>>,
-  opts: CheckpointOptions = {},
+  opts: CheckpointOptions<z.infer<S>> = {},
 ): Promise<z.infer<S>> {
   const dir = path.join(runDir, "steps");
   const suffix = opts.invalidation ? `.${opts.invalidation}` : "";
@@ -34,9 +35,11 @@ export async function checkpoint<S extends z.ZodTypeAny>(
   }
 
   const result = await fn();
-  mkdirSync(dir, { recursive: true });
-  const tmp = `${file}.tmp`;
-  writeFileSync(tmp, JSON.stringify(result));
-  renameSync(tmp, file);
+  if (opts.cacheable === undefined || opts.cacheable(result)) {
+    mkdirSync(dir, { recursive: true });
+    const tmp = `${file}.tmp`;
+    writeFileSync(tmp, JSON.stringify(result));
+    renameSync(tmp, file);
+  }
   return result;
 }
