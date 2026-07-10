@@ -1,20 +1,26 @@
 // 契約付録 §5・§8。claude プロバイダ（純変換器化した公式 CLI subprocess）。
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
+import { spawn } from "node:child_process";
 import type { LlmClient } from "../types/contract.js";
-import { JpaperError, isTransient } from "../types/errors.js";
-
-const pExecFile = promisify(execFile);
+import { JpaperError } from "../types/errors.js";
 
 export interface ClaudeDeps {
   run?: (args: string[]) => Promise<string>;
 }
 
 async function defaultRun(args: string[]): Promise<string> {
-  const { stdout } = await pExecFile("claude", args, {
-    maxBuffer: 64 * 1024 * 1024,
+  return new Promise((resolve, reject) => {
+    const child = spawn("claude", args, { stdio: ["pipe", "pipe", "pipe"] });
+    let out = "";
+    let err = "";
+    child.stdout.on("data", (d) => (out += d));
+    child.stderr.on("data", (d) => (err += d));
+    child.on("error", reject);
+    child.on("close", (code) => {
+      if (code === 0) resolve(out);
+      else reject(Object.assign(new Error(`claude exited ${code}: ${err.slice(0, 500)}`), { code }));
+    });
+    child.stdin.end(); // stdin を即 EOF にして -p 位置引数のプロンプトを使わせる（3秒待機回避）。
   });
-  return stdout;
 }
 
 export function makeClaudeClient(deps: ClaudeDeps = {}): LlmClient {
@@ -37,12 +43,17 @@ export function makeClaudeClient(deps: ClaudeDeps = {}): LlmClient {
           "",
         ]);
       } catch (e) {
-        if (isTransient(e)) throw e; // 瞬断等は withRetry へ
-        throw new JpaperError(
+        if ((e as { code?: unknown }).code === "ENOENT") {
+          throw new JpaperError(2, "provider", "claude が見つかりません（未インストール/PATH 外）");
+        }
+        // 非ゼロ終了・タイムアウトは API 側の一時障害が多い → transient にして withRetry へ委ねる。
+        const err = new JpaperError(
           2,
           "provider",
-          `claude 実行に失敗（未インストール/未ログイン/非ゼロ終了）: ${String((e as Error)?.message ?? e)}`,
+          `claude 実行に失敗: ${String((e as Error)?.message ?? e)}`,
         );
+        Object.assign(err, { transient: true });
+        throw err;
       }
       let parsed: { result?: unknown };
       try {
