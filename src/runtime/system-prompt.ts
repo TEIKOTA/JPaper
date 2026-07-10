@@ -24,14 +24,30 @@ const COMMON =
 const PITFALLS =
   "頻出の誤訳に注意する（evaluator 用チェックリスト）: 統計語 significantly=「有意」（p 値の含意を保つ）／SI 単位は立体・°K は K に／主張強度・hedging（may/might/suggest 等）を原文どおり保つ／false friend: agency=「行為主体性」など文脈依存の訳。";
 
+function jaPart(form: string): string {
+  return form.replace(/\s*[（(].*$/, "").trim();
+}
+
+function instructionFor(t: ResolvedTerm): string {
+  switch (t.rendering) {
+    case "keep-original":
+      return `原表記「${t.src}」のまま残す（訳さない）`;
+    case "bilingual":
+      return t.firstOccurrence
+        ? `初出なので併記「${t.form}」を使う`
+        : `2回目以降なので「${jaPart(t.form)}」（日本語のみ・併記しない）を使う`;
+    default:
+      return `訳語「${t.form}」を使う`;
+  }
+}
+
 function renderTerms(glossary: ResolvedTerm[]): string {
   if (glossary.length === 0) return "（確定用語なし）";
   return [...glossary]
     .sort((a, b) => (a.src < b.src ? -1 : a.src > b.src ? 1 : 0))
     .map((t) => {
       const note = t.note ? ` 〔訳注: ${t.note}〕` : "";
-      const first = t.firstOccurrence ? " [初出]" : "";
-      return `- ${t.src} → ${t.form} (${t.class}/${t.rendering})${first}${note}`;
+      return `- ${t.src}: ${instructionFor(t)}${note}`;
     })
     .join("\n");
 }

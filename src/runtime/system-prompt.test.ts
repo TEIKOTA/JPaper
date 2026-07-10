@@ -15,7 +15,34 @@ describe("buildSystemPrompt", () => {
     const p = buildSystemPrompt("translator", { glossary: [term] });
     expect(p).toContain("翻訳する専門家");
     expect(p).toContain("構造・数式");
-    expect(p).toContain("attention → アテンション");
+    expect(p).toContain("attention: 訳語「アテンション」を使う");
+  });
+
+  it("rendering ごとに行動指示を出す（bilingual 初出/以降・keep-original）", () => {
+    const bi1: ResolvedTerm = {
+      src: "value",
+      form: "値(Value)",
+      class: "paper-defined",
+      rendering: "bilingual",
+      firstOccurrence: true,
+    };
+    const bi2: ResolvedTerm = { ...bi1, firstOccurrence: false };
+    const keep: ResolvedTerm = {
+      src: "BLEU",
+      form: "BLEU",
+      class: "do-not-translate",
+      rendering: "keep-original",
+      firstOccurrence: false,
+    };
+    expect(buildSystemPrompt("translator", { glossary: [bi1] })).toContain(
+      "初出なので併記「値(Value)」",
+    );
+    expect(buildSystemPrompt("translator", { glossary: [bi2] })).toContain(
+      "「値」（日本語のみ",
+    );
+    expect(buildSystemPrompt("translator", { glossary: [keep] })).toContain(
+      "原表記「BLEU」のまま残す",
+    );
   });
 
   it("evaluator にのみ pitfalls を開示する", () => {
