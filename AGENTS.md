@@ -60,6 +60,8 @@
 - 調査タスクは read-only 前提。変更依頼がない限り編集しない。
 - docs が不足・矛盾している場合は、修正案より先にギャップを示す。ドリフトの定期検査は `sync-docs` skill で行う。
 - UI / UX・文言・操作感に関わる判断は、選択肢を短く説明してユーザーに確認してから固定する。
+- **ソースは事実のみ**。why は正本（ADR/契約付録/設計メモ）へ置き、inline は正本ポインタ（`// 契約付録 §N`）と中身ゼロの地雷標識（`// ⚠ landmines.md`）のみ。規約の正本は [ソースコメント ADR](./docs/adr/20260710-source-comments-facts-only-rationale-to-docs.md)。
+- **コードが不自然に見えても、直す前に [`docs/design/landmines.md`](./docs/design/landmines.md) を確認する**。該当があれば意図的なので維持する。
 
 ## コマンド
 
