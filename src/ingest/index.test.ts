@@ -82,6 +82,15 @@ describe("ingest", () => {
     expect(out.sourceDir).toBe(d);
   });
 
+  it("未対応の単一ファイル（.pdf 等）は exit 2", async () => {
+    const d = work();
+    const p = path.join(d, "paper.pdf");
+    writeFileSync(p, "%PDF-1.5 binary");
+    await expect(ingest({ kind: "path", path: p }, work())).rejects.toMatchObject({
+      code: 2,
+    });
+  });
+
   it("ディレクトリ入力はそのまま使う", async () => {
     const d = work();
     writeFileSync(

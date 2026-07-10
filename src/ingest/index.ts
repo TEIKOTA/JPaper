@@ -2,6 +2,7 @@
 import { readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import type { JpaperInput } from "../types/contract.js";
+import { JpaperError } from "../types/errors.js";
 import { fetchArxivSource, type ArxivDeps } from "./arxiv.js";
 import { extractArchive, writeFileMap, isArchive } from "./extract.js";
 import { detectMainTex, expandInputs } from "./main-tex.js";
@@ -44,6 +45,9 @@ async function materialize(
     if (statSync(input.path).isDirectory()) return { sourceDir: input.path };
     const bytes = readFileSync(input.path);
     if (!isArchive(bytes)) {
+      if (!/\.tex$/i.test(input.path)) {
+        throw new JpaperError(2, "input", `未対応の入力形態です: ${input.path}`);
+      }
       const abs = path.resolve(input.path);
       return { sourceDir: path.dirname(abs), mainRel: path.basename(abs) };
     }
