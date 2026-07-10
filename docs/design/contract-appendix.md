@@ -17,6 +17,7 @@ const ResolvedTerm = z.object({
   class: TermClass,
   rendering: Rendering,
   firstOccurrence: z.boolean(),     // このセグメントで初出か（決定的インデクサが算出）
+  note: z.string().optional(),      // 訳注の文面（LLM 生成）。preserve/低確信の理由。trigger 該当時に surface
 });
 
 // translator: 入力→出力。priorJa/issues は再訳(revise)時のみ埋める
@@ -50,8 +51,39 @@ const GlossaryBuilderIn  = z.object({
     definedInPaper: z.boolean(),    // "we define/call", \newcommand, 強調初出 で検出
   })),
 });
-const GlossaryBuilderOut = z.object({ resolved: z.array(ResolvedTerm.omit({ firstOccurrence: true }) )});
+const GlossaryBuilderOut = z.object({
+  resolved: z.array(ResolvedTerm.omit({ firstOccurrence: true })), // note は残す（訳注の文面）
+  brief: DocumentBrief,             // 決定1: 全文パスの副産物（全 translator に注入）
+  style: StyleContract,             // 決定1: 文体契約（既定=である調・常体）
+});
 // firstOccurrence は翻訳配線側の決定的インデクサが後付け（translator に判定させない）
+
+// 文書ブリーフ（brief.md の正本。可視・編集可）
+const DocumentBrief = z.object({
+  thesis: z.string(),                                        // 論文の主張の核
+  sectionRoles: z.array(z.object({ id: z.string(), role: z.string() })), // 各節の役割
+  notationConventions: z.array(z.string()),                  // 記法規約（変数・記号の使い方）
+  claimStrengthNotes: z.array(z.string()).default([]),       // 主張強度/hedging の注意
+});
+// 文体契約（style.md の正本。可視・編集可。既定は register=plain=である調・常体）
+const StyleContract = z.object({
+  register: z.enum(["plain", "polite"]).default("plain"),    // plain=である調・常体
+  tensePolicy: z.string(),                                   // 時制方針（例: 結果=過去）
+  headingStyle: z.string(),                                  // 見出し訳の方針
+  numberStyle: z.string(),                                   // 数字・単位表記
+  notes: z.array(z.string()).default([]),
+});
+
+// 訳注（uncertainties）。採否=trigger は決定的 / 文面=LLM。data=(A) / render=(B)
+const NoteTrigger    = z.enum(["paper-defined-preserve", "low-confidence", "evaluator-warn"]);
+const TranslatorNote = z.object({
+  id: z.string(),
+  trigger: NoteTrigger,
+  src: z.string().optional(),       // 対象語（term 系 trigger のとき）
+  segmentId: z.string(),
+  firstOccurrence: z.boolean(),     // 文書全体で初出か（脚注はここだけ・巻末は1エントリ）
+  text: z.string(),                 // 文面（LLM 生成: term=ResolvedTerm.note / warn=EvalIssue.message）
+});
 ```
 
 ## 2. 用語 DB（SQLite / `node:sqlite`）
@@ -85,6 +117,8 @@ CREATE INDEX idx_term_src ON term(src);
 - 単位: セグメント（節）。2層＝[節ループ軽検査＋evaluator] と [全文組版ゲート]（[2層化 ADR](../adr/20260709-quality-gate-two-layer-and-build-error-triage.md)）。
 - `MAX_REVISIONS`: セグメントサイズ連動 **小=3 / 中=4 / 大=5**（下限3・上限5）。区分は**絶対トークン閾値**（プロバイダ非依存＝決定的テストのゴールデン値が揺れない）: 小 `<1500` / 中 `<3500` / 大 `>=3500`（§4 の自前推定器で計測）。超過→failed。形式検査の差し戻しもカウント。
 - evaluator `verdict`: `pass`→抜ける / `revise`→`issues` を translator の再訳入力へ / `fail`→即 failed。
+- **evaluator rubric（明示軸・[翻訳一貫性 ADR](../adr/20260710-translation-consistency-brief-style-and-annotations.md) 決定2）**: 従来の「自然さ・専門用語妥当性・原意保持」に加え ①**主張強度・hedging の保持**（断定/限定/推量を原文どおり）②**統計語の忠実**（`significantly`=有意・p 値の含意）③**単位・記法の正しさ**（SI＝立体・`°K`→`K`・数値と単位の間隔）を判定する。②③の一部で決定的に落とせるものは §7 (B) の言語整合 lint に回す。
+- **warn→訳注の連動**: evaluator が `pass` としつつ残した `warn` の `issue` は、`TranslatorNote{ trigger: "evaluator-warn", text: issue.message }` として §8 の訳注に流す（品質は落とさず読者に可視化）。
 - 全文ゲート失敗の分類: 翻訳起因の LaTeX 文法ミス→失敗スニペット＋エラー行のみで再訳 / 構造・テンプレ起因→明示的失敗。
 
 ## 4. セグメント分割・トークン予算（モデル非依存）
@@ -123,21 +157,23 @@ CREATE INDEX idx_term_src ON term(src);
 新B レビューを受け、v1 を2段で発注する。
 
 - **(A) 固定価格 = コア**: 用語 DB（`node:sqlite`）／薄いランタイム＋エージェント配線／節ループ品質ゲート（形式検査＋evaluator＋再訳）／durable checkpoint／CLI・プロバイダ。§1–6・§8 の契約で確定。
-- **(B) 上限付き T&M = 組版・図・引用レイヤ**: `assemble-latex`（訳文＋manifest→`main.tex`/chapters）／共通プリアンブル・引用マクロテンプレ／全文組版ゲートのビルドエラー分類＋エラー行→セグメント逆引き／`.bbl` 番号順パース＋`\cite`→番号対応表／図 manifest。工数の幅が大きいため実費上限方式。
+- **(B) 上限付き T&M = 組版・図・引用レイヤ**: `assemble-latex`（訳文＋manifest→`main.tex`/chapters）／共通プリアンブル・引用マクロテンプレ／全文組版ゲートのビルドエラー分類＋エラー行→セグメント逆引き／`.bbl` 番号順パース＋`\cite`→番号対応表／図 manifest／**言語整合 lint（[翻訳一貫性 ADR](../adr/20260710-translation-consistency-brief-style-and-annotations.md) 決定4: 単位 SI 表記・略語初出定義・glossary 外の訳語表記ゆれ・数字表記を決定的に検査。PerfectIt 相当まで許容）**／**訳注レンダリング（決定3: `notes.json`→本文の文書初出のみ `\footnote`＋巻末「訳注一覧」）**。工数の幅が大きいため実費上限方式。
 - **Phase2（別フェーズ）**: PDF-only 抽出（Nougat/GPU/Docker/`nougat-ocr`/`pymupdf`/`pdfplumber`）／`.bbl` 著者年スタイル／`glossary.db` 並行実行。
 
 ## 7.5 (A) コアの受け入れ条件（(B) 非依存で定義）
 
 (A) は組版=(B) を持たないため「main.pdf 生成（終了コード0・`buildOk`・`pdfPath`）」に単体で到達できない。(A) の完成を (B) から切り離して定義する（R1 解消）。
 
-- **(A) の成果**: 節ループ品質ゲートを通過した**訳文セグメント群**（`translation/chapters/*` 相当の中間物）＋ per-paper 確定辞書（`glossary.md`）＋ `RunSummary`。**組版・PDF は含まない**。
+- **(A) の成果**: 節ループ品質ゲートを通過した**訳文セグメント群**（`translation/chapters/*` 相当の中間物）＋ per-paper 確定辞書（`glossary.md`）＋ **文書ブリーフ `brief.md`・文体契約 `style.md`**（[翻訳一貫性 ADR](../adr/20260710-translation-consistency-brief-style-and-annotations.md) 決定1）＋ **訳注データ `notes.json`**（決定3。PDF 描画は (B)）＋ `RunSummary`。**組版・PDF は含まない**。
 - **(A) 単体の終了コード**: `0`=全セグメントが節ループ通過（翻訳完了・組版前）／`2`=入力・プロバイダ／`3`=形式検査が MAX 内に通らず failed／`4`=品質未達 failed。`5`（全文組版ゲート）・`pdfPath`・`buildOk` は **(B) 結合後に評価**（(A) 単体では `RunSummary.buildOk = null`）。
 - **(A) の検収**: ①`FakeLlmClient` 注入で配線・段階遷移・checkpoint の idempotent-skip・`MAX_REVISIONS` 到達 failed が決定的に再現、②実 LLM で訳文セグメント＋`glossary.md` が生成され `RunSummary` が返る。組版通過は (B) 検収項目。
 
 ## 8. 追加契約（新B レビュー反映）
 
 - **core API**: `translatePaper(input: JpaperInput, opts: { provider: "ollama"|"claude"; outDir?: string }): Promise<Result>`。`Result = { status: "ok"|"failed"; pdfPath?: string; exitCode: number; summary: RunSummary }`。CLI・GUI はこの1関数を呼ぶ薄い皮（[UI/配置 ADR](../adr/20260709-user-interface-file-layout-and-cli.md) 決定4）。例外は投げず `status/exitCode` で表現（§6 と対応）。
-- **stdout サマリ JSON**: `RunSummary = { paperId, outDir, segments: {total, passed, failed}, revisions: {max, used}, glossary: {proposedAdded}, buildOk: boolean, exitCode }`（zod 定義を実装時に写経）。
+- **stdout サマリ JSON**: `RunSummary = { paperId, outDir, segments: {total, passed, failed}, revisions: {max, used}, glossary: {proposedAdded}, notes: {total, byTrigger}, buildOk: boolean, exitCode }`（zod 定義を実装時に写経）。`notes` は §1 `TranslatorNote` の件数集計（本体は `notes.json`）。`byTrigger` は `paper-defined-preserve|low-confidence|evaluator-warn` 別の件数。
+- **訳注の生成契約（[翻訳一貫性 ADR](../adr/20260710-translation-consistency-brief-style-and-annotations.md) 決定3・採否=決定的 / 文面=LLM）**: trigger を次の決定的規則で採る。①`paper-defined` で `rendering∈{keep-original,bilingual}` に確定した語 ②**低確信=`class="established"` かつ global DB に `status="confirmed"` の一致が無く `proposed` のみ or 未ヒットで preserve に倒した語**（DB 状態から決定的に判定）③evaluator の `warn` issue。文面 `text` は term 系＝`ResolvedTerm.note`、warn 系＝`EvalIssue.message`。`firstOccurrence`（文書全体基準）で本文脚注は初出1回のみ、巻末一覧は語ごと1エントリ。
+- **run-context 注入（brief/style）**: system prompt の run-context（設計メモ §13A）に、per-paper 確定辞書＋rendering に加えて **`DocumentBrief`＋`StyleContract` を全 translator へ注入**する。トークン予算は §4 の 30% 圏内で管理（超過時はブリーフを要約して圧縮）。
 - **リトライ（`isTransient`）**: 対象＝ネットワーク瞬断・タイムアウト・HTTP 429/5xx・Ollama 一時的接続不可。回数3・指数バックオフ（初期 1s, ×2, 上限 10s）。それ以外（タスク失敗）はリトライせず surface。
 - **形式検査の合否規則（節ループ内・決定的）**: 数式保全＝原文と訳文で `$...$`／`\[...\]`／`\begin{equation|align|...}` の**個数一致**（中身は問わない）。段落欠落なし＝**訳文段落数 ≤ 原文段落数**（日本語で複数段落を自然に統合するのを許容。分割・水増しは不可）。ただし訳文段落数が原文の **50% 未満**なら明らかな欠落として error。`keep-original` 一貫＝当該語が全出現で原形のまま。zod 適合＝§1 スキーマ。（大セグメント `>=3500` がトークン予算 `0.30×CW` を超える場合の段落境界での再分割は §4 の core 実装＝(A) に含む。）
 - **Ollama 設定契約**: 設定に `model`（例 `llama3.1:8b`）・`contextWindow`・`keepAlive`・`port`。`ollama serve` はオンデマンド起動、起動/モデル未 pull 失敗は明示案内＋**終了コード 2**（プロバイダ利用不能）。
