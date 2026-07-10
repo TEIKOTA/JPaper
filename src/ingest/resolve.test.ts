@@ -77,6 +77,12 @@ describe("collectFigures", () => {
     expect(collectFigures(latex, d)).toEqual([path.resolve(d, "images/fig.png")]);
   });
 
+  it("複数 \\graphicspath は最後の宣言を採用する", () => {
+    const d = tmp(["old/fig.png", "new/fig.png"]);
+    const latex = "\\graphicspath{{old/}}\\graphicspath{{new/}}\\includegraphics{fig}";
+    expect(collectFigures(latex, d)).toEqual([path.resolve(d, "new/fig.png")]);
+  });
+
   it("図が無ければ空配列", () => {
     const d = tmp([]);
     expect(collectFigures("\\includegraphics{none}", d)).toEqual([]);

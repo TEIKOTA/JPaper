@@ -102,6 +102,11 @@ describe("expandInputs", () => {
     expect(out).toContain("X\\\\");
   });
 
+  it("波括弧なしの \\input filename も展開する", () => {
+    const d = tmp({ "main.tex": "A\\input sec\nB", "sec.tex": "節本文" });
+    expect(expandInputs(d, "main.tex")).toBe("A節本文\nB");
+  });
+
   it("未解決の \\input は除去する", () => {
     const d = tmp({ "main.tex": "A\\input{missing}B" });
     expect(expandInputs(d, "main.tex")).toBe("AB");
