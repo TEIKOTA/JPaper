@@ -31,13 +31,14 @@ const TRANSIENT_SYSCODES = new Set([
   "EPIPE",
 ]);
 
-export function isTransient(e: unknown): boolean {
-  if (e == null) return false;
+export function isTransient(e: unknown, depth = 3): boolean {
+  if (e == null || depth < 0) return false;
   const err = e as {
     code?: unknown;
     status?: unknown;
     statusCode?: unknown;
     message?: unknown;
+    cause?: unknown;
   };
 
   const sysCode = typeof err.code === "string" ? err.code : "";
@@ -55,5 +56,6 @@ export function isTransient(e: unknown): boolean {
     return true;
   }
 
+  if (err.cause != null && err.cause !== e) return isTransient(err.cause, depth - 1);
   return false;
 }
