@@ -67,6 +67,21 @@ describe("ingest", () => {
     expect(out.paperId).toBe("1706.03762");
   });
 
+  it("ネストした main（paper/main.tex）でも隣接図を解決する", async () => {
+    const nested = [
+      {
+        name: "paper/main.tex",
+        content:
+          "\\documentclass{a}\n\\begin{document}\n\\includegraphics{fig}\n\\end{document}\n",
+      },
+      { name: "paper/fig.png", content: "PNG" },
+    ];
+    const tarPath = path.join(work(), "nested.tar");
+    writeFileSync(tarPath, makeTar(nested));
+    const out = await ingest({ kind: "path", path: tarPath }, work());
+    expect(out.figures).toEqual([path.resolve(out.sourceDir, "paper/fig.png")]);
+  });
+
   it("単一 .tex は隣接ファイル・図を解決する", async () => {
     const d = work();
     writeFileSync(

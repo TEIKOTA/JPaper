@@ -67,6 +67,7 @@ export async function ingest(
   const { sourceDir, mainRel } = await materialize(input, workDir, deps);
   const main = mainRel ?? detectMainTex(sourceDir);
   const cleanLatex = expandInputs(sourceDir, main);
-  const figures = collectFigures(cleanLatex, sourceDir);
+  const mainDir = path.join(sourceDir, path.dirname(main));
+  const figures = collectFigures(cleanLatex, mainDir, sourceDir);
   return { cleanLatex, figures, paperId: derivePaperId(input), sourceDir };
 }
