@@ -35,6 +35,14 @@ describe("runCli", () => {
     expect(code).toBe(2);
   });
 
+  it("--out に値が無いと exit 2", async () => {
+    const code = await runCli(["node", "jpaper", "1706.03762", "--provider", "claude", "--out"], {
+      stderr: () => {},
+      translate: async () => okResult,
+    });
+    expect(code).toBe(2);
+  });
+
   it("<input> 欠如は exit 2", async () => {
     const code = await runCli(["node", "jpaper", "--provider", "claude"], {
       stderr: () => {},

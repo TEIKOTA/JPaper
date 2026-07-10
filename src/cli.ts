@@ -16,17 +16,26 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number
   const stderr = deps.stderr ?? ((s) => process.stderr.write(s));
 
   const args = argv.slice(2);
-  const positional: string[] = [];
-  let providerArg: string | undefined;
-  let outArg: string | undefined;
-  for (let i = 0; i < args.length; i++) {
-    const a = args[i];
-    if (a === "--provider") providerArg = args[++i];
-    else if (a === "--out") outArg = args[++i];
-    else if (a !== undefined) positional.push(a);
-  }
 
   try {
+    const positional: string[] = [];
+    let providerArg: string | undefined;
+    let outArg: string | undefined;
+    for (let i = 0; i < args.length; i++) {
+      const a = args[i];
+      if (a === "--provider" || a === "--out") {
+        const v = args[i + 1];
+        if (v === undefined || v.startsWith("--")) {
+          throw new JpaperError(2, "input", `${a} に値が必要です`);
+        }
+        if (a === "--provider") providerArg = v;
+        else outArg = v;
+        i++;
+      } else if (a !== undefined) {
+        positional.push(a);
+      }
+    }
+
     const inputStr = positional[0];
     if (inputStr === undefined) {
       throw new JpaperError(2, "input", "<input> が必要です");
@@ -36,7 +45,11 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number
     }
     const provider = Provider.parse(providerArg);
     const input = detectInput(inputStr);
-    const result: Result = await translate(input, { provider, outDir: outArg });
+    const result: Result = await translate(
+      input,
+      { provider, outDir: outArg },
+      { onError: (m) => stderr(`エラー: ${m}\n`) },
+    );
     stdout(`${JSON.stringify(result.summary, null, 2)}\n`);
     return result.exitCode;
   } catch (e) {

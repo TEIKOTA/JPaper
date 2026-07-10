@@ -222,13 +222,38 @@ describe("translatePaper（検収①）", () => {
     db.close();
   });
 
-  it("入力失敗は例外を投げず exit 2 の Result", async () => {
+  it("入力失敗は例外を投げず exit 2・onError に理由を渡す", async () => {
+    const errs: string[] = [];
+    const db = new GlossaryDb();
     const result = await translatePaper(
       { kind: "path", path: path.join(tmp(), "missing.tar") },
       { provider: "claude", outDir: path.join(tmp(), "out") },
-      { client: docClient(), db: new GlossaryDb() },
+      { client: docClient(), db, onError: (m) => errs.push(m) },
     );
     expect(result.status).toBe("failed");
     expect(result.exitCode).toBe(2);
+    expect(errs.length).toBeGreaterThan(0);
+    db.close();
+  });
+
+  it("glossary.md を空にすると空を尊重し再生成しない", async () => {
+    const outDir = path.join(tmp(), "out");
+    const tar = makePaperTar();
+    const db = new GlossaryDb();
+    await translatePaper({ kind: "path", path: tar }, { provider: "claude", outDir }, {
+      client: docClient(),
+      db,
+    });
+    const gPath = path.join(outDir, "glossary.md");
+    writeFileSync(
+      gPath,
+      "# 用語集\n\n| 原語 | 確定訳/表記 | 分類 | 表記方針 | 訳注 |\n|---|---|---|---|---|\n",
+    );
+    await translatePaper({ kind: "path", path: tar }, { provider: "claude", outDir }, {
+      client: docClient(),
+      db,
+    });
+    expect(readFileSync(gPath, "utf8")).not.toContain("甲");
+    db.close();
   });
 });

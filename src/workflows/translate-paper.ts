@@ -65,6 +65,7 @@ export interface TranslateDeps {
   db?: GlossaryDb;
   dbPath?: string;
   ingest?: IngestDeps;
+  onError?: (message: string) => void;
 }
 
 interface PaperContext {
@@ -98,8 +99,8 @@ async function loadOrBuildContext(
 
   let resolved: ResolvedRow[] = built.resolved;
   if (existsSync(glossaryMd)) {
-    const edited = parseGlossaryMd(readFileSync(glossaryMd, "utf8"));
-    if (edited.length > 0) resolved = edited;
+    // 既存 md が正本（空にする編集も尊重する）。
+    resolved = parseGlossaryMd(readFileSync(glossaryMd, "utf8"));
   } else {
     writeFileSync(glossaryMd, renderGlossaryMd(built.resolved));
   }
@@ -255,6 +256,7 @@ export async function translatePaper(
     });
     return { status: failed === 0 ? "ok" : "failed", exitCode, summary };
   } catch (e) {
+    deps.onError?.(String((e as Error)?.message ?? e));
     return failResult(paperId, outDir, e instanceof JpaperError ? e.code : 1);
   } finally {
     if (!deps.db) db?.close();
