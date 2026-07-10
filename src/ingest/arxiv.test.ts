@@ -39,6 +39,21 @@ describe("fetchArxivSource", () => {
     expect(state.lastRequestAt).toBe(4000);
   });
 
+  it("発火が遅延したら lastRequestAt を実時刻に補正する", async () => {
+    let t = 0;
+    const state = { lastRequestAt: 0 };
+    await fetchArxivSource("x", {
+      fetchImpl: (async () => okResponse("S")) as unknown as typeof fetch,
+      now: () => t,
+      sleep: async () => {
+        t = 6000; // 予定の 3000 を超えて遅延復帰
+      },
+      minIntervalMs: 3000,
+      state,
+    });
+    expect(state.lastRequestAt).toBe(6000);
+  });
+
   it("並行呼び出しでもスロットを予約して直列化する", async () => {
     const state = { lastRequestAt: 0 };
     const waits: number[] = [];

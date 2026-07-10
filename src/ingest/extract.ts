@@ -127,6 +127,9 @@ export function parseZip(buf: Buffer): FileMap {
     const lNameLen = buf.readUInt16LE(lho + 26);
     const lExtraLen = buf.readUInt16LE(lho + 28);
     const dataStart = lho + 30 + lNameLen + lExtraLen;
+    if (dataStart + compSize > buf.length) {
+      throw new JpaperError(2, "input", "zip が途中で切れています");
+    }
     const comp = buf.subarray(dataStart, dataStart + compSize);
     if (!name.endsWith("/")) {
       let content: Buffer;

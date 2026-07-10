@@ -44,6 +44,7 @@ export async function fetchArxivSource(
     state.lastRequestAt = target;
     const wait = target - now();
     if (wait > 0) await sleep(wait);
+    state.lastRequestAt = Math.max(state.lastRequestAt, now()); // 発火遅延時は実時刻へ補正
 
     try {
       const res = await fetchImpl(`${endpoint}${id}`, {

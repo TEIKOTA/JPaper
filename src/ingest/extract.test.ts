@@ -96,6 +96,19 @@ describe("extractArchive", () => {
     expect(files.get("main.tex")?.toString("utf8")).toContain("documentclass");
   });
 
+  it("圧縮サイズがバッファ長を超える zip は exit 2", () => {
+    const zip = Buffer.from(makeZip([{ name: "main.tex", content: "\\documentclass{a}" }]));
+    const eocd = zip.length - 22; // makeZip はコメント無し
+    const cd = zip.readUInt32LE(eocd + 16);
+    zip.writeUInt32LE(0xffffff, cd + 20); // compSize を誇張
+    try {
+      extractArchive(zip);
+      throw new Error("should have thrown");
+    } catch (e) {
+      expect((e as { code: number }).code).toBe(2);
+    }
+  });
+
   it("パストラバーサル（..）を拒否する", () => {
     expect(() => parseTar(makeTar([{ name: "../evil.tex", content: "x" }]))).toThrow(
       /不正なアーカイブパス/,
