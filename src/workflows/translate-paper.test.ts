@@ -22,7 +22,7 @@ function docClient(): FakeLlmClient {
     if (req.system.includes("編纂者")) {
       return JSON.stringify({
         resolved: [
-          { src: "introduction", form: "導入", class: "established", rendering: "translate" },
+          { src: "Alpha", form: "甲", class: "established", rendering: "translate" },
         ],
         brief: { thesis: "核", sectionRoles: [], notationConventions: [] },
         style: { tensePolicy: "a", headingStyle: "b", numberStyle: "c" },
@@ -63,9 +63,11 @@ describe("translatePaper（検収①）", () => {
     expect(result.summary.buildOk).toBeNull();
     expect(result.summary.layout).toBeNull();
     expect(result.summary.glossary.proposedAdded).toBe(1);
-    expect(existsSync(path.join(outDir, "chapters", "seg-0000.tex"))).toBe(true);
-    expect(readFileSync(path.join(outDir, "chapters", "seg-0000.tex"), "utf8")).toBe("訳文");
-    expect(readFileSync(path.join(outDir, "glossary.md"), "utf8")).toContain("導入");
+    expect(existsSync(path.join(outDir, "translation", "chapters", "seg-0000.tex"))).toBe(true);
+    expect(
+      readFileSync(path.join(outDir, "translation", "chapters", "seg-0000.tex"), "utf8"),
+    ).toBe("訳文");
+    expect(readFileSync(path.join(outDir, "glossary.md"), "utf8")).toContain("甲");
     expect(existsSync(path.join(outDir, "brief.md"))).toBe(true);
     expect(existsSync(path.join(outDir, "style.md"))).toBe(true);
     expect(existsSync(path.join(outDir, "notes.json"))).toBe(true);
@@ -86,6 +88,26 @@ describe("translatePaper（検収①）", () => {
       db,
     });
     expect(client2.calls.length).toBe(0);
+    db.close();
+  });
+
+  it("glossary.md を編集して再実行すると該当セグメントを再訳し md を上書きしない", async () => {
+    const outDir = path.join(tmp(), "out");
+    const tar = makePaperTar();
+    const db = new GlossaryDb();
+    await translatePaper({ kind: "path", path: tar }, { provider: "claude", outDir }, {
+      client: docClient(),
+      db,
+    });
+    const gPath = path.join(outDir, "glossary.md");
+    writeFileSync(gPath, readFileSync(gPath, "utf8").replace("甲", "エー"));
+    const client2 = docClient();
+    await translatePaper({ kind: "path", path: tar }, { provider: "claude", outDir }, {
+      client: client2,
+      db,
+    });
+    expect(client2.calls.length).toBeGreaterThan(0);
+    expect(readFileSync(gPath, "utf8")).toContain("エー");
     db.close();
   });
 

@@ -1,8 +1,14 @@
 // 契約付録 §7.5・§8。core API（取り込み→用語バリア→並列翻訳→訳注→出力→RunSummary）。
-import { mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { z } from "zod";
-import type { JpaperInput, LlmClient, ResolvedTerm } from "../types/contract.js";
+import type {
+  JpaperInput,
+  LlmClient,
+  ResolvedTerm,
+  DocumentBrief,
+  StyleContract,
+} from "../types/contract.js";
 import {
   GlossaryBuilderOut,
   EvalIssue,
@@ -17,6 +23,13 @@ import { makeLlmClient } from "../providers/index.js";
 import { ingest, derivePaperId, type IngestDeps } from "../ingest/index.js";
 import { GlossaryDb } from "../terminology/db.js";
 import { buildPaperGlossary } from "../terminology/glossary.js";
+import {
+  renderGlossaryMd,
+  parseGlossaryMd,
+  renderBriefMd,
+  renderStyleMd,
+  type ResolvedRow,
+} from "../terminology/glossary-io.js";
 import { buildFirstOccurrenceIndex } from "../terminology/first-occurrence.js";
 import { segment, segmentBudgetFor } from "../segment/segmenter.js";
 import { runSectionLoop } from "./section-loop.js";
@@ -56,22 +69,46 @@ export interface TranslateDeps {
   ingest?: IngestDeps;
 }
 
-function renderGlossaryMd(
-  resolved: { src: string; form: string; class: string; rendering: string }[],
-): string {
-  const rows = resolved
-    .map((r) => `| ${r.src} | ${r.form} | ${r.class} | ${r.rendering} |`)
-    .join("\n");
-  return `# 用語集\n\n| 原語 | 確定訳/表記 | 分類 | 表記方針 |\n|---|---|---|---|\n${rows}\n`;
+interface PaperContext {
+  resolved: ResolvedRow[];
+  brief: DocumentBrief;
+  style: StyleContract;
+  proposedAdded: number;
 }
 
-function renderBriefMd(g: z.infer<typeof GlossaryBuilderOut>["brief"]): string {
-  const roles = g.sectionRoles.map((r) => `- ${r.id}: ${r.role}`).join("\n");
-  return `# 文書ブリーフ\n\n## 主張の核\n${g.thesis}\n\n## 節の役割\n${roles}\n\n## 記法規約\n${g.notationConventions.map((n) => `- ${n}`).join("\n")}\n\n## 主張強度の注意\n${g.claimStrengthNotes.map((n) => `- ${n}`).join("\n")}\n`;
-}
+// glossary.md が有れば編集を正本として読み戻す（無ければ builder 実行＋md 描画）。既存 md は上書きしない。
+async function loadOrBuildContext(
+  runDir: string,
+  outDir: string,
+  client: LlmClient,
+  db: GlossaryDb,
+  paperId: string,
+  cleanLatex: string,
+): Promise<PaperContext> {
+  const built = await checkpoint(runDir, "glossary", GlossaryCache, () =>
+    buildPaperGlossary(client, db, paperId, cleanLatex),
+  );
+  mkdirSync(outDir, { recursive: true });
+  const glossaryMd = path.join(outDir, "glossary.md");
+  const briefMd = path.join(outDir, "brief.md");
+  const styleMd = path.join(outDir, "style.md");
 
-function renderStyleMd(s: z.infer<typeof GlossaryBuilderOut>["style"]): string {
-  return `# 文体契約\n\n- register: ${s.register}\n- 時制: ${s.tensePolicy}\n- 見出し: ${s.headingStyle}\n- 数字・単位: ${s.numberStyle}\n- 備考: ${s.notes.join(" / ")}\n`;
+  let resolved: ResolvedRow[] = built.out.resolved;
+  if (existsSync(glossaryMd)) {
+    const edited = parseGlossaryMd(readFileSync(glossaryMd, "utf8"));
+    if (edited.length > 0) resolved = edited;
+  } else {
+    writeFileSync(glossaryMd, renderGlossaryMd(built.out.resolved));
+  }
+  if (!existsSync(briefMd)) writeFileSync(briefMd, renderBriefMd(built.out.brief));
+  if (!existsSync(styleMd)) writeFileSync(styleMd, renderStyleMd(built.out.style));
+
+  return {
+    resolved,
+    brief: built.out.brief,
+    style: built.out.style,
+    proposedAdded: built.proposedAdded,
+  };
 }
 
 function countByTrigger(notes: TranslatorNote[]): Record<string, number> {
@@ -107,63 +144,73 @@ export async function translatePaper(
   const outDir = paperOutDir(paperId, opts.outDir);
   const runDir = path.join(outDir, ".run");
   const client = deps.client ?? makeLlmClient(opts.provider, { ollama: opts.ollama });
-  const db = deps.db ?? new GlossaryDb(deps.dbPath ?? dbPath());
+  let db: GlossaryDb | undefined;
 
   try {
+    if (deps.db) {
+      db = deps.db;
+    } else {
+      const loc = deps.dbPath ?? dbPath();
+      mkdirSync(path.dirname(loc), { recursive: true });
+      db = new GlossaryDb(loc);
+    }
+
     const ingested = await checkpoint(runDir, "ingest", IngestCache, () =>
       ingest(input, path.join(runDir, "source"), deps.ingest),
     );
 
     // 用語バリア: 並列翻訳の前に resolved/brief/style を確定する。
-    const glossary = await checkpoint(runDir, "glossary", GlossaryCache, () =>
-      buildPaperGlossary(client, db, ingested.paperId, ingested.cleanLatex),
+    const ctx = await loadOrBuildContext(
+      runDir,
+      outDir,
+      client,
+      db,
+      ingested.paperId,
+      ingested.cleanLatex,
     );
-    const g = glossary.out;
-    const invalidation = hashContext(
-      JSON.stringify(g.resolved),
-      JSON.stringify(g.brief),
-      JSON.stringify(g.style),
-    );
-
     const budget = segmentBudgetFor(contextWindowFor(opts.provider, opts.ollama));
     const segments = segment(ingested.cleanLatex, budget);
     const firstOcc = buildFirstOccurrenceIndex(
       segments,
-      g.resolved.map((r) => r.src),
+      ctx.resolved.map((r) => r.src),
     );
 
     const results = await Promise.all(
       segments.map((seg) => {
-        const slice: ResolvedTerm[] = g.resolved
+        const slice = ctx.resolved
           .filter((t) => seg.latex.includes(t.src))
-          .map((t) => ({ ...t, firstOccurrence: firstOcc.get(t.src) === seg.id }));
+          .map((t) => ({ ...t, firstOccurrence: firstOcc.get(t.src) === seg.id })) as ResolvedTerm[];
+        // 無効化は注入コンテキスト（当該セグメントの slice＋brief＋style）のハッシュ。
+        const invalidation = hashContext(
+          JSON.stringify(slice),
+          JSON.stringify(ctx.brief),
+          JSON.stringify(ctx.style),
+        );
         return checkpoint(
           runDir,
           seg.id,
           SectionLoopCache,
-          () => runSectionLoop(client, seg, slice, { brief: g.brief, style: g.style }),
+          () => runSectionLoop(client, seg, slice, { brief: ctx.brief, style: ctx.style }),
           { invalidation },
         );
       }),
     );
 
     const notes = buildNotes({
-      resolved: g.resolved.map((r) => ({ ...r, firstOccurrence: false })),
+      resolved: ctx.resolved.map((r) => ({ ...r, firstOccurrence: false })) as ResolvedTerm[],
       firstOccurrenceBySrc: firstOcc,
-      hasConfirmed: (src) => db.confirmedFor(src).length > 0,
+      hasConfirmed: (src) => db!.confirmedFor(src).length > 0,
       segmentWarns: results.map((r) => ({
         segmentId: r.segmentId,
         warnIssues: r.warnIssues,
       })),
     });
 
-    mkdirSync(path.join(outDir, "chapters"), { recursive: true });
+    const chaptersDir = path.join(outDir, "translation", "chapters");
+    mkdirSync(chaptersDir, { recursive: true });
     for (const r of results) {
-      writeFileSync(path.join(outDir, "chapters", `${r.segmentId}.tex`), r.ja);
+      writeFileSync(path.join(chaptersDir, `${r.segmentId}.tex`), r.ja);
     }
-    writeFileSync(path.join(outDir, "glossary.md"), renderGlossaryMd(g.resolved));
-    writeFileSync(path.join(outDir, "brief.md"), renderBriefMd(g.brief));
-    writeFileSync(path.join(outDir, "style.md"), renderStyleMd(g.style));
     writeFileSync(path.join(outDir, "notes.json"), JSON.stringify(notes, null, 2));
 
     const passed = results.filter((r) => r.passed).length;
@@ -179,7 +226,7 @@ export async function translatePaper(
         max: results.reduce((m, r) => Math.max(m, r.maxRevisions), 0),
         used: results.reduce((a, r) => a + r.usedRevisions, 0),
       },
-      glossary: { proposedAdded: glossary.proposedAdded },
+      glossary: { proposedAdded: ctx.proposedAdded },
       notes: { total: notes.length, byTrigger: countByTrigger(notes) },
       layout: null,
       buildOk: null,
@@ -187,9 +234,8 @@ export async function translatePaper(
     });
     return { status: failed === 0 ? "ok" : "failed", exitCode, summary };
   } catch (e) {
-    const code = e instanceof JpaperError ? e.code : 1;
-    return failResult(paperId, outDir, code);
+    return failResult(paperId, outDir, e instanceof JpaperError ? e.code : 1);
   } finally {
-    if (!deps.db) db.close();
+    if (!deps.db) db?.close();
   }
 }
