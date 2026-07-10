@@ -4,7 +4,7 @@ import type { JpaperInput } from "../types/contract.js";
 import { JpaperError } from "../types/errors.js";
 
 const ARXIV_NEW = /^(?:arxiv:)?(\d{4}\.\d{4,5})(v\d+)?$/i;
-const ARXIV_OLD = /^(?:arxiv:)?([a-z][a-z-]*(?:\.[a-z]{2})?\/\d{7})(v\d+)?$/i;
+const ARXIV_OLD = /^(?:arxiv:)?([a-z][a-z-]*(?:\.[a-z][a-z-]*)?\/\d{7})(v\d+)?$/i;
 
 export function detectInput(
   raw: string,

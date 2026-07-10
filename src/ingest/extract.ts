@@ -97,6 +97,10 @@ export function parseZip(buf: Buffer): FileMap {
   return files;
 }
 
+export function isArchive(b: Buffer): boolean {
+  return isZip(b) || isGzip(b) || isTar(b);
+}
+
 export function extractArchive(bytes: Buffer): FileMap {
   if (isZip(bytes)) return parseZip(bytes);
   if (isGzip(bytes)) {

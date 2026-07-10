@@ -28,6 +28,14 @@ describe("detectInput", () => {
       kind: "arxiv",
       id: "math.AG/0601001v2",
     });
+    expect(detectInput("cond-mat.stat-mech/0101001", noExist)).toEqual({
+      kind: "arxiv",
+      id: "cond-mat.stat-mech/0101001",
+    });
+    expect(detectInput("physics.gen-ph/0101001", noExist)).toEqual({
+      kind: "arxiv",
+      id: "physics.gen-ph/0101001",
+    });
   });
 
   it("実在パスは path として優先", () => {

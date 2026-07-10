@@ -67,6 +67,21 @@ describe("ingest", () => {
     expect(out.paperId).toBe("1706.03762");
   });
 
+  it("単一 .tex は隣接ファイル・図を解決する", async () => {
+    const d = work();
+    writeFileSync(
+      path.join(d, "paper.tex"),
+      "\\documentclass{a}\n\\begin{document}\n\\input{sec}\n\\includegraphics{fig}\n\\end{document}\n",
+    );
+    writeFileSync(path.join(d, "sec.tex"), "隣接本文");
+    writeFileSync(path.join(d, "fig.png"), "PNG");
+    const out = await ingest({ kind: "path", path: path.join(d, "paper.tex") }, work());
+    expect(out.cleanLatex).toContain("隣接本文");
+    expect(out.figures).toEqual([path.resolve(d, "fig.png")]);
+    expect(out.paperId).toBe("paper");
+    expect(out.sourceDir).toBe(d);
+  });
+
   it("ディレクトリ入力はそのまま使う", async () => {
     const d = work();
     writeFileSync(
