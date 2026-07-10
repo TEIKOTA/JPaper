@@ -23,7 +23,11 @@ async function defaultEnsureDaemon(
   spawnImpl: typeof spawn,
 ): Promise<void> {
   const err: { current: Error | null } = { current: null };
-  const child = spawnImpl("ollama", ["serve"], { detached: true, stdio: "ignore" });
+  const child = spawnImpl("ollama", ["serve"], {
+    detached: true,
+    stdio: "ignore",
+    env: { ...process.env, OLLAMA_HOST: `127.0.0.1:${cfg.port}` },
+  });
   // 実行ファイル欠如の 'error' に listener を付けないと Node が落ちる。
   child.on("error", (e) => {
     err.current = e;
@@ -53,11 +57,12 @@ export function makeOllamaClient(cfg: OllamaConfig, deps: OllamaDeps = {}): LlmC
   let started = false;
 
   async function call(req: LlmRequest): Promise<string> {
+    const model = req.model ?? cfg.model;
     const res = await fetchImpl(`http://127.0.0.1:${cfg.port}/api/chat`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
-        model: req.model ?? cfg.model,
+        model,
         messages: [
           { role: "system", content: req.system },
           { role: "user", content: req.user },
@@ -74,6 +79,13 @@ export function makeOllamaClient(cfg: OllamaConfig, deps: OllamaDeps = {}): LlmC
     if (res.status === 429 || res.status >= 500) {
       // 一時障害。isTransient が status で拾えるようにして withRetry に委ねる。
       throw Object.assign(new Error(`ollama HTTP ${res.status}`), { status: res.status });
+    }
+    if (res.status === 404) {
+      throw new JpaperError(
+        2,
+        "provider",
+        `モデル ${model} が見つかりません（未 pull の可能性）。'ollama pull ${model}' を実行してください (HTTP 404)`,
+      );
     }
     throw new JpaperError(2, "provider", `ollama HTTP ${res.status}`);
   }

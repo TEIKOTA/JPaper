@@ -74,6 +74,47 @@ describe("makeOllamaClient", () => {
     ).rejects.toMatchObject({ code: 2 });
   });
 
+  it("custom port は OLLAMA_HOST を渡して daemon 起動する", async () => {
+    const cfg = { ...DEFAULT_OLLAMA, port: 12345 };
+    let calls = 0;
+    let spawnOpts: { env?: Record<string, string> } = {};
+    const fetchImpl = (async (url: string) => {
+      calls++;
+      if (url.includes("/api/chat") && calls === 1) {
+        throw Object.assign(new Error("fetch failed"), { cause: { code: "ECONNREFUSED" } });
+      }
+      if (url.includes("/api/tags")) return { ok: true } as Response;
+      return okChat("ok");
+    }) as unknown as typeof fetch;
+    const spawnImpl = ((_c: string, _a: string[], opts: { env?: Record<string, string> }) => {
+      spawnOpts = opts;
+      return {
+        on() {
+          return this;
+        },
+        unref() {
+          return this;
+        },
+      };
+    }) as unknown as typeof import("node:child_process").spawn;
+    const c = makeOllamaClient(cfg, { fetchImpl, spawnImpl, sleep: async () => {} });
+    expect(await c.complete({ system: "s", user: "u" })).toBe("ok");
+    expect(spawnOpts.env?.OLLAMA_HOST).toBe("127.0.0.1:12345");
+  });
+
+  it("未 pull モデル(404)は pull 案内付き code 2", async () => {
+    const fetchImpl = (async () =>
+      ({ ok: false, status: 404 }) as Response) as unknown as typeof fetch;
+    try {
+      await makeOllamaClient(DEFAULT_OLLAMA, { fetchImpl }).complete({ system: "s", user: "u" });
+      throw new Error("should have thrown");
+    } catch (e) {
+      expect((e as { code: number }).code).toBe(2);
+      expect((e as { message: string }).message).toContain("pull");
+      expect((e as { message: string }).message).toContain(DEFAULT_OLLAMA.model);
+    }
+  });
+
   it("4xx はプロバイダ利用不能 code 2", async () => {
     const fetchImpl = (async () =>
       ({ ok: false, status: 400 }) as Response) as unknown as typeof fetch;
