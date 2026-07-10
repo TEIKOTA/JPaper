@@ -24,8 +24,9 @@ function findByBasename(rootDir: string, ref: string): string | null {
   const names = path.extname(wanted) ? [wanted] : FIG_EXTS.map((e) => wanted + e);
   const all = listAllFiles(rootDir);
   for (const name of names) {
-    const hit = all.find((f) => path.basename(f) === name);
-    if (hit) return hit;
+    const hits = all.filter((f) => path.basename(f) === name);
+    if (hits.length === 1) return hits[0]!;
+    if (hits.length > 1) return null; // 曖昧: 誤選択を避けて取りこぼす
   }
   return null;
 }

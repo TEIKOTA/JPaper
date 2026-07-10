@@ -61,7 +61,7 @@ export function expandInputs(dir: string, mainRel: string): string {
     if (stack.includes(rel)) return "";
     stack.push(rel);
     const raw = stripComments(readFileSync(path.join(dir, rel), "utf8"));
-    const out = raw.replace(/\\(?:input|include)\{([^}]+)\}/g, (_m, target: string) => {
+    const out = raw.replace(/\\(?:input|include)\s*\{([^}]+)\}/g, (_m, target: string) => {
       const child = resolveTexPath(dir, rel, target.trim());
       return child ? load(child) : "";
     });

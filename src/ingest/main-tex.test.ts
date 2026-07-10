@@ -70,6 +70,11 @@ describe("expandInputs", () => {
     expect(out).not.toContain("SUBFOO");
   });
 
+  it("\\input と { の間の空白も展開する", () => {
+    const d = tmp({ "main.tex": "A\\input {sec}B", "sec.tex": "節" });
+    expect(expandInputs(d, "main.tex")).toBe("A節B");
+  });
+
   it("未解決の \\input は除去する", () => {
     const d = tmp({ "main.tex": "A\\input{missing}B" });
     expect(expandInputs(d, "main.tex")).toBe("AB");

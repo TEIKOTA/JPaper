@@ -36,6 +36,11 @@ describe("collectFigures", () => {
     expect(collectFigures(latex, d)).toEqual([path.resolve(d, "images/plot.pdf")]);
   });
 
+  it("同名 basename が複数ある場合は曖昧として取りこぼす", () => {
+    const d = tmp(["a/fig.png", "b/fig.png"]);
+    expect(collectFigures("\\includegraphics{fig}", d)).toEqual([]);
+  });
+
   it("図が無ければ空配列", () => {
     const d = tmp([]);
     expect(collectFigures("\\includegraphics{none}", d)).toEqual([]);
