@@ -26,7 +26,10 @@ fi
 valid_format=1
 valid_japanese=1
 printf '%s\n' "$subject" | grep -qE "^(${types})(\([a-zA-Z0-9._/-]+\))?!?: .+" || valid_format=0
-printf '%s\n' "$subject" | grep -qE '[ぁ-んァ-ヶ一-龠々ー]' || valid_japanese=0
+# 日本語（非 ASCII）を含むか。文字クラスの範囲（[ぁ-ん] 等）は一部 locale で
+# "Invalid collation character" になり CI で誤判定するため、LC_ALL=C のバイト単位で
+# 非 ASCII（0x20-0x7E 以外）の有無を見る。英語のみの件名を拒否する意図を保ちつつ移植性を確保。
+printf '%s\n' "$subject" | LC_ALL=C grep -q '[^ -~]' || valid_japanese=0
 
 if [[ $valid_format -ne 1 || $valid_japanese -ne 1 ]]; then
   {
