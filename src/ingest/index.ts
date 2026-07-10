@@ -49,8 +49,14 @@ async function materialize(
   deps: IngestDeps,
 ): Promise<Materialized> {
   if (input.kind === "path") {
-    if (statSync(input.path).isDirectory()) return { sourceDir: input.path };
-    const bytes = readFileSync(input.path);
+    let bytes: Buffer;
+    try {
+      if (statSync(input.path).isDirectory()) return { sourceDir: input.path };
+      bytes = readFileSync(input.path);
+    } catch (e) {
+      if (e instanceof JpaperError) throw e;
+      throw new JpaperError(2, "input", `入力パスを読めません: ${input.path}`);
+    }
     if (!isArchive(bytes)) {
       if (!/\.tex$/i.test(input.path)) {
         throw new JpaperError(2, "input", `未対応の入力形態です: ${input.path}`);

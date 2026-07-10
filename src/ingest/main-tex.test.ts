@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from "vitest";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, symlinkSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { detectMainTex, expandInputs } from "./main-tex.js";
@@ -97,6 +97,17 @@ describe("expandInputs", () => {
     const src = path.join(container, "src");
     mkdirSync(src);
     writeFileSync(path.join(src, "main.tex"), "A\\input{../secret}B");
+    expect(expandInputs(src, "main.tex")).toBe("AB");
+  });
+
+  it("symlink でルート外へ逃げる \\input を拒否する", () => {
+    const container = mkdtempSync(path.join(os.tmpdir(), "jpaper-sym-"));
+    dirs.push(container);
+    writeFileSync(path.join(container, "secret.tex"), "SECRET");
+    const src = path.join(container, "src");
+    mkdirSync(src);
+    writeFileSync(path.join(src, "main.tex"), "A\\input{linked}B");
+    symlinkSync(path.join(container, "secret.tex"), path.join(src, "linked.tex"));
     expect(expandInputs(src, "main.tex")).toBe("AB");
   });
 });

@@ -1,7 +1,7 @@
 // 設計メモ §3・§6。\includegraphics から図パスを回収（実在するもののみ・決定的ソート）。
 import { existsSync, readdirSync } from "node:fs";
 import path from "node:path";
-import { isInsideDir } from "./paths.js";
+import { isInsideDirReal } from "./paths.js";
 
 const FIG_EXTS = [".pdf", ".png", ".jpg", ".jpeg", ".eps", ".ps", ".gif", ".svg"];
 
@@ -25,7 +25,7 @@ function findByBasename(rootDir: string, ref: string): string | null {
   const all = listAllFiles(rootDir);
   for (const name of names) {
     const hits = all.filter((f) => path.basename(f) === name);
-    if (hits.length === 1) return hits[0]!;
+    if (hits.length === 1) return isInsideDirReal(rootDir, hits[0]!) ? hits[0]! : null;
     if (hits.length > 1) return null; // 曖昧: 誤選択を避けて取りこぼす
   }
   return null;
@@ -47,7 +47,7 @@ function resolveFigure(
   for (const base of bases) {
     for (const cand of cands) {
       const abs = path.resolve(baseDir, base, cand);
-      if (existsSync(abs) && isInsideDir(rootDir, abs)) return abs;
+      if (existsSync(abs) && isInsideDirReal(rootDir, abs)) return abs;
     }
   }
   return null;

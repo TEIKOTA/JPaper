@@ -2,7 +2,7 @@
 import { readdirSync, readFileSync, existsSync } from "node:fs";
 import path from "node:path";
 import { JpaperError } from "../types/errors.js";
-import { isInsideDir } from "./paths.js";
+import { isInsideDirReal } from "./paths.js";
 
 const PREFERRED = ["main.tex", "ms.tex", "paper.tex", "manuscript.tex", "root.tex"];
 
@@ -49,7 +49,7 @@ function resolveTexPath(dir: string, fromRel: string, target: string): string | 
     for (const cand of cands) {
       const rel = path.posix.normalize(base && base !== "." ? `${base}/${cand}` : cand);
       const abs = path.join(dir, rel);
-      if (existsSync(abs) && isInsideDir(dir, abs)) return rel;
+      if (existsSync(abs) && isInsideDirReal(dir, abs)) return rel;
     }
   }
   return null;

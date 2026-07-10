@@ -113,6 +113,12 @@ describe("ingest", () => {
     expect(out.sourceDir).toBe(d);
   });
 
+  it("存在しない入力パスは exit 2", async () => {
+    await expect(
+      ingest({ kind: "path", path: path.join(work(), "nope.tar") }, work()),
+    ).rejects.toMatchObject({ code: 2 });
+  });
+
   it("未対応の単一ファイル（.pdf 等）は exit 2", async () => {
     const d = work();
     const p = path.join(d, "paper.pdf");
