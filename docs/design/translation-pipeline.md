@@ -104,6 +104,7 @@
   - 常駐サーバー案は不採用: ディスク永続するなら本方式の再発明、メモリのみなら「サーバー落ち＝全ロスト」で再起動すら耐える本方式より弱い。サーバーが要るのは複数クライアント／並行オーケストレーションが必要になったときで、単発 CLI 翻訳には該当しない。
 - **保存先**: 論文ごとフォルダ配下 `<paper>-ja/.run/steps/<step>.json`（[UI/配置 ADR](../adr/20260709-user-interface-file-layout-and-cli.md) 決定 1。可視だが触らなくてよい trace 領域）。書き込みは **tmp→rename の原子的更新**。
 - **再開**: 同じ `run-id` で再実行。各ステップは checkpoint でくるみ、「出力が既にあり zod スキーマに妥当なら読んで skip」＝ idempotent-skip。
+- **編集による無効化**: ユーザーが `glossary.md`／`brief.md`／`style.md` を編集して再実行したときは、これらを注入する**下流の翻訳ステップの checkpoint を無効化**して再訳する（checkpoint キーに注入コンテキストのハッシュを含める）。取り込み・用語収集など未影響ステップは skip のまま。
 - **リトライは一時エラーのみ**（API タイムアウト・429・瞬断を数回バックオフ）。ビルド失敗・欠図・品質未達などタスク自体の失敗はリトライせず明示的に上げる（境界は [品質ゲート ADR](../adr/20260708-quality-gate-machine-vs-llm-and-explicit-failure.md) 決定 3）。
 - 実装イメージ:
 
@@ -150,7 +151,7 @@ async function checkpoint<T>(runDir, stepId, schema, fn: () => Promise<T>): Prom
 
 1. **役割定義** — translator / evaluator / glossary-builder それぞれの正体（「本文だけ訳す」等）
 2. **共通規約** — 責務境界（構造・数式・図・引用はコードが持つ / AI は本文のみ）・出力契約（zod に載る JSON）。全 agent で重複させず1箇所。
-3. **run-context** — 論文メタ＋**per-paper 確定辞書＋rendering ルール**を動的注入。
+3. **run-context** — 論文メタ＋**per-paper 確定辞書＋rendering ルール＋文書ブリーフ(`brief.md`)＋文体契約(`style.md`)**を動的注入（[翻訳一貫性 ADR](../adr/20260710-translation-consistency-brief-style-and-annotations.md) 決定1。並列翻訳でも主張強度・文体の大域一貫を保つ源）。
 
 落とす2つ: **日時**（論文翻訳に無関係・YAGNI）、**skill 段階開示**（用語 DB の retrieval がその役割を果たすので汎用 skill 機構は当面不要）。
 
@@ -164,5 +165,15 @@ async function checkpoint<T>(runDir, stepId, schema, fn: () => Promise<T>): Prom
 ### C. 決定性回帰テスト — FakeLlmClient で配線を検証
 `LlmClient` を差し替え可能にした恩恵で、テストは **`FakeLlmClient`（固定/スクリプト応答）を注入**して配線を LLM 抜きで決定的に vitest（CLAUDE.md「`npm test`=LLM 非含有」を実現）。
 
-- **決定的にテスト**: セグメント分割 / アセンブル(訳文+manifest→tex) / 用語 DB クエリ・write-back / zod 検証 / `\ref`・全図の形式検査 / checkpoint の idempotent-skip / system prompt ビルダー出力 / 品質ゲートのループ回数・`MAX_REVISIONS` 超過で failed / **rendering 適用（`Value` が全文 `値(Value)` に統一されているか）**。
-- **テストしない**: 翻訳品質・evaluator 判定（非決定的。実行時の品質ゲートに委ねる）。
+- **決定的にテスト**: セグメント分割 / アセンブル(訳文+manifest→tex) / 用語 DB クエリ・write-back / zod 検証 / `\ref`・全図の形式検査 / checkpoint の idempotent-skip（`brief.md`/`style.md`/`glossary.md` 編集で下流のみ無効化）/ system prompt ビルダー出力（brief/style 注入込み）/ 品質ゲートのループ回数・`MAX_REVISIONS` 超過で failed / **rendering 適用（`Value` が全文 `値(Value)` に統一されているか）** / **訳注の採否（trigger の決定的規則: paper-defined preserve・低確信=DB に confirmed 無し・warn）・文書初出のみ脚注**。
+- **テストしない**: 翻訳品質・evaluator 判定・**文書ブリーフ／文体契約／訳注の文面**（いずれも LLM 生成で非決定的。実行時の品質ゲートに委ねる）。
+
+## 14. 翻訳一貫性: 文書ブリーフ・文体契約・訳注（2026-07-10 決着）
+
+学術翻訳の実務レポート（deep-research）を現 spec と突き合わせ、**用語以外の3次元**の欠落を [翻訳一貫性 ADR](../adr/20260710-translation-consistency-brief-style-and-annotations.md) で確定した。いずれも「節を並列・独立に訳す」現アーキテクチャの局所最適／大域不整合への手当て。値・スキーマの正本は [契約付録](./contract-appendix.md)。
+
+- **文書ブリーフ＋文体契約（決定1）**: glossary-builder の**全文1回パスの副産物**として `brief.md`（主張構造・記法規約）と `style.md`（既定=である調・常体）を確定・ロックし、全 translator の run-context に注入。両者は `<paper>-ja/` に**可視・編集可**。研究の「試訳で先に文体を固定」を新ステージなしで実現する。
+- **evaluator 軸の明文化（決定2）**: 主張強度・hedging・統計語（`significantly`=有意）・単位表記を評価軸に追加。
+- **訳注（決定3）**: 採否=決定的 trigger（paper-defined preserve／低確信=DB に confirmed 無し／evaluator warn）、文面=LLM。データ生成は (A) の `notes.json`＋`glossary.md` 印、PDF 描画は (B) の**文書初出のみ脚注＋巻末「訳注一覧」**。PDF しか読まない運用に届ける。
+- **言語整合 lint（決定4）**: 単位/略語初出/表記ゆれの決定的検査を (B) 全文ゲートへ（PerfectIt 相当まで）。
+- **落とし穴 skill（決定5）**: 統計語・SI・false friend の注意リストを [`.agents/skills/translation-pitfalls`](../../.agents/skills/translation-pitfalls/SKILL.md) に置き、**evaluator のみ**に段階開示。DB は空スタートを維持。
