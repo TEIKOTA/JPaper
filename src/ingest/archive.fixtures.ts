@@ -95,7 +95,10 @@ export function makeTarPax(longName: string, content: string): Buffer {
   ]);
 }
 
-export function makeZip(entries: { name: string; content: string }[]): Buffer {
+export function makeZip(
+  entries: { name: string; content: string }[],
+  comment: Buffer = Buffer.alloc(0),
+): Buffer {
   const local: Buffer[] = [];
   const central: Buffer[] = [];
   let offset = 0;
@@ -132,5 +135,6 @@ export function makeZip(entries: { name: string; content: string }[]): Buffer {
   eocd.writeUInt16LE(entries.length, 10);
   eocd.writeUInt32LE(cdSize, 12);
   eocd.writeUInt32LE(cdStart, 16);
-  return Buffer.concat([...local, ...central, eocd]);
+  eocd.writeUInt16LE(comment.length, 20);
+  return Buffer.concat([...local, ...central, eocd, comment]);
 }

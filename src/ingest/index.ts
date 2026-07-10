@@ -1,5 +1,5 @@
 // 設計メモ §3・契約付録 §3/§5/§8。source-first 取り込みの配線。
-import { readFileSync, statSync } from "node:fs";
+import { readFileSync, statSync, rmSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import type { JpaperInput } from "../types/contract.js";
 import { JpaperError } from "../types/errors.js";
@@ -36,6 +36,13 @@ interface Materialized {
   mainRel?: string;
 }
 
+function extractInto(bytes: Buffer, workDir: string): string {
+  rmSync(workDir, { recursive: true, force: true });
+  mkdirSync(workDir, { recursive: true });
+  writeFileMap(extractArchive(bytes), workDir);
+  return workDir;
+}
+
 async function materialize(
   input: JpaperInput,
   workDir: string,
@@ -51,12 +58,10 @@ async function materialize(
       const abs = path.resolve(input.path);
       return { sourceDir: path.dirname(abs), mainRel: path.basename(abs) };
     }
-    writeFileMap(extractArchive(bytes), workDir);
-    return { sourceDir: workDir };
+    return { sourceDir: extractInto(bytes, workDir) };
   }
   const bytes = await fetchArxivSource(input.id, deps.arxiv);
-  writeFileMap(extractArchive(bytes), workDir);
-  return { sourceDir: workDir };
+  return { sourceDir: extractInto(bytes, workDir) };
 }
 
 export async function ingest(

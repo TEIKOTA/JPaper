@@ -122,6 +122,34 @@ describe("ingest", () => {
     });
   });
 
+  it("workDir を再利用しても前回の残留を持ち込まない", async () => {
+    const wd = work();
+    const p1 = path.join(work(), "a.tar");
+    writeFileSync(
+      p1,
+      makeTar([
+        {
+          name: "main.tex",
+          content: "\\documentclass{a}\\begin{document}FIRST\\end{document}",
+        },
+      ]),
+    );
+    const p2 = path.join(work(), "b.tar");
+    writeFileSync(
+      p2,
+      makeTar([
+        {
+          name: "paper.tex",
+          content: "\\documentclass{a}\\begin{document}SECOND\\end{document}",
+        },
+      ]),
+    );
+    await ingest({ kind: "path", path: p1 }, wd);
+    const out = await ingest({ kind: "path", path: p2 }, wd);
+    expect(out.cleanLatex).toContain("SECOND");
+    expect(out.cleanLatex).not.toContain("FIRST");
+  });
+
   it("ディレクトリ入力はそのまま使う", async () => {
     const d = work();
     writeFileSync(

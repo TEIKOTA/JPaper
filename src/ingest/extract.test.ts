@@ -66,6 +66,14 @@ describe("extractArchive", () => {
     }
   });
 
+  it("アーカイブコメント内の偽 EOCD 署名を無視する", () => {
+    const comment = Buffer.alloc(40);
+    comment.writeUInt32LE(0x06054b50, 0);
+    comment.writeUInt16LE(0xffff, 20);
+    const files = extractArchive(makeZip(entries, comment));
+    expect(files.get("main.tex")?.toString("utf8")).toContain("documentclass");
+  });
+
   it("パストラバーサル（..）を拒否する", () => {
     expect(() => parseTar(makeTar([{ name: "../evil.tex", content: "x" }]))).toThrow(
       /不正なアーカイブパス/,

@@ -85,8 +85,14 @@ export function parseTar(buf: Buffer): FileMap {
 }
 
 function findEOCD(buf: Buffer): number {
-  for (let i = buf.length - 22; i >= 0; i--) {
-    if (buf.readUInt32LE(i) === 0x06054b50) return i;
+  const minEnd = Math.max(0, buf.length - 22 - 0xffff);
+  for (let i = buf.length - 22; i >= minEnd; i--) {
+    if (
+      buf.readUInt32LE(i) === 0x06054b50 &&
+      i + 22 + buf.readUInt16LE(i + 20) === buf.length
+    ) {
+      return i;
+    }
   }
   return -1;
 }
