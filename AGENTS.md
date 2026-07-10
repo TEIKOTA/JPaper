@@ -16,11 +16,11 @@
 - `src/index.ts` — エントリポイント（ワークフロー起動 CLI）
 - `input/` — 用語集・スタイルガイド等の知識 SSOT（コミット対象）
 - `output/` — 実行証跡（`runs/`）と作業領域（`workspace/`）。runtime 生成物で gitignore
-- `docs/` — 設計ドキュメント・運用メモ（ビルド対象外）
+- `docs/` — 設計ドキュメント・運用メモ（ビルド対象外）。実装契約の正本は [`docs/design/contract-appendix.md`](./docs/design/contract-appendix.md)
 - `docs/adr/` — アーキテクチャ決定記録。運用ルールは [`docs/adr/README.md`](./docs/adr/README.md)
 - `scripts/` — 規約の検証（commit 件名・branch 名・PR body）と repo 初期設定
 - `.github/` — PR / issue テンプレート、ラベル定義（`labels.yml` が正本）、PR 検査 CI
-- `.agents/skills/` — 共有 skill（`git-commit` / `manage-adrs` / `sync-docs`）。`.claude` は `.agents` への symlink
+- `.agents/skills/` — 共有 skill（開発運用: `git-commit` / `manage-adrs` / `sync-docs`。翻訳運用: `translation-pitfalls`=evaluator 向け誤訳チェックリスト）。`.claude` は `.agents` への symlink
 
 ## 検索ポリシー
 
