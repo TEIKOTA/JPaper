@@ -1,0 +1,145 @@
+import { describe, it, expect, afterEach } from "vitest";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, symlinkSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { detectMainTex, expandInputs } from "./main-tex.js";
+
+const dirs: string[] = [];
+function tmp(files: Record<string, string>): string {
+  const d = mkdtempSync(path.join(os.tmpdir(), "jpaper-mt-"));
+  dirs.push(d);
+  for (const [rel, content] of Object.entries(files)) {
+    const abs = path.join(d, rel);
+    mkdirSync(path.dirname(abs), { recursive: true });
+    writeFileSync(abs, content);
+  }
+  return d;
+}
+afterEach(() => {
+  for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
+});
+
+const DOC = "\\documentclass{article}\n\\begin{document}\n本文\n\\end{document}\n";
+
+describe("detectMainTex", () => {
+  it("documentclass＋begin{document} を持つファイルを選ぶ", () => {
+    const d = tmp({ "main.tex": DOC, "helper.tex": "\\section{x}" });
+    expect(detectMainTex(d)).toBe("main.tex");
+  });
+
+  it("外部への symlink な main.tex は候補から除外する", () => {
+    const container = mkdtempSync(path.join(os.tmpdir(), "jpaper-symmain-"));
+    dirs.push(container);
+    writeFileSync(path.join(container, "outside.tex"), DOC);
+    const src = path.join(container, "src");
+    mkdirSync(src);
+    symlinkSync(path.join(container, "outside.tex"), path.join(src, "main.tex"));
+    expect(() => detectMainTex(src)).toThrow(/見つかりません/);
+  });
+
+  it("複数候補は名前（main.tex 等）で解決", () => {
+    const d = tmp({ "a.tex": DOC, "main.tex": DOC });
+    expect(detectMainTex(d)).toBe("main.tex");
+  });
+
+  it("documentclass が無ければ失敗", () => {
+    const d = tmp({ "a.tex": "\\section{x}" });
+    expect(() => detectMainTex(d)).toThrow(/見つかりません/);
+  });
+
+  it("一意に決められない複数フルドキュメントは失敗", () => {
+    const d = tmp({ "a.tex": DOC, "b.tex": DOC });
+    expect(() => detectMainTex(d)).toThrow(/一意に決定できません/);
+  });
+});
+
+describe("expandInputs", () => {
+  it("\\input/\\include を再帰展開しコメントを除去", () => {
+    const d = tmp({
+      "main.tex":
+        "\\documentclass{a}\n\\begin{document}\n\\input{sec/intro}\n% これはコメント\\input{ignored}\n\\end{document}\n",
+      "sec/intro.tex": "序論本文 50\\% 完了\n\\include{sec/body}",
+      "sec/body.tex": "本体",
+    });
+    const out = expandInputs(d, "main.tex");
+    expect(out).toContain("序論本文");
+    expect(out).toContain("本体");
+    expect(out).not.toContain("これはコメント");
+    expect(out).toContain("50\\% 完了");
+  });
+
+  it("\\input はルート優先で解決する（TeX 準拠）", () => {
+    const d = tmp({
+      "main.tex": "\\documentclass{a}\\begin{document}\\input{sub/chapter}\\end{document}",
+      "foo.tex": "ROOT",
+      "sub/chapter.tex": "\\input{foo}",
+      "sub/foo.tex": "SUBFOO",
+    });
+    const out = expandInputs(d, "main.tex");
+    expect(out).toContain("ROOT");
+    expect(out).not.toContain("SUBFOO");
+  });
+
+  it("\\input と { の間の空白も展開する", () => {
+    const d = tmp({ "main.tex": "A\\input {sec}B", "sec.tex": "節" });
+    expect(expandInputs(d, "main.tex")).toBe("A節B");
+  });
+
+  it("波括弧なしの \\input filename も展開する（TeX プリミティブ）", () => {
+    const d = tmp({ "main.tex": "A\\input sec\nB", "sec.tex": "節" });
+    expect(expandInputs(d, "main.tex")).toBe("A節\nB");
+  });
+
+  it("\\inputencoding など input で始まる別コマンドは展開しない", () => {
+    const d = tmp({ "main.tex": "\\inputencoding{utf8}X" });
+    expect(expandInputs(d, "main.tex")).toBe("\\inputencoding{utf8}X");
+  });
+
+  it("\\\\%（偶数バックスラッシュ）はコメント開始として扱う", () => {
+    const d = tmp({ "main.tex": "X\\\\% \\input{draft}\nY", "draft.tex": "DRAFT" });
+    const out = expandInputs(d, "main.tex");
+    expect(out).not.toContain("DRAFT");
+    expect(out).toContain("X\\\\");
+  });
+
+  it("波括弧なしの \\input filename も展開する", () => {
+    const d = tmp({ "main.tex": "A\\input sec\nB", "sec.tex": "節本文" });
+    expect(expandInputs(d, "main.tex")).toBe("A節本文\nB");
+  });
+
+  it("未解決の \\input は除去する", () => {
+    const d = tmp({ "main.tex": "A\\input{missing}B" });
+    expect(expandInputs(d, "main.tex")).toBe("AB");
+  });
+
+  it("同じファイルの複数 \\input を各回展開する", () => {
+    const d = tmp({ "main.tex": "\\input{part}-\\input{part}", "part.tex": "P" });
+    expect(expandInputs(d, "main.tex")).toBe("P-P");
+  });
+
+  it("循環参照でも停止する", () => {
+    const d = tmp({ "main.tex": "M\\input{loop}", "loop.tex": "L\\input{main}" });
+    expect(expandInputs(d, "main.tex")).toBe("ML");
+  });
+
+  it("ソースルート外への \\input は拒否する", () => {
+    const container = mkdtempSync(path.join(os.tmpdir(), "jpaper-esc-"));
+    dirs.push(container);
+    writeFileSync(path.join(container, "secret.tex"), "SECRET");
+    const src = path.join(container, "src");
+    mkdirSync(src);
+    writeFileSync(path.join(src, "main.tex"), "A\\input{../secret}B");
+    expect(expandInputs(src, "main.tex")).toBe("AB");
+  });
+
+  it("symlink でルート外へ逃げる \\input を拒否する", () => {
+    const container = mkdtempSync(path.join(os.tmpdir(), "jpaper-sym-"));
+    dirs.push(container);
+    writeFileSync(path.join(container, "secret.tex"), "SECRET");
+    const src = path.join(container, "src");
+    mkdirSync(src);
+    writeFileSync(path.join(src, "main.tex"), "A\\input{linked}B");
+    symlinkSync(path.join(container, "secret.tex"), path.join(src, "linked.tex"));
+    expect(expandInputs(src, "main.tex")).toBe("AB");
+  });
+});

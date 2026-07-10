@@ -35,6 +35,19 @@ describe("isTransient", () => {
     expect(isTransient(new Error("429 Too Many Requests"))).toBe(true);
   });
 
+  it("cause に隠れた一時コードも辿る（Node fetch 相当）", () => {
+    const e = Object.assign(new TypeError("fetch failed"), {
+      cause: { code: "ECONNRESET" },
+    });
+    expect(isTransient(e)).toBe(true);
+  });
+
+  it("cause の循環でも停止する", () => {
+    const a: { message: string; cause?: unknown } = { message: "boom" };
+    a.cause = a;
+    expect(isTransient(a)).toBe(false);
+  });
+
   it("タスク失敗・不明は false", () => {
     expect(isTransient(null)).toBe(false);
     expect(isTransient(new Error("build failed: missing figure"))).toBe(false);
