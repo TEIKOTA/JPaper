@@ -28,4 +28,24 @@ describe("makeClaudeClient", () => {
     const c = makeClaudeClient({ run: async () => JSON.stringify({ foo: "bar" }) });
     await expect(c.complete({ system: "s", user: "u" })).rejects.toMatchObject({ code: 1 });
   });
+
+  it("実行失敗（未インストール/非ゼロ終了）は code 2", async () => {
+    const c = makeClaudeClient({
+      run: async () => {
+        throw Object.assign(new Error("spawn claude ENOENT"), { code: "ENOENT" });
+      },
+    });
+    await expect(c.complete({ system: "s", user: "u" })).rejects.toMatchObject({ code: 2 });
+  });
+
+  it("瞬断など transient は素通し（withRetry 用）", async () => {
+    const c = makeClaudeClient({
+      run: async () => {
+        throw { code: "ETIMEDOUT" };
+      },
+    });
+    await expect(c.complete({ system: "s", user: "u" })).rejects.toMatchObject({
+      code: "ETIMEDOUT",
+    });
+  });
 });

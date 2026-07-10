@@ -2,7 +2,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import type { LlmClient } from "../types/contract.js";
-import { JpaperError } from "../types/errors.js";
+import { JpaperError, isTransient } from "../types/errors.js";
 
 const pExecFile = promisify(execFile);
 
@@ -22,18 +22,28 @@ export function makeClaudeClient(deps: ClaudeDeps = {}): LlmClient {
   return {
     async complete(req) {
       // model は渡さない（CLI ログインセッションのモデルを使う）。
-      const stdout = await run([
-        "-p",
-        req.user,
-        "--output-format",
-        "json",
-        "--append-system-prompt",
-        req.system,
-        "--max-turns",
-        "1",
-        "--allowedTools",
-        "",
-      ]);
+      let stdout: string;
+      try {
+        stdout = await run([
+          "-p",
+          req.user,
+          "--output-format",
+          "json",
+          "--append-system-prompt",
+          req.system,
+          "--max-turns",
+          "1",
+          "--allowedTools",
+          "",
+        ]);
+      } catch (e) {
+        if (isTransient(e)) throw e; // 瞬断等は withRetry へ
+        throw new JpaperError(
+          2,
+          "provider",
+          `claude 実行に失敗（未インストール/未ログイン/非ゼロ終了）: ${String((e as Error)?.message ?? e)}`,
+        );
+      }
       let parsed: { result?: unknown };
       try {
         parsed = JSON.parse(stdout) as { result?: unknown };

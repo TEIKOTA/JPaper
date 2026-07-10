@@ -38,4 +38,19 @@ describe("runAgent", () => {
       runAgent(c, { system: "s", user: "u" }, z.object({ x: z.number() })),
     ).rejects.toThrow();
   });
+
+  it("一時エラーは client 境界でリトライする", async () => {
+    let n = 0;
+    const client = {
+      async complete() {
+        if (n++ < 1) throw { code: "ETIMEDOUT" };
+        return '{"x":1}';
+      },
+    };
+    const out = await runAgent(client, { system: "s", user: "u" }, z.object({ x: z.number() }), {
+      sleep: async () => {},
+    });
+    expect(out).toEqual({ x: 1 });
+    expect(n).toBe(2);
+  });
 });

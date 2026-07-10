@@ -1,6 +1,7 @@
 // 契約付録 §1・§8。LLM 応答（JSON テキスト）の取り出しと zod 検証。
 import type { z } from "zod";
 import type { LlmClient, LlmRequest } from "../types/contract.js";
+import { withRetry, type RetryOptions } from "./session.js";
 
 function tryBalanced(body: string, start: number): { value: unknown } | undefined {
   const open = body[start]!;
@@ -53,7 +54,9 @@ export async function runAgent<S extends z.ZodTypeAny>(
   client: LlmClient,
   req: LlmRequest,
   schema: S,
+  retry: RetryOptions = {},
 ): Promise<z.infer<S>> {
-  const raw = await client.complete(req);
+  // 一時的なプロバイダ障害は client 境界で retry（形式検査失敗は retry せず節ループへ）。
+  const raw = await withRetry(() => client.complete(req), retry);
   return schema.parse(extractJson(raw)) as z.infer<S>;
 }
