@@ -20,7 +20,7 @@
 - `docs/adr/` — アーキテクチャ決定記録。運用ルールは [`docs/adr/README.md`](./docs/adr/README.md)
 - `scripts/` — 規約の検証（commit 件名・branch 名・PR body）と repo 初期設定
 - `.github/` — PR / issue テンプレート、ラベル定義（`labels.yml` が正本）、PR 検査 CI
-- `.agents/skills/` — 共有 skill（`git-commit` / `manage-adrs` / `sync-docs`）。`.claude` は `.agents` への symlink
+- `.agents/skills/` — 共有 skill（開発運用: `git-commit` / `manage-adrs` / `sync-docs`。翻訳運用: `translation-pitfalls`=evaluator 向け誤訳チェックリスト）。`.claude` は `.agents` への symlink
 
 ## 検索ポリシー
 
