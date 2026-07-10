@@ -1,0 +1,80 @@
+import { describe, it, expect, afterEach } from "vitest";
+import { gzipSync } from "node:zlib";
+import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { ingest, derivePaperId } from "./index.js";
+import { makeTar } from "./archive.fixtures.js";
+
+const SRC = [
+  {
+    name: "main.tex",
+    content:
+      "\\documentclass{article}\n\\begin{document}\n\\input{sec1}\n\\includegraphics{fig}\n\\end{document}\n",
+  },
+  { name: "sec1.tex", content: "第一節の本文" },
+  { name: "fig.png", content: "PNG" },
+];
+
+const dirs: string[] = [];
+function work(): string {
+  const d = mkdtempSync(path.join(os.tmpdir(), "jpaper-ing-"));
+  dirs.push(d);
+  return d;
+}
+afterEach(() => {
+  for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
+});
+
+describe("derivePaperId", () => {
+  it("arXiv は版・スラッシュを正規化", () => {
+    expect(derivePaperId({ kind: "arxiv", id: "1706.03762v5" })).toBe("1706.03762");
+    expect(derivePaperId({ kind: "arxiv", id: "hep-th/9901001" })).toBe("hep-th_9901001");
+  });
+  it("path は basename から拡張子を除去", () => {
+    expect(derivePaperId({ kind: "path", path: "/a/b/attention.tar.gz" })).toBe("attention");
+    expect(derivePaperId({ kind: "path", path: "/a/mypaper/" })).toBe("mypaper");
+  });
+});
+
+describe("ingest", () => {
+  it("アーカイブ path から cleanLatex・figures・paperId を得る", async () => {
+    const tarPath = path.join(work(), "attention.tar.gz");
+    writeFileSync(tarPath, gzipSync(makeTar(SRC)));
+    const out = await ingest({ kind: "path", path: tarPath }, work());
+    expect(out.cleanLatex).toContain("第一節の本文");
+    expect(out.cleanLatex).toContain("\\includegraphics{fig}");
+    expect(out.figures).toEqual([path.resolve(out.sourceDir, "fig.png")]);
+    expect(out.paperId).toBe("attention");
+  });
+
+  it("arXiv ID はソースを取得して展開する", async () => {
+    const bytes = gzipSync(makeTar(SRC));
+    const out = await ingest({ kind: "arxiv", id: "1706.03762" }, work(), {
+      arxiv: {
+        fetchImpl: (async () =>
+          ({
+            ok: true,
+            status: 200,
+            arrayBuffer: async () => bytes,
+          }) as unknown as Response) as unknown as typeof fetch,
+        state: { lastRequestAt: 0 },
+        now: () => 0,
+        sleep: async () => {},
+      },
+    });
+    expect(out.cleanLatex).toContain("第一節の本文");
+    expect(out.paperId).toBe("1706.03762");
+  });
+
+  it("ディレクトリ入力はそのまま使う", async () => {
+    const d = work();
+    writeFileSync(
+      path.join(d, "main.tex"),
+      "\\documentclass{a}\n\\begin{document}\nDIR\n\\end{document}\n",
+    );
+    const out = await ingest({ kind: "path", path: d }, work());
+    expect(out.cleanLatex).toContain("DIR");
+    expect(out.sourceDir).toBe(d);
+  });
+});
