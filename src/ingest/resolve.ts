@@ -32,9 +32,10 @@ function findByBasename(rootDir: string, ref: string): string | null {
 }
 
 function extractGraphicsPath(latex: string): string[] {
-  const m = /\\graphicspath\{((?:\{[^}]*\})+)\}/.exec(latex);
-  if (!m) return [];
-  return [...(m[1] ?? "").matchAll(/\{([^}]*)\}/g)].map((g) => g[1] ?? "");
+  const all = [...latex.matchAll(/\\graphicspath\{((?:\{[^}]*\})+)\}/g)];
+  const last = all[all.length - 1]; // LaTeX は後の宣言で置換＝最後が有効
+  if (!last) return [];
+  return [...(last[1] ?? "").matchAll(/\{([^}]*)\}/g)].map((g) => g[1] ?? "");
 }
 
 function resolveFigure(

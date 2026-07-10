@@ -64,10 +64,13 @@ export function expandInputs(dir: string, mainRel: string): string {
     if (!isInsideDirReal(dir, path.join(dir, rel))) return "";
     stack.push(rel);
     const raw = stripComments(readFileSync(path.join(dir, rel), "utf8"));
-    const out = raw.replace(/\\(?:input|include)\s*\{([^}]+)\}/g, (_m, target: string) => {
-      const child = resolveTexPath(dir, rel, target.trim());
-      return child ? load(child) : "";
-    });
+    const out = raw.replace(
+      /\\(?:input|include)\s*\{([^}]+)\}|\\input\s+([^\s{}\\%]+)/g,
+      (_m, braced: string | undefined, unbraced: string | undefined) => {
+        const child = resolveTexPath(dir, rel, (braced ?? unbraced ?? "").trim());
+        return child ? load(child) : "";
+      },
+    );
     stack.pop();
     return out;
   }

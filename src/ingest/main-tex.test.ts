@@ -85,6 +85,16 @@ describe("expandInputs", () => {
     expect(expandInputs(d, "main.tex")).toBe("A節B");
   });
 
+  it("波括弧なしの \\input filename も展開する（TeX プリミティブ）", () => {
+    const d = tmp({ "main.tex": "A\\input sec\nB", "sec.tex": "節" });
+    expect(expandInputs(d, "main.tex")).toBe("A節\nB");
+  });
+
+  it("\\inputencoding など input で始まる別コマンドは展開しない", () => {
+    const d = tmp({ "main.tex": "\\inputencoding{utf8}X" });
+    expect(expandInputs(d, "main.tex")).toBe("\\inputencoding{utf8}X");
+  });
+
   it("\\\\%（偶数バックスラッシュ）はコメント開始として扱う", () => {
     const d = tmp({ "main.tex": "X\\\\% \\input{draft}\nY", "draft.tex": "DRAFT" });
     const out = expandInputs(d, "main.tex");

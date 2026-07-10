@@ -36,6 +36,13 @@ describe("collectFigures", () => {
     expect(collectFigures(latex, d)).toEqual([path.resolve(d, "images/plot.pdf")]);
   });
 
+  it("複数 \\graphicspath は最後の宣言を有効とする（LaTeX 準拠）", () => {
+    const d = tmp(["old/fig.png", "new/fig.png"]);
+    const latex =
+      "\\graphicspath{{old/}}\\graphicspath{{new/}}\\includegraphics{fig}";
+    expect(collectFigures(latex, d)).toEqual([path.resolve(d, "new/fig.png")]);
+  });
+
   it("同名 basename が複数ある場合は曖昧として取りこぼす", () => {
     const d = tmp(["a/fig.png", "b/fig.png"]);
     expect(collectFigures("\\includegraphics{fig}", d)).toEqual([]);
