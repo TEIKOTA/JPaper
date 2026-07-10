@@ -61,6 +61,28 @@ export function makeTarGnuLong(longName: string, content: string): Buffer {
   ]);
 }
 
+export function makeTarV7(entries: { name: string; content: string }[]): Buffer {
+  const blocks: Buffer[] = [];
+  for (const e of entries) {
+    const data = Buffer.from(e.content, "utf8");
+    const h = Buffer.alloc(512);
+    h.write(e.name, 0);
+    h.write("0000644 ", 100);
+    h.write("0000000 ", 108);
+    h.write("0000000 ", 116);
+    h.write(`${data.length.toString(8).padStart(11, "0")} `, 124);
+    h.write("00000000000 ", 136);
+    h.write("        ", 148);
+    h.write("0", 156);
+    let sum = 0;
+    for (let i = 0; i < 512; i++) sum += h[i]!;
+    h.write(`${sum.toString(8).padStart(6, "0")}\0 `, 148);
+    blocks.push(h, pad512(data));
+  }
+  blocks.push(Buffer.alloc(1024));
+  return Buffer.concat(blocks);
+}
+
 export function makeTarPax(longName: string, content: string): Buffer {
   const record = Buffer.from(`100 path=${longName}\n`, "utf8");
   const data = Buffer.from(content, "utf8");

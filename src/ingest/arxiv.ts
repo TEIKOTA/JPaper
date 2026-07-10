@@ -39,9 +39,11 @@ export async function fetchArxivSource(
   let lastErr: unknown;
   for (let attempt = 0; attempt <= retries; attempt++) {
     if (attempt > 0) await sleep(Math.min(10000, 1000 * 2 ** (attempt - 1)));
-    const wait = state.lastRequestAt + minInterval - now();
+    // await 前に次スロットを予約し、並行呼び出しでも 3秒間隔を直列化する。
+    const target = Math.max(now(), state.lastRequestAt + minInterval);
+    state.lastRequestAt = target;
+    const wait = target - now();
     if (wait > 0) await sleep(wait);
-    state.lastRequestAt = now();
 
     try {
       const res = await fetchImpl(`${endpoint}${id}`, {

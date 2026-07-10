@@ -1,7 +1,13 @@
 import { describe, it, expect } from "vitest";
 import { gzipSync } from "node:zlib";
 import { extractArchive, parseTar } from "./extract.js";
-import { makeTar, makeZip, makeTarGnuLong, makeTarPax } from "./archive.fixtures.js";
+import {
+  makeTar,
+  makeZip,
+  makeTarGnuLong,
+  makeTarPax,
+  makeTarV7,
+} from "./archive.fixtures.js";
 
 const entries = [
   { name: "main.tex", content: "\\documentclass{article}\\begin{document}x\\end{document}" },
@@ -43,6 +49,11 @@ describe("extractArchive", () => {
       "L",
     );
     expect(extractArchive(makeTarPax(longName, "P")).get(longName)?.toString()).toBe("P");
+  });
+
+  it("V7 tar（ustar マジック無し）もチェックサムで展開する", () => {
+    const files = extractArchive(makeTarV7([{ name: "main.tex", content: "V7" }]));
+    expect(files.get("main.tex")?.toString("utf8")).toBe("V7");
   });
 
   it("壊れた gzip は exit 2 に変換する", () => {

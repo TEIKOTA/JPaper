@@ -19,7 +19,14 @@ function isZip(b: Buffer): boolean {
   );
 }
 function isTar(b: Buffer): boolean {
-  return b.length >= 262 && b.toString("ascii", 257, 262) === "ustar";
+  if (b.length < 512) return false;
+  if (b.toString("ascii", 257, 262) === "ustar") return true;
+  // V7（ustar マジック無し）はヘッダチェックサムで判定。
+  const stored = parseInt(readStr(b, 148, 8).trim(), 8);
+  if (!Number.isFinite(stored)) return false;
+  let sum = 0;
+  for (let i = 0; i < 512; i++) sum += i >= 148 && i < 156 ? 0x20 : b[i]!;
+  return sum === stored;
 }
 
 function readStr(b: Buffer, start: number, len: number): string {

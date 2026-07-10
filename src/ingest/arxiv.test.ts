@@ -36,7 +36,28 @@ describe("fetchArxivSource", () => {
       state,
     });
     expect(sleep).toHaveBeenCalledWith(2000);
-    expect(state.lastRequestAt).toBe(2000);
+    expect(state.lastRequestAt).toBe(4000);
+  });
+
+  it("並行呼び出しでもスロットを予約して直列化する", async () => {
+    const state = { lastRequestAt: 0 };
+    const waits: number[] = [];
+    const sleep = async (ms: number) => {
+      waits.push(ms);
+    };
+    const common = {
+      fetchImpl: (async () => okResponse("S")) as unknown as typeof fetch,
+      now: () => 0,
+      sleep,
+      minIntervalMs: 3000,
+      state,
+    };
+    await Promise.all([
+      fetchArxivSource("a", common),
+      fetchArxivSource("b", common),
+    ]);
+    expect(state.lastRequestAt).toBe(6000);
+    expect(waits).toEqual([3000, 6000]);
   });
 
   it("間隔が空いていれば待機しない", async () => {
