@@ -25,6 +25,54 @@ export function makeTar(entries: { name: string; content: string }[]): Buffer {
   return Buffer.concat(blocks);
 }
 
+function tarHeader(name: string, size: number, type: string): Buffer {
+  const h = Buffer.alloc(512);
+  h.write(name, 0);
+  h.write("0000644 ", 100);
+  h.write("0000000 ", 108);
+  h.write("0000000 ", 116);
+  h.write(`${size.toString(8).padStart(11, "0")} `, 124);
+  h.write("00000000000 ", 136);
+  h.write("        ", 148);
+  h.write(type, 156);
+  h.write("ustar\0", 257);
+  h.write("00", 263);
+  let sum = 0;
+  for (let i = 0; i < 512; i++) sum += h[i]!;
+  h.write(`${sum.toString(8).padStart(6, "0")}\0 `, 148);
+  return h;
+}
+
+function pad512(data: Buffer): Buffer {
+  const p = Buffer.alloc(Math.ceil(data.length / 512) * 512);
+  data.copy(p);
+  return p;
+}
+
+export function makeTarGnuLong(longName: string, content: string): Buffer {
+  const nameBuf = Buffer.from(`${longName}\0`, "utf8");
+  const data = Buffer.from(content, "utf8");
+  return Buffer.concat([
+    tarHeader("././@LongLink", nameBuf.length, "L"),
+    pad512(nameBuf),
+    tarHeader(longName.slice(0, 100), data.length, "0"),
+    pad512(data),
+    Buffer.alloc(1024),
+  ]);
+}
+
+export function makeTarPax(longName: string, content: string): Buffer {
+  const record = Buffer.from(`100 path=${longName}\n`, "utf8");
+  const data = Buffer.from(content, "utf8");
+  return Buffer.concat([
+    tarHeader("PaxHeader", record.length, "x"),
+    pad512(record),
+    tarHeader(longName.slice(0, 100), data.length, "0"),
+    pad512(data),
+    Buffer.alloc(1024),
+  ]);
+}
+
 export function makeZip(entries: { name: string; content: string }[]): Buffer {
   const local: Buffer[] = [];
   const central: Buffer[] = [];

@@ -58,6 +58,18 @@ describe("expandInputs", () => {
     expect(out).toContain("50\\% 完了");
   });
 
+  it("\\input はルート優先で解決する（TeX 準拠）", () => {
+    const d = tmp({
+      "main.tex": "\\documentclass{a}\\begin{document}\\input{sub/chapter}\\end{document}",
+      "foo.tex": "ROOT",
+      "sub/chapter.tex": "\\input{foo}",
+      "sub/foo.tex": "SUBFOO",
+    });
+    const out = expandInputs(d, "main.tex");
+    expect(out).toContain("ROOT");
+    expect(out).not.toContain("SUBFOO");
+  });
+
   it("未解決の \\input は除去する", () => {
     const d = tmp({ "main.tex": "A\\input{missing}B" });
     expect(expandInputs(d, "main.tex")).toBe("AB");

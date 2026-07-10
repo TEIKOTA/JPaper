@@ -43,7 +43,7 @@ function stripComments(s: string): string {
 }
 
 function resolveTexPath(dir: string, fromRel: string, target: string): string | null {
-  const bases = [path.posix.dirname(fromRel), ""];
+  const bases = ["", path.posix.dirname(fromRel)];
   const cands = target.toLowerCase().endsWith(".tex") ? [target] : [`${target}.tex`, target];
   for (const base of bases) {
     for (const cand of cands) {

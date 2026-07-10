@@ -36,21 +36,43 @@ function normalizePath(p: string): string {
   return norm;
 }
 
+function readZ(b: Buffer): string {
+  const nul = b.indexOf(0);
+  return b.toString("utf8", 0, nul === -1 ? b.length : nul);
+}
+
+function paxPath(data: Buffer): string | null {
+  const m = /(?:^|\n)\d+ path=([^\n]*)/.exec(data.toString("utf8"));
+  return m ? (m[1] ?? null) : null;
+}
+
 export function parseTar(buf: Buffer): FileMap {
   const files: FileMap = new Map();
   let off = 0;
+  let override: string | null = null;
   while (off + 512 <= buf.length) {
     const name = readStr(buf, off, 100);
     if (name === "") break;
     const size = parseInt(readStr(buf, off + 124, 12).trim(), 8) || 0;
     const type = buf[off + 156];
-    const prefix = readStr(buf, off + 345, 155);
-    const full = prefix ? `${prefix}/${name}` : name;
     const dataStart = off + 512;
-    if (type === 0x30 || type === 0) {
-      files.set(normalizePath(full), buf.subarray(dataStart, dataStart + size));
+    const data = buf.subarray(dataStart, dataStart + size);
+    const advance = dataStart + Math.ceil(size / 512) * 512;
+    if (type === 0x4c) {
+      override = readZ(data); // GNU long name ('L')
+    } else if (type === 0x78) {
+      override = paxPath(data) ?? override; // PAX ext header ('x')
+    } else if (type === 0x67) {
+      // PAX global ('g') は無視
+    } else {
+      if (type === 0x30 || type === 0) {
+        const prefix = readStr(buf, off + 345, 155);
+        const ustar = prefix ? `${prefix}/${name}` : name;
+        files.set(normalizePath(override ?? ustar), data);
+      }
+      override = null;
     }
-    off = dataStart + Math.ceil(size / 512) * 512;
+    off = advance;
   }
   return files;
 }

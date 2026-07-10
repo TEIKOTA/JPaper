@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { gzipSync } from "node:zlib";
 import { extractArchive, parseTar } from "./extract.js";
-import { makeTar, makeZip } from "./archive.fixtures.js";
+import { makeTar, makeZip, makeTarGnuLong, makeTarPax } from "./archive.fixtures.js";
 
 const entries = [
   { name: "main.tex", content: "\\documentclass{article}\\begin{document}x\\end{document}" },
@@ -35,6 +35,14 @@ describe("extractArchive", () => {
   it("生 .tex バイトは main.tex になる", () => {
     const files = extractArchive(Buffer.from("plain tex", "utf8"));
     expect(files.get("main.tex")?.toString("utf8")).toBe("plain tex");
+  });
+
+  it("GNU long-name / PAX の長いパスを復元する", () => {
+    const longName = `deep/${"x".repeat(120)}/main.tex`;
+    expect(extractArchive(makeTarGnuLong(longName, "L")).get(longName)?.toString()).toBe(
+      "L",
+    );
+    expect(extractArchive(makeTarPax(longName, "P")).get(longName)?.toString()).toBe("P");
   });
 
   it("壊れた gzip は exit 2 に変換する", () => {
