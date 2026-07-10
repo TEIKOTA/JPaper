@@ -37,6 +37,16 @@ describe("extractArchive", () => {
     expect(files.get("main.tex")?.toString("utf8")).toBe("plain tex");
   });
 
+  it("壊れた gzip は exit 2 に変換する", () => {
+    const corrupt = Buffer.concat([Buffer.from([0x1f, 0x8b]), Buffer.from("garbage")]);
+    expect(() => extractArchive(corrupt)).toThrow(/アーカイブ展開に失敗/);
+    try {
+      extractArchive(corrupt);
+    } catch (e) {
+      expect((e as { code: number }).code).toBe(2);
+    }
+  });
+
   it("パストラバーサル（..）を拒否する", () => {
     expect(() => parseTar(makeTar([{ name: "../evil.tex", content: "x" }]))).toThrow(
       /不正なアーカイブパス/,

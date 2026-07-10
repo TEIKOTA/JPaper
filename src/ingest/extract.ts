@@ -102,14 +102,23 @@ export function isArchive(b: Buffer): boolean {
 }
 
 export function extractArchive(bytes: Buffer): FileMap {
-  if (isZip(bytes)) return parseZip(bytes);
-  if (isGzip(bytes)) {
-    const inner = gunzipSync(bytes);
-    if (isTar(inner)) return parseTar(inner);
-    return new Map([["main.tex", inner]]);
+  try {
+    if (isZip(bytes)) return parseZip(bytes);
+    if (isGzip(bytes)) {
+      const inner = gunzipSync(bytes);
+      if (isTar(inner)) return parseTar(inner);
+      return new Map([["main.tex", inner]]);
+    }
+    if (isTar(bytes)) return parseTar(bytes);
+    return new Map([["main.tex", bytes]]);
+  } catch (e) {
+    if (e instanceof JpaperError) throw e;
+    throw new JpaperError(
+      2,
+      "input",
+      `アーカイブ展開に失敗: ${String((e as Error)?.message ?? e)}`,
+    );
   }
-  if (isTar(bytes)) return parseTar(bytes);
-  return new Map([["main.tex", bytes]]);
 }
 
 export function writeFileMap(files: FileMap, destDir: string): void {
