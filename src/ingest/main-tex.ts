@@ -56,15 +56,17 @@ function resolveTexPath(dir: string, fromRel: string, target: string): string | 
 }
 
 export function expandInputs(dir: string, mainRel: string): string {
-  const seen = new Set<string>();
+  const stack: string[] = [];
   function load(rel: string): string {
-    if (seen.has(rel)) return "";
-    seen.add(rel);
+    if (stack.includes(rel)) return "";
+    stack.push(rel);
     const raw = stripComments(readFileSync(path.join(dir, rel), "utf8"));
-    return raw.replace(/\\(?:input|include)\{([^}]+)\}/g, (_m, target: string) => {
+    const out = raw.replace(/\\(?:input|include)\{([^}]+)\}/g, (_m, target: string) => {
       const child = resolveTexPath(dir, rel, target.trim());
       return child ? load(child) : "";
     });
+    stack.pop();
+    return out;
   }
   return load(mainRel);
 }

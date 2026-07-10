@@ -63,6 +63,11 @@ describe("expandInputs", () => {
     expect(expandInputs(d, "main.tex")).toBe("AB");
   });
 
+  it("同じファイルの複数 \\input を各回展開する", () => {
+    const d = tmp({ "main.tex": "\\input{part}-\\input{part}", "part.tex": "P" });
+    expect(expandInputs(d, "main.tex")).toBe("P-P");
+  });
+
   it("循環参照でも停止する", () => {
     const d = tmp({ "main.tex": "M\\input{loop}", "loop.tex": "L\\input{main}" });
     expect(expandInputs(d, "main.tex")).toBe("ML");
