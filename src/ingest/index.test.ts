@@ -82,6 +82,22 @@ describe("ingest", () => {
     expect(out.figures).toEqual([path.resolve(out.sourceDir, "paper/fig.png")]);
   });
 
+  it("サブファイル内の図（sections/fig.png）も source ルート内で回収する", async () => {
+    const src = [
+      {
+        name: "main.tex",
+        content:
+          "\\documentclass{a}\n\\begin{document}\n\\input{sections/intro}\n\\end{document}\n",
+      },
+      { name: "sections/intro.tex", content: "\\includegraphics{fig}" },
+      { name: "sections/fig.png", content: "PNG" },
+    ];
+    const tarPath = path.join(work(), "sub.tar");
+    writeFileSync(tarPath, makeTar(src));
+    const out = await ingest({ kind: "path", path: tarPath }, work());
+    expect(out.figures).toEqual([path.resolve(out.sourceDir, "sections/fig.png")]);
+  });
+
   it("単一 .tex は隣接ファイル・図を解決する", async () => {
     const d = work();
     writeFileSync(
