@@ -39,7 +39,7 @@ export function detectMainTex(dir: string): string {
 }
 
 function stripComments(s: string): string {
-  return s.replace(/(^|[^\\])%.*$/gm, "$1");
+  return s.replace(/((?:^|[^\\])(?:\\\\)*)%.*$/gm, "$1");
 }
 
 function resolveTexPath(dir: string, fromRel: string, target: string): string | null {

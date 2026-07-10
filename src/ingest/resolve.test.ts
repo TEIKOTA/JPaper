@@ -41,6 +41,13 @@ describe("collectFigures", () => {
     expect(collectFigures("\\includegraphics{fig}", d)).toEqual([]);
   });
 
+  it("\\includegraphics と引数の間の空白も解決する", () => {
+    const d = tmp(["fig.png"]);
+    expect(collectFigures("\\includegraphics [w=1cm] {fig}", d)).toEqual([
+      path.resolve(d, "fig.png"),
+    ]);
+  });
+
   it("図が無ければ空配列", () => {
     const d = tmp([]);
     expect(collectFigures("\\includegraphics{none}", d)).toEqual([]);

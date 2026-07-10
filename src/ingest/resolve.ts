@@ -60,7 +60,7 @@ export function collectFigures(
 ): string[] {
   const bases = ["", ...extractGraphicsPath(latex)];
   const found = new Set<string>();
-  const re = /\\includegraphics(?:\[[^\]]*\])?\{([^}]+)\}/g;
+  const re = /\\includegraphics\s*(?:\[[^\]]*\]\s*)?\{([^}]+)\}/g;
   let m: RegExpExecArray | null;
   while ((m = re.exec(latex)) !== null) {
     const ref = (m[1] ?? "").trim();

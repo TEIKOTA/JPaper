@@ -63,6 +63,9 @@ export function parseTar(buf: Buffer): FileMap {
     const size = parseInt(readStr(buf, off + 124, 12).trim(), 8) || 0;
     const type = buf[off + 156];
     const dataStart = off + 512;
+    if (dataStart + size > buf.length) {
+      throw new JpaperError(2, "input", "tar が途中で切れています");
+    }
     const data = buf.subarray(dataStart, dataStart + size);
     const advance = dataStart + Math.ceil(size / 512) * 512;
     if (type === 0x4c) {

@@ -75,6 +75,13 @@ describe("expandInputs", () => {
     expect(expandInputs(d, "main.tex")).toBe("A節B");
   });
 
+  it("\\\\%（偶数バックスラッシュ）はコメント開始として扱う", () => {
+    const d = tmp({ "main.tex": "X\\\\% \\input{draft}\nY", "draft.tex": "DRAFT" });
+    const out = expandInputs(d, "main.tex");
+    expect(out).not.toContain("DRAFT");
+    expect(out).toContain("X\\\\");
+  });
+
   it("未解決の \\input は除去する", () => {
     const d = tmp({ "main.tex": "A\\input{missing}B" });
     expect(expandInputs(d, "main.tex")).toBe("AB");
