@@ -60,4 +60,15 @@ describe("formalCheck: bilingual", () => {
     expect(formalCheck("value", "値 を使う", [later])).toEqual([]);
     expect(kinds("value", "値(Value) を使う", [later])).toContain("bilingual");
   });
+
+  it("併記形を持たない form（日本語のみ）は 2回目以降でも誤検知しない", () => {
+    const plain: ResolvedTerm = {
+      src: "x",
+      form: "用語",
+      class: "paper-defined",
+      rendering: "bilingual",
+      firstOccurrence: false,
+    };
+    expect(formalCheck("x", "用語を繰り返し用語と使う", [plain])).toEqual([]);
+  });
 });

@@ -68,5 +68,6 @@ describe("glossary-builder", () => {
     expect(out.style.register).toBe("plain");
     expect(c.calls[0]!.user).toContain("v [論文内定義]");
     expect(c.calls[0]!.user).toContain("rendering");
+    expect(c.calls[0]!.user).toContain("併記形");
   });
 });
