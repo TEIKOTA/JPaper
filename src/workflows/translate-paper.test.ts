@@ -222,6 +222,49 @@ describe("translatePaper（検収①）", () => {
     db.close();
   });
 
+  it("翻訳の並列度を concurrency で制限する", async () => {
+    const outDir = path.join(tmp(), "out");
+    const tar = path.join(tmp(), "p.tar");
+    writeFileSync(
+      tar,
+      makeTar([
+        {
+          name: "main.tex",
+          content:
+            "\\documentclass{a}\\begin{document}\\section{A}a text.\\section{B}b text.\\section{C}c text.\\section{D}d text.\\end{document}",
+        },
+      ]),
+    );
+    let active = 0;
+    let maxActive = 0;
+    const client = {
+      async complete(req: { system: string }) {
+        active++;
+        maxActive = Math.max(maxActive, active);
+        await new Promise((r) => setTimeout(r, 5));
+        active--;
+        if (req.system.includes("編纂者")) {
+          return JSON.stringify({
+            resolved: [],
+            brief: { thesis: "t", sectionRoles: [], notationConventions: [] },
+            style: { tensePolicy: "a", headingStyle: "b", numberStyle: "c" },
+          });
+        }
+        if (req.system.includes("審査者")) return '{"verdict":"pass","issues":[]}';
+        return '{"segmentId":"x","ja":"訳文"}';
+      },
+    };
+    const db = new GlossaryDb();
+    const r = await translatePaper(
+      { kind: "path", path: tar },
+      { provider: "claude", outDir, concurrency: 2 },
+      { client, db },
+    );
+    expect(r.summary.segments.total).toBe(4);
+    expect(maxActive).toBeLessThanOrEqual(2);
+    db.close();
+  });
+
   it("入力失敗は例外を投げず exit 2・onError に理由を渡す", async () => {
     const errs: string[] = [];
     const db = new GlossaryDb();

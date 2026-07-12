@@ -58,6 +58,26 @@ export interface TranslateOptions {
   provider: Provider;
   outDir?: string;
   ollama?: OllamaConfig;
+  concurrency?: number;
+}
+
+// subprocess プロバイダは無制限並列に耐えないため翻訳の同時実行数を制限する。
+async function mapLimit<T, R>(
+  items: T[],
+  limit: number,
+  fn: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let next = 0;
+  async function worker(): Promise<void> {
+    for (let i = next++; i < items.length; i = next++) {
+      results[i] = await fn(items[i]!);
+    }
+  }
+  await Promise.all(
+    Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, worker),
+  );
+  return results;
 }
 
 export interface TranslateDeps {
@@ -195,27 +215,25 @@ export async function translatePaper(
       ctx.resolved.map((r) => r.src),
     );
 
-    const results = await Promise.all(
-      segments.map((seg) => {
-        const slice = ctx.resolved
-          .filter((t) => seg.latex.includes(t.src))
-          .map((t) => ({ ...t, firstOccurrence: firstOcc.get(t.src) === seg.id })) as ResolvedTerm[];
-        // 無効化は原文＋注入コンテキスト（slice＋brief＋style）のハッシュ。失敗結果は永続しない。
-        const invalidation = hashContext(
-          seg.latex,
-          JSON.stringify(slice),
-          JSON.stringify(ctx.brief),
-          JSON.stringify(ctx.style),
-        );
-        return checkpoint(
-          runDir,
-          seg.id,
-          SectionLoopCache,
-          () => runSectionLoop(client, seg, slice, { brief: ctx.brief, style: ctx.style }),
-          { invalidation, cacheable: (r) => r.passed },
-        );
-      }),
-    );
+    const results = await mapLimit(segments, opts.concurrency ?? 4, (seg) => {
+      const slice = ctx.resolved
+        .filter((t) => seg.latex.includes(t.src))
+        .map((t) => ({ ...t, firstOccurrence: firstOcc.get(t.src) === seg.id })) as ResolvedTerm[];
+      // 無効化は原文＋注入コンテキスト（slice＋brief＋style）のハッシュ。失敗結果は永続しない。
+      const invalidation = hashContext(
+        seg.latex,
+        JSON.stringify(slice),
+        JSON.stringify(ctx.brief),
+        JSON.stringify(ctx.style),
+      );
+      return checkpoint(
+        runDir,
+        seg.id,
+        SectionLoopCache,
+        () => runSectionLoop(client, seg, slice, { brief: ctx.brief, style: ctx.style }),
+        { invalidation, cacheable: (r) => r.passed },
+      );
+    });
 
     const notes = buildNotes({
       resolved: ctx.resolved.map((r) => ({ ...r, firstOccurrence: false })) as ResolvedTerm[],
