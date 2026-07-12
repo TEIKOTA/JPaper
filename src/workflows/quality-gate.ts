@@ -77,7 +77,7 @@ export function formalCheck(
         });
       }
     } else if (t.rendering === "bilingual") {
-      const combined = /[（(]/.test(t.form); // form が 日本語(原語) 併記形か
+      const combined = /[（(][^）)]*[A-Za-z][^）)]*[）)]/.test(t.form); // 括弧内に原語(ラテン文字)を含む併記形か
       if (t.firstOccurrence) {
         if (!ja.includes(t.form)) {
           issues.push({ kind: "bilingual", message: `初出の併記形が無い: ${t.form}` });

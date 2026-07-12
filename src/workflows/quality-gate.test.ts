@@ -71,4 +71,15 @@ describe("formalCheck: bilingual", () => {
     };
     expect(formalCheck("x", "用語を繰り返し用語と使う", [plain])).toEqual([]);
   });
+
+  it("原語を含まない日本語括弧注記の form は誤検知しない", () => {
+    const jaParen: ResolvedTerm = {
+      src: "y",
+      form: "用語（仮称）",
+      class: "paper-defined",
+      rendering: "bilingual",
+      firstOccurrence: false,
+    };
+    expect(formalCheck("y", "用語（仮称）を繰り返し使う", [jaParen])).toEqual([]);
+  });
 });
