@@ -35,6 +35,11 @@ describe("isTransient", () => {
     expect(isTransient(new Error("429 Too Many Requests"))).toBe(true);
   });
 
+  it("transient マーカーを尊重する", () => {
+    expect(isTransient({ transient: true })).toBe(true);
+    expect(isTransient({ transient: false })).toBe(false);
+  });
+
   it("cause に隠れた一時コードも辿る（Node fetch 相当）", () => {
     const e = Object.assign(new TypeError("fetch failed"), {
       cause: { code: "ECONNRESET" },

@@ -39,7 +39,10 @@ export function isTransient(e: unknown, depth = 3): boolean {
     statusCode?: unknown;
     message?: unknown;
     cause?: unknown;
+    transient?: unknown;
   };
+
+  if (err.transient === true) return true;
 
   const sysCode = typeof err.code === "string" ? err.code : "";
   if (TRANSIENT_SYSCODES.has(sysCode)) return true;
