@@ -135,7 +135,7 @@ CREATE INDEX idx_term_src ON term(src);
 
 - v1 実装 = **2つ**: `ollama`（local, オンデマンド daemon）/ `claude`（cloud, `claude -p --output-format json` の `result` を抽出）。codex/OpenRouter/API キーは将来。
 - `--provider {ollama|claude}` は **必須（既定なし）**。省略はエラー（終了コード §6）。**受理値の正本は `ollama|claude`**（[UI/配置 ADR](../adr/20260709-user-interface-file-layout-and-cli.md) の例示 `local|cloud` は概念軸。CLI 実値は本付録が正本）。
-- claude CLI は純変換器化して使う: `--append-system-prompt` で役割注入、`--max-turns 1`、内蔵ツール無効化（`--allowedTools` 空）。対応 CLI バージョンはレンジ指定し、出力 JSON 形式は統合テストで回帰検知。
+- claude CLI は純変換器化して使う: `--append-system-prompt` で役割注入、`--max-turns 1`、内蔵ツール無効化（`--tools none`。`--allowedTools ""` はツールを無効化できずモデルが tool_use を試みて `error_max_turns` になるため不可。SHOW 検収で判明）。対応 CLI バージョンはレンジ指定し、出力 JSON 形式は統合テストで回帰検知。
 - モデル ID: claude(subprocess) は CLI のログインセッションのモデルを使うため JPaper から渡さない。ollama は設定でモデル ID 明示（例 `llama3.1:8b`、変更可）。
 - CLI: `jpaper <input> --provider {ollama|claude} [--out DIR]`。`<input>` は zip/tar.gz/gzip-tar/.tex.gz/.tex/ディレクトリ/arXiv ID を自動判定（判定不能は明示的失敗）。配布は `package.json` の `bin.jpaper = dist/cli.js`。
 

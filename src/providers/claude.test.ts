@@ -14,7 +14,8 @@ describe("makeClaudeClient", () => {
     expect(await c.complete({ system: "SYS", user: "USR" })).toBe("訳文");
     expect(args).toContain("--append-system-prompt");
     expect(args).toContain("--max-turns");
-    expect(args).toContain("--allowedTools");
+    expect(args).toContain("--tools");
+    expect(args).toContain("none");
     expect(args).toContain("SYS");
     expect(args).toContain("USR");
     expect(args).not.toContain("--model");

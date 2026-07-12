@@ -17,7 +17,10 @@ async function defaultRun(args: string[]): Promise<string> {
     child.on("error", reject);
     child.on("close", (code) => {
       if (code === 0) resolve(out);
-      else reject(Object.assign(new Error(`claude exited ${code}: ${err.slice(0, 500)}`), { code }));
+      else {
+        const detail = (err || out).slice(0, 800);
+        reject(Object.assign(new Error(`claude exited ${code}: ${detail}`), { code }));
+      }
     });
     child.stdin.end(); // stdin を即 EOF にして -p 位置引数のプロンプトを使わせる（3秒待機回避）。
   });
@@ -39,8 +42,8 @@ export function makeClaudeClient(deps: ClaudeDeps = {}): LlmClient {
           req.system,
           "--max-turns",
           "1",
-          "--allowedTools",
-          "",
+          "--tools",
+          "none",
         ]);
       } catch (e) {
         if ((e as { code?: unknown }).code === "ENOENT") {
