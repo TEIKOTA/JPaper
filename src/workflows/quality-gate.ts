@@ -77,9 +77,13 @@ export function formalCheck(
         });
       }
     } else if (t.rendering === "bilingual") {
-      if (t.firstOccurrence && !ja.includes(t.form)) {
-        issues.push({ kind: "bilingual", message: `初出の併記形が無い: ${t.form}` });
-      } else if (!t.firstOccurrence && ja.includes(t.form)) {
+      const combined = /[（(][^）)]*[A-Za-z][^）)]*[）)]/.test(t.form); // 括弧内に原語(ラテン文字)を含む併記形か
+      if (t.firstOccurrence) {
+        if (!ja.includes(t.form)) {
+          issues.push({ kind: "bilingual", message: `初出の併記形が無い: ${t.form}` });
+        }
+      } else if (combined && ja.includes(t.form)) {
+        // 併記形を持つ語のみ「2回目以降は日本語のみ」を要求（括弧無しは誤検知しない）。
         issues.push({ kind: "bilingual", message: `2回目以降に併記形: ${t.form}` });
       }
     }

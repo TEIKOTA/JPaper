@@ -22,6 +22,7 @@ function renderUser(input: GlossaryBuilderIn): string {
     '{"resolved":[{"src":"原語","form":"確定訳/表記","class":"established"|"paper-defined"|"proper-noun"|"do-not-translate","rendering":"translate"|"bilingual"|"keep-original","note":"訳注(任意)"}],' +
       '"brief":{"thesis":"主張の核","sectionRoles":[{"id":"節id","role":"役割"}],"notationConventions":["記法規約"],"claimStrengthNotes":["主張強度の注意(任意)"]},' +
       '"style":{"register":"plain"|"polite","tensePolicy":"時制方針","headingStyle":"見出し方針","numberStyle":"数字/単位方針","notes":["備考(任意)"]}}',
+    "rendering=bilingual の form は必ず『日本語(原語)』の併記形にする（例: 値(Value) / スケール化ドット積注意(Scaled Dot-Product Attention)）。日本語のみにしない。",
     "既定文体は register=plain（である調・常体）。firstOccurrence は付与しない（配線側が決定的に付ける）。",
   ].join("\n\n");
 }
