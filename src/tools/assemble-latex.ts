@@ -99,13 +99,59 @@ function assembleBody(chapters: string[]): string {
     .join("\n\n");
 }
 
+export function buildPreamble(cleanLatex: string, mode: Layout): string {
+  const original = extractPreamble(cleanLatex);
+  return mode === "original"
+    ? injectShared(neutralizePreamble(original))
+    : `${templatePreamble(original)}\n`;
+}
+
 export function assembleLatex(input: AssembleInput): AssembleOutput {
   const layout: Layout = input.mode ?? "original";
-  const originalPreamble = extractPreamble(input.cleanLatex);
-  const preamble =
-    layout === "original"
-      ? injectShared(neutralizePreamble(originalPreamble))
-      : `${templatePreamble(originalPreamble)}\n`;
-  const mainTex = `${preamble}${BEGIN_DOC}\n${assembleBody(input.chapters)}\n${END_DOC}\n`;
+  const mainTex = `${buildPreamble(input.cleanLatex, layout)}${BEGIN_DOC}\n${assembleBody(input.chapters)}\n${END_DOC}\n`;
   return { mainTex, layout };
+}
+
+export interface Segment {
+  id: string;
+  tex: string;
+}
+export interface SourceSpan {
+  id: string;
+  startLine: number;
+  endLine: number;
+}
+export interface AssembledWithMap extends AssembleOutput {
+  sourceMap: SourceSpan[];
+}
+
+function lineCount(s: string): number {
+  return (s.match(/\n/g) ?? []).length;
+}
+
+// エラー行→セグメント逆引き用に、本文各セグメントの main.tex 上の行範囲(1始まり)を返す。
+export function assembleWithMap(input: {
+  cleanLatex: string;
+  segments: Segment[];
+  mode?: Layout;
+}): AssembledWithMap {
+  const layout: Layout = input.mode ?? "original";
+  let out = `${buildPreamble(input.cleanLatex, layout)}${BEGIN_DOC}\n`;
+  const parts = input.segments
+    .map((s) => ({ id: s.id, tex: sanitizeMath(s.tex).trim() }))
+    .filter((p) => p.tex !== "");
+  const sourceMap: SourceSpan[] = [];
+  parts.forEach((p, i) => {
+    const base = lineCount(out);
+    sourceMap.push({ id: p.id, startLine: base + 1, endLine: base + 1 + lineCount(p.tex) });
+    out += p.tex;
+    if (i < parts.length - 1) out += "\n\n";
+  });
+  out += `\n${END_DOC}\n`;
+  return { mainTex: out, layout, sourceMap };
+}
+
+export function segmentAtLine(sourceMap: SourceSpan[], line: number): string | undefined {
+  const hit = sourceMap.find((s) => line >= s.startLine && line <= s.endLine);
+  return hit?.id;
 }

@@ -1,6 +1,8 @@
 import { describe, it, expect } from "vitest";
 import {
   assembleLatex,
+  assembleWithMap,
+  segmentAtLine,
   extractPreamble,
   neutralizePreamble,
   injectShared,
@@ -98,6 +100,49 @@ describe("assembleLatex: original モード", () => {
   it("空チャプターは連結から除く", () => {
     const r = assembleLatex({ cleanLatex: CLEAN, chapters: ["A", "  ", "B"] });
     expect(r.mainTex).toContain("A\n\nB");
+  });
+});
+
+describe("assembleWithMap", () => {
+  it("mainTex は assembleLatex と一致し、各セグメントの行範囲を返す", () => {
+    const segs = [
+      { id: "seg-0000", tex: "\\maketitle\nAAA" },
+      { id: "seg-0001", tex: "\\section{B}\nBBB\nBBB2" },
+    ];
+    const plain = assembleLatex({ cleanLatex: CLEAN, chapters: segs.map((s) => s.tex) });
+    const mapped = assembleWithMap({ cleanLatex: CLEAN, segments: segs });
+    expect(mapped.mainTex).toBe(plain.mainTex);
+
+    const lines = mapped.mainTex.split("\n");
+    for (const span of mapped.sourceMap) {
+      const seg = segs.find((s) => s.id === span.id)!;
+      const firstBodyLine = seg.tex.split("\n")[0]!;
+      expect(lines[span.startLine - 1]).toBe(firstBodyLine);
+    }
+    expect(mapped.sourceMap.map((s) => s.id)).toEqual(["seg-0000", "seg-0001"]);
+  });
+  it("空セグメントは map から除外する", () => {
+    const mapped = assembleWithMap({
+      cleanLatex: CLEAN,
+      segments: [
+        { id: "a", tex: "A" },
+        { id: "blank", tex: "   " },
+        { id: "b", tex: "B" },
+      ],
+    });
+    expect(mapped.sourceMap.map((s) => s.id)).toEqual(["a", "b"]);
+  });
+});
+
+describe("segmentAtLine", () => {
+  const map = [
+    { id: "seg-0000", startLine: 10, endLine: 20 },
+    { id: "seg-0001", startLine: 21, endLine: 40 },
+  ];
+  it("行が含まれるセグメントを返し、範囲外は undefined", () => {
+    expect(segmentAtLine(map, 25)).toBe("seg-0001");
+    expect(segmentAtLine(map, 10)).toBe("seg-0000");
+    expect(segmentAtLine(map, 5)).toBeUndefined();
   });
 });
 
