@@ -2,10 +2,20 @@ import { describe, it, expect, afterEach } from "vitest";
 import { mkdtempSync, writeFileSync, existsSync, readFileSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { translatePaper } from "./translate-paper.js";
+import { translatePaper, type TranslateDeps, type TranslateOptions } from "./translate-paper.js";
 import { GlossaryDb } from "../terminology/db.js";
 import { FakeLlmClient } from "../testing/fake-llm.js";
 import { makeTar } from "../ingest/archive.fixtures.js";
+import type { LatexRunner } from "../tools/build-gate.js";
+import type { JpaperInput } from "../types/contract.js";
+
+// 決定的テスト用の擬似 latexmk（実ビルドしない）。
+const okRunner: LatexRunner = (dir) => {
+  writeFileSync(path.join(dir, "main.pdf"), "%PDF");
+  return { code: 0, log: "Output written on main.pdf (1 page)." };
+};
+const tp = (input: JpaperInput, opts: TranslateOptions, deps: TranslateDeps) =>
+  translatePaper(input, opts, { latexRunner: okRunner, ...deps });
 
 const dirs: string[] = [];
 const tmp = () => {
@@ -53,7 +63,7 @@ describe("translatePaper（検収①）", () => {
   it("配線・出力・exit 0", async () => {
     const outDir = path.join(tmp(), "out");
     const db = new GlossaryDb();
-    const result = await translatePaper(
+    const result = await tp(
       { kind: "path", path: makePaperTar() },
       { provider: "claude", outDir },
       { client: docClient(), db },
@@ -61,8 +71,9 @@ describe("translatePaper（検収①）", () => {
     expect(result.exitCode).toBe(0);
     expect(result.status).toBe("ok");
     expect(result.summary.segments).toEqual({ total: 2, passed: 2, failed: 0 });
-    expect(result.summary.buildOk).toBeNull();
-    expect(result.summary.layout).toBeNull();
+    expect(result.summary.buildOk).toBe(true);
+    expect(result.summary.layout).toBe("original");
+    expect(result.pdfPath).toBe(path.join(outDir, "translation", "build", "main.pdf"));
     expect(result.summary.glossary.proposedAdded).toBe(1);
     expect(existsSync(path.join(outDir, "translation", "chapters", "seg-0000.tex"))).toBe(true);
     expect(
@@ -75,16 +86,82 @@ describe("translatePaper（検収①）", () => {
     db.close();
   });
 
+  it("原プリアンブルが構造起因で組めないとき template へ明示的フォールバックする", async () => {
+    const outDir = path.join(tmp(), "out");
+    const db = new GlossaryDb();
+    const errs: string[] = [];
+    const runner: LatexRunner = (dir) => {
+      const tex = readFileSync(path.join(dir, "main.tex"), "utf8");
+      if (tex.includes("a4paper")) {
+        writeFileSync(path.join(dir, "main.pdf"), "%PDF");
+        return { code: 0, log: "Output written on main.pdf (1 page)." };
+      }
+      return { code: 1, log: "! LaTeX Error: File `nips_2017.sty' not found." };
+    };
+    const r = await tp({ kind: "path", path: makePaperTar() }, { provider: "claude", outDir }, {
+      client: docClient(),
+      db,
+      latexRunner: runner,
+      onError: (m) => errs.push(m),
+    });
+    expect(r.exitCode).toBe(0);
+    expect(r.summary.layout).toBe("template");
+    expect(r.summary.buildOk).toBe(true);
+    expect(errs.some((e) => e.includes("フォールバック"))).toBe(true);
+    db.close();
+  });
+
+  it("テンプレでも組めないときは exit 5・buildOk=false", async () => {
+    const outDir = path.join(tmp(), "out");
+    const db = new GlossaryDb();
+    const errs: string[] = [];
+    const runner: LatexRunner = () => ({ code: 1, log: "! LaTeX Error: File `x.png' not found." });
+    const r = await tp({ kind: "path", path: makePaperTar() }, { provider: "claude", outDir }, {
+      client: docClient(),
+      db,
+      latexRunner: runner,
+      onError: (m) => errs.push(m),
+    });
+    expect(r.exitCode).toBe(5);
+    expect(r.summary.layout).toBe("template");
+    expect(r.summary.buildOk).toBe(false);
+    expect(r.pdfPath).toBeUndefined();
+    db.close();
+  });
+
+  it("翻訳起因のビルド失敗は暫定 exit 5（要再訳を surface）", async () => {
+    const outDir = path.join(tmp(), "out");
+    const db = new GlossaryDb();
+    const errs: string[] = [];
+    const runner: LatexRunner = (dir) => {
+      const tex = readFileSync(path.join(dir, "main.tex"), "utf8");
+      const line = tex.split("\n").findIndex((l) => l.includes("訳文")) + 1;
+      return { code: 1, log: `./main.tex:${line}: Missing $ inserted.` };
+    };
+    const r = await tp({ kind: "path", path: makePaperTar() }, { provider: "claude", outDir }, {
+      client: docClient(),
+      db,
+      latexRunner: runner,
+      onError: (m) => errs.push(m),
+    });
+    expect(r.exitCode).toBe(5);
+    expect(r.summary.layout).toBe("original");
+    expect(r.summary.buildOk).toBe(false);
+    expect(r.pdfPath).toBeUndefined();
+    expect(errs.some((e) => e.includes("翻訳起因"))).toBe(true);
+    db.close();
+  });
+
   it("checkpoint idempotent-skip: 2回目は LLM を呼ばない", async () => {
     const outDir = path.join(tmp(), "out");
     const tar = makePaperTar();
     const db = new GlossaryDb();
-    await translatePaper({ kind: "path", path: tar }, { provider: "claude", outDir }, {
+    await tp({ kind: "path", path: tar }, { provider: "claude", outDir }, {
       client: docClient(),
       db,
     });
     const client2 = docClient();
-    await translatePaper({ kind: "path", path: tar }, { provider: "claude", outDir }, {
+    await tp({ kind: "path", path: tar }, { provider: "claude", outDir }, {
       client: client2,
       db,
     });
@@ -96,14 +173,14 @@ describe("translatePaper（検収①）", () => {
     const outDir = path.join(tmp(), "out");
     const tar = makePaperTar();
     const db = new GlossaryDb();
-    await translatePaper({ kind: "path", path: tar }, { provider: "claude", outDir }, {
+    await tp({ kind: "path", path: tar }, { provider: "claude", outDir }, {
       client: docClient(),
       db,
     });
     const gPath = path.join(outDir, "glossary.md");
     writeFileSync(gPath, readFileSync(gPath, "utf8").replace("甲", "エー"));
     const client2 = docClient();
-    await translatePaper({ kind: "path", path: tar }, { provider: "claude", outDir }, {
+    await tp({ kind: "path", path: tar }, { provider: "claude", outDir }, {
       client: client2,
       db,
     });
@@ -116,14 +193,14 @@ describe("translatePaper（検収①）", () => {
     const outDir = path.join(tmp(), "out");
     const tar = makePaperTar();
     const db = new GlossaryDb();
-    await translatePaper({ kind: "path", path: tar }, { provider: "claude", outDir }, {
+    await tp({ kind: "path", path: tar }, { provider: "claude", outDir }, {
       client: docClient(),
       db,
     });
     const sPath = path.join(outDir, "style.md");
     writeFileSync(sPath, readFileSync(sPath, "utf8").replace("時制: a", "時制: 現在形固定"));
     const client2 = docClient();
-    await translatePaper({ kind: "path", path: tar }, { provider: "claude", outDir }, {
+    await tp({ kind: "path", path: tar }, { provider: "claude", outDir }, {
       client: client2,
       db,
     });
@@ -144,7 +221,7 @@ describe("translatePaper（検収①）", () => {
       ]),
     );
     const db = new GlossaryDb();
-    await translatePaper({ kind: "path", path: tar }, { provider: "claude", outDir }, {
+    await tp({ kind: "path", path: tar }, { provider: "claude", outDir }, {
       client: docClient(),
       db,
     });
@@ -158,7 +235,7 @@ describe("translatePaper（検収①）", () => {
       ]),
     );
     const client2 = docClient();
-    await translatePaper({ kind: "path", path: tar }, { provider: "claude", outDir }, {
+    await tp({ kind: "path", path: tar }, { provider: "claude", outDir }, {
       client: client2,
       db,
     });
@@ -170,13 +247,13 @@ describe("translatePaper（検収①）", () => {
     const outDir = path.join(tmp(), "out");
     const tar = makePaperTar();
     const db = new GlossaryDb();
-    const r1 = await translatePaper({ kind: "path", path: tar }, { provider: "claude", outDir }, {
+    const r1 = await tp({ kind: "path", path: tar }, { provider: "claude", outDir }, {
       client: mkClient("fail"),
       db,
     });
     expect(r1.exitCode).toBe(4);
     const client2 = mkClient("fail");
-    await translatePaper({ kind: "path", path: tar }, { provider: "claude", outDir }, {
+    await tp({ kind: "path", path: tar }, { provider: "claude", outDir }, {
       client: client2,
       db,
     });
@@ -198,7 +275,7 @@ describe("translatePaper（検収①）", () => {
         },
       ]),
     );
-    await translatePaper({ kind: "path", path: tar }, { provider: "claude", outDir }, {
+    await tp({ kind: "path", path: tar }, { provider: "claude", outDir }, {
       client: docClient(),
       db,
     });
@@ -213,7 +290,7 @@ describe("translatePaper（検収①）", () => {
         },
       ]),
     );
-    await translatePaper({ kind: "path", path: tar }, { provider: "claude", outDir }, {
+    await tp({ kind: "path", path: tar }, { provider: "claude", outDir }, {
       client: docClient(),
       db,
     });
@@ -255,7 +332,7 @@ describe("translatePaper（検収①）", () => {
       },
     };
     const db = new GlossaryDb();
-    const r = await translatePaper(
+    const r = await tp(
       { kind: "path", path: tar },
       { provider: "claude", outDir, concurrency: 2 },
       { client, db },
@@ -268,7 +345,7 @@ describe("translatePaper（検収①）", () => {
   it("入力失敗は例外を投げず exit 2・onError に理由を渡す", async () => {
     const errs: string[] = [];
     const db = new GlossaryDb();
-    const result = await translatePaper(
+    const result = await tp(
       { kind: "path", path: path.join(tmp(), "missing.tar") },
       { provider: "claude", outDir: path.join(tmp(), "out") },
       { client: docClient(), db, onError: (m) => errs.push(m) },
@@ -283,7 +360,7 @@ describe("translatePaper（検収①）", () => {
     const outDir = path.join(tmp(), "out");
     const tar = makePaperTar();
     const db = new GlossaryDb();
-    await translatePaper({ kind: "path", path: tar }, { provider: "claude", outDir }, {
+    await tp({ kind: "path", path: tar }, { provider: "claude", outDir }, {
       client: docClient(),
       db,
     });
@@ -292,7 +369,7 @@ describe("translatePaper（検収①）", () => {
       gPath,
       "# 用語集\n\n| 原語 | 確定訳/表記 | 分類 | 表記方針 | 訳注 |\n|---|---|---|---|---|\n",
     );
-    await translatePaper({ kind: "path", path: tar }, { provider: "claude", outDir }, {
+    await tp({ kind: "path", path: tar }, { provider: "claude", outDir }, {
       client: docClient(),
       db,
     });

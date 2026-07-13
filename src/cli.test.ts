@@ -51,6 +51,15 @@ describe("runCli", () => {
     expect(code).toBe(2);
   });
 
+  it("pdfPath があれば標準出力に表示する", async () => {
+    let out = "";
+    await runCli(["node", "jpaper", "1706.03762", "--provider", "claude"], {
+      stdout: (s) => (out += s),
+      translate: async () => ({ ...okResult, pdfPath: "/out/translation/build/main.pdf" }),
+    });
+    expect(out).toContain("PDF: /out/translation/build/main.pdf");
+  });
+
   it("正常系は input/opts を渡し translate の exitCode を返す", async () => {
     let got: { input: unknown; opts: unknown } | undefined;
     const code = await runCli(
