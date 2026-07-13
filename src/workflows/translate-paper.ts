@@ -37,12 +37,15 @@ import { segment, segmentBudgetFor } from "../segment/segmenter.js";
 import { runSectionLoop } from "./section-loop.js";
 import { buildNotes } from "./notes.js";
 import { checkpoint, hashContext } from "../durable/checkpoint.js";
+import { assembleWithMap, type Layout } from "../tools/assemble-latex.js";
+import { runBuildGate, type LatexRunner, type BuildGateResult } from "../tools/build-gate.js";
 
 const IngestCache = z.object({
   cleanLatex: z.string(),
   figures: z.array(z.string()),
   paperId: z.string(),
   sourceDir: z.string(),
+  mainDir: z.string().optional(), // 旧キャッシュ互換（無ければ sourceDir）
 });
 const SectionLoopCache = z.object({
   segmentId: z.string(),
@@ -86,6 +89,7 @@ export interface TranslateDeps {
   dbPath?: string;
   ingest?: IngestDeps;
   onError?: (message: string) => void;
+  latexRunner?: LatexRunner;
 }
 
 interface PaperContext {
@@ -169,6 +173,54 @@ function failResult(paperId: string, outDir: string, exitCode: number): Result {
       exitCode,
     }),
   };
+}
+
+interface TypesetOutcome {
+  layout: Layout | null;
+  buildOk: boolean | null;
+  pdfPath?: string;
+  exitCode: number;
+}
+
+function summarizeGateFailure(g: BuildGateResult): string {
+  const parts: string[] = [];
+  if (g.failedSegments.length)
+    parts.push(`翻訳起因: ${g.failedSegments.map((f) => `${f.id}(${f.line})`).join(", ")}`);
+  if (g.structuralErrors.length) parts.push(`構造: ${g.structuralErrors.slice(0, 3).join(" / ")}`);
+  if (g.missingFigures.length) parts.push(`欠図: ${g.missingFigures.join(", ")}`);
+  if (g.droppedFigures.length) parts.push(`図欠落: ${g.droppedFigures.join(", ")}`);
+  if (g.unresolvedRefs.length) parts.push(`未解決参照: ${g.unresolvedRefs.slice(0, 5).join(", ")}`);
+  return parts.join(" | ") || "不明なビルド失敗";
+}
+
+// 全文組版ゲート: 原プリアンブル温存を試し、構造起因失敗のみ共通テンプレへ明示的にフォールバック（surface）。
+function typeset(
+  cleanLatex: string,
+  segments: { id: string; tex: string }[],
+  opts: { outDir: string; sourceDir: string; mainDir: string; figures: string[] },
+  runner: LatexRunner | undefined,
+  surface: (m: string) => void,
+): TypesetOutcome {
+  const buildDir = path.join(opts.outDir, "translation", "build");
+  const run = (mode: Layout): BuildGateResult => {
+    const { mainTex, sourceMap } = assembleWithMap({ cleanLatex, segments, mode });
+    return runBuildGate(
+      { buildDir, mainTex, sourceDir: opts.sourceDir, mainDir: opts.mainDir, figures: opts.figures, sourceMap },
+      runner,
+    );
+  };
+  const orig = run("original");
+  if (orig.buildOk) return { layout: "original", buildOk: true, pdfPath: orig.pdfPath, exitCode: 0 };
+  if (orig.failedSegments.length > 0) {
+    // 翻訳起因のビルド失敗。再訳ループ(WP10)未実装のため明示的失敗として surface する。
+    surface(`組版失敗(翻訳起因・要再訳): ${summarizeGateFailure(orig)}`);
+    return { layout: "original", buildOk: false, pdfPath: orig.pdfPath, exitCode: 5 };
+  }
+  surface(`原プリアンブルで組めず共通テンプレへフォールバック: ${summarizeGateFailure(orig)}`);
+  const tmpl = run("template");
+  if (tmpl.buildOk) return { layout: "template", buildOk: true, pdfPath: tmpl.pdfPath, exitCode: 0 };
+  surface(`組版失敗(テンプレでも不可): ${summarizeGateFailure(tmpl)}`);
+  return { layout: "template", buildOk: false, pdfPath: tmpl.pdfPath, exitCode: 5 };
 }
 
 export async function translatePaper(
@@ -255,9 +307,28 @@ export async function translatePaper(
 
     const passed = results.filter((r) => r.passed).length;
     const failed = results.length - passed;
-    const exitCode = resolveExitCode(
-      results.filter((r) => !r.passed).map((r) => r.failCode ?? 4),
-    );
+
+    // 全節通過時のみ組版する（翻訳失敗の 3/4 は組版前に確定）。
+    let layout: Layout | null = null;
+    let buildOk: boolean | null = null;
+    let pdfPath: string | undefined;
+    let exitCode = resolveExitCode(results.filter((r) => !r.passed).map((r) => r.failCode ?? 4));
+    if (failed === 0) {
+      const outcome = typeset(
+        ingested.cleanLatex,
+        results.map((r) => ({ id: r.segmentId, tex: r.ja })),
+        {
+          outDir,
+          sourceDir: ingested.sourceDir,
+          mainDir: ingested.mainDir ?? ingested.sourceDir,
+          figures: ingested.figures,
+        },
+        deps.latexRunner,
+        (m) => deps.onError?.(m),
+      );
+      ({ layout, buildOk, pdfPath, exitCode } = outcome);
+    }
+
     const summary = RunSummary.parse({
       paperId: ingested.paperId,
       outDir,
@@ -268,11 +339,11 @@ export async function translatePaper(
       },
       glossary: { proposedAdded: ctx.proposedAdded },
       notes: { total: notes.length, byTrigger: countByTrigger(notes) },
-      layout: null,
-      buildOk: null,
+      layout,
+      buildOk,
       exitCode,
     });
-    return { status: failed === 0 ? "ok" : "failed", exitCode, summary };
+    return { status: exitCode === 0 ? "ok" : "failed", exitCode, pdfPath, summary };
   } catch (e) {
     deps.onError?.(String((e as Error)?.message ?? e));
     return failResult(paperId, outDir, e instanceof JpaperError ? e.code : 1);

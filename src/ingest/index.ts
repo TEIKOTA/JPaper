@@ -13,6 +13,7 @@ export interface Ingested {
   figures: string[];
   paperId: string;
   sourceDir: string;
+  mainDir: string;
 }
 
 export interface IngestDeps {
@@ -80,5 +81,5 @@ export async function ingest(
   const cleanLatex = expandInputs(sourceDir, main);
   const mainDir = path.join(sourceDir, path.dirname(main));
   const figures = collectFigures(cleanLatex, mainDir, sourceDir);
-  return { cleanLatex, figures, paperId: derivePaperId(input), sourceDir };
+  return { cleanLatex, figures, paperId: derivePaperId(input), sourceDir, mainDir };
 }
