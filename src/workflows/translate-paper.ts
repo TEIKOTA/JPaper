@@ -39,6 +39,7 @@ import { buildNotes } from "./notes.js";
 import { checkpoint, hashContext } from "../durable/checkpoint.js";
 import { assembleWithMap, type Layout } from "../tools/assemble-latex.js";
 import { runBuildGate, type LatexRunner, type BuildGateResult } from "../tools/build-gate.js";
+import { injectFootnotes, renderBackmatter } from "../tools/render-notes.js";
 
 const IngestCache = z.object({
   cleanLatex: z.string(),
@@ -315,9 +316,17 @@ export async function translatePaper(
     let pdfPath: string | undefined;
     let exitCode = resolveExitCode(results.filter((r) => !r.passed).map((r) => r.failCode ?? 4));
     if (failed === 0) {
+      // 訳注を本文へ反映（初出脚注＋巻末一覧）してから組版する。
+      const formBySrc = new Map(ctx.resolved.map((r) => [r.src, r.form]));
+      const rendered = results.map((r) => ({
+        id: r.segmentId,
+        tex: injectFootnotes(r.ja, r.segmentId, notes, formBySrc),
+      }));
+      const backmatter = renderBackmatter(notes, formBySrc);
+      if (backmatter) rendered.push({ id: "backmatter", tex: backmatter });
       const outcome = typeset(
         ingested.cleanLatex,
-        results.map((r) => ({ id: r.segmentId, tex: r.ja })),
+        rendered,
         {
           outDir,
           sourceDir: ingested.sourceDir,
