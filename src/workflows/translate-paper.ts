@@ -45,7 +45,7 @@ const IngestCache = z.object({
   figures: z.array(z.string()),
   paperId: z.string(),
   sourceDir: z.string(),
-  mainDir: z.string().optional(), // 旧キャッシュ互換（無ければ sourceDir）
+  mainDir: z.string(), // 旧キャッシュは mainDir 欠落で無効化され再取り込みされる（入れ子 main の図配置に必須）
 });
 const SectionLoopCache = z.object({
   segmentId: z.string(),
@@ -209,18 +209,19 @@ function typeset(
       runner,
     );
   };
+  // pdfPath は buildOk のときだけ返す（ゲート棄却済みの成果物を成功として渡さない）。
   const orig = run("original");
   if (orig.buildOk) return { layout: "original", buildOk: true, pdfPath: orig.pdfPath, exitCode: 0 };
   if (orig.failedSegments.length > 0) {
     // 翻訳起因のビルド失敗。再訳ループ(WP10)未実装のため明示的失敗として surface する。
     surface(`組版失敗(翻訳起因・要再訳): ${summarizeGateFailure(orig)}`);
-    return { layout: "original", buildOk: false, pdfPath: orig.pdfPath, exitCode: 5 };
+    return { layout: "original", buildOk: false, exitCode: 5 };
   }
   surface(`原プリアンブルで組めず共通テンプレへフォールバック: ${summarizeGateFailure(orig)}`);
   const tmpl = run("template");
   if (tmpl.buildOk) return { layout: "template", buildOk: true, pdfPath: tmpl.pdfPath, exitCode: 0 };
   surface(`組版失敗(テンプレでも不可): ${summarizeGateFailure(tmpl)}`);
-  return { layout: "template", buildOk: false, pdfPath: tmpl.pdfPath, exitCode: 5 };
+  return { layout: "template", buildOk: false, exitCode: 5 };
 }
 
 export async function translatePaper(

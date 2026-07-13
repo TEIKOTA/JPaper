@@ -125,6 +125,7 @@ describe("translatePaper（検収①）", () => {
     expect(r.exitCode).toBe(5);
     expect(r.summary.layout).toBe("template");
     expect(r.summary.buildOk).toBe(false);
+    expect(r.pdfPath).toBeUndefined();
     db.close();
   });
 
@@ -146,6 +147,7 @@ describe("translatePaper（検収①）", () => {
     expect(r.exitCode).toBe(5);
     expect(r.summary.layout).toBe("original");
     expect(r.summary.buildOk).toBe(false);
+    expect(r.pdfPath).toBeUndefined();
     expect(errs.some((e) => e.includes("翻訳起因"))).toBe(true);
     db.close();
   });
