@@ -105,6 +105,16 @@ describe("runSectionLoop: 抜け穴を塞ぐ（敵対的）", () => {
     expect(r.usedRevisions).toBe(0);
   });
 
+  it("severity ラベルを信頼する（message 本文は解析しない）＝意味反転でも warn と付ければ通す設計", async () => {
+    // 信頼境界の明示化: 決定的層は issue.message の散文を解釈しない（脆い文字列一致に頼らない）。
+    // 意味反転など地の文の意味的欠陥の検出は evaluator の severity 割当に委ねる（契約 §3・EVAL_RUBRIC）。
+    // 決定的に落とせるのは §7 形式検査（数式・引用・keep-original）だけ。ここはその設計を回帰で固定する。
+    const c = new FakeLlmClient(evalReply("revise", '{"severity":"warn","message":"意味が反転している"}'));
+    const r = await runSectionLoop(c, seg, []);
+    expect(r.passed).toBe(true); // message に「反転」とあっても warn ラベルなら訳注化して通す（by-design）
+    expect(r.warnIssues.map((i) => i.message)).toEqual(["意味が反転している"]);
+  });
+
   it("形式検査（数式欠落）は evaluator が pass と言っても迂回できない（決定的ハードゲート）", async () => {
     const withMath: Segment = { id: "seg", latex: "text $x$ here.", tokens: 100 };
     const c = new FakeLlmClient((req) =>
