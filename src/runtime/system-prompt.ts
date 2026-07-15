@@ -24,6 +24,9 @@ const COMMON =
 const PITFALLS =
   "頻出の誤訳に注意する（evaluator 用チェックリスト）: 統計語 significantly=「有意」（p 値の含意を保つ）／SI 単位は立体・°K は K に／主張強度・hedging（may/might/suggest 等）を原文どおり保つ／false friend: agency=「行為主体性」など文脈依存の訳。";
 
+const EVAL_RUBRIC =
+  "判定基準: verdict は pass=そのまま出版できる品質／revise=直すべき点がある／fail=意味の反転・大幅な欠落・重大な誤りで即時不可。severity は error=意味を損なう問題（誤訳・意味の反転・内容や数式・引用の欠落・数値/単位の誤り・主張強度や hedging の反転・確定用語違反）で、これらは必ず error か verdict=fail にする。warn=出版を妨げない軽微な指摘（表記ゆれ・語調・言い回しの統一など）に限る。重大な問題を warn に格下げしてはならない。";
+
 function jaPart(form: string): string {
   return form.replace(/\s*[（(].*$/, "").trim();
 }
@@ -83,6 +86,6 @@ function renderRunContext(ctx: RunContext): string {
 
 export function buildSystemPrompt(role: AgentRole, ctx: RunContext): string {
   const parts = [ROLE_DEF[role], COMMON, renderRunContext(ctx)];
-  if (role === "evaluator") parts.push(PITFALLS);
+  if (role === "evaluator") parts.push(PITFALLS, EVAL_RUBRIC);
   return parts.join("\n\n---\n\n");
 }
