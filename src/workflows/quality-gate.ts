@@ -2,7 +2,7 @@
 import type { ResolvedTerm } from "../types/contract.js";
 
 export interface FormalIssue {
-  kind: "math" | "graphics" | "paragraph" | "keep-original" | "bilingual";
+  kind: "math" | "graphics" | "label" | "paragraph" | "keep-original" | "bilingual";
   message: string;
 }
 
@@ -33,14 +33,24 @@ function stripLineComments(text: string): string {
   return text.replace(/(?<!\\)%.*$/gm, "");
 }
 
-// \includegraphics のファイルパス引数を出現順に抽出する。
-// オプション有無・* ・前空白・行コメントに頑健。直後に {path} を要求するため \includegraphicsbox 等は拾わない。
-function graphicsPaths(text: string): string[] {
-  const re = /\\includegraphics\*?\s*(?:\[[^\]]*\]\s*)?\{([^}]*)\}/g;
-  const paths: string[] = [];
+// 指定コマンドの {引数} を出現順に抽出する（行コメント除去済み・前空白/オプションに頑健）。
+// optArg=true で \cmd[opts]{arg} のオプションを飛ばす（\includegraphics 用）。
+function commandArgs(text: string, cmd: string, optArg: boolean): string[] {
+  const opt = optArg ? "(?:\\[[^\\]]*\\]\\s*)?" : "";
+  const re = new RegExp(`\\\\${cmd}\\*?\\s*${opt}\\{([^}]*)\\}`, "g");
+  const args: string[] = [];
+  const stripped = stripLineComments(text);
   let m: RegExpExecArray | null;
-  while ((m = re.exec(stripLineComments(text))) !== null) paths.push(m[1]!.trim());
-  return paths;
+  while ((m = re.exec(stripped)) !== null) args.push(m[1]!.trim());
+  return args;
+}
+
+// multiset（並べ替えて要素比較）が一致するか。出現順の違いは無視し、脱落・置換・重複・増減を検出。
+function multisetMismatch(src: string[], ja: string[]): boolean {
+  if (src.length !== ja.length) return true;
+  const a = [...src].sort();
+  const b = [...ja].sort();
+  return a.some((x, i) => x !== b[i]);
 }
 
 function countParagraphs(text: string): number {
@@ -75,12 +85,22 @@ export function formalCheck(
   }
 
   // 図はパスの multiset で照合する（個数一致だけでは {a},{b}→{a},{a} の置換=b脱落を見逃すため）。
-  const srcGfx = graphicsPaths(srcLatex).sort();
-  const jaGfx = graphicsPaths(ja).sort();
-  if (srcGfx.length !== jaGfx.length || srcGfx.some((p, i) => p !== jaGfx[i])) {
+  const srcGfx = commandArgs(srcLatex, "includegraphics", true);
+  const jaGfx = commandArgs(ja, "includegraphics", true);
+  if (multisetMismatch(srcGfx, jaGfx)) {
     issues.push({
       kind: "graphics",
       message: `図(\\includegraphics)の不一致: src=[${srcGfx.join(", ")}] ja=[${jaGfx.join(", ")}]`,
+    });
+  }
+
+  // \label の脱落は \ref を未解決にして build-gate を落とす。名前の multiset で保持を検証する。
+  const srcLbl = commandArgs(srcLatex, "label", false);
+  const jaLbl = commandArgs(ja, "label", false);
+  if (multisetMismatch(srcLbl, jaLbl)) {
+    issues.push({
+      kind: "label",
+      message: `\\label の不一致: src=[${srcLbl.join(", ")}] ja=[${jaLbl.join(", ")}]`,
     });
   }
 

@@ -67,6 +67,25 @@ describe("formalCheck: 図(\\includegraphics)", () => {
   });
 });
 
+describe("formalCheck: \\label（相互参照の定義）", () => {
+  it("\\label を保持すれば pass", () => {
+    const src = "\\section{注意}\\label{sec:attention} 本文";
+    expect(formalCheck(src, "\\section{注意}\\label{sec:attention} 訳文", [])).toEqual([]);
+  });
+  it("\\label の脱落を検出（\\ref を未解決にする脱落）", () => {
+    const src = "\\section{注意}\\label{sec:attention} 本文";
+    expect(kinds(src, "\\section{注意} 訳文")).toContain("label");
+  });
+  it("複数 label の一部脱落・置換も multiset で検出", () => {
+    const src = "\\label{a}\\label{b}";
+    expect(kinds(src, "\\label{a}\\label{a}")).toContain("label");
+    expect(formalCheck(src, "\\label{b}\\label{a}", [])).toEqual([]); // 順序違いは pass
+  });
+  it("コメントアウトした \\label は数えない", () => {
+    expect(formalCheck("本文 % \\label{old}\n続き", "本文 \n続き", [])).toEqual([]);
+  });
+});
+
 describe("formalCheck: 段落", () => {
   it("水増し（訳>原）を検出", () => {
     expect(kinds("a", "訳a\n\n余分")).toContain("paragraph");
