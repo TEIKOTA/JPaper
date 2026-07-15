@@ -2,7 +2,7 @@
 import type { ResolvedTerm } from "../types/contract.js";
 
 export interface FormalIssue {
-  kind: "math" | "paragraph" | "keep-original" | "bilingual";
+  kind: "math" | "graphics" | "paragraph" | "keep-original" | "bilingual";
   message: string;
 }
 
@@ -25,6 +25,12 @@ function countMath(text: string): number {
   const envRe = new RegExp(`\\\\begin\\{(?:${MATH_ENVS.join("|")})\\*?\\}`, "g");
   const envs = (text.match(envRe) ?? []).length;
   return dollars + open + close + envs;
+}
+
+// \includegraphics[opts]{path} / \includegraphics*{path} / \includegraphics{path} を数える。
+// lookahead で直後が [ か { のときだけ数え、\includegraphicsbox 等の別コマンドは拾わない。
+function countGraphics(text: string): number {
+  return (text.match(/\\includegraphics\*?(?=\s*[[{])/g) ?? []).length;
 }
 
 function countParagraphs(text: string): number {
@@ -56,6 +62,15 @@ export function formalCheck(
   const jaMath = countMath(ja);
   if (srcMath !== jaMath) {
     issues.push({ kind: "math", message: `数式個数不一致: src=${srcMath} ja=${jaMath}` });
+  }
+
+  const srcGfx = countGraphics(srcLatex);
+  const jaGfx = countGraphics(ja);
+  if (srcGfx !== jaGfx) {
+    issues.push({
+      kind: "graphics",
+      message: `図(\\includegraphics)個数不一致: src=${srcGfx} ja=${jaGfx}`,
+    });
   }
 
   const srcPar = countParagraphs(srcLatex);

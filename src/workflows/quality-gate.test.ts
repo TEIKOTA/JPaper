@@ -16,6 +16,34 @@ describe("formalCheck: 数式", () => {
   });
 });
 
+describe("formalCheck: 図(\\includegraphics)", () => {
+  const FIG_SRC =
+    "\\begin{figure}\\includegraphics[scale=0.6]{Figures/ModalNet-21}\\caption{The Transformer}\\end{figure}";
+  it("図を保持すれば pass", () => {
+    expect(formalCheck(FIG_SRC, FIG_SRC.replace("The Transformer", "トランスフォーマー"), [])).toEqual([]);
+  });
+  it("図の脱落（キャプションだけ訳して \\includegraphics を落とす）を検出", () => {
+    const dropped = "\\begin{figure}\\caption{トランスフォーマー}\\end{figure}";
+    expect(kinds(FIG_SRC, dropped)).toContain("graphics");
+  });
+  it("複数図の一部脱落も検出（src=2 ja=1）", () => {
+    const src = "\\includegraphics{a.png} と \\includegraphics[width=1cm]{b.pdf}";
+    const ja = "\\includegraphics{a.png} のみ";
+    expect(kinds(src, ja)).toContain("graphics");
+  });
+  it("オプション無し・\\includegraphics* も数える", () => {
+    expect(formalCheck("\\includegraphics{a}", "訳 \\includegraphics{a}", [])).toEqual([]);
+    expect(formalCheck("\\includegraphics*[p]{a}", "訳 \\includegraphics*[p]{a}", [])).toEqual([]);
+  });
+  it("図の水増し（幻覚で増やす）も検出（src=1 ja=2）", () => {
+    expect(kinds("\\includegraphics{a}", "\\includegraphics{a}\\includegraphics{b}")).toContain("graphics");
+  });
+  it("\\includegraphicsbox 等の別コマンドは誤検知しない", () => {
+    // 直後が [ か { でなければ拾わない＝別マクロを図と誤認しない。
+    expect(formalCheck("\\includegraphicsbox は図ではない", "\\includegraphicsbox は図ではない", [])).toEqual([]);
+  });
+});
+
 describe("formalCheck: 段落", () => {
   it("水増し（訳>原）を検出", () => {
     expect(kinds("a", "訳a\n\n余分")).toContain("paragraph");
