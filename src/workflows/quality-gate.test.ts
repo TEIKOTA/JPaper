@@ -65,6 +65,13 @@ describe("formalCheck: 図(\\includegraphics)", () => {
     // 直後に {path} を要求＝別マクロを図と誤認しない。
     expect(formalCheck("\\includegraphicsbox{x} は図ではない", "\\includegraphicsbox{x} は図ではない", [])).toEqual([]);
   });
+  it("未閉じ { が多数でも O(n) で打ち切る（壊れた入力の CPU 消費を防ぐ）", () => {
+    const malformed = "\\includegraphics{".repeat(20000); // 未閉じ 2万個
+    const t0 = Date.now();
+    const r = formalCheck("\\includegraphics{a}", malformed, []);
+    expect(Date.now() - t0).toBeLessThan(500); // 単一走査で高速
+    expect(r.map((i) => i.kind)).toContain("graphics"); // 壊れた ja は不一致で flag
+  });
   it("入れ子波括弧のパスも平衡して抽出（{{plot}.pdf}→{{plot}.png} の置換を検出）", () => {
     const src = "\\includegraphics{{plot}.pdf}";
     expect(formalCheck(src, "\\includegraphics{{plot}.pdf}", [])).toEqual([]);

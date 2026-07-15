@@ -51,10 +51,9 @@ function commandArgs(text: string, cmd: string, optArg: boolean): string[] {
       if (c === "{") depth++;
       else if (c === "}") depth--;
     }
-    if (depth === 0) {
-      args.push(stripped.slice(start, i - 1).trim());
-      head.lastIndex = i; // 読み終えた引数の先へ進める
-    }
+    if (depth !== 0) break; // 未閉じ = これ以降に平衡した引数は存在しない（壊れた入力での O(n²) 再走査も断つ）
+    args.push(stripped.slice(start, i - 1).trim());
+    head.lastIndex = i; // 読み終えた引数の先へ進める
   }
   return args;
 }
