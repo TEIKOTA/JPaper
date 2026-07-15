@@ -116,9 +116,9 @@ CREATE INDEX idx_term_src ON term(src);
 
 - 単位: セグメント（節）。2層＝[節ループ軽検査＋evaluator] と [全文組版ゲート]（[2層化 ADR](../adr/20260709-quality-gate-two-layer-and-build-error-triage.md)）。
 - `MAX_REVISIONS`: セグメントサイズ連動 **小=3 / 中=4 / 大=5**（下限3・上限5）。区分は**絶対トークン閾値**（プロバイダ非依存＝決定的テストのゴールデン値が揺れない）: 小 `<1500` / 中 `<3500` / 大 `>=3500`（§4 の自前推定器で計測）。超過→failed。形式検査の差し戻しもカウント。
-- evaluator `verdict`: `pass`→抜ける / `revise`→`issues` を translator の再訳入力へ / `fail`→即 failed。
+- evaluator の合否は**不変条件**で決める（`verdict` 単独では決めない）: **出版可能＝`verdict≠fail` かつ `error` 級 `issue` が無い**。この時のみ pass（`warn` は非ブロッキングで訳注へ流す）。それ以外は `issues` を translator の再訳入力へ回し、`verdict=fail` は即 failed（再訳しない）・`MAX_REVISIONS` 超過も failed。`error` 級 issue があれば `pass` verdict でも通さない（重大問題の素通しを防ぐ）。**severity の正しい割当は evaluator の責務**（下の rubric で規定）で、意味反転など地の文の意味的欠陥に対する決定的検出器は存在しないため、決定的ハードゲートは §7 の形式検査（数式・引用・keep-original 等）が担う。
 - **evaluator rubric（明示軸・[翻訳一貫性 ADR](../adr/20260710-translation-consistency-brief-style-and-annotations.md) 決定2）**: 従来の「自然さ・専門用語妥当性・原意保持」に加え ①**主張強度・hedging の保持**（断定/限定/推量を原文どおり）②**統計語の忠実**（`significantly`=有意・p 値の含意）③**単位・記法の正しさ**（SI＝立体・`°K`→`K`・数値と単位の間隔）を判定する。②③の一部で決定的に落とせるものは §7 (B) の言語整合 lint に回す。
-- **warn→訳注の連動**: evaluator が `pass` としつつ残した `warn` の `issue` は、`TranslatorNote{ trigger: "evaluator-warn", text: issue.message }` として §8 の訳注に流す（品質は落とさず読者に可視化）。
+- **warn→訳注の連動**: pass に至ったセグメントに残った `warn` の `issue` は、`TranslatorNote{ trigger: "evaluator-warn", text: issue.message }` として §8 の訳注に流す（`verdict` が `pass`/`revise` いずれでも、`error` を含まず上の不変条件で pass すれば warn を可視化）。品質は落とさず読者に見せる。
 - 全文ゲート失敗の分類: 翻訳起因の LaTeX 文法ミス→失敗スニペット＋エラー行のみで再訳 / 構造・テンプレ起因→明示的失敗。
 
 ## 4. セグメント分割・トークン予算（モデル非依存）

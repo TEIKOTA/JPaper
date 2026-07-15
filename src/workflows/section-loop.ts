@@ -69,7 +69,10 @@ export async function runSectionLoop(
       { segmentId: segment.id, srcLatex: segment.latex, ja: out.ja },
       { glossary: glossarySlice, brief: doc.brief, style: doc.style },
     );
-    if (ev.verdict === "pass") {
+    // 契約 §3: 出版可能＝verdict≠fail かつ error 級 issue が無い。warn は非ブロッキングで訳注へ流す。
+    // error があれば pass verdict でも通さない（重大問題の素通しを防ぐ）。fail は常に失敗。
+    const hasError = ev.issues.some((i) => i.severity === "error");
+    if (ev.verdict !== "fail" && !hasError) {
       return {
         segmentId: segment.id,
         ja: out.ja,

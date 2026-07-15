@@ -51,6 +51,13 @@ describe("buildSystemPrompt", () => {
     expect(buildSystemPrompt("glossary-builder", { glossary: [] })).not.toContain("有意");
   });
 
+  it("evaluator に verdict/severity の判定基準を明示する（重大問題を warn に格下げしない）", () => {
+    const p = buildSystemPrompt("evaluator", { glossary: [] });
+    expect(p).toContain("重大な問題を warn に格下げしてはならない");
+    expect(p).toContain("verdict=fail");
+    expect(buildSystemPrompt("translator", { glossary: [] })).not.toContain("格下げ");
+  });
+
   it("brief/style を注入する", () => {
     const brief: DocumentBrief = {
       thesis: "核",
