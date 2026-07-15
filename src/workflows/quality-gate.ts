@@ -27,21 +27,35 @@ function countMath(text: string): number {
   return dollars + open + close + envs;
 }
 
-// TeX 行コメント（エスケープされていない % から行末）を除去する。
-// これで % でコメントアウトした \includegraphics を図と誤認せず、\includegraphics%\n{a} の見逃しも防ぐ。
+// TeX 行コメント（偶数個のバックスラッシュに続く生の % から行末）を除去する。
+// % でコメントアウトした \includegraphics/\label を誤認せず、\includegraphics%\n{a} の見逃しも防ぐ。
+// \% は 1 個（奇数）＝エスケープなのでコメント扱いしない。\\%（偶数）は % 以降がコメント。
 function stripLineComments(text: string): string {
-  return text.replace(/(?<!\\)%.*$/gm, "");
+  return text.replace(/(^|[^\\])((?:\\\\)*)%.*$/gm, "$1$2");
 }
 
-// 指定コマンドの {引数} を出現順に抽出する（行コメント除去済み・前空白/オプションに頑健）。
-// optArg=true で \cmd[opts]{arg} のオプションを飛ばす（\includegraphics 用）。
+// 指定コマンドの {引数} を出現順に抽出する（行コメント除去済み・前空白/オプション・入れ子波括弧に頑健）。
+// optArg=true で \cmd[opts]{arg} のオプションを飛ばす（\includegraphics 用）。直後に { を要求＝別コマンドを拾わない。
 function commandArgs(text: string, cmd: string, optArg: boolean): string[] {
   const opt = optArg ? "(?:\\[[^\\]]*\\]\\s*)?" : "";
-  const re = new RegExp(`\\\\${cmd}\\*?\\s*${opt}\\{([^}]*)\\}`, "g");
-  const args: string[] = [];
+  const head = new RegExp(`\\\\${cmd}\\*?\\s*${opt}\\{`, "g");
   const stripped = stripLineComments(text);
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(stripped)) !== null) args.push(m[1]!.trim());
+  const args: string[] = [];
+  for (let m = head.exec(stripped); m; m = head.exec(stripped)) {
+    // マッチ末尾は開き { の直後。そこから平衡した閉じ } まで読む（入れ子対応）。
+    let depth = 1;
+    let i = head.lastIndex;
+    const start = i;
+    for (; i < stripped.length && depth > 0; i++) {
+      const c = stripped[i];
+      if (c === "{") depth++;
+      else if (c === "}") depth--;
+    }
+    if (depth === 0) {
+      args.push(stripped.slice(start, i - 1).trim());
+      head.lastIndex = i; // 読み終えた引数の先へ進める
+    }
+  }
   return args;
 }
 

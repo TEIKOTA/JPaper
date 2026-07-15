@@ -65,6 +65,17 @@ describe("formalCheck: 図(\\includegraphics)", () => {
     // 直後に {path} を要求＝別マクロを図と誤認しない。
     expect(formalCheck("\\includegraphicsbox{x} は図ではない", "\\includegraphicsbox{x} は図ではない", [])).toEqual([]);
   });
+  it("入れ子波括弧のパスも平衡して抽出（{{plot}.pdf}→{{plot}.png} の置換を検出）", () => {
+    const src = "\\includegraphics{{plot}.pdf}";
+    expect(formalCheck(src, "\\includegraphics{{plot}.pdf}", [])).toEqual([]);
+    expect(kinds(src, "\\includegraphics{{plot}.png}")).toContain("graphics");
+  });
+  it("\\\\%（偶数バックスラッシュ）後の図はコメント＝脱落として検出する", () => {
+    // TeX 上 \\ は改行命令で続く % はコメント開始。ja で図を \\% でコメントアウト＝実質脱落なので flag する。
+    expect(kinds("\\includegraphics{a}", "\\\\% \\includegraphics{a}")).toContain("graphics");
+    // 奇数（\%）はエスケープ＝コメントではないので図は生きている（pass）。
+    expect(formalCheck("x \\includegraphics{a}", "x \\% \\includegraphics{a}", [])).toEqual([]);
+  });
 });
 
 describe("formalCheck: \\label（相互参照の定義）", () => {
