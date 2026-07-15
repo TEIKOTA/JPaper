@@ -27,10 +27,20 @@ function countMath(text: string): number {
   return dollars + open + close + envs;
 }
 
-// \includegraphics[opts]{path} / \includegraphics*{path} / \includegraphics{path} を数える。
-// lookahead で直後が [ か { のときだけ数え、\includegraphicsbox 等の別コマンドは拾わない。
-function countGraphics(text: string): number {
-  return (text.match(/\\includegraphics\*?(?=\s*[[{])/g) ?? []).length;
+// TeX 行コメント（エスケープされていない % から行末）を除去する。
+// これで % でコメントアウトした \includegraphics を図と誤認せず、\includegraphics%\n{a} の見逃しも防ぐ。
+function stripLineComments(text: string): string {
+  return text.replace(/(?<!\\)%.*$/gm, "");
+}
+
+// \includegraphics のファイルパス引数を出現順に抽出する。
+// オプション有無・* ・前空白・行コメントに頑健。直後に {path} を要求するため \includegraphicsbox 等は拾わない。
+function graphicsPaths(text: string): string[] {
+  const re = /\\includegraphics\*?\s*(?:\[[^\]]*\]\s*)?\{([^}]*)\}/g;
+  const paths: string[] = [];
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(stripLineComments(text))) !== null) paths.push(m[1]!.trim());
+  return paths;
 }
 
 function countParagraphs(text: string): number {
@@ -64,12 +74,13 @@ export function formalCheck(
     issues.push({ kind: "math", message: `数式個数不一致: src=${srcMath} ja=${jaMath}` });
   }
 
-  const srcGfx = countGraphics(srcLatex);
-  const jaGfx = countGraphics(ja);
-  if (srcGfx !== jaGfx) {
+  // 図はパスの multiset で照合する（個数一致だけでは {a},{b}→{a},{a} の置換=b脱落を見逃すため）。
+  const srcGfx = graphicsPaths(srcLatex).sort();
+  const jaGfx = graphicsPaths(ja).sort();
+  if (srcGfx.length !== jaGfx.length || srcGfx.some((p, i) => p !== jaGfx[i])) {
     issues.push({
       kind: "graphics",
-      message: `図(\\includegraphics)個数不一致: src=${srcGfx} ja=${jaGfx}`,
+      message: `図(\\includegraphics)の不一致: src=[${srcGfx.join(", ")}] ja=[${jaGfx.join(", ")}]`,
     });
   }
 

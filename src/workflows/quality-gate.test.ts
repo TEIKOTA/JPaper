@@ -38,9 +38,32 @@ describe("formalCheck: 図(\\includegraphics)", () => {
   it("図の水増し（幻覚で増やす）も検出（src=1 ja=2）", () => {
     expect(kinds("\\includegraphics{a}", "\\includegraphics{a}\\includegraphics{b}")).toContain("graphics");
   });
+  it("個数は同じでも置換（b→a 重複）は検出（multiset 照合）", () => {
+    // 個数一致だけの検査ではすり抜ける: src={a},{b} ja={a},{a}。パス multiset で b 脱落を捕捉。
+    const src = "\\includegraphics{a.pdf} と \\includegraphics{b.pdf}";
+    const ja = "\\includegraphics{a.pdf} と \\includegraphics{a.pdf}";
+    expect(kinds(src, ja)).toContain("graphics");
+  });
+  it("出現順が違ってもパス集合が同じなら pass（multiset）", () => {
+    const src = "\\includegraphics{a} 次に \\includegraphics{b}";
+    const ja = "\\includegraphics{b} 次に \\includegraphics{a}";
+    expect(formalCheck(src, ja, [])).toEqual([]);
+  });
+  it("コメントアウトした図は数えない（偽陽性を防ぐ）", () => {
+    // src の % \includegraphics{old} はコメント＝図ではない。訳がそれを落としても図脱落にしない。
+    expect(formalCheck("本文 % \\includegraphics{old}\n続き", "本文 \n続き", [])).toEqual([]);
+  });
+  it("コメントで分断された \\includegraphics%\\n{a} も1件として拾う（偽陰性を防ぐ）", () => {
+    const src = "\\includegraphics% コメント\n{a.pdf}";
+    expect(formalCheck(src, "訳 \\includegraphics{a.pdf}", [])).toEqual([]);
+    expect(kinds(src, "訳のみ")).toContain("graphics");
+  });
+  it("エスケープした \\% はコメント扱いしない", () => {
+    expect(formalCheck("50\\% と \\includegraphics{a}", "50\\% と \\includegraphics{a}", [])).toEqual([]);
+  });
   it("\\includegraphicsbox 等の別コマンドは誤検知しない", () => {
-    // 直後が [ か { でなければ拾わない＝別マクロを図と誤認しない。
-    expect(formalCheck("\\includegraphicsbox は図ではない", "\\includegraphicsbox は図ではない", [])).toEqual([]);
+    // 直後に {path} を要求＝別マクロを図と誤認しない。
+    expect(formalCheck("\\includegraphicsbox{x} は図ではない", "\\includegraphicsbox{x} は図ではない", [])).toEqual([]);
   });
 });
 
