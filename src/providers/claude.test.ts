@@ -27,10 +27,10 @@ describe("makeClaudeClient", () => {
     await c.complete({ system: "s", user: "u" }).catch((e) => expect(isTransient(e)).toBe(true));
   });
 
-  it("result 欠如は transient な code 1（withRetry 対象）", async () => {
+  it("result 欠如は非 transient な code 1（契約不一致＝retry せず即 surface）", async () => {
     const c = makeClaudeClient({ run: async () => JSON.stringify({ foo: "bar" }) });
     await expect(c.complete({ system: "s", user: "u" })).rejects.toMatchObject({ code: 1 });
-    await c.complete({ system: "s", user: "u" }).catch((e) => expect(isTransient(e)).toBe(true));
+    await c.complete({ system: "s", user: "u" }).catch((e) => expect(isTransient(e)).toBe(false));
   });
 
   it("ENOENT（未インストール）は非 transient の code 2", async () => {
