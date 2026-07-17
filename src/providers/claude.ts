@@ -62,8 +62,12 @@ export function makeClaudeClient(deps: ClaudeDeps = {}): LlmClient {
       try {
         parsed = JSON.parse(stdout) as { result?: unknown };
       } catch {
-        throw new JpaperError(1, "provider", "claude 応答が JSON でない");
+        // 構文不正な JSON は切れ/破損＝一時障害が多い → transient にして withRetry へ委ねる。
+        throw Object.assign(new JpaperError(1, "provider", "claude 応答が JSON でない"), {
+          transient: true,
+        });
       }
+      // JSON は正常なのに result が無いのは契約不一致（CLI 仕様変更等）＝決定的。retry せず即 surface する。
       if (typeof parsed.result !== "string") {
         throw new JpaperError(1, "provider", "claude 応答に result 文字列が無い");
       }
