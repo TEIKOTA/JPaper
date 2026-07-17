@@ -32,11 +32,35 @@ describe("runAgent", () => {
       x: 5,
     });
   });
-  it("スキーマ不一致は throw", async () => {
-    const c = new FakeLlmClient('{"x":"no"}');
+  it("スキーマ不一致は retry 上限まで試して throw", async () => {
+    let n = 0;
+    const client = {
+      async complete() {
+        n++;
+        return '{"x":"no"}';
+      },
+    };
     await expect(
-      runAgent(c, { system: "s", user: "u" }, z.object({ x: z.number() })),
+      runAgent(client, { system: "s", user: "u" }, z.object({ x: z.number() }), {
+        retries: 2,
+        sleep: async () => {},
+      }),
     ).rejects.toThrow();
+    expect(n).toBe(3); // 初回＋2 retry（不正応答も transient 扱いで再試行）
+  });
+
+  it("応答の parse/検証失敗も retry する（不正JSON→次で正常なら成功）", async () => {
+    let n = 0;
+    const client = {
+      async complete() {
+        return n++ < 1 ? "json ではない散文応答" : '{"x":1}';
+      },
+    };
+    const out = await runAgent(client, { system: "s", user: "u" }, z.object({ x: z.number() }), {
+      sleep: async () => {},
+    });
+    expect(out).toEqual({ x: 1 });
+    expect(n).toBe(2); // 1 回目の parse 失敗を retry して 2 回目で成功
   });
 
   it("一時エラーは client 境界でリトライする", async () => {

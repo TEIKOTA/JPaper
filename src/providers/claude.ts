@@ -58,14 +58,19 @@ export function makeClaudeClient(deps: ClaudeDeps = {}): LlmClient {
         Object.assign(err, { transient: true });
         throw err;
       }
+      // CLI が壊れた/切れた JSON エンベロープを返すのは一時障害が多い → transient にして withRetry へ委ねる。
       let parsed: { result?: unknown };
       try {
         parsed = JSON.parse(stdout) as { result?: unknown };
       } catch {
-        throw new JpaperError(1, "provider", "claude 応答が JSON でない");
+        throw Object.assign(new JpaperError(1, "provider", "claude 応答が JSON でない"), {
+          transient: true,
+        });
       }
       if (typeof parsed.result !== "string") {
-        throw new JpaperError(1, "provider", "claude 応答に result 文字列が無い");
+        throw Object.assign(new JpaperError(1, "provider", "claude 応答に result 文字列が無い"), {
+          transient: true,
+        });
       }
       return parsed.result;
     },

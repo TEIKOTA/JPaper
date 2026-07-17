@@ -56,7 +56,15 @@ export async function runAgent<S extends z.ZodTypeAny>(
   schema: S,
   retry: RetryOptions = {},
 ): Promise<z.infer<S>> {
-  // 一時的なプロバイダ障害は client 境界で retry（形式検査失敗は retry せず節ループへ）。
-  const raw = await withRetry(() => client.complete(req), retry);
-  return schema.parse(extractJson(raw)) as z.infer<S>;
+  // complete と応答の parse/zod 検証を一体で retry する。
+  // モデルが 1 回でも非 JSON/欠けたスキーマを返しても run 全体を落とさない（parse/検証失敗も transient 扱い）。
+  // client.complete 自体のエラー分類（provider の transient 判定）は従来どおり保つ（try の外）。
+  return withRetry(async () => {
+    const raw = await client.complete(req);
+    try {
+      return schema.parse(extractJson(raw)) as z.infer<S>;
+    } catch (e) {
+      throw Object.assign(e instanceof Error ? e : new Error(String(e)), { transient: true });
+    }
+  }, retry);
 }
