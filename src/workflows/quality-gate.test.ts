@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { formalCheck } from "./quality-gate.js";
+import { formalCheck, untranslatedHeadings } from "./quality-gate.js";
 import type { ResolvedTerm } from "../types/contract.js";
 
 const kinds = (src: string, ja: string, terms: ResolvedTerm[] = []) =>
@@ -101,6 +101,72 @@ describe("formalCheck: \\label（相互参照の定義）", () => {
   });
   it("コメントアウトした \\label は数えない", () => {
     expect(formalCheck("本文 % \\label{old}\n続き", "本文 \n続き", [])).toEqual([]);
+  });
+});
+
+describe("untranslatedHeadings（非ブロッキング lint）", () => {
+  // ja と keep-original 語だけを見る決定的検査。結果は訳注へ流れる（formalCheck には載らない）。
+  const h = (ja: string, keep: string[] = []) => untranslatedHeadings(ja, keep);
+  it("英語のままの見出しを検出（\\section/\\subsection/\\subsubsection）", () => {
+    expect(h("\\section{Training}")).not.toEqual([]);
+    expect(h("\\subsection{Hardware and Schedule}")).not.toEqual([]);
+    expect(h("\\subsubsection{Scaled Dot-Product Attention}")).not.toEqual([]);
+  });
+  it("訳済み・併記の見出しは検出しない（日本語を含む）", () => {
+    expect(h("\\section{訓練}")).toEqual([]);
+    expect(h("\\section{モデルアーキテクチャ(model architecture)}")).toEqual([]);
+    expect(h("\\subsection{注意} \\label{s}")).toEqual([]);
+  });
+  it("全大文字の略語・数字のみの見出しは誤検知しない（小文字 Latin 無し）", () => {
+    expect(h("\\section{BLEU}")).toEqual([]);
+    expect(h("\\subsection{WMT 2014}")).toEqual([]);
+    expect(h("\\section{GPU}")).toEqual([]);
+  });
+  it("keep-original 固有名だけの見出しは除外（Transformer 等）", () => {
+    expect(h("\\section{Transformer}", ["Transformer"])).toEqual([]);
+    // keep-original を除いても訳すべき語が残れば検出
+    expect(h("\\section{Transformer Training}", ["Transformer"])).not.toEqual([]);
+  });
+  it("複数見出しの一部だけ未訳でも検出", () => {
+    const ja = "\\section{背景}\n本文\n\\subsection{Training}";
+    expect(h(ja)).toEqual(["Training"]);
+  });
+  it("数式・制御綴りだけの見出しは誤検知しない（可視テキストで判定）", () => {
+    // 生 LaTeX の $p$ や \textsc/\emph の英小文字を未訳と誤認しない。
+    expect(h("\\section{$p$}")).toEqual([]);
+    expect(h("\\section{\\textsc{BLEU}}")).toEqual([]);
+    expect(h("\\section{\\emph{Transformer}}", ["Transformer"])).toEqual([]);
+  });
+  it("各種数式記法（\\(..\\) / $$..$$ / \\[..\\]）と参照系（\\ref 引数）も誤検知しない", () => {
+    expect(h("\\section{\\(p\\)}")).toEqual([]);
+    expect(h("\\section{$$p$$}")).toEqual([]);
+    // \ref の不可視引数 sec:methods を未訳の地の文と誤認しない
+    expect(h("\\subsection{結果 \\ref{sec:methods}}")).toEqual([]);
+    expect(h("\\subsection{\\ref{sec:methods}}")).toEqual([]);
+  });
+  it("中黒（・）は日本語扱いしない＝英語見出しを見逃さない", () => {
+    expect(h("\\section{Encoder・Decoder Architecture}")).not.toEqual([]);
+  });
+  it("\\chapter・\\part も対象", () => {
+    expect(h("\\chapter{Introduction}")).not.toEqual([]);
+  });
+  it("keep-original は語境界で除去（部分一致で Part→art を消さない）", () => {
+    expect(h("\\section{Part}", ["art"])).not.toEqual([]);
+  });
+  it("半角カタカナも日本語として扱う", () => {
+    expect(h("\\section{ﾓﾃﾞﾙ}")).toEqual([]);
+  });
+  it("オプション引数付き見出し（\\section[短縮]{本文}）も本引数で判定", () => {
+    expect(h("\\section[Intro]{Introduction}")).toEqual(["Introduction"]);
+    expect(h("\\section[概要]{はじめに}")).toEqual([]);
+  });
+  it("見出し中の \\url / \\includegraphics / \\path は不可視引数扱い（誤検知しない）", () => {
+    expect(h("\\section{\\url{https://example.org}}")).toEqual([]);
+    expect(h("\\section{\\includegraphics[width=1cm]{logo-file}}")).toEqual([]);
+    expect(h("\\section{\\path{src/main.tex}}")).toEqual([]);
+    // \href の第2引数（表示テキスト）は訳すべき地の文なので検出は維持
+    expect(h("\\section{\\href{https://example.org}{項目}}")).toEqual([]);
+    expect(h("\\section{\\href{https://example.org}{items}}")).not.toEqual([]);
   });
 });
 

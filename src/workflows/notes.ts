@@ -6,11 +6,17 @@ export interface SegmentWarns {
   warnIssues: EvalIssue[];
 }
 
+export interface SegmentLint {
+  segmentId: string;
+  untranslatedHeadings: string[];
+}
+
 export interface NotesInput {
   resolved: ResolvedTerm[];
   firstOccurrenceBySrc: Map<string, string>;
   hasConfirmed: (src: string) => boolean;
   segmentWarns: SegmentWarns[];
+  segmentLints?: SegmentLint[];
 }
 
 export function buildNotes(input: NotesInput): TranslatorNote[] {
@@ -54,6 +60,19 @@ export function buildNotes(input: NotesInput): TranslatorNote[] {
         segmentId: seg.segmentId,
         firstOccurrence: true,
         text: issue.message,
+      });
+    });
+  }
+
+  // 見出し未訳の非ブロッキング lint（決定的検査）。ビルドは壊さないので再訳ゲートに載せず訳注で可視化する。
+  for (const seg of input.segmentLints ?? []) {
+    seg.untranslatedHeadings.forEach((h, i) => {
+      notes.push({
+        id: `note-heading-untranslated-${seg.segmentId}-${i}`,
+        trigger: "heading-untranslated",
+        segmentId: seg.segmentId,
+        firstOccurrence: true,
+        text: `見出しが未訳の可能性: 「${h}」`,
       });
     });
   }

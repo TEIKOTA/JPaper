@@ -106,6 +106,7 @@ export const NoteTrigger = z.enum([
   "paper-defined-preserve",
   "low-confidence",
   "evaluator-warn",
+  "heading-untranslated",
 ]);
 export type NoteTrigger = z.infer<typeof NoteTrigger>;
 

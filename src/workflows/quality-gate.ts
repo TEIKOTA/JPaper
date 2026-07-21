@@ -6,6 +6,46 @@ export interface FormalIssue {
   message: string;
 }
 
+const HEADING_CMDS = ["part", "chapter", "section", "subsection", "subsubsection", "paragraph", "subparagraph"];
+// ひらがな・カタカナ（letters のみ・長音 ー=30FC を含む／中黒 ・=30FB は除外）・CJK 漢字・半角カタカナ。
+// 1字でもあれば訳済み/併記とみなす。中黒を除くのは「Encoder・Decoder」を訳済みと誤認しないため。
+const JAPANESE = /[ぁ-ゖァ-ヺー㐀-鿿ｦ-ﾝ]/;
+
+const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+// 見出し引数から可視テキストを取り出す（数式・参照系・制御綴り・波括弧を除去）。
+// $p$ や \textsc/\emph の綴り、\ref{...} の不可視引数を「未訳の地の文」と誤認しないため。
+function visibleText(s: string): string {
+  return s
+    .replace(/\$\$[\s\S]*?\$\$/g, " ") // $$...$$
+    .replace(/\$[^$]*\$/g, " ") // $...$
+    .replace(/\\\([\s\S]*?\\\)/g, " ") // \(...\)
+    .replace(/\\\[[\s\S]*?\\\]/g, " ") // \[...\]
+    .replace(/\\includegraphics\*?\s*(?:\[[^\]]*\])?\s*\{[^}]*\}/g, " ") // 図: オプション込みで引数ごと除去
+    .replace(/\\(?:eqref|autoref|pageref|cref|Cref|ref|label|cite[a-zA-Z]*|url|nolinkurl|path|href|input|include)\s*\{[^}]*\}/g, " ") // 参照系・URL・パス系は不可視引数ごと除去
+    .replace(/\\[a-zA-Z]+\*?/g, " ") // 残る制御綴り名（\textsc 等）は名前だけ除去し可視な引数は残す
+    .replace(/[{}]/g, " "); // 波括弧
+}
+
+// 未訳見出しを返す（非ブロッキング lint→heading-untranslated 訳注）: 可視テキストが日本語ゼロ かつ
+// keep-original 語を語境界で除いても小文字 Latin が残るもの。全大文字略語・数字は小文字を含まず除外。
+// 契約付録 §8（訳注生成契約 ④）。⚠ landmines.md
+export function untranslatedHeadings(ja: string, keepOriginal: string[]): string[] {
+  const found: string[] = [];
+  for (const cmd of HEADING_CMDS) {
+    // optArg=true で \section[短縮見出し]{本見出し} のオプション引数を飛ばして本引数を取る。
+    for (const h of commandArgs(ja, cmd, true)) {
+      let vis = visibleText(h);
+      if (JAPANESE.test(vis)) continue; // 日本語あり＝訳済み or 併記
+      for (const k of keepOriginal) {
+        if (k) vis = vis.replace(new RegExp(`(?<![A-Za-z])${escapeRe(k)}(?![A-Za-z])`, "g"), " ");
+      }
+      if (/[a-z]/.test(vis)) found.push(h); // 小文字 Latin が残る＝未訳の可能性大
+    }
+  }
+  return found;
+}
+
 const MATH_ENVS = [
   "equation",
   "align",
