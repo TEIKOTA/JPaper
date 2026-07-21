@@ -20,6 +20,7 @@ import {
 import { JpaperError, resolveExitCode } from "../types/errors.js";
 import { paperOutDir, dbPath, contextWindowFor, type OllamaConfig } from "../config.js";
 import { makeLlmClient } from "../providers/index.js";
+import { makeJsonlTrace } from "../runtime/trace.js";
 import { ingest, derivePaperId, type IngestDeps } from "../ingest/index.js";
 import { GlossaryDb } from "../terminology/db.js";
 import { buildPaperGlossary, writeBackResolved } from "../terminology/glossary.js";
@@ -234,7 +235,14 @@ export async function translatePaper(
   const paperId = derivePaperId(input);
   const outDir = paperOutDir(paperId, opts.outDir);
   const runDir = path.join(outDir, ".run");
-  const client = deps.client ?? makeLlmClient(opts.provider, { ollama: opts.ollama });
+  // 注入 client（テスト）はそのまま尊重し、内部生成時のみトレースを配線する。LLM トレース ADR。
+  const runId = `${paperId}-${Date.now()}`;
+  const client =
+    deps.client ??
+    makeLlmClient(opts.provider, {
+      ollama: opts.ollama,
+      trace: makeJsonlTrace(path.join(runDir, "llm-trace.jsonl"), runId),
+    });
   let db: GlossaryDb | undefined;
 
   try {

@@ -51,3 +51,4 @@
 | 2026-07-10 | [組版レイアウト方針: 原プリアンブル温存を既定・共通テンプレへ明示的フォールバック](./20260710-typesetting-layout-original-first-hybrid.md) | accepted |
 | 2026-07-10 | [ソースコメント方針: コードは事実のみ・why は正本・地雷は登録簿＋標識](./20260710-source-comments-facts-only-rationale-to-docs.md) | accepted |
 | 2026-07-21 | [見出し未訳検査は非ブロッキングの訳注に留める（第4の trigger 追加）](./20260721-heading-untranslated-nonblocking-note.md) | accepted |
+| 2026-07-22 | [LLM 呼び出しトレースは local-first JSONL・メタのみ（Langfuse は将来の opt-in exporter）](./20260722-llm-call-trace-local-jsonl.md) | accepted |

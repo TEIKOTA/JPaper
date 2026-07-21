@@ -38,15 +38,32 @@ describe("translator", () => {
     expect(c.calls[0]!.user).toContain("前訳");
     expect(c.calls[0]!.user).toContain("hedging を保持");
   });
+
+  it("トレース用 meta（role/phase/segmentId/pass）を request に載せる", async () => {
+    const c = new FakeLlmClient('{"segmentId":"s1","ja":"訳"}');
+    await translate(c, { segmentId: "s1", latex: "x", glossarySlice: [] }, {}, 2);
+    expect(c.calls[0]!.meta).toEqual({
+      role: "translator",
+      phase: "translate",
+      segmentId: "s1",
+      pass: 2,
+    });
+  });
 });
 
 describe("evaluator", () => {
   it("verdict/issues を返し pitfalls を開示", async () => {
     const c = new FakeLlmClient('{"verdict":"pass","issues":[]}');
-    const out = await evaluate(c, { segmentId: "s1", srcLatex: "x", ja: "訳" });
+    const out = await evaluate(c, { segmentId: "s1", srcLatex: "x", ja: "訳" }, {}, 1);
     expect(out.verdict).toBe("pass");
     expect(c.calls[0]!.system).toContain("有意");
     expect(c.calls[0]!.user).toContain("severity");
+    expect(c.calls[0]!.meta).toEqual({
+      role: "evaluator",
+      phase: "evaluate",
+      segmentId: "s1",
+      pass: 1,
+    });
   });
 });
 
@@ -69,5 +86,6 @@ describe("glossary-builder", () => {
     expect(c.calls[0]!.user).toContain("v [論文内定義]");
     expect(c.calls[0]!.user).toContain("rendering");
     expect(c.calls[0]!.user).toContain("併記形");
+    expect(c.calls[0]!.meta).toEqual({ role: "glossary-builder", phase: "glossary" });
   });
 });
