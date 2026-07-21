@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { makeJsonlTrace, nullTrace } from "./trace.js";
@@ -28,6 +28,14 @@ describe("makeJsonlTrace", () => {
     const first = JSON.parse(lines[0]!);
     expect(first).toMatchObject({ runId: "run-42", role: "translator", segmentId: "s1", costUsd: 0.01 });
     expect(JSON.parse(lines[1]!)).toMatchObject({ runId: "run-42", role: "evaluator", pass: 1 });
+  });
+
+  it("書き込み不能でも throw しない（ベストエフォート）", () => {
+    // dirname が既存ファイル → mkdir が ENOTDIR で失敗するが握り潰す。
+    const blocker = path.join(dir, "blocker");
+    writeFileSync(blocker, "x");
+    const sink = makeJsonlTrace(path.join(blocker, "trace.jsonl"), "run-1");
+    expect(() => sink(ev())).not.toThrow();
   });
 });
 

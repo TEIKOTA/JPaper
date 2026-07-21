@@ -62,7 +62,7 @@ export function makeOllamaClient(cfg: OllamaConfig, deps: OllamaDeps = {}): LlmC
 
   async function call(req: LlmRequest): Promise<string> {
     const model = req.model ?? cfg.model;
-    const started = now();
+    const startedAt = now();
     const res = await fetchImpl(`http://127.0.0.1:${cfg.port}/api/chat`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -91,7 +91,7 @@ export function makeOllamaClient(cfg: OllamaConfig, deps: OllamaDeps = {}): LlmC
         segmentId: req.meta?.segmentId,
         pass: req.meta?.pass,
         model,
-        latencyMs: now() - started,
+        latencyMs: now() - startedAt,
         inputTokens: data.prompt_eval_count,
         outputTokens: data.eval_count,
       });
