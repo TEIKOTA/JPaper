@@ -145,6 +145,16 @@ describe("formalCheck: 見出し未訳", () => {
     expect(h("\\section{\\textsc{BLEU}}", "\\section{\\textsc{BLEU}}")).not.toContain("heading");
     expect(h("\\section{\\emph{Transformer}}", "\\section{\\emph{Transformer}}", [keep("Transformer")])).not.toContain("heading");
   });
+  it("各種数式記法（\\(..\\) / $$..$$ / \\[..\\]）と参照系（\\ref 引数）も誤検知しない", () => {
+    expect(h("\\section{\\(p\\)}", "\\section{\\(p\\)}")).not.toContain("heading");
+    expect(h("\\section{$$p$$}", "\\section{$$p$$}")).not.toContain("heading");
+    // \ref の不可視引数 sec:methods を未訳の地の文と誤認しない
+    expect(h("\\subsection{結果 \\ref{sec:methods}}", "\\subsection{結果 \\ref{sec:methods}}")).not.toContain("heading");
+    expect(h("\\subsection{\\ref{sec:methods}}", "\\subsection{\\ref{sec:methods}}")).not.toContain("heading");
+  });
+  it("中黒（・）は日本語扱いしない＝英語見出しを見逃さない", () => {
+    expect(h("\\section{Encoder・Decoder Architecture}", "\\section{Encoder・Decoder Architecture}")).toContain("heading");
+  });
   it("\\chapter・\\part も対象", () => {
     expect(h("\\chapter{Introduction}", "\\chapter{Introduction}")).toContain("heading");
   });

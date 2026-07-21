@@ -7,30 +7,37 @@ export interface FormalIssue {
 }
 
 const HEADING_CMDS = ["part", "chapter", "section", "subsection", "subsubsection", "paragraph", "subparagraph"];
-// ひらがな・カタカナ（全角＋長音/記号ブロック）・CJK 漢字・半角カタカナ。1字でもあれば訳済み/併記とみなす。
-const JAPANESE = /[぀-ヿ㐀-鿿ｦ-ﾟ]/;
+// ひらがな・カタカナ（letters のみ・長音 ー=30FC を含む／中黒 ・=30FB は除外）・CJK 漢字・半角カタカナ。
+// 1字でもあれば訳済み/併記とみなす。中黒を除くのは「Encoder・Decoder」を訳済みと誤認しないため。
+const JAPANESE = /[ぁ-ゖァ-ヺー㐀-鿿ｦ-ﾝ]/;
 
 const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-// 見出し引数から可視テキストを取り出す（数式・制御綴り・波括弧を除去）。
-// これで \textsc/\emph 等の綴りや $p$ の英字を「未訳の地の文」と誤認しない。
+// 見出し引数から可視テキストを取り出す（数式・参照系・制御綴り・波括弧を除去）。
+// $p$ や \textsc/\emph の綴り、\ref{...} の不可視引数を「未訳の地の文」と誤認しないため。
 function visibleText(s: string): string {
   return s
-    .replace(/\$[^$]*\$/g, " ") // インライン数式
-    .replace(/\\[a-zA-Z]+\*?/g, " ") // 制御綴り \textsc, \emph, \ref 等
+    .replace(/\$\$[\s\S]*?\$\$/g, " ") // $$...$$
+    .replace(/\$[^$]*\$/g, " ") // $...$
+    .replace(/\\\([\s\S]*?\\\)/g, " ") // \(...\)
+    .replace(/\\\[[\s\S]*?\\\]/g, " ") // \[...\]
+    .replace(/\\(?:eqref|autoref|pageref|cref|Cref|ref|label|cite[a-zA-Z]*)\s*\{[^}]*\}/g, " ") // 参照系は引数ごと除去
+    .replace(/\\[a-zA-Z]+\*?/g, " ") // 残る制御綴り名（\textsc 等）は名前だけ除去し可視な引数は残す
     .replace(/[{}]/g, " "); // 波括弧
 }
 
 // 未訳の見出しを返す: 可視テキストが日本語ゼロ かつ keep-original 語を語境界で除いても小文字 Latin が残るもの。
 // 全大文字の略語（BLEU 等）・数字は小文字を含まないので除外＝安全側（ALL CAPS の実語は意図的に見逃す）。
-// keep-original の固有名（Transformer 等）は語境界で除去する（部分一致で Part→art を消さない）。
+// keep-original の固有名（Transformer 等）は前後を ASCII 英字で囲まれない箇所だけ除去（Part→art を消さない・非 ASCII 語頭も可）。
 function untranslatedHeadings(ja: string, keepOriginal: string[]): string[] {
   const found: string[] = [];
   for (const cmd of HEADING_CMDS) {
     for (const h of commandArgs(ja, cmd, false)) {
       let vis = visibleText(h);
       if (JAPANESE.test(vis)) continue; // 日本語あり＝訳済み or 併記
-      for (const k of keepOriginal) if (k) vis = vis.replace(new RegExp(`\\b${escapeRe(k)}\\b`, "g"), " ");
+      for (const k of keepOriginal) {
+        if (k) vis = vis.replace(new RegExp(`(?<![A-Za-z])${escapeRe(k)}(?![A-Za-z])`, "g"), " ");
+      }
       if (/[a-z]/.test(vis)) found.push(h); // 小文字 Latin が残る＝未訳の可能性大
     }
   }
