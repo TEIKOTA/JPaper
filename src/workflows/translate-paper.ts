@@ -36,6 +36,7 @@ import { buildFirstOccurrenceIndex } from "../terminology/first-occurrence.js";
 import { segment, segmentBudgetFor } from "../segment/segmenter.js";
 import { runSectionLoop } from "./section-loop.js";
 import { buildNotes } from "./notes.js";
+import { untranslatedHeadings } from "./quality-gate.js";
 import { checkpoint, hashContext } from "../durable/checkpoint.js";
 import { assembleWithMap, type Layout } from "../tools/assemble-latex.js";
 import { runBuildGate, type LatexRunner, type BuildGateResult } from "../tools/build-gate.js";
@@ -289,6 +290,10 @@ export async function translatePaper(
       );
     });
 
+    // 見出し未訳の非ブロッキング lint。keep-original 確定語は除外して訳注へ流す（ビルドは壊さない）。
+    const keepOriginal = ctx.resolved
+      .filter((t) => t.rendering === "keep-original")
+      .map((t) => t.src);
     const notes = buildNotes({
       resolved: ctx.resolved.map((r) => ({ ...r, firstOccurrence: false })) as ResolvedTerm[],
       firstOccurrenceBySrc: firstOcc,
@@ -296,6 +301,10 @@ export async function translatePaper(
       segmentWarns: results.map((r) => ({
         segmentId: r.segmentId,
         warnIssues: r.warnIssues,
+      })),
+      segmentLints: results.map((r) => ({
+        segmentId: r.segmentId,
+        untranslatedHeadings: untranslatedHeadings(r.ja, keepOriginal),
       })),
     });
 

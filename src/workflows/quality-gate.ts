@@ -2,7 +2,7 @@
 import type { ResolvedTerm } from "../types/contract.js";
 
 export interface FormalIssue {
-  kind: "math" | "graphics" | "label" | "heading" | "paragraph" | "keep-original" | "bilingual";
+  kind: "math" | "graphics" | "label" | "paragraph" | "keep-original" | "bilingual";
   message: string;
 }
 
@@ -29,7 +29,9 @@ function visibleText(s: string): string {
 // 未訳の見出しを返す: 可視テキストが日本語ゼロ かつ keep-original 語を語境界で除いても小文字 Latin が残るもの。
 // 全大文字の略語（BLEU 等）・数字は小文字を含まないので除外＝安全側（ALL CAPS の実語は意図的に見逃す）。
 // keep-original の固有名（Transformer 等）は前後を ASCII 英字で囲まれない箇所だけ除去（Part→art を消さない・非 ASCII 語頭も可）。
-function untranslatedHeadings(ja: string, keepOriginal: string[]): string[] {
+// これは非ブロッキングの lint（結果は訳注に流す）。任意 LaTeX から可視テキストを完全に判別するのは決定的には不可能なため、
+// 偽陽性は無害な訳注1件に留め、ビルドを壊す再訳ゲート（formalCheck）には載せない。⚠ landmines.md
+export function untranslatedHeadings(ja: string, keepOriginal: string[]): string[] {
   const found: string[] = [];
   for (const cmd of HEADING_CMDS) {
     for (const h of commandArgs(ja, cmd, false)) {
@@ -153,13 +155,6 @@ export function formalCheck(
       kind: "label",
       message: `\\label の不一致: src=[${srcLbl.join(", ")}] ja=[${jaLbl.join(", ")}]`,
     });
-  }
-
-  // 見出し引数の訳し忘れ（英語のまま残る）を決定的に捕捉して再訳させる。keep-original 固有名は除外。
-  const keepOriginal = terms.filter((t) => t.rendering === "keep-original").map((t) => t.src);
-  const untranslated = untranslatedHeadings(ja, keepOriginal);
-  if (untranslated.length > 0) {
-    issues.push({ kind: "heading", message: `見出し未訳: ${untranslated.join(" / ")}` });
   }
 
   const srcPar = countParagraphs(srcLatex);

@@ -44,4 +44,19 @@ describe("buildNotes", () => {
     });
     expect(notes).toEqual([]);
   });
+
+  it("segmentLints の未訳見出しを heading-untranslated 訳注に流す", () => {
+    const notes = buildNotes({
+      resolved: [],
+      firstOccurrenceBySrc: new Map(),
+      hasConfirmed: () => false,
+      segmentWarns: [],
+      segmentLints: [{ segmentId: "seg-2", untranslatedHeadings: ["Training", "Results"] }],
+    });
+    const headingNotes = notes.filter((n) => n.trigger === "heading-untranslated");
+    expect(headingNotes).toHaveLength(2);
+    expect(headingNotes[0].segmentId).toBe("seg-2");
+    expect(headingNotes[0].text).toContain("Training");
+    expect(headingNotes[1].text).toContain("Results");
+  });
 });
