@@ -156,6 +156,18 @@ describe("untranslatedHeadings（非ブロッキング lint）", () => {
   it("半角カタカナも日本語として扱う", () => {
     expect(h("\\section{ﾓﾃﾞﾙ}")).toEqual([]);
   });
+  it("オプション引数付き見出し（\\section[短縮]{本文}）も本引数で判定", () => {
+    expect(h("\\section[Intro]{Introduction}")).toEqual(["Introduction"]);
+    expect(h("\\section[概要]{はじめに}")).toEqual([]);
+  });
+  it("見出し中の \\url / \\includegraphics / \\path は不可視引数扱い（誤検知しない）", () => {
+    expect(h("\\section{\\url{https://example.org}}")).toEqual([]);
+    expect(h("\\section{\\includegraphics[width=1cm]{logo-file}}")).toEqual([]);
+    expect(h("\\section{\\path{src/main.tex}}")).toEqual([]);
+    // \href の第2引数（表示テキスト）は訳すべき地の文なので検出は維持
+    expect(h("\\section{\\href{https://example.org}{項目}}")).toEqual([]);
+    expect(h("\\section{\\href{https://example.org}{items}}")).not.toEqual([]);
+  });
 });
 
 describe("formalCheck: 段落", () => {

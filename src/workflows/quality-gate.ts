@@ -21,20 +21,20 @@ function visibleText(s: string): string {
     .replace(/\$[^$]*\$/g, " ") // $...$
     .replace(/\\\([\s\S]*?\\\)/g, " ") // \(...\)
     .replace(/\\\[[\s\S]*?\\\]/g, " ") // \[...\]
-    .replace(/\\(?:eqref|autoref|pageref|cref|Cref|ref|label|cite[a-zA-Z]*)\s*\{[^}]*\}/g, " ") // 参照系は引数ごと除去
+    .replace(/\\includegraphics\*?\s*(?:\[[^\]]*\])?\s*\{[^}]*\}/g, " ") // 図: オプション込みで引数ごと除去
+    .replace(/\\(?:eqref|autoref|pageref|cref|Cref|ref|label|cite[a-zA-Z]*|url|nolinkurl|path|href|input|include)\s*\{[^}]*\}/g, " ") // 参照系・URL・パス系は不可視引数ごと除去
     .replace(/\\[a-zA-Z]+\*?/g, " ") // 残る制御綴り名（\textsc 等）は名前だけ除去し可視な引数は残す
     .replace(/[{}]/g, " "); // 波括弧
 }
 
-// 未訳の見出しを返す: 可視テキストが日本語ゼロ かつ keep-original 語を語境界で除いても小文字 Latin が残るもの。
-// 全大文字の略語（BLEU 等）・数字は小文字を含まないので除外＝安全側（ALL CAPS の実語は意図的に見逃す）。
-// keep-original の固有名（Transformer 等）は前後を ASCII 英字で囲まれない箇所だけ除去（Part→art を消さない・非 ASCII 語頭も可）。
-// これは非ブロッキングの lint（結果は訳注に流す）。任意 LaTeX から可視テキストを完全に判別するのは決定的には不可能なため、
-// 偽陽性は無害な訳注1件に留め、ビルドを壊す再訳ゲート（formalCheck）には載せない。⚠ landmines.md
+// 未訳見出しを返す（非ブロッキング lint→heading-untranslated 訳注）: 可視テキストが日本語ゼロ かつ
+// keep-original 語を語境界で除いても小文字 Latin が残るもの。全大文字略語・数字は小文字を含まず除外。
+// 契約付録 §8（訳注生成契約 ④）。⚠ landmines.md
 export function untranslatedHeadings(ja: string, keepOriginal: string[]): string[] {
   const found: string[] = [];
   for (const cmd of HEADING_CMDS) {
-    for (const h of commandArgs(ja, cmd, false)) {
+    // optArg=true で \section[短縮見出し]{本見出し} のオプション引数を飛ばして本引数を取る。
+    for (const h of commandArgs(ja, cmd, true)) {
       let vis = visibleText(h);
       if (JAPANESE.test(vis)) continue; // 日本語あり＝訳済み or 併記
       for (const k of keepOriginal) {

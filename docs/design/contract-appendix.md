@@ -74,15 +74,15 @@ const StyleContract = z.object({
   notes: z.array(z.string()).default([]),
 });
 
-// 訳注（uncertainties）。採否=trigger は決定的 / 文面=LLM。data=(A) / render=(B)
-const NoteTrigger    = z.enum(["paper-defined-preserve", "low-confidence", "evaluator-warn"]);
+// 訳注（uncertainties）。採否=trigger は決定的 / 文面=LLM（heading-untranslated のみ決定的）。data=(A) / render=(B)
+const NoteTrigger    = z.enum(["paper-defined-preserve", "low-confidence", "evaluator-warn", "heading-untranslated"]);
 const TranslatorNote = z.object({
   id: z.string(),
   trigger: NoteTrigger,
   src: z.string().optional(),       // 対象語（term 系 trigger のとき）
   segmentId: z.string(),
   firstOccurrence: z.boolean(),     // 文書全体で初出か（脚注はここだけ・巻末は1エントリ）
-  text: z.string(),                 // 文面（LLM 生成: term=ResolvedTerm.note / warn=EvalIssue.message）
+  text: z.string(),                 // 文面（LLM 生成: term=ResolvedTerm.note / warn=EvalIssue.message。heading-untranslated のみ決定的テンプレ）
 });
 ```
 
@@ -172,8 +172,8 @@ CREATE INDEX idx_term_src ON term(src);
 ## 8. 追加契約（新B レビュー反映）
 
 - **core API**: `translatePaper(input: JpaperInput, opts: { provider: "ollama"|"claude"; outDir?: string }): Promise<Result>`。`Result = { status: "ok"|"failed"; pdfPath?: string; exitCode: number; summary: RunSummary }`。CLI・GUI はこの1関数を呼ぶ薄い皮（[UI/配置 ADR](../adr/20260709-user-interface-file-layout-and-cli.md) 決定4）。例外は投げず `status/exitCode` で表現（§6 と対応）。
-- **stdout サマリ JSON**: `RunSummary = { paperId, outDir, segments: {total, passed, failed}, revisions: {max, used}, glossary: {proposedAdded}, notes: {total, byTrigger}, layout: "original"|"template"|null, buildOk: boolean, exitCode }`（zod 定義を実装時に写経）。`layout` は採用した組版モード（[組版レイアウト ADR](../adr/20260710-typesetting-layout-original-first-hybrid.md)。`original`=原プリアンブル温存／`template`=共通テンプレへフォールバック）。組版は (B) のため **(A) 単体では `layout=null`**（`buildOk=null` と同様）。`notes` は §1 `TranslatorNote` の件数集計（本体は `notes.json`）。`byTrigger` は `paper-defined-preserve|low-confidence|evaluator-warn` 別の件数。
-- **訳注の生成契約（[翻訳一貫性 ADR](../adr/20260710-translation-consistency-brief-style-and-annotations.md) 決定3・採否=決定的 / 文面=LLM）**: trigger を次の決定的規則で採る。①`paper-defined` で `rendering∈{keep-original,bilingual}` に確定した語 ②**低確信=`class="established"` かつ global DB に `status="confirmed"` の一致が無く `proposed` のみ or 未ヒットで preserve に倒した語**（DB 状態から決定的に判定）③evaluator の `warn` issue。文面 `text` は term 系＝`ResolvedTerm.note`、warn 系＝`EvalIssue.message`。`firstOccurrence`（文書全体基準）で本文脚注は初出1回のみ、巻末一覧は語ごと1エントリ。
+- **stdout サマリ JSON**: `RunSummary = { paperId, outDir, segments: {total, passed, failed}, revisions: {max, used}, glossary: {proposedAdded}, notes: {total, byTrigger}, layout: "original"|"template"|null, buildOk: boolean, exitCode }`（zod 定義を実装時に写経）。`layout` は採用した組版モード（[組版レイアウト ADR](../adr/20260710-typesetting-layout-original-first-hybrid.md)。`original`=原プリアンブル温存／`template`=共通テンプレへフォールバック）。組版は (B) のため **(A) 単体では `layout=null`**（`buildOk=null` と同様）。`notes` は §1 `TranslatorNote` の件数集計（本体は `notes.json`）。`byTrigger` は `paper-defined-preserve|low-confidence|evaluator-warn|heading-untranslated` 別の件数。
+- **訳注の生成契約（[翻訳一貫性 ADR](../adr/20260710-translation-consistency-brief-style-and-annotations.md) 決定3・採否=決定的 / 文面=LLM）**: trigger を次の決定的規則で採る。①`paper-defined` で `rendering∈{keep-original,bilingual}` に確定した語 ②**低確信=`class="established"` かつ global DB に `status="confirmed"` の一致が無く `proposed` のみ or 未ヒットで preserve に倒した語**（DB 状態から決定的に判定）③evaluator の `warn` issue ④**heading-untranslated=見出し（`\section` 等）の可視テキストが未訳の可能性（`untranslatedHeadings` の決定的検査。非ブロッキングで再訳ゲートには載せない）**。文面 `text` は term 系＝`ResolvedTerm.note`、warn 系＝`EvalIssue.message`、heading 系＝決定的テンプレ（LLM 非依存）。`firstOccurrence`（文書全体基準）で本文脚注は初出1回のみ、巻末一覧は語ごと1エントリ。④の決定は [見出し未訳検査 ADR](../adr/20260721-heading-untranslated-nonblocking-note.md)。
 - **run-context 注入（brief/style）**: system prompt の run-context（設計メモ §13A）に、per-paper 確定辞書＋rendering に加えて **`DocumentBrief`＋`StyleContract` を全 translator へ注入**する。トークン予算は §4 の 30% 圏内で管理（超過時はブリーフを要約して圧縮）。
 - **リトライ（`isTransient`）**: 対象＝ネットワーク瞬断・タイムアウト・HTTP 429/5xx・Ollama 一時的接続不可。回数3・指数バックオフ（初期 1s, ×2, 上限 10s）。それ以外（タスク失敗）はリトライせず surface。
 - **形式検査の合否規則（節ループ内・決定的）**: 数式保全＝原文と訳文で `$...$`／`\[...\]`／`\begin{equation|align|...}` の**個数一致**（中身は問わない）。段落欠落なし＝**訳文段落数 ≤ 原文段落数**（日本語で複数段落を自然に統合するのを許容。分割・水増しは不可）。ただし訳文段落数が原文の **50% 未満**なら明らかな欠落として error。`keep-original` 一貫＝当該語が全出現で原形のまま。zod 適合＝§1 スキーマ。（大セグメント `>=3500` がトークン予算 `0.30×CW` を超える場合の段落境界での再分割は §4 の core 実装＝(A) に含む。）
