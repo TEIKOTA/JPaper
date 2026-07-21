@@ -104,6 +104,43 @@ describe("formalCheck: \\label（相互参照の定義）", () => {
   });
 });
 
+describe("formalCheck: 見出し未訳", () => {
+  const keep = (src: string): ResolvedTerm => ({
+    src,
+    form: src,
+    class: "do-not-translate",
+    rendering: "keep-original",
+    firstOccurrence: false,
+  });
+  // src を与えて段落数を揃え、heading 判定だけを見る（空 src だと段落水増しが混じるため）。
+  const h = (src: string, ja: string, terms: ResolvedTerm[] = []) => kinds(src, ja, terms);
+  it("英語のままの見出しを検出（\\section/\\subsection/\\subsubsection）", () => {
+    expect(h("\\section{Training}", "\\section{Training}")).toContain("heading");
+    expect(h("\\subsection{Hardware and Schedule}", "\\subsection{Hardware and Schedule}")).toContain("heading");
+    expect(h("\\subsubsection{Scaled Dot-Product Attention}", "\\subsubsection{Scaled Dot-Product Attention}")).toContain("heading");
+  });
+  it("訳済み・併記の見出しは heading を出さない（日本語を含む）", () => {
+    expect(h("\\section{Training}", "\\section{訓練}")).not.toContain("heading");
+    expect(h("\\section{Model Architecture}", "\\section{モデルアーキテクチャ(model architecture)}")).not.toContain("heading");
+    expect(h("\\subsection{Attention} \\label{s}", "\\subsection{注意} \\label{s}")).not.toContain("heading");
+  });
+  it("全大文字の略語・数字のみの見出しは誤検知しない（小文字 Latin 無し）", () => {
+    expect(h("\\section{BLEU}", "\\section{BLEU}")).not.toContain("heading");
+    expect(h("\\subsection{WMT 2014}", "\\subsection{WMT 2014}")).not.toContain("heading");
+    expect(h("\\section{GPU}", "\\section{GPU}")).not.toContain("heading");
+  });
+  it("keep-original 固有名だけの見出しは除外（Transformer 等）", () => {
+    expect(h("\\section{Transformer}", "\\section{Transformer}", [keep("Transformer")])).not.toContain("heading");
+    // keep-original を除いても訳すべき語が残れば検出
+    expect(h("\\section{Transformer Training}", "\\section{Transformer Training}", [keep("Transformer")])).toContain("heading");
+  });
+  it("複数見出しの一部だけ未訳でも検出", () => {
+    const src = "\\section{Background}\n本文\n\\subsection{Training}";
+    const ja = "\\section{背景}\n本文\n\\subsection{Training}";
+    expect(h(src, ja)).toContain("heading");
+  });
+});
+
 describe("formalCheck: 段落", () => {
   it("水増し（訳>原）を検出", () => {
     expect(kinds("a", "訳a\n\n余分")).toContain("paragraph");

@@ -2,8 +2,27 @@
 import type { ResolvedTerm } from "../types/contract.js";
 
 export interface FormalIssue {
-  kind: "math" | "graphics" | "label" | "paragraph" | "keep-original" | "bilingual";
+  kind: "math" | "graphics" | "label" | "heading" | "paragraph" | "keep-original" | "bilingual";
   message: string;
+}
+
+const HEADING_CMDS = ["section", "subsection", "subsubsection", "paragraph", "subparagraph"];
+// ひらがな・カタカナ（＋長音/記号ブロック）・CJK 漢字。見出しに日本語が1字でもあれば訳済み/併記とみなす。
+const JAPANESE = /[぀-ヿ㐀-鿿]/;
+
+// 未訳の見出しを返す: 日本語ゼロ かつ keep-original 語を除いても小文字 Latin が残るもの。
+// 全大文字の略語（BLEU 等）・数字は小文字を含まないので除外。keep-original の固有名（Transformer 等）も除外。
+function untranslatedHeadings(ja: string, keepOriginal: string[]): string[] {
+  const found: string[] = [];
+  for (const cmd of HEADING_CMDS) {
+    for (const h of commandArgs(ja, cmd, false)) {
+      if (JAPANESE.test(h)) continue; // 日本語あり＝訳済み or 併記
+      let rest = h;
+      for (const k of keepOriginal) if (k) rest = rest.split(k).join(" "); // 固有名/略語を除去
+      if (/[a-z]/.test(rest)) found.push(h); // 小文字 Latin が残る＝未訳の可能性大
+    }
+  }
+  return found;
 }
 
 const MATH_ENVS = [
@@ -115,6 +134,13 @@ export function formalCheck(
       kind: "label",
       message: `\\label の不一致: src=[${srcLbl.join(", ")}] ja=[${jaLbl.join(", ")}]`,
     });
+  }
+
+  // 見出し引数の訳し忘れ（英語のまま残る）を決定的に捕捉して再訳させる。keep-original 固有名は除外。
+  const keepOriginal = terms.filter((t) => t.rendering === "keep-original").map((t) => t.src);
+  const untranslated = untranslatedHeadings(ja, keepOriginal);
+  if (untranslated.length > 0) {
+    issues.push({ kind: "heading", message: `見出し未訳: ${untranslated.join(" / ")}` });
   }
 
   const srcPar = countParagraphs(srcLatex);

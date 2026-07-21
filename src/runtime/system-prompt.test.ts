@@ -45,6 +45,12 @@ describe("buildSystemPrompt", () => {
     );
   });
 
+  it("translator にのみ見出し和訳の指示を出す", () => {
+    expect(buildSystemPrompt("translator", { glossary: [] })).toContain("見出しの扱い");
+    expect(buildSystemPrompt("evaluator", { glossary: [] })).not.toContain("見出しの扱い");
+    expect(buildSystemPrompt("glossary-builder", { glossary: [] })).not.toContain("見出しの扱い");
+  });
+
   it("evaluator にのみ pitfalls を開示する", () => {
     expect(buildSystemPrompt("evaluator", { glossary: [] })).toContain("有意");
     expect(buildSystemPrompt("translator", { glossary: [] })).not.toContain("有意");
