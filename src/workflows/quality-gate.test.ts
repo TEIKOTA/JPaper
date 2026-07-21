@@ -139,6 +139,21 @@ describe("formalCheck: 見出し未訳", () => {
     const ja = "\\section{背景}\n本文\n\\subsection{Training}";
     expect(h(src, ja)).toContain("heading");
   });
+  it("数式・制御綴りだけの見出しは誤検知しない（可視テキストで判定）", () => {
+    // 生 LaTeX の $p$ や \textsc/\emph の英小文字を未訳と誤認しない（再訳でも直せず MAX 到達を防ぐ）。
+    expect(h("\\section{$p$}", "\\section{$p$}")).not.toContain("heading");
+    expect(h("\\section{\\textsc{BLEU}}", "\\section{\\textsc{BLEU}}")).not.toContain("heading");
+    expect(h("\\section{\\emph{Transformer}}", "\\section{\\emph{Transformer}}", [keep("Transformer")])).not.toContain("heading");
+  });
+  it("\\chapter・\\part も対象", () => {
+    expect(h("\\chapter{Introduction}", "\\chapter{Introduction}")).toContain("heading");
+  });
+  it("keep-original は語境界で除去（部分一致で Part→art を消さない）", () => {
+    expect(h("\\section{Part}", "\\section{Part}", [keep("art")])).toContain("heading");
+  });
+  it("半角カタカナも日本語として扱う", () => {
+    expect(h("\\section{Model}", "\\section{ﾓﾃﾞﾙ}")).not.toContain("heading");
+  });
 });
 
 describe("formalCheck: 段落", () => {

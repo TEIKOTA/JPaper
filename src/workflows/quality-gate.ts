@@ -6,20 +6,32 @@ export interface FormalIssue {
   message: string;
 }
 
-const HEADING_CMDS = ["section", "subsection", "subsubsection", "paragraph", "subparagraph"];
-// ひらがな・カタカナ（＋長音/記号ブロック）・CJK 漢字。見出しに日本語が1字でもあれば訳済み/併記とみなす。
-const JAPANESE = /[぀-ヿ㐀-鿿]/;
+const HEADING_CMDS = ["part", "chapter", "section", "subsection", "subsubsection", "paragraph", "subparagraph"];
+// ひらがな・カタカナ（全角＋長音/記号ブロック）・CJK 漢字・半角カタカナ。1字でもあれば訳済み/併記とみなす。
+const JAPANESE = /[぀-ヿ㐀-鿿ｦ-ﾟ]/;
 
-// 未訳の見出しを返す: 日本語ゼロ かつ keep-original 語を除いても小文字 Latin が残るもの。
-// 全大文字の略語（BLEU 等）・数字は小文字を含まないので除外。keep-original の固有名（Transformer 等）も除外。
+const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+// 見出し引数から可視テキストを取り出す（数式・制御綴り・波括弧を除去）。
+// これで \textsc/\emph 等の綴りや $p$ の英字を「未訳の地の文」と誤認しない。
+function visibleText(s: string): string {
+  return s
+    .replace(/\$[^$]*\$/g, " ") // インライン数式
+    .replace(/\\[a-zA-Z]+\*?/g, " ") // 制御綴り \textsc, \emph, \ref 等
+    .replace(/[{}]/g, " "); // 波括弧
+}
+
+// 未訳の見出しを返す: 可視テキストが日本語ゼロ かつ keep-original 語を語境界で除いても小文字 Latin が残るもの。
+// 全大文字の略語（BLEU 等）・数字は小文字を含まないので除外＝安全側（ALL CAPS の実語は意図的に見逃す）。
+// keep-original の固有名（Transformer 等）は語境界で除去する（部分一致で Part→art を消さない）。
 function untranslatedHeadings(ja: string, keepOriginal: string[]): string[] {
   const found: string[] = [];
   for (const cmd of HEADING_CMDS) {
     for (const h of commandArgs(ja, cmd, false)) {
-      if (JAPANESE.test(h)) continue; // 日本語あり＝訳済み or 併記
-      let rest = h;
-      for (const k of keepOriginal) if (k) rest = rest.split(k).join(" "); // 固有名/略語を除去
-      if (/[a-z]/.test(rest)) found.push(h); // 小文字 Latin が残る＝未訳の可能性大
+      let vis = visibleText(h);
+      if (JAPANESE.test(vis)) continue; // 日本語あり＝訳済み or 併記
+      for (const k of keepOriginal) if (k) vis = vis.replace(new RegExp(`\\b${escapeRe(k)}\\b`, "g"), " ");
+      if (/[a-z]/.test(vis)) found.push(h); // 小文字 Latin が残る＝未訳の可能性大
     }
   }
   return found;
