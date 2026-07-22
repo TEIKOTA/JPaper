@@ -22,7 +22,9 @@ describe("translator", () => {
     });
     expect(out).toEqual({ segmentId: "s1", ja: "アテンションは…" });
     expect(c.calls[0]!.system).toContain("翻訳する専門家");
-    expect(c.calls[0]!.system).toContain("attention: 訳語「アテンション」を使う");
+    // 確定用語は system ではなく user（プロンプトキャッシュ prefix を安定化するため）
+    expect(c.calls[0]!.system).not.toContain("attention: 訳語");
+    expect(c.calls[0]!.user).toContain("attention: 訳語「アテンション」を使う");
     expect(c.calls[0]!.user).toContain("\\section{x}");
   });
 

@@ -3,8 +3,8 @@ import type { ResolvedTerm, DocumentBrief, StyleContract } from "../types/contra
 
 export type AgentRole = "translator" | "evaluator" | "glossary-builder";
 
+// 用語スライスは per-segment で変わるため system には入れない（user へ）。プロンプトキャッシュ再利用 ADR。
 export interface RunContext {
-  glossary: ResolvedTerm[];
   brief?: DocumentBrief;
   style?: StyleContract;
 }
@@ -80,15 +80,24 @@ function renderStyle(style: StyleContract): string {
     .join("\n");
 }
 
-function renderRunContext(ctx: RunContext): string {
-  const parts = [`## 確定用語・表記\n${renderTerms(ctx.glossary)}`];
+function renderDocContext(ctx: RunContext): string {
+  const parts: string[] = [];
   if (ctx.brief) parts.push(`## 文書ブリーフ\n${renderBrief(ctx.brief)}`);
   if (ctx.style) parts.push(`## 文体契約\n${renderStyle(ctx.style)}`);
   return parts.join("\n\n");
 }
 
+// 確定用語ブロックは user メッセージ側に置く（per-segment で変わり system prompt のキャッシュ prefix を壊さないため）。
+// プロンプトキャッシュ再利用 ADR（20260722）。
+export function renderGlossaryBlock(glossary: ResolvedTerm[]): string {
+  return `## 確定用語・表記\n${renderTerms(glossary)}`;
+}
+
+// system prompt は role ごとに安定（brief/style は run 内で一定）＝同一 role のコール間でキャッシュ prefix を共有する。
 export function buildSystemPrompt(role: AgentRole, ctx: RunContext): string {
-  const parts = [ROLE_DEF[role], COMMON, renderRunContext(ctx)];
+  const parts = [ROLE_DEF[role], COMMON];
+  const doc = renderDocContext(ctx);
+  if (doc !== "") parts.push(doc);
   if (role === "translator") parts.push(TRANSLATOR_HEADINGS);
   if (role === "evaluator") parts.push(PITFALLS, EVAL_RUBRIC);
   return parts.join("\n\n---\n\n");

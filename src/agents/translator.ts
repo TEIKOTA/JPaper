@@ -7,7 +7,7 @@ import type {
 } from "../types/contract.js";
 import { TranslatorOut } from "../types/contract.js";
 import { runAgent } from "../runtime/llm-client.js";
-import { buildSystemPrompt } from "../runtime/system-prompt.js";
+import { buildSystemPrompt, renderGlossaryBlock } from "../runtime/system-prompt.js";
 
 export interface DocContext {
   brief?: DocumentBrief;
@@ -16,6 +16,7 @@ export interface DocContext {
 
 function renderUser(input: TranslatorIn): string {
   const lines = [`# セグメント ${input.segmentId}`, "## 原文 LaTeX", input.latex];
+  lines.push(renderGlossaryBlock(input.glossarySlice)); // per-segment 用語は user 側（system の cache prefix を保つ）
   if (input.priorJa) lines.push("## 前回の訳（改稿対象）", input.priorJa);
   if (input.issues && input.issues.length > 0) {
     lines.push("## 指摘（これらを直す）", input.issues.map((i) => `- ${i}`).join("\n"));
@@ -34,7 +35,6 @@ export async function translate(
   pass?: number,
 ): Promise<TranslatorOut> {
   const system = buildSystemPrompt("translator", {
-    glossary: input.glossarySlice,
     brief: doc.brief,
     style: doc.style,
   });
