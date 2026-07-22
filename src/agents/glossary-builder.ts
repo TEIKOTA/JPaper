@@ -32,5 +32,9 @@ export async function buildGlossary(
   input: GlossaryBuilderIn,
 ): Promise<GlossaryBuilderOut> {
   const system = buildSystemPrompt("glossary-builder", { glossary: [] });
-  return runAgent(client, { system, user: renderUser(input) }, GlossaryBuilderOut);
+  return runAgent(
+    client,
+    { system, user: renderUser(input), meta: { role: "glossary-builder", phase: "glossary" } },
+    GlossaryBuilderOut,
+  );
 }

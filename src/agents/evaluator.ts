@@ -33,11 +33,20 @@ export async function evaluate(
   client: LlmClient,
   input: EvaluatorIn,
   ctx: EvalContext = {},
+  pass?: number,
 ): Promise<EvaluatorOut> {
   const system = buildSystemPrompt("evaluator", {
     glossary: ctx.glossary ?? [],
     brief: ctx.brief,
     style: ctx.style,
   });
-  return runAgent(client, { system, user: renderUser(input) }, EvaluatorOut);
+  return runAgent(
+    client,
+    {
+      system,
+      user: renderUser(input),
+      meta: { role: "evaluator", phase: "evaluate", segmentId: input.segmentId, pass },
+    },
+    EvaluatorOut,
+  );
 }

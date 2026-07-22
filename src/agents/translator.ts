@@ -31,11 +31,20 @@ export async function translate(
   client: LlmClient,
   input: TranslatorIn,
   doc: DocContext = {},
+  pass?: number,
 ): Promise<TranslatorOut> {
   const system = buildSystemPrompt("translator", {
     glossary: input.glossarySlice,
     brief: doc.brief,
     style: doc.style,
   });
-  return runAgent(client, { system, user: renderUser(input) }, TranslatorOut);
+  return runAgent(
+    client,
+    {
+      system,
+      user: renderUser(input),
+      meta: { role: "translator", phase: "translate", segmentId: input.segmentId, pass },
+    },
+    TranslatorOut,
+  );
 }

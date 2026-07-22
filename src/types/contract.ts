@@ -159,11 +159,40 @@ export const Result = z.object({
 export type Result = z.infer<typeof Result>;
 
 // ── §8 LlmClient 境界 ──
+// meta は呼び出し文脈（誰が・どの段・何回目か）。トレース（LlmCallEvent）へ写すためだけに使い、変換結果には影響しない。
+export interface LlmCallMeta {
+  role: "translator" | "evaluator" | "glossary-builder";
+  phase?: "translate" | "evaluate" | "glossary";
+  segmentId?: string;
+  pass?: number; // 節ループの再訳回数（0=初回）
+}
 export interface LlmRequest {
   model?: string;
   system: string;
   user: string;
+  meta?: LlmCallMeta;
 }
 export interface LlmClient {
   complete(req: LlmRequest): Promise<string>;
 }
+
+// ── §8 LLM 呼び出しトレース（local JSONL・メタのみ。本文/訳文は含めない）。LLM トレース ADR。──
+// プロバイダは runId を知らないので LlmCallEvent を emit し、run 層が runId を stamp して LlmCallRecord にする。
+export interface LlmCallEvent {
+  ts: string; // 呼び出し完了時刻（ISO8601）
+  provider: Provider;
+  role?: LlmCallMeta["role"];
+  phase?: LlmCallMeta["phase"];
+  segmentId?: string;
+  pass?: number;
+  model?: string;
+  latencyMs: number;
+  numTurns?: number;
+  inputTokens?: number;
+  outputTokens?: number;
+  cacheReadTokens?: number;
+  cacheCreationTokens?: number;
+  costUsd?: number;
+}
+export type LlmCallRecord = LlmCallEvent & { runId: string };
+export type TraceSink = (ev: LlmCallEvent) => void;
