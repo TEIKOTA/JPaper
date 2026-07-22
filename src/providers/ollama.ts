@@ -75,6 +75,8 @@ export function makeOllamaClient(cfg: OllamaConfig, deps: OllamaDeps = {}): LlmC
         stream: false,
         keep_alive: cfg.keepAlive,
         options: { num_ctx: cfg.contextWindow },
+        // ネイティブ JSON モードで構文的に妥当な JSON を強制（parse 失敗を撲滅）。構造化出力 ADR。
+        ...(req.jsonMode ? { format: "json" } : {}),
       }),
     });
     if (res.ok) {

@@ -22,6 +22,19 @@ describe("makeClaudeClient", () => {
     expect(args).not.toContain("--model");
   });
 
+  it("jsonMode は無視する（claude CLI にネイティブ機能が無く CLI フラグを増やさない）", async () => {
+    let args: string[] = [];
+    const c = makeClaudeClient({
+      run: async (a) => {
+        args = a;
+        return JSON.stringify({ result: "訳文" });
+      },
+    });
+    await c.complete({ system: "s", user: "u", jsonMode: true });
+    expect(args).not.toContain("--format");
+    expect(args.filter((a) => a === "--output-format")).toHaveLength(1); // 既存の envelope 用のみ
+  });
+
   it("非 JSON 応答は transient な code 1（withRetry 対象）", async () => {
     const c = makeClaudeClient({ run: async () => "not json" });
     await expect(c.complete({ system: "s", user: "u" })).rejects.toMatchObject({ code: 1 });
