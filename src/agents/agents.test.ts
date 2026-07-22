@@ -3,6 +3,7 @@ import { translate } from "./translator.js";
 import { evaluate } from "./evaluator.js";
 import { buildGlossary } from "./glossary-builder.js";
 import { FakeLlmClient } from "../testing/fake-llm.js";
+import type { ResolvedTerm } from "../types/contract.js";
 
 describe("translator", () => {
   it("本文を訳して TranslatorOut を返す", async () => {
@@ -66,6 +67,22 @@ describe("evaluator", () => {
       segmentId: "s1",
       pass: 1,
     });
+  });
+
+  it("確定用語は system ではなく user に載る（用語違反検出のため届く・キャッシュ prefix を保つ）", async () => {
+    const c = new FakeLlmClient('{"verdict":"pass","issues":[]}');
+    const glossary: ResolvedTerm[] = [
+      {
+        src: "attention",
+        form: "アテンション",
+        class: "established",
+        rendering: "translate",
+        firstOccurrence: true,
+      },
+    ];
+    await evaluate(c, { segmentId: "s1", srcLatex: "x", ja: "訳" }, { glossary });
+    expect(c.calls[0]!.user).toContain("attention: 訳語「アテンション」を使う");
+    expect(c.calls[0]!.system).not.toContain("attention: 訳語");
   });
 });
 
