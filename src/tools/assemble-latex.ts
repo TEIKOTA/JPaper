@@ -26,6 +26,9 @@ const JP_INJECTION = [
   "% --- JPaper 注入ここまで ---",
 ].join("\n");
 
+// 契約付録 §7・組版 shim ADR(20260809)。pdfTeX プリミティブを LuaTeX で有効化する。
+const LUATEX85 = "\\RequirePackage{luatex85}";
+
 export function extractPreamble(cleanLatex: string): string {
   const i = cleanLatex.indexOf(BEGIN_DOC);
   return i === -1 ? "" : cleanLatex.slice(0, i);
@@ -39,41 +42,94 @@ export function neutralizePreamble(preamble: string): string {
   return preamble.replace(DROP_PACKAGES, "");
 }
 
+// \documentclass より前に置く必要があるため、共有部品の注入とは別工程で先頭へ足す。
+export function prependLuatexCompat(preamble: string): string {
+  if (preamble.includes("luatex85")) return preamble;
+  return `${LUATEX85}\n${preamble}`;
+}
+
 // 原前文へ共有部品（luatexja・引用フォールバック・graphicx 保証）を注入する。
 export function injectShared(preamble: string): string {
   const graphicx = hasPackage(preamble, "graphicx") ? "" : "\n\\usepackage{graphicx}";
-  return `${preamble.replace(/\s*$/, "")}\n${JP_INJECTION}${graphicx}\n`;
+  return `${prependLuatexCompat(preamble).replace(/\s*$/, "")}\n${JP_INJECTION}${graphicx}\n`;
 }
 
-// \maketitle を成立させるため原前文から \title/\author ブロックを取り出す（テンプレへ引き継ぐ）。
-export function extractCommand(preamble: string, name: string): string | undefined {
-  const start = preamble.indexOf(`\\${name}`);
-  if (start === -1) return undefined;
-  let i = preamble.indexOf("{", start);
-  if (i === -1) return undefined;
-  let depth = 0;
-  for (; i < preamble.length; i++) {
-    const c = preamble[i];
-    if (c === "{") depth++;
-    else if (c === "}" && --depth === 0) return preamble.slice(start, i + 1);
-  }
-  return undefined;
+// 契約付録 §7・組版 shim ADR(20260809)。原 class 固有のマークアップを article 上で吸収する。
+const CLASS_SHIM = [
+  "% --- JPaper 注入: class 固有マークアップの吸収 ---",
+  "\\makeatletter",
+  "\\newcommand{\\jpaper@env}[3]{\\@ifundefined{#1}{\\newenvironment{#1}{#2}{#3}}{}}",
+  // elsarticle
+  "\\jpaper@env{frontmatter}{}{\\maketitle}",
+  "\\jpaper@env{keyword}{\\par\\noindent\\textbf{キーワード: }}{\\par}",
+  "\\providecommand{\\sep}{;\\ }",
+  "\\providecommand{\\ead}[2][]{}",
+  "\\providecommand{\\address}[2][]{}",
+  "\\providecommand{\\cortext}[2][]{}",
+  "\\providecommand{\\fntext}[2][]{}",
+  "\\providecommand{\\tnotetext}[2][]{}",
+  "\\providecommand{\\corref}[1]{}",
+  "\\providecommand{\\fnref}[1]{}",
+  "\\providecommand{\\tnoteref}[1]{}",
+  "\\providecommand{\\journal}[1]{}",
+  "\\providecommand{\\biboptions}[1]{}",
+  // IEEEtran
+  "\\jpaper@env{IEEEkeywords}{\\par\\noindent\\textbf{キーワード: }}{\\par}",
+  "\\providecommand{\\IEEEauthorblockN}[1]{#1}",
+  "\\providecommand{\\IEEEauthorblockA}[1]{#1}",
+  "\\providecommand{\\IEEEPARstart}[2]{#1#2}",
+  "\\providecommand{\\IEEEpubid}[1]{}",
+  // acmart（CCSXML は XML なので verbatim の comment で丸ごと捨てる）
+  "\\jpaper@env{CCSXML}{\\comment}{\\endcomment}",
+  "\\providecommand{\\ccsdesc}[2][]{}",
+  "\\providecommand{\\keywords}[1]{\\par\\noindent\\textbf{キーワード: }#1\\par}",
+  "\\providecommand{\\institution}[1]{#1}",
+  "\\providecommand{\\city}[1]{#1}",
+  "\\providecommand{\\country}[1]{#1}",
+  "\\providecommand{\\affiliation}[2][]{}",
+  "\\providecommand{\\email}[1]{#1}",
+  // revtex
+  "\\providecommand{\\altaffiliation}[2][]{}",
+  "\\providecommand{\\homepage}[2][]{}",
+  "\\providecommand{\\collaboration}[1]{}",
+  "\\providecommand{\\preprint}[1]{}",
+  "\\providecommand{\\pacs}[1]{}",
+  // llncs / springer
+  "\\providecommand{\\institute}[1]{}",
+  "\\providecommand{\\inst}[1]{}",
+  "\\providecommand{\\orcidID}[1]{}",
+  "\\providecommand{\\titlerunning}[1]{}",
+  "\\providecommand{\\authorrunning}[1]{}",
+  "\\providecommand{\\subtitle}[1]{}",
+  "\\makeatother",
+  "% --- JPaper 注入ここまで ---",
+].join("\n");
+
+const DOCUMENTCLASS = /\\documentclass(?:\[[^\]]*\])?\{[^}]*\}[ \t]*\r?\n?/;
+
+// 原 \documentclass を落として残り（パッケージ・ユーザー定義マクロ）は丸ごと引き継ぐ。
+export function stripDocumentClass(preamble: string): string {
+  return preamble.replace(DOCUMENTCLASS, "");
 }
 
 function templatePreamble(originalPreamble: string): string {
-  const title = extractCommand(originalPreamble, "title") ?? "\\title{}";
-  const author = extractCommand(originalPreamble, "author") ?? "\\author{}";
+  const carried = stripDocumentClass(neutralizePreamble(originalPreamble)).trim();
   return [
+    LUATEX85,
     "\\documentclass[a4paper]{article}",
+    "\\title{}",
+    "\\author{}",
+    CLASS_SHIM,
+    ...(carried === "" ? [] : ["% --- JPaper 注入: 原前文の引き継ぎ（documentclass のみ差し替え）---", carried]),
+    "% --- JPaper 注入: 日本語組版・共有引用 ---",
     "\\usepackage[ipaex]{luatexja-preset}",
     "\\usepackage{amsmath,amsfonts,amssymb}",
     "\\usepackage{graphicx}",
     "\\usepackage{booktabs}",
+    "\\usepackage{verbatim}",
     "\\usepackage{hyperref}",
     "\\providecommand{\\citep}{\\cite}",
     "\\providecommand{\\citet}{\\cite}",
-    title,
-    author,
   ].join("\n");
 }
 
