@@ -208,7 +208,15 @@ function typeset(
   const run = (mode: Layout): BuildGateResult => {
     const { mainTex, sourceMap } = assembleWithMap({ cleanLatex, segments, mode });
     return runBuildGate(
-      { buildDir, mainTex, sourceDir: opts.sourceDir, mainDir: opts.mainDir, figures: opts.figures, sourceMap },
+      {
+        buildDir,
+        mainTex,
+        sourceDir: opts.sourceDir,
+        mainDir: opts.mainDir,
+        figures: opts.figures,
+        sourceMap,
+        originalTex: cleanLatex,
+      },
       runner,
     );
   };
