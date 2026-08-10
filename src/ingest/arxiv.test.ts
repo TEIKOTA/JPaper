@@ -209,3 +209,45 @@ describe("待ち行列の上限と中断", () => {
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 });
+
+describe("中断時の予約の巻き戻し", () => {
+  it("待機中に中断されたら予約を返す（他のリクエストの待ちを伸ばさない）", async () => {
+    const state = { lastRequestAt: 5000 };
+    const c = new AbortController();
+    const p = fetchArxivSource("2203.06060", {
+      fetchImpl: (async () => okResponse("S")) as unknown as typeof fetch,
+      now: () => 0,
+      sleep: () => new Promise<void>(() => {}),
+      minIntervalMs: 3000,
+      state,
+      signal: c.signal,
+    });
+    c.abort();
+    await expect(p).rejects.toMatchObject({ kind: "canceled" });
+    // 予約を残すと、接続してすぐ切るだけで待ち行列を伸ばせる（fetch は 1 度も起きない）。
+    expect(state.lastRequestAt).toBe(5000);
+  });
+
+  it("中断が連続しても正当なリクエストが締め出されない", async () => {
+    const state = { lastRequestAt: 0 };
+    const common = {
+      fetchImpl: (async () => okResponse("S")) as unknown as typeof fetch,
+      now: () => 0,
+      minIntervalMs: 3000,
+      maxQueueWaitMs: 10_000,
+      state,
+    };
+    for (let i = 0; i < 6; i++) {
+      const c = new AbortController();
+      const p = fetchArxivSource("2203.06060", {
+        ...common,
+        sleep: () => new Promise<void>(() => {}),
+        signal: c.signal,
+      });
+      c.abort();
+      await expect(p).rejects.toMatchObject({ kind: "canceled" });
+    }
+    const buf = await fetchArxivSource("2203.06060", { ...common, sleep: async () => {} });
+    expect(buf.toString("utf8")).toBe("S");
+  });
+});

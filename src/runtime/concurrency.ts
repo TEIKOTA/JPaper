@@ -23,7 +23,9 @@ export function makeGate(limit: number): Gate {
     active: () => running,
     waiting: () => queue.length,
     async run<T>(fn: () => Promise<T>): Promise<T> {
-      if (running >= max) await new Promise<void>((r) => queue.push(r));
+      // 起床後に必ず再検査する。release の running-- と待機者の再開（microtask）の間に
+      // 新規呼び出しが枠を横取りすると、再検査しなければ待機者が上乗せして上限を破る。
+      while (running >= max) await new Promise<void>((r) => queue.push(r));
       running++;
       try {
         return await fn();
@@ -35,10 +37,15 @@ export function makeGate(limit: number): Gate {
 }
 
 export const DEFAULT_MAX_LLM_CONCURRENCY = 8;
+// 上限の上限。"1e9" のような値で事実上無制限にさせない。
+export const MAX_LLM_CONCURRENCY_CAP = 64;
 
+// 10 進整数だけを受け付ける（"1e9" / "0x10" は不正）。範囲外は既定ではなく端へ丸める。
+// 既定へ黙って戻すと、絞ろうとした設定ミスが緩める方向に倒れるため。
 export function resolveMaxLlmConcurrency(env = process.env): number {
-  const raw = Number(env.JPAPER_MAX_LLM_CONCURRENCY);
-  return Number.isFinite(raw) && raw >= 1 ? Math.floor(raw) : DEFAULT_MAX_LLM_CONCURRENCY;
+  const raw = env.JPAPER_MAX_LLM_CONCURRENCY?.trim();
+  if (raw === undefined || !/^\d+$/.test(raw)) return DEFAULT_MAX_LLM_CONCURRENCY;
+  return Math.min(MAX_LLM_CONCURRENCY_CAP, Math.max(1, Number(raw)));
 }
 
 // プロセス全体で 1 つ。リクエストをまたいで効かせるため module スコープに置く。

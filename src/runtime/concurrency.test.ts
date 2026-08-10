@@ -4,6 +4,7 @@ import {
   withGate,
   resolveMaxLlmConcurrency,
   DEFAULT_MAX_LLM_CONCURRENCY,
+  MAX_LLM_CONCURRENCY_CAP,
   llmGate,
   setLlmGate,
 } from "./concurrency.js";
@@ -51,14 +52,24 @@ describe("makeGate", () => {
 });
 
 describe("resolveMaxLlmConcurrency", () => {
-  it("env で上書きでき、不正値は既定へ落ちる", () => {
+  it("env で上書きできる（10 進整数のみ）", () => {
     expect(resolveMaxLlmConcurrency({})).toBe(DEFAULT_MAX_LLM_CONCURRENCY);
     expect(resolveMaxLlmConcurrency({ JPAPER_MAX_LLM_CONCURRENCY: "3" })).toBe(3);
-    expect(resolveMaxLlmConcurrency({ JPAPER_MAX_LLM_CONCURRENCY: "0" })).toBe(
-      DEFAULT_MAX_LLM_CONCURRENCY,
-    );
-    expect(resolveMaxLlmConcurrency({ JPAPER_MAX_LLM_CONCURRENCY: "abc" })).toBe(
-      DEFAULT_MAX_LLM_CONCURRENCY,
+    expect(resolveMaxLlmConcurrency({ JPAPER_MAX_LLM_CONCURRENCY: " 3 " })).toBe(3);
+  });
+
+  it("整数でない値は既定へ落ちる（指数・16 進で上限を無効化させない）", () => {
+    for (const bad of ["abc", "1e9", "0x10", "Infinity", "-1", "2.5", ""]) {
+      expect(resolveMaxLlmConcurrency({ JPAPER_MAX_LLM_CONCURRENCY: bad })).toBe(
+        DEFAULT_MAX_LLM_CONCURRENCY,
+      );
+    }
+  });
+
+  it("範囲外は既定ではなく端へ丸める（設定ミスが緩める方向に倒れない）", () => {
+    expect(resolveMaxLlmConcurrency({ JPAPER_MAX_LLM_CONCURRENCY: "0" })).toBe(1);
+    expect(resolveMaxLlmConcurrency({ JPAPER_MAX_LLM_CONCURRENCY: "1000000000" })).toBe(
+      MAX_LLM_CONCURRENCY_CAP,
     );
   });
 
@@ -91,5 +102,26 @@ describe("withGate", () => {
       ...Array.from({ length: 5 }, () => b.complete({ system: "s", user: "u" })),
     ]);
     expect(peak).toBe(2);
+  });
+});
+
+describe("待機解除後の再検査（barge-in で上限を破らせない）", () => {
+  it("release と待機者の再開の間に新規到着が割り込んでも上限を超えない", async () => {
+    const gate = makeGate(1);
+    const a = defer();
+    const q = defer();
+    const never = new Promise<void>(() => {});
+
+    void gate.run(() => a.promise); // A: 枠を取る
+    void gate.run(() => never); // B: 待ち行列へ
+    // A の release と B の再開の間に走る microtask から新規投入する。
+    void q.promise.then(() => {
+      void gate.run(() => never); // C
+    });
+    a.resolve();
+    q.resolve();
+
+    await new Promise((r) => setTimeout(r, 20));
+    expect(gate.active()).toBeLessThanOrEqual(gate.limit);
   });
 });

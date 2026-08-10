@@ -78,3 +78,38 @@ describe("runAgent", () => {
     expect(n).toBe(2);
   });
 });
+
+describe("契約に合わない応答の分類", () => {
+  it("リトライしても zod を通らない応答は provider 起因として返す", async () => {
+    const { JpaperError } = await import("../types/errors.js");
+    const schema = z.object({ ja: z.string() });
+    const client = { complete: async () => '{"ja": 42}' };
+    let err: unknown;
+    try {
+      await runAgent(client, { system: "s", user: "u" }, schema, {
+        retries: 1,
+        sleep: async () => {},
+      });
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(JpaperError);
+    expect((err as InstanceType<typeof JpaperError>).kind).toBe("provider");
+    // 生の zod エラーをそのまま外へ出さない（長さも抑える）。
+    expect((err as Error).message).toContain("契約に合いません");
+    expect((err as Error).message.length).toBeLessThan(300);
+  });
+
+  it("プロバイダ自身のエラーは分類を変えない", async () => {
+    const { JpaperError } = await import("../types/errors.js");
+    const boom = new JpaperError(2, "provider", "ollama HTTP 404");
+    const client = {
+      complete: async () => {
+        throw boom;
+      },
+    };
+    await expect(
+      runAgent(client, { system: "s", user: "u" }, z.object({}), { retries: 0 }),
+    ).rejects.toBe(boom);
+  });
+});

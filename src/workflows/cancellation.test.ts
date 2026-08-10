@@ -6,6 +6,12 @@ import { withSignal, throwIfAborted, canceledError } from "../runtime/cancellati
 import { JpaperError, isTransient } from "../types/errors.js";
 import type { LlmClient } from "../types/contract.js";
 
+const defer = (): { promise: Promise<void>; resolve: () => void } => {
+  let resolve!: () => void;
+  const promise = new Promise<void>((r) => (resolve = r));
+  return { promise, resolve };
+};
+
 const dirs: string[] = [];
 const tmp = (): string => {
   const d = mkdtempSync(path.join(os.tmpdir(), "jpaper-cancel-"));
@@ -138,5 +144,31 @@ describe("translatePaper の中断", () => {
     );
     expect(r.exitCode).toBe(6);
     expect(calls).toBe(0);
+  });
+});
+
+describe("ゲートと中断の相互作用", () => {
+  it("枠を取ってから中断を見る（待ち行列に中断済みが居座らない）", async () => {
+    const { makeGate, withGate } = await import("../runtime/concurrency.js");
+    const gate = makeGate(1);
+    const c = new AbortController();
+    let calls = 0;
+    const base: LlmClient = {
+      complete: async () => {
+        calls++;
+        return "{}";
+      },
+    };
+    const client = withGate(withSignal(base, c.signal), gate);
+
+    const hold = defer();
+    void gate.run(() => hold.promise); // 枠を占有する
+    const queued = client.complete({ system: "s", user: "u" });
+    c.abort();
+    hold.resolve();
+
+    await expect(queued).rejects.toThrow(JpaperError);
+    expect(calls).toBe(0); // 中断済みは provider へ届かない
+    expect(gate.active()).toBe(0); // 枠を掴んだままにしない
   });
 });

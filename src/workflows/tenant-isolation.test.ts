@@ -277,3 +277,76 @@ describe("単一ユーザ既定の可視化", () => {
     expect(r.summary.sharedDefaults).toContain("cacheKey");
   });
 });
+
+describe("注入クライアントにも同時実行ゲートが掛かる", () => {
+  it("deps.client を渡してもプロセス上限を素通りしない", async () => {
+    const { translatePaper } = await import("./translate-paper.js");
+    const { FakeLlmClient } = await import("../testing/fake-llm.js");
+    const { GlossaryDb } = await import("../terminology/db.js");
+    const { makeTar } = await import("../ingest/archive.fixtures.js");
+    const { makeGate } = await import("../runtime/concurrency.js");
+    const { writeFileSync } = await import("node:fs");
+
+    const work = tmp();
+    const tar = path.join(work, "p.tar");
+    const body = Array.from({ length: 8 }, (_, i) => `\\section{S${i}}Alpha beta gamma.`).join(
+      "\n\n",
+    );
+    writeFileSync(
+      tar,
+      makeTar([
+        { name: "main.tex", content: `\\documentclass{a}\\begin{document}${body}\\end{document}` },
+      ]),
+    );
+
+    let inFlight = 0;
+    let peak = 0;
+    const client = new FakeLlmClient(async (req) => {
+      inFlight++;
+      peak = Math.max(peak, inFlight);
+      await new Promise((r) => setTimeout(r, 3));
+      inFlight--;
+      if (req.system.includes("編纂者")) {
+        return JSON.stringify({
+          resolved: [],
+          brief: { thesis: "核", sectionRoles: [], notationConventions: [] },
+          style: { tensePolicy: "a", headingStyle: "b", numberStyle: "c" },
+        });
+      }
+      if (req.system.includes("審査者")) return '{"verdict":"pass","issues":[]}';
+      return '{"segmentId":"x","ja":"これは訳文である。"}';
+    });
+
+    await translatePaper(
+      { kind: "path", path: tar },
+      { provider: "ollama", outDir: path.join(work, "out"), concurrency: 8 },
+      {
+        client,
+        db: new GlossaryDb(),
+        gate: makeGate(2),
+        latexRunner: () => ({ code: 1, log: "" }),
+      },
+    );
+    expect(peak).toBeLessThanOrEqual(2);
+  });
+});
+
+describe("空白のみの dbPath", () => {
+  it("「未指定」として扱い、cwd に空白名の DB を作らない", async () => {
+    const { translatePaper } = await import("./translate-paper.js");
+    const { FakeLlmClient } = await import("../testing/fake-llm.js");
+    const { readdirSync } = await import("node:fs");
+
+    const before = new Set(readdirSync(process.cwd()));
+    const r = await translatePaper(
+      { kind: "path", path: path.join(tmp(), "missing.tar") },
+      { provider: "ollama", outDir: path.join(tmp(), "out") },
+      { client: new FakeLlmClient(() => "{}"), dbPath: "  " },
+    );
+    expect(r.status).toBe("failed");
+    // 報告（sharedDefaults）と実挙動を一致させる。
+    expect(r.summary.sharedDefaults).toContain("db");
+    const added = readdirSync(process.cwd()).filter((f) => !before.has(f));
+    expect(added).toEqual([]);
+  });
+});

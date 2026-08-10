@@ -97,9 +97,19 @@ export async function fetchArxivSource(
         `arXiv 取得の待ち行列が長すぎます（推定 ${Math.round(wait0 / 1000)} 秒 > 上限 ${Math.round(maxQueueWait / 1000)} 秒）。時間をおいて再実行してください`,
       );
     }
+    const prevReservation = state.lastRequestAt;
     state.lastRequestAt = target;
     const wait = target - now();
-    if (wait > 0) await waitFor(wait);
+    if (wait > 0) {
+      try {
+        await waitFor(wait);
+      } catch (e) {
+        // 中断された分の予約は返す。返さないと、接続してすぐ切るだけで（fetch を 1 度も
+        // 発生させずに）待ち行列を伸ばし、他の全リクエストを conflict で拒否させられる。
+        if (state.lastRequestAt === target) state.lastRequestAt = prevReservation;
+        throw e;
+      }
+    }
     state.lastRequestAt = Math.max(state.lastRequestAt, now()); // 発火遅延時は実時刻へ補正
 
     try {

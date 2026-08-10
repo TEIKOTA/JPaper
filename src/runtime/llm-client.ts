@@ -2,6 +2,7 @@
 import type { z } from "zod";
 import type { LlmClient, LlmRequest } from "../types/contract.js";
 import { withRetry, type RetryOptions } from "./session.js";
+import { JpaperError } from "../types/errors.js";
 
 function tryBalanced(body: string, start: number): { value: unknown } | undefined {
   const open = body[start]!;
@@ -61,12 +62,25 @@ export async function runAgent<S extends z.ZodTypeAny>(
   // client.complete 自体のエラー分類（provider の transient 判定）は従来どおり保つ（try の外）。
   // runAgent は必ず JSON を parse するので JSON 出力を要求する（能力を持つプロバイダのみ強制に使う）。
   const jsonReq = { ...req, jsonMode: true };
-  return withRetry(async () => {
-    const raw = await client.complete(jsonReq);
-    try {
-      return schema.parse(extractJson(raw)) as z.infer<S>;
-    } catch (e) {
-      throw Object.assign(e instanceof Error ? e : new Error(String(e)), { transient: true });
+  try {
+    return await withRetry(async () => {
+      const raw = await client.complete(jsonReq);
+      try {
+        return schema.parse(extractJson(raw)) as z.infer<S>;
+      } catch (e) {
+        throw Object.assign(e instanceof Error ? e : new Error(String(e)), {
+          transient: true,
+          schemaFailure: true,
+        });
+      }
+    }, retry);
+  } catch (e) {
+    // リトライしても応答が契約に合わないのはプロバイダ起因の失敗。internal（＝想定外）へ
+    // 落とすと web で 500 相当になり、生の zod エラーがそのまま外へ出る。
+    if ((e as { schemaFailure?: boolean }).schemaFailure === true) {
+      const detail = String((e as Error).message ?? e).slice(0, 200);
+      throw new JpaperError(2, "provider", `LLM 応答が契約に合いません: ${detail}`);
     }
-  }, retry);
+    throw e;
+  }
 }
