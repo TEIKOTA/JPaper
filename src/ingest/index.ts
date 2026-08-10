@@ -7,6 +7,7 @@ import { fetchArxivSource, type ArxivDeps } from "./arxiv.js";
 import { extractArchive, writeFileMap, isArchive } from "./extract.js";
 import { detectMainTex, expandInputs } from "./main-tex.js";
 import { collectFigures } from "./resolve.js";
+import { DEFAULT_LIMITS, type IngestLimits } from "./limits.js";
 
 export interface Ingested {
   cleanLatex: string;
@@ -18,6 +19,8 @@ export interface Ingested {
 
 export interface IngestDeps {
   arxiv?: ArxivDeps;
+  // 取り込みのサイズ・件数上限。既定は DEFAULT_LIMITS。
+  limits?: IngestLimits;
 }
 
 const PATH_STRIP =
@@ -37,10 +40,10 @@ interface Materialized {
   mainRel?: string;
 }
 
-function extractInto(bytes: Buffer, workDir: string): string {
+function extractInto(bytes: Buffer, workDir: string, limits: IngestLimits): string {
   rmSync(workDir, { recursive: true, force: true });
   mkdirSync(workDir, { recursive: true });
-  writeFileMap(extractArchive(bytes), workDir);
+  writeFileMap(extractArchive(bytes, limits), workDir);
   return workDir;
 }
 
@@ -49,6 +52,7 @@ async function materialize(
   workDir: string,
   deps: IngestDeps,
 ): Promise<Materialized> {
+  const limits = deps.limits ?? DEFAULT_LIMITS;
   if (input.kind === "path") {
     let bytes: Buffer;
     try {
@@ -65,10 +69,10 @@ async function materialize(
       const abs = path.resolve(input.path);
       return { sourceDir: path.dirname(abs), mainRel: path.basename(abs) };
     }
-    return { sourceDir: extractInto(bytes, workDir) };
+    return { sourceDir: extractInto(bytes, workDir, limits) };
   }
-  const bytes = await fetchArxivSource(input.id, deps.arxiv);
-  return { sourceDir: extractInto(bytes, workDir) };
+  const bytes = await fetchArxivSource(input.id, { limits, ...deps.arxiv });
+  return { sourceDir: extractInto(bytes, workDir, limits) };
 }
 
 export async function ingest(

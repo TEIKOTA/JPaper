@@ -125,3 +125,64 @@ describe("translatePaper への鍵の貫通", () => {
     expect(calls).toBeGreaterThan(afterFirst);
   });
 });
+
+describe("取り込み上限の注入", () => {
+  it("translatePaper に渡した limits が実際に効く（プラン別の上限を掛けられる）", async () => {
+    const { translatePaper } = await import("./translate-paper.js");
+    const { FakeLlmClient } = await import("../testing/fake-llm.js");
+    const { GlossaryDb } = await import("../terminology/db.js");
+    const { makeTar } = await import("../ingest/archive.fixtures.js");
+    const { DEFAULT_LIMITS } = await import("../ingest/limits.js");
+    const { writeFileSync } = await import("node:fs");
+
+    const work = tmp();
+    const tar = path.join(work, "p.tar");
+    writeFileSync(
+      tar,
+      makeTar([
+        {
+          name: "main.tex",
+          content: "\\documentclass{a}\\begin{document}\\section{I}Alpha.\\end{document}",
+        },
+      ]),
+    );
+
+    let calls = 0;
+    const deps = () => ({
+      client: new FakeLlmClient((req) => {
+        calls++;
+        if (req.system.includes("編纂者")) {
+          return JSON.stringify({
+            resolved: [],
+            brief: { thesis: "核", sectionRoles: [], notationConventions: [] },
+            style: { tensePolicy: "a", headingStyle: "b", numberStyle: "c" },
+          });
+        }
+        if (req.system.includes("審査者")) return '{"verdict":"pass","issues":[]}';
+        return '{"segmentId":"x","ja":"これは訳文である。"}';
+      }),
+      db: new GlossaryDb(),
+      // 実 latexmk を起動しない（この検査の対象は取り込み上限）。
+      latexRunner: () => ({ code: 1, log: "" }),
+    });
+
+    // 既定の上限なら取り込みは通る（LLM まで到達する）。
+    const ok = await translatePaper(
+      { kind: "path", path: tar },
+      { provider: "ollama", outDir: path.join(work, "out1") },
+      deps(),
+    );
+    expect(ok.error?.kind).not.toBe("too-large");
+    expect(calls).toBeGreaterThan(0);
+
+    // 締めた上限では取り込み段で弾かれる。
+    calls = 0;
+    const tight = await translatePaper(
+      { kind: "path", path: tar },
+      { provider: "ollama", outDir: path.join(work, "out2") },
+      { ...deps(), limits: { ...DEFAULT_LIMITS, maxArchiveBytes: 10 } },
+    );
+    expect(tight.error?.kind).toBe("too-large");
+    expect(calls).toBe(0);
+  });
+});

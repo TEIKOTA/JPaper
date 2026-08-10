@@ -22,6 +22,7 @@ import { paperOutDir, dbPath, contextWindowFor, type OllamaConfig } from "../con
 import { makeLlmClient } from "../providers/index.js";
 import { makeJsonlTrace } from "../runtime/trace.js";
 import { ingest, derivePaperId, type IngestDeps } from "../ingest/index.js";
+import type { IngestLimits } from "../ingest/limits.js";
 import { GlossaryDb } from "../terminology/db.js";
 import { buildPaperGlossary, writeBackResolved } from "../terminology/glossary.js";
 import {
@@ -101,6 +102,8 @@ export interface TranslateDeps {
   db?: GlossaryDb;
   dbPath?: string;
   ingest?: IngestDeps;
+  // 取り込みのサイズ上限。web ではプラン別に締めたいので注入可能にする。
+  limits?: IngestLimits;
   onError?: (message: string) => void;
   latexRunner?: LatexRunner;
 }
@@ -320,6 +323,7 @@ export async function translatePaper(
       () =>
         ingest(input, path.join(runDir, "source"), {
           ...deps.ingest,
+          limits: deps.limits ?? deps.ingest?.limits,
           arxiv: { ...deps.ingest?.arxiv, signal: opts.signal },
         }),
       { invalidation: inputSignature(input), key: deps.cacheKey },
