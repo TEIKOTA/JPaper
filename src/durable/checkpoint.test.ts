@@ -1,5 +1,12 @@
 import { describe, it, expect, afterEach } from "vitest";
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from "node:fs";
+import {
+  mkdtempSync,
+  mkdirSync,
+  writeFileSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+} from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { z } from "zod";
@@ -130,5 +137,45 @@ describe("checkpoint の完全性", () => {
     }, { key: KEY });
     expect(called).toBe(false);
     expect(r).toEqual({ v: 1 });
+  });
+});
+
+describe("旧世代の掃除", () => {
+  it("同じ step の無効化ハッシュ違いは残さない", async () => {
+    const dir = tmp();
+    const key = Buffer.alloc(32, 7);
+    for (const gen of ["a1", "b2", "c3"]) {
+      await checkpoint(dir, "ingest", z.object({ v: z.string() }), async () => ({ v: gen }), {
+        invalidation: gen,
+        key,
+      });
+    }
+    const files = readdirSync(path.join(dir, "steps"));
+    expect(files).toEqual(["ingest.c3.json"]);
+  });
+
+  it("別の step は消さない・再開はそのまま効く", async () => {
+    const dir = tmp();
+    const key = Buffer.alloc(32, 7);
+    const schema = z.object({ v: z.string() });
+    await checkpoint(dir, "glossary", schema, async () => ({ v: "g" }), { invalidation: "h", key });
+    await checkpoint(dir, "seg-0000", schema, async () => ({ v: "s" }), { invalidation: "h", key });
+    let calls = 0;
+    const again = await checkpoint(
+      dir,
+      "glossary",
+      schema,
+      async () => {
+        calls++;
+        return { v: "再計算" };
+      },
+      { invalidation: "h", key },
+    );
+    expect(again.v).toBe("g");
+    expect(calls).toBe(0);
+    expect(readdirSync(path.join(dir, "steps")).sort()).toEqual([
+      "glossary.h.json",
+      "seg-0000.h.json",
+    ]);
   });
 });

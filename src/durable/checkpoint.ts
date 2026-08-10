@@ -1,6 +1,14 @@
 // 設計メモ §11。ファイル checkpoint（tmp→rename・idempotent-skip・無効化ハッシュ）。
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import path from "node:path";
 import type { z } from "zod";
 import { loadCacheKey } from "./cache-key.js";
@@ -73,6 +81,24 @@ export async function checkpoint<S extends z.ZodTypeAny>(
     const tmp = `${file}.tmp`;
     writeFileSync(tmp, JSON.stringify(env));
     renameSync(tmp, file);
+    dropOldGenerations(dir, stepId, path.basename(file));
   }
   return result;
+}
+
+// 同じ step の旧世代（無効化ハッシュ違い）を消す。残すと、論文を直して再投入するたびに
+// 原文全文・訳文が世代ぶん積み上がり、ディスクが線形に増え続ける（実測 8 世代で 5 倍）。
+function dropOldGenerations(dir: string, stepId: string, keep: string): void {
+  try {
+    for (const name of readdirSync(dir)) {
+      if (name === keep) continue;
+      // "<stepId>.<hash>.json" と、無効化なしの "<stepId>.json" だけを対象にする。
+      if (!name.startsWith(`${stepId}.`) || !name.endsWith(".json")) continue;
+      const middle = name.slice(stepId.length + 1, -".json".length);
+      if (middle !== "" && !/^[0-9a-f]+$/.test(middle)) continue;
+      rmSync(path.join(dir, name), { force: true });
+    }
+  } catch {
+    // GC は最善努力。失敗しても run は続行する（ディスクが増えるだけ）。
+  }
 }
