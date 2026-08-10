@@ -145,8 +145,8 @@ CREATE INDEX idx_term_src ON term(src);
 | コード | 意味 |
 |---|---|
 | 0 | 成功（main.pdf 生成・全ゲート通過） |
-| 1 | 想定外エラー |
-| 2 | 入力形態の判定不能 / `--provider` 未指定 |
+| 1 | 想定外エラー（`internal`）／実行環境の障害（`infra`＝権限・容量・パス衝突。コードのバグと区別するため `kind` で分ける） |
+| 2 | 入力形態の判定不能 / `--provider` 未指定・不正（`input`）／出力先が使用中（`conflict`）／上限超過（`too-large`）／一時的な過負荷（`busy`）／外部サービス障害（`upstream`）／LLM プロバイダ利用不能（`provider`） |
 | 3 | 節ループの形式検査が MAX_REVISIONS 内に通らず failed |
 | 4 | 品質未達（evaluator が pass に至らず MAX_REVISIONS 超過 or `fail`） |
 | 5 | 全文組版ゲート失敗（構造・テンプレ起因のビルド/欠図/未解決参照） |
@@ -173,7 +173,7 @@ CREATE INDEX idx_term_src ON term(src);
 
 ## 8. 追加契約（新B レビュー反映）
 
-- **core API**: `translatePaper(input: JpaperInput, opts: { provider: "ollama"|"claude"; outDir?: string }): Promise<Result>`。`Result = { status: "ok"|"failed"; pdfPath?: string; exitCode: number; summary: RunSummary }`。CLI・GUI はこの1関数を呼ぶ薄い皮（[UI/配置 ADR](../adr/20260709-user-interface-file-layout-and-cli.md) 決定4）。例外は投げず `status/exitCode` で表現（§6 と対応）。
+- **core API**: `translatePaper(input: JpaperInput, opts: TranslateOptions, deps?: TranslateDeps): Promise<Result>`。`TranslateOptions = { provider; outDir?; ollama?; concurrency?; signal?; timeoutMs? }`、`TranslateDeps` は web が差し替える依存（`client` / `trace` / `cacheKey` / `db` / `dbPath` / `ingest` / `limits` / `work` / `gate` / `onError` / `onProgress` / `latexRunner`）。`Result = { status: "ok"|"failed"; pdfPath?: string; exitCode: number; error?: RunError; summary: RunSummary }`。CLI・GUI はこの1関数を呼ぶ薄い皮（[UI/配置 ADR](../adr/20260709-user-interface-file-layout-and-cli.md) 決定4）。例外は投げず `status/exitCode` で表現（§6 と対応）。
 - **stdout サマリ JSON**: `RunSummary = { paperId, outDir, segments: {total, passed, failed}, revisions: {max, used}, glossary: {proposedAdded}, notes: {total, byTrigger}, layout: "original"|"template"|null, buildOk: boolean, sharedDefaults: ("db"|"cacheKey"|"outDir")[], exitCode }`（zod 定義を実装時に写経）。`layout` は採用した組版モード（[組版レイアウト ADR](../adr/20260710-typesetting-layout-original-first-hybrid.md)。`original`=原プリアンブル温存／`template`=共通テンプレへフォールバック）。組版は (B) のため **(A) 単体では `layout=null`**（`buildOk=null` と同様）。`notes` は §1 `TranslatorNote` の件数集計（本体は `notes.json`）。`byTrigger` は `paper-defined-preserve|low-confidence|evaluator-warn|heading-untranslated` 別の件数。
 - **訳注の生成契約（[翻訳一貫性 ADR](../adr/20260710-translation-consistency-brief-style-and-annotations.md) 決定3・採否=決定的 / 文面=LLM）**: trigger を次の決定的規則で採る。①`paper-defined` で `rendering∈{keep-original,bilingual}` に確定した語 ②**低確信=`class="established"` かつ global DB に `status="confirmed"` の一致が無く `proposed` のみ or 未ヒットで preserve に倒した語**（DB 状態から決定的に判定）③evaluator の `warn` issue ④**heading-untranslated=見出し（`\section` 等）の可視テキストが未訳の可能性（`untranslatedHeadings` の決定的検査。非ブロッキングで再訳ゲートには載せない）**。文面 `text` は term 系＝`ResolvedTerm.note`、warn 系＝`EvalIssue.message`、heading 系＝決定的テンプレ（LLM 非依存）。`firstOccurrence`（文書全体基準）で本文脚注は初出1回のみ、巻末一覧は語ごと1エントリ。④の決定は [見出し未訳検査 ADR](../adr/20260721-heading-untranslated-nonblocking-note.md)。
 - **run-context 注入（brief/style）**: system prompt の run-context（設計メモ §13A）に **`DocumentBrief`＋`StyleContract` を全 translator へ注入**する（per-paper で run 内不変＝キャッシュ prefix を安定化）。**per-segment の確定用語ブロック（rendering 指示）は system ではなく user メッセージへ載せる**（毎セグメント変わり system の cache prefix を壊すため。[プロンプトキャッシュ再利用 ADR](../adr/20260722-prompt-cache-reuse-stable-system-prompt.md)）。トークン予算は §4 の 30% 圏内で管理（超過時はブリーフを要約して圧縮）。
