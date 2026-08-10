@@ -48,7 +48,7 @@ import { segment, segmentBudgetFor } from "../segment/segmenter.js";
 import { runSectionLoop } from "./section-loop.js";
 import { buildNotes } from "./notes.js";
 import { untranslatedHeadings } from "./quality-gate.js";
-import { checkpoint, hashContext } from "../durable/checkpoint.js";
+import { checkpoint, hashContext, pruneSteps } from "../durable/checkpoint.js";
 import { acquireRunLock, type RunLock } from "../durable/run-lock.js";
 import {
   throwIfAborted,
@@ -625,6 +625,9 @@ export async function translatePaper(
     });
 
     // ここまで来た run だけが outDir の正本を更新する。
+    // 今回使わなかった step の checkpoint を掃除する（節が減った再実行の孤児が
+    // 残ると、前の論文の訳文がそのまま出力先に居座る）。
+    pruneSteps(runDir, new Set(["ingest", "glossary", ...segments.map((s) => s.id)]));
     promoteContext(outDir, ingested.paperId, ctx.pending);
 
     const chaptersDir = path.join(outDir, "translation", "chapters");

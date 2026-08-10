@@ -10,7 +10,7 @@ import {
 import os from "node:os";
 import path from "node:path";
 import { z } from "zod";
-import { checkpoint, hashContext } from "./checkpoint.js";
+import { checkpoint, hashContext, pruneSteps } from "./checkpoint.js";
 
 const dirs: string[] = [];
 const tmp = () => {
@@ -179,3 +179,39 @@ describe("旧世代の掃除", () => {
     ]);
   });
 });
+
+describe("pruneSteps", () => {
+  it("今回使わなかった step の checkpoint を消す", () => {
+    // dropOldGenerations は同じ stepId の旧世代しか見ないので、節が減る再実行では
+    // 消えた seg-NNNN が残り続けた（実測 8 節→1 節で 4.2MB・7 件が前回の訳文）。
+    const dir = mkdtempSync(path.join(os.tmpdir(), "jpaper-prune-"));
+    const steps = path.join(dir, "steps");
+    mkdirSync(steps, { recursive: true });
+    for (const name of [
+      "ingest.aa11.json",
+      "glossary.json",
+      "seg-0000.bb22.json",
+      "seg-0001.cc33.json",
+      "seg-0002.json",
+      "notes.txt",
+    ]) {
+      writeFileSync(path.join(steps, name), "{}");
+    }
+    const removed = pruneSteps(dir, new Set(["ingest", "glossary", "seg-0000"]));
+    expect(removed).toBe(2);
+    expect(readdirSync(steps).sort()).toEqual([
+      "glossary.json",
+      "ingest.aa11.json",
+      "notes.txt",
+      "seg-0000.bb22.json",
+    ]);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("steps が無くても落ちない", () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), "jpaper-prune-"));
+    expect(pruneSteps(dir, new Set(["ingest"]))).toBe(0);
+    rmSync(dir, { recursive: true, force: true });
+  });
+});
+

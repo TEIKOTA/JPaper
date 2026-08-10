@@ -108,3 +108,34 @@ function dropOldGenerations(dir: string, stepId: string, keep: string): void {
     }
   }
 }
+
+// run が正常に完了した時点で、今回使わなかった step の checkpoint を消す。
+// dropOldGenerations は同じ stepId の旧世代しか見ないので、節が減る再実行では
+// 消えた seg-NNNN が残り続ける（実測 8 節→1 節で 4.2MB・7 件が前回の訳文のまま）。
+// paperId が衝突すると、これがそのまま別論文の内容の残留経路になる。
+export function pruneSteps(runDir: string, keep: ReadonlySet<string>): number {
+  const dir = path.join(runDir, "steps");
+  let names: string[] = [];
+  try {
+    names = readdirSync(dir);
+  } catch {
+    return 0;
+  }
+  let removed = 0;
+  for (const name of names) {
+    try {
+      if (!name.endsWith(".json")) continue;
+      const stem = name.slice(0, -".json".length);
+      // "<stepId>.<hash>" と無効化なしの "<stepId>"。
+      const dot = stem.lastIndexOf(".");
+      const stepId =
+        dot > 0 && /^[0-9a-f]+$/.test(stem.slice(dot + 1)) ? stem.slice(0, dot) : stem;
+      if (keep.has(stepId)) continue;
+      rmSync(path.join(dir, name), { force: true });
+      removed++;
+    } catch {
+      // GC は最善努力。1 エントリの失敗で残りを諦めない。
+    }
+  }
+  return removed;
+}
