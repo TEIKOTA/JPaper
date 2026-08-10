@@ -207,6 +207,17 @@ describe("展開の予算", () => {
     expect(Date.now() - started).toBeLessThan(3000);
   });
 
+  it("解決だけで終わる \\input の羅列も上限で止まる", () => {
+    // 不在先への \input は展開もバイトも増やさないのに existsSync と realpathSync を叩く。
+    // 実測 3.8MB（gzip すれば数 KB）の羅列が 1,096ms 同期でイベントループを止め、
+    // しかも 47 バイトを返して「成功」していた。
+    const body = "\\input{zz}".repeat(400_000);
+    const d = tmp({ "main.tex": `\\documentclass{a}\\begin{document}${body}\\end{document}` });
+    const started = Date.now();
+    expect(() => expandInputs(d, "main.tex", { maxBytes: 8 * 1024 * 1024 })).toThrowError(/上限/);
+    expect(Date.now() - started).toBeLessThan(3000);
+  });
+
   it("入れ子の深さにも上限がある", () => {
     const files: Record<string, string> = {
       "main.tex": "\\documentclass{a}\\begin{document}\\input{l0}\\end{document}",

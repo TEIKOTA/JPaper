@@ -100,6 +100,9 @@ export function expandInputs(
   const maxExpansions = budget.maxExpansions ?? 5_000;
   let produced = 0;
   let expansions = 0;
+  // 解決の試行そのものを数える。不在・循環先への \input は展開もバイトも増やさないのに
+  // existsSync と realpathSync を叩くため、計上しないと「上限内なのに重い」入力が素通りする。
+  let lookups = 0;
   // stack.includes は直接の循環しか止めない。各ファイルが次を 2 回読むダイヤモンド型は
   // 指数的に膨らみ、実測で 508 バイトの入力がイベントループを 205 秒占有した。
   const spend = (n: number): void => {
@@ -132,6 +135,14 @@ export function expandInputs(
     const out = raw.replace(
       /\\(?:input|include|@@input)\s*\{([^}]+)\}|\\(?:input|@@input)\s+([^\s{}\\%]+)/g,
       (_m, braced: string | undefined, unbraced: string | undefined) => {
+        lookups++;
+        if (lookups > maxExpansions) {
+          throw new JpaperError(
+            2,
+            "too-large",
+            `\\input の解決回数が上限 ${maxExpansions} を超えています`,
+          );
+        }
         const child = resolveTexPath(dir, rel, (braced ?? unbraced ?? "").trim());
         return child ? load(child) : "";
       },

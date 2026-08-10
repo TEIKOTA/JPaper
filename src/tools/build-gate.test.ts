@@ -106,6 +106,20 @@ describe("checkFigures", () => {
     const dropped = checkFigures(mainTex, mainDir, ["/src/Figures/a.png", "/src/Figures/gone.pdf"]);
     expect(dropped).toEqual(["Figures/gone.pdf"]);
   });
+
+  it("図数 × 本文長に比例しない", () => {
+    // 図ごとに本文全体を走査していた頃は 5,000 図 × 8MB 本文で 1,472ms 同期ブロックした。
+    const mainTex = "x".repeat(8 * 1024 * 1024);
+    const figures = Array.from({ length: 5000 }, (_, i) => `/src/f${String(i)}.pdf`);
+    const started = Date.now();
+    expect(checkFigures(mainTex, mainDir, figures)).toHaveLength(5000);
+    expect(Date.now() - started).toBeLessThan(300);
+  });
+
+  it("\\includegraphics の引数以外に同じ綴りがあっても残存とは見なさない", () => {
+    const mainTex = "本文で Figures/a という語に触れるだけ";
+    expect(checkFigures(mainTex, mainDir, ["/src/Figures/a.png"])).toEqual(["Figures/a.png"]);
+  });
 });
 
 describe("stageBuild", () => {
