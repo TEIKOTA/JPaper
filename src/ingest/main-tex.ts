@@ -41,14 +41,17 @@ export function detectMainTex(dir: string, maxFiles = 10_000): string {
     throw new JpaperError(2, "too-large", `.tex の数が上限 ${maxFiles} を超えています`);
   }
   const texs = all;
-  // 同じファイルを 2 回読まない（判定は 2 条件あるが読み込みは 1 回で足りる）。
-  const heads = new Map(texs.map((f) => [f, readHead(path.join(dir, f), DETECT_HEAD_BYTES)]));
-  const head = (f: string): string => heads.get(f) ?? "";
-  const withDoc = texs.filter(
-    (f) => /\\documentclass/.test(head(f)) && /\\begin\{document\}/.test(head(f)),
-  );
-  const pool =
-    withDoc.length > 0 ? withDoc : texs.filter((f) => /\\documentclass/.test(head(f)));
+  // 判定に要るのは真偽値 2 つだけ。前文を全件分ため込むと常駐量が件数 × 256KB
+  // （上限件数で約 2.5GB）になり、ワーカーごと OOM で落ちる。1 パスで畳む。
+  const withDoc: string[] = [];
+  const withClass: string[] = [];
+  for (const f of texs) {
+    const head = readHead(path.join(dir, f), DETECT_HEAD_BYTES);
+    if (!/\\documentclass/.test(head)) continue;
+    withClass.push(f);
+    if (/\\begin\{document\}/.test(head)) withDoc.push(f);
+  }
+  const pool = withDoc.length > 0 ? withDoc : withClass;
   if (pool.length === 0) {
     throw new JpaperError(2, "input", "main.tex が見つかりません");
   }

@@ -164,6 +164,22 @@ describe("main.tex 検出の上限", () => {
     expect(detectMainTex(d)).toBe("main.tex");
   });
 
+  it("常駐量が .tex の件数に比例しない", () => {
+    // 前文を全件分ため込んでいた頃は 1,200 件で heapUsed 307MB（上限件数なら約 2.5GB）に達し、
+    // --max-old-space-size=256 で OOM 死した。翻訳を始める前にワーカーごと落ちる。
+    const files: Record<string, string> = {
+      "main.tex": "\\documentclass{a}\\begin{document}x\\end{document}",
+    };
+    const pad = `% ${"x".repeat(256 * 1024)}`;
+    for (let i = 0; i < 200; i++) files[`pad${String(i)}.tex`] = pad;
+    const d = tmp(files);
+    global.gc?.();
+    const before = process.memoryUsage().heapUsed;
+    expect(detectMainTex(d)).toBe("main.tex");
+    // 保持していれば 200 × 256KB ≒ 50MB 増える。1 件分しか持たなければ増えない。
+    expect(process.memoryUsage().heapUsed - before).toBeLessThan(16 * 1024 * 1024);
+  });
+
   it(".tex の数が上限を超えたら too-large", () => {
     const files: Record<string, string> = {
       "main.tex": "\\documentclass{a}\\begin{document}x\\end{document}",
