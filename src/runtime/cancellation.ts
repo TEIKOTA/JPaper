@@ -73,8 +73,9 @@ export function withDeadline(signal: AbortSignal | undefined, timeoutMs?: number
   }
   const ms = Math.min(MAX_TIMEOUT_MS, Math.floor(timeoutMs));
   const ctl = new AbortController();
+  // unref しない。ref された handle が無い実行形（キュー worker 等）で期限が黙って
+  // 無効になるため。dispose で必ず clearTimeout するので run の寿命は伸びない。
   const timer = setTimeout(() => ctl.abort(new Error(`deadline ${ms}ms`)), ms);
-  timer.unref?.();
   const onParent = (): void => ctl.abort();
   signal?.addEventListener("abort", onParent, { once: true });
   return {

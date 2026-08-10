@@ -13,6 +13,8 @@ import {
   GlossaryBuilderOut,
   EvalIssue,
   RunSummary,
+  JpaperInput as JpaperInputSchema,
+  Provider as ProviderSchema,
   type Result,
   type Provider,
   type TranslatorNote,
@@ -380,10 +382,27 @@ export async function translatePaper(
   opts: TranslateOptions,
   deps: TranslateDeps = {},
 ): Promise<Result> {
-  const paperId = derivePaperId(input);
-  const outDir = paperOutDir(paperId, opts.outDir);
-  const runDir = path.join(outDir, ".run");
-  const sharedDefaults = sharedDefaultsOf(opts, deps);
+  // 入口の検証。web ハンドラへ生の例外を漏らさない（契約付録 §8「例外は投げず戻り値で表現」）。
+  const badInput = JpaperInputSchema.safeParse(input).success
+    ? ProviderSchema.safeParse(opts.provider).success
+      ? undefined
+      : `provider が不正です: ${outwardMessage(String(opts.provider))}`
+    : "入力の指定が不正です（kind と path/id を確認してください）";
+  if (badInput !== undefined) {
+    return failResult("unknown", opts.outDir ?? "", { kind: "input", code: 2, message: badInput });
+  }
+  let paperId: string;
+  let outDir: string;
+  let runDir: string;
+  let sharedDefaults: SharedDefault[];
+  try {
+    paperId = derivePaperId(input);
+    outDir = paperOutDir(paperId, opts.outDir);
+    runDir = path.join(outDir, ".run");
+    sharedDefaults = sharedDefaultsOf(opts, deps);
+  } catch (e) {
+    return failResult("unknown", opts.outDir ?? "", toRunError(e));
+  }
   if (sharedDefaults.length > 0) {
     deps.onError?.(
       `単一ユーザ既定を使用: ${sharedDefaults.join(", ")}（マルチテナントでは dbPath / cacheKey / outDir を明示的に渡すこと）`,
@@ -410,9 +429,12 @@ export async function translatePaper(
     // 不正な timeoutMs はここで input エラーになるので、try の内側で組み立てる。
     deadline = withDeadline(opts.signal, opts.timeoutMs);
     const signal = deadline.signal;
+    // 注入ゲートはプロセス上限を置き換えず、内側の第 2 段として重ねる。
+    // 置き換えにすると、web がリクエスト単位でゲートを作った瞬間にプロセス上限が消える。
+    const inner = withCallBudget(withProviderErrors(withSignal(client0, signal)), work.maxLlmCalls);
     const client = withGate(
-      withCallBudget(withProviderErrors(withSignal(client0, signal)), work.maxLlmCalls),
-      deps.gate ?? llmGate(),
+      deps.gate === undefined ? inner : withGate(inner, deps.gate, signal),
+      llmGate(),
       signal,
     );
     // チェックポイントは runDir 単位なので、同一 outDir の並行実行は訳文を混ぜる。契約付録 §8。

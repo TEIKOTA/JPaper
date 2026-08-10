@@ -7,6 +7,9 @@ import {
   MAX_LLM_CONCURRENCY_CAP,
   llmGate,
   setLlmGate,
+  resolveMaxLlmQueue,
+  DEFAULT_MAX_LLM_QUEUE,
+  MAX_LLM_QUEUE_CAP,
 } from "./concurrency.js";
 import type { LlmClient } from "../types/contract.js";
 
@@ -123,5 +126,32 @@ describe("待機解除後の再検査（barge-in で上限を破らせない）"
 
     await new Promise((r) => setTimeout(r, 20));
     expect(gate.active()).toBeLessThanOrEqual(gate.limit);
+  });
+});
+
+describe("待ち行列の上限", () => {
+  it("上限に達したら busy で即断る（返らないリクエストを積み上げない）", async () => {
+    const gate = makeGate(1, 2);
+    const held = gate.run(() => new Promise<void>(() => undefined));
+    await Promise.resolve();
+    const w1 = gate.run(async () => "a");
+    const w2 = gate.run(async () => "b");
+    await Promise.resolve();
+    expect(gate.waiting()).toBe(2);
+    await expect(gate.run(async () => "c")).rejects.toMatchObject({ kind: "busy", code: 2 });
+    void held;
+    void w1;
+    void w2;
+  });
+
+  it("上限は 10 進整数だけ受け付け、範囲外は端へ丸める", () => {
+    expect(resolveMaxLlmQueue({} as NodeJS.ProcessEnv)).toBe(DEFAULT_MAX_LLM_QUEUE);
+    expect(resolveMaxLlmQueue({ JPAPER_MAX_LLM_QUEUE: "1e9" } as NodeJS.ProcessEnv)).toBe(
+      DEFAULT_MAX_LLM_QUEUE,
+    );
+    expect(resolveMaxLlmQueue({ JPAPER_MAX_LLM_QUEUE: "99999" } as NodeJS.ProcessEnv)).toBe(
+      MAX_LLM_QUEUE_CAP,
+    );
+    expect(resolveMaxLlmQueue({ JPAPER_MAX_LLM_QUEUE: "0" } as NodeJS.ProcessEnv)).toBe(1);
   });
 });

@@ -3,6 +3,7 @@
 // 捌く web ハンドラで上限が掛からない（リクエスト数 × セグメント並列だけ子プロセスが増える）。
 import type { LlmClient } from "../types/contract.js";
 import { canceledError, throwIfAborted } from "./cancellation.js";
+import { JpaperError } from "../types/errors.js";
 
 export interface Gate {
   run<T>(fn: () => Promise<T>, signal?: AbortSignal): Promise<T>;
@@ -16,8 +17,20 @@ interface Waiter {
   canceled: boolean;
 }
 
-export function makeGate(limit: number): Gate {
+// 待ち行列の上限。無制限だと過負荷を busy（429）へ変換できず、返らないリクエストだけが
+// 積み上がる（実測: makeGate(1) に 10 万件積めた）。arXiv 側の maxQueueWaitMs と同じ考え方。
+export const DEFAULT_MAX_LLM_QUEUE = 256;
+export const MAX_LLM_QUEUE_CAP = 4_096;
+
+export function resolveMaxLlmQueue(env = process.env): number {
+  const raw = env.JPAPER_MAX_LLM_QUEUE?.trim();
+  if (raw === undefined || !/^\d+$/.test(raw)) return DEFAULT_MAX_LLM_QUEUE;
+  return Math.min(MAX_LLM_QUEUE_CAP, Math.max(1, Number(raw)));
+}
+
+export function makeGate(limit: number, maxQueue = resolveMaxLlmQueue()): Gate {
   const max = Math.max(1, Math.floor(limit));
+  const queueCap = Math.min(MAX_LLM_QUEUE_CAP, Math.max(1, Math.floor(maxQueue)));
   const queue: Waiter[] = [];
   let running = 0;
   // 中断済みの待機者は起こしても枠を使わないので、生きている先頭が出るまで捨てる。
@@ -42,6 +55,13 @@ export function makeGate(limit: number): Gate {
       // 新規呼び出しが枠を横取りすると、再検査しなければ待機者が上乗せして上限を破る。
       while (running >= max) {
         throwIfAborted(signal, "LLM 同時実行の待機");
+        if (queue.length >= queueCap) {
+          throw new JpaperError(
+            2,
+            "busy",
+            `LLM 呼び出しの待ち行列が上限 ${queueCap} に達しています。時間をおいて再試行してください`,
+          );
+        }
         await new Promise<void>((resolve, reject) => {
           const waiter: Waiter = { wake: () => { cleanup(); resolve(); }, canceled: false };
           // 待機中も中断が効く。効かないと、枠を握った run が期限を持たない場合に
