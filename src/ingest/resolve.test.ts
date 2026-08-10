@@ -116,6 +116,24 @@ describe("図の解決コストの上限", () => {
     expect(Date.now() - started).toBeLessThan(500);
   });
 
+  it("\\graphicspath のディレクトリ数でコストが膨らまない", () => {
+    // maxFigureRefs は参照件数しか縛らない。1 参照あたりのコストが bases に比例するので、
+    // 同じ綴りを数千個並べるだけで実測 39KiB の入力が 36,769ms 同期ブロックした。
+    const d = tmp(["fig.png"]);
+    const gp = `\\graphicspath{${"{nowhere/}".repeat(4000)}}`;
+    const body = Array.from({ length: 1000 }, (_, i) => `\\includegraphics{nope${String(i)}}`).join("");
+    const started = Date.now();
+    expect(collectFigures(gp + body, d)).toEqual([]);
+    expect(Date.now() - started).toBeLessThan(1000);
+  });
+
+  it("実在するディレクトリが多すぎたら too-large", () => {
+    const dirs = Array.from({ length: 70 }, (_, i) => `d${String(i)}/keep.png`);
+    const d = tmp(dirs);
+    const gp = `\\graphicspath{${dirs.map((_, i) => `{d${String(i)}/}`).join("")}}`;
+    expect(() => collectFigures(`${gp}\\includegraphics{keep}`, d)).toThrowError(/上限/);
+  });
+
   it("図の参照が上限を超えたら too-large", () => {
     const d = tmp(["fig.png"]);
     const latex = Array.from(

@@ -44,15 +44,50 @@ function findByBasename(rootDir: string, ref: string, index: Map<string, string[
   return null;
 }
 
+// \graphicspath のディレクトリ数の上限。実在の論文は数個。
+const MAX_GRAPHICS_PATHS = 64;
+// 図の解決で叩く existsSync の総回数。参照件数だけを縛っても、1 参照あたりのコストが
+// bases に比例するので抑えられない（実測: 4,000 dirs × 1,000 refs の 39KiB で 36,769ms、
+// 10ms タイマーの発火は 0）。
+const MAX_FIGURE_LOOKUPS = 200_000;
+
+// 重複を落とし、実在するディレクトリだけに絞る。同じ綴りを並べるだけの入力を畳み、
+// 存在しないディレクトリへの探索（1 参照あたり拡張子ぶん）を最初に消す。
+function usableBases(baseDir: string, bases: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const base of bases) {
+    if (seen.has(base)) continue;
+    seen.add(base);
+    if (base === "" || existsSync(path.resolve(baseDir, base))) out.push(base);
+  }
+  if (out.length > MAX_GRAPHICS_PATHS) {
+    throw new JpaperError(
+      2,
+      "too-large",
+      `\\graphicspath のディレクトリが上限 ${MAX_GRAPHICS_PATHS} 件を超えています`,
+    );
+  }
+  return out;
+}
+
 function resolveFigure(
   baseDir: string,
   rootDir: string,
   bases: string[],
   ref: string,
+  budget: { lookups: number },
 ): string | null {
   const cands = path.extname(ref) ? [ref] : [ref, ...FIG_EXTS.map((e) => ref + e)];
   for (const base of bases) {
     for (const cand of cands) {
+      if (--budget.lookups < 0) {
+        throw new JpaperError(
+          2,
+          "too-large",
+          `図の解決が上限 ${MAX_FIGURE_LOOKUPS} 回を超えています`,
+        );
+      }
       const abs = path.resolve(baseDir, base, cand);
       if (existsSync(abs) && isInsideDirReal(rootDir, abs)) return abs;
     }
@@ -70,6 +105,7 @@ export function collectFigures(
   maxRefs = 5_000,
 ): string[] {
   let bases = [""]; // \graphicspath 宣言を参照順に追う（後宣言で置換）
+  const budget = { lookups: MAX_FIGURE_LOOKUPS };
   const found = new Set<string>();
   const re =
     /\\graphicspath\s*\{((?:\{[^}]*\})+)\}|\\includegraphics\*?\s*(?:\[[^\]]*\]\s*)?\{([^}]+)\}/g;
@@ -81,7 +117,10 @@ export function collectFigures(
   const memo = new Map<string, string | null>();
   while ((m = re.exec(latex)) !== null) {
     if (m[1] !== undefined) {
-      bases = ["", ...[...m[1].matchAll(/\{([^}]*)\}/g)].map((g) => g[1] ?? "")];
+      bases = usableBases(
+        baseDir,
+        ["", ...[...m[1].matchAll(/\{([^}]*)\}/g)].map((g) => g[1] ?? "")],
+      );
       continue;
     }
     const ref = (m[2] ?? "").trim();
@@ -91,7 +130,7 @@ export function collectFigures(
       if (memo.size >= maxRefs) {
         throw new JpaperError(2, "too-large", `図の参照が上限 ${maxRefs} 件を超えています`);
       }
-      resolved = resolveFigure(baseDir, rootDir, bases, ref);
+      resolved = resolveFigure(baseDir, rootDir, bases, ref, budget);
       if (resolved === null) {
         index ??= buildNameIndex(rootDir);
         resolved = findByBasename(rootDir, ref, index);
