@@ -32,12 +32,16 @@ describe("GlossaryDb", () => {
     db.close();
   });
 
-  it("matchKnownTerms は最長一致優先", () => {
+  it("matchKnownTerms は confirmed のみを最長一致優先で返す", () => {
     const db = new GlossaryDb();
     db.writeBackProposed([
       { src: "attention", ja: null, ...base },
       { src: "self-attention", ja: null, ...base },
     ]);
+    // proposed のうちは他論文の処理に影響しない。
+    expect(db.matchKnownTerms("we use self-attention here")).toEqual([]);
+    db.promote("attention", null, null);
+    db.promote("self-attention", null, null);
     const m = db.matchKnownTerms("we use self-attention here");
     expect(m[0]).toBe("self-attention");
     expect(m).toContain("attention");

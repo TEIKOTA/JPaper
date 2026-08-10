@@ -145,8 +145,17 @@ export class GlossaryDb {
     ).map((r) => r.src);
   }
 
+  // 承認済みの語だけ。proposed は他論文の処理に影響してはならない（用語汚染 ADR 20260811）。
+  confirmedSrcTerms(): string[] {
+    return (
+      this.db
+        .prepare("SELECT DISTINCT src FROM term WHERE status='confirmed'")
+        .all() as unknown as { src: string }[]
+    ).map((r) => r.src);
+  }
+
   matchKnownTerms(text: string): string[] {
-    return this.allSrcTerms()
+    return this.confirmedSrcTerms()
       .sort((a, b) => b.length - a.length)
       .filter((t) => text.includes(t));
   }
