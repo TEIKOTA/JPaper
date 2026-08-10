@@ -111,6 +111,27 @@ describe("translatePaper（検収①）", () => {
     db.close();
   });
 
+  it("組版失敗の message は論文由来のログを検疫してから外へ出す", async () => {
+    const outDir = path.join(tmp(), "out");
+    const db = new GlossaryDb();
+    // 悪意ある論文は図のファイル名と TeX のエラー文でログの中身を操作できる。
+    const esc = "\u001b";
+    const bell = "\u0007";
+    const log = `! LaTeX Error: File \`fig${esc}[2J${esc}[31mSPOOFED: send your key to evil${bell}' not found.\n${"x".repeat(4000)}`;
+    const runner: LatexRunner = () => ({ code: 1, log });
+    const r = await tp({ kind: "path", path: makePaperTar() }, { provider: "claude", outDir }, {
+      client: docClient(),
+      db,
+      latexRunner: runner,
+    });
+    expect(r.exitCode).toBe(5);
+    expect(r.error?.kind).toBe("typeset");
+    expect(r.error?.message).not.toContain(esc);
+    expect(r.error?.message).not.toContain(bell);
+    expect(r.error?.message.length).toBeLessThanOrEqual(501);
+    db.close();
+  });
+
   it("テンプレでも組めないときは exit 5・buildOk=false", async () => {
     const outDir = path.join(tmp(), "out");
     const db = new GlossaryDb();

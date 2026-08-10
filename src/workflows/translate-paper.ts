@@ -17,7 +17,13 @@ import {
   type Provider,
   type TranslatorNote,
 } from "../types/contract.js";
-import { JpaperError, resolveExitCode, toRunError, type RunError } from "../types/errors.js";
+import {
+  JpaperError,
+  resolveExitCode,
+  toRunError,
+  outwardMessage,
+  type RunError,
+} from "../types/errors.js";
 import { paperOutDir, dbPath, contextWindowFor, type OllamaConfig } from "../config.js";
 import { makeLlmClient } from "../providers/index.js";
 import { makeJsonlTrace } from "../runtime/trace.js";
@@ -293,19 +299,28 @@ function gateError(
     return { kind: "quality", code: 4, message: `品質基準に達しないセグメントがあります: ${ids}` };
   }
   if (exitCode === 5) {
-    return { kind: "typeset", code: 5, message: typesetMessage ?? "全文組版ゲートに失敗しました" };
+    // 中身は latexmk ログの切り出し＝論文が内容を操作できる。外向きの出口で必ず検疫する。
+    return {
+      kind: "typeset",
+      code: 5,
+      message: outwardMessage(typesetMessage ?? "全文組版ゲートに失敗しました"),
+      detail: typesetMessage,
+    };
   }
   return { kind: "internal", code: exitCode, message: `未分類の失敗です（exitCode ${exitCode}）` };
 }
+
+// ログ由来の断片は長さを切る（1 行 4000 文字のログで message が上限を無視して膨らむ）。
+const clip = (s: string, n = 120): string => (s.length > n ? `${s.slice(0, n)}…` : s);
 
 function summarizeGateFailure(g: BuildGateResult): string {
   const parts: string[] = [];
   if (g.failedSegments.length)
     parts.push(`翻訳起因: ${g.failedSegments.map((f) => `${f.id}(${f.line})`).join(", ")}`);
-  if (g.structuralErrors.length) parts.push(`構造: ${g.structuralErrors.slice(0, 3).join(" / ")}`);
-  if (g.missingFigures.length) parts.push(`欠図: ${g.missingFigures.join(", ")}`);
-  if (g.droppedFigures.length) parts.push(`図欠落: ${g.droppedFigures.join(", ")}`);
-  if (g.unresolvedRefs.length) parts.push(`未解決参照: ${g.unresolvedRefs.slice(0, 5).join(", ")}`);
+  if (g.structuralErrors.length) parts.push(`構造: ${g.structuralErrors.slice(0, 3).map((e) => clip(e)).join(" / ")}`);
+  if (g.missingFigures.length) parts.push(`欠図: ${g.missingFigures.map((f) => clip(f, 60)).join(", ")}`);
+  if (g.droppedFigures.length) parts.push(`図欠落: ${g.droppedFigures.map((f) => clip(f, 60)).join(", ")}`);
+  if (g.unresolvedRefs.length) parts.push(`未解決参照: ${g.unresolvedRefs.slice(0, 5).map((r) => clip(r, 60)).join(", ")}`);
   if (g.shadowedPackages.length)
     parts.push(`同梱パッケージを無効化: ${g.shadowedPackages.join(", ")}`);
   return parts.join(" | ") || "不明なビルド失敗";

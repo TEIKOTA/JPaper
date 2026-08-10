@@ -38,8 +38,8 @@ export interface StageInput {
 }
 
 const ERROR_LINE = /(?:^|\s)(?:\.\/)?([A-Za-z0-9._/-]+\.(?:tex|cls|sty|bst|bib|def|ltx)):(\d+):\s*(.+)$/gm;
-const MISSING_FIG = /(?:File `([^']+)' not found|Unable to load picture or PDF file `([^']+)')/g;
-const UNRESOLVED = /(?:Reference|Citation) `([^']+)' (?:on page \d+ )?undefined/g;
+const MISSING_FIG = /(?:File `([^'\n]+)' not found|Unable to load picture or PDF file `([^'\n]+)')/g;
+const UNRESOLVED = /(?:Reference|Citation) `([^'\n]+)' (?:on page \d+ )?undefined/g;
 const SUPPORT_EXT = /\.(sty|cls|bst|bib|bbl)$/i;
 
 const FATAL_TRAILER = /^==> Fatal error occurred/;

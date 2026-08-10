@@ -123,3 +123,46 @@ describe("注入クライアントの例外", () => {
     expect(r.error?.message).toContain("401");
   });
 });
+
+describe("外向きメッセージの検疫", () => {
+  it("絶対パスは message から伏せ、detail に残す", async () => {
+    const { JpaperError: E } = await import("../types/errors.js");
+    const r = toRunError(new E(2, "conflict", "別の実行が進行中です: /srv/acme/out/.run"));
+    expect(r.message).not.toContain("/srv/acme");
+    expect(r.message).toContain("<path>");
+    expect(r.detail).toContain("/srv/acme/out/.run");
+  });
+
+  it("internal の生メッセージからも絶対パスを伏せる", () => {
+    const r = toRunError(new TypeError("cannot read x of /Users/secret/tenants/a/db.sqlite"));
+    expect(r.kind).toBe("internal");
+    expect(r.message).not.toContain("/Users/secret");
+  });
+
+  it("双方向制御文字・ゼロ幅・行区切りを落とす", () => {
+    const rlo = "\u202e";
+    const zwsp = "\u200b";
+    const ls = "\u2028";
+    const out = safeMessage(`OK${rlo}gnitset${zwsp}X${ls}Y`);
+    expect(out).not.toContain(rlo);
+    expect(out).not.toContain(zwsp);
+    expect(out).not.toContain(ls);
+  });
+
+  it("環境由来の errno を infra、ネットワーク errno を upstream に分類する", () => {
+    for (const code of ["ENOENT", "EEXIST", "EBUSY", "EACCES"]) {
+      expect(toRunError(Object.assign(new Error("x"), { code })).kind).toBe("infra");
+    }
+    const net = toRunError(Object.assign(new Error("connect"), { code: "ECONNREFUSED" }));
+    expect(net.kind).toBe("upstream");
+    expect(net.code).toBe(2);
+  });
+
+  it("cause に包まれた fs エラーも取りこぼさない", () => {
+    const wrapped = new Error("db を開けません", {
+      cause: Object.assign(new Error("EACCES"), { code: "EACCES" }),
+    });
+    expect(isInfraError(wrapped)).toBe(true);
+    expect(toRunError(wrapped).kind).toBe("infra");
+  });
+});

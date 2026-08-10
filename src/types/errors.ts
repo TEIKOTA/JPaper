@@ -42,6 +42,10 @@ export interface RunError {
 
 // 実行環境の障害（権限・容量・パス衝突）。コードのバグと区別できないと運用で切り分けられない。
 const INFRA_SYSCODES = new Set([
+  "ENOENT",
+  "EEXIST",
+  "EBUSY",
+  "ENOTEMPTY",
   "EACCES",
   "EPERM",
   "ENOTDIR",
@@ -56,9 +60,24 @@ const INFRA_SYSCODES = new Set([
   "EXDEV",
 ]);
 
-function syscodeOf(e: unknown): string {
-  const code = (e as NodeJS.ErrnoException | undefined)?.code;
-  return typeof code === "string" ? code : "";
+// 外部サービス側の障害。JPaper のバグ（internal）でも実行環境の障害（infra）でもない。
+const NETWORK_SYSCODES = new Set([
+  "ECONNREFUSED",
+  "ECONNRESET",
+  "ENOTFOUND",
+  "ETIMEDOUT",
+  "EHOSTUNREACH",
+  "ENETUNREACH",
+  "EPIPE",
+]);
+
+// ライブラリは fs エラーを cause で包むことがある。isTransient と同じ深さまで辿る。
+function syscodeOf(e: unknown, depth = 3): string {
+  const err = e as (NodeJS.ErrnoException & { cause?: unknown }) | undefined;
+  const code = err?.code;
+  if (typeof code === "string") return code;
+  if (depth > 0 && err?.cause !== undefined) return syscodeOf(err.cause, depth - 1);
+  return "";
 }
 
 export function isInfraError(e: unknown): boolean {
@@ -68,17 +87,42 @@ export function isInfraError(e: unknown): boolean {
 // 外向きメッセージから制御文字を落とす。論文由来の文字列や外部プロセスの出力が
 // そのまま端末・HTTP 応答へ流れるため（表示の偽装を防ぐ）。長さも抑える。
 const MAX_MESSAGE_CHARS = 500;
+// 双方向制御・行区切り・ゼロ幅も落とす。表示順を反転させて偽の成功文言を見せられるため。
+const UNSAFE_CHARS = /[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069\ufeff]/g;
+
+// ホストの絶対パスは運用者にしか意味がなく、外へ出すと配置が漏れる。detail 側にだけ残す。
+const ABSOLUTE_PATH = /(?:[A-Za-z]:)?(?:~|\/)[^\s'"`,;)\]]*\/[^\s'"`,;)\]]*/g;
+export function redactPaths(s: string): string {
+  return s.replace(ABSOLUTE_PATH, "<path>");
+}
+
 export function safeMessage(s: string): string {
-  const flat = s.replace(/[\u0000-\u001f\u007f-\u009f]/g, " ").trim();
+  const flat = s.replace(UNSAFE_CHARS, " ").replace(/\s+/g, " ").trim();
   return flat.length > MAX_MESSAGE_CHARS ? `${flat.slice(0, MAX_MESSAGE_CHARS)}…` : flat;
+}
+
+// 外向きに出す文字列の唯一の出口。制御文字を落とし、絶対パスを伏せ、長さを切る。
+export function outwardMessage(s: string): string {
+  return safeMessage(redactPaths(s));
 }
 
 // 想定外の例外も分類済みの形に落とす。原因の型名は detail に残す（web のログ用）。
 export function toRunError(e: unknown): RunError {
   if (e instanceof JpaperError) {
-    return { kind: e.kind, code: e.code, message: safeMessage(e.message) };
+    const message = outwardMessage(e.message);
+    // 伏せた情報はサーバ側ログでは要る（どの出力先が衝突したのか等）。
+    const detail = message === safeMessage(e.message) ? undefined : safeMessage(e.message);
+    return { kind: e.kind, code: e.code, message, detail };
   }
   const err = e as Error | undefined;
+  if (NETWORK_SYSCODES.has(syscodeOf(e))) {
+    return {
+      kind: "upstream",
+      code: 2,
+      message: `外部サービスに到達できません（${syscodeOf(e)}）`,
+      detail: err?.stack ?? String(err?.message ?? e),
+    };
+  }
   if (isInfraError(e)) {
     // 生の errno と絶対パスは detail（サーバ側ログ用）に留め、message には出さない。
     return {
@@ -88,10 +132,11 @@ export function toRunError(e: unknown): RunError {
       detail: err?.stack ?? String(err?.message ?? e),
     };
   }
+  // internal は JPaper のバグ。生の例外文には絶対パスが混ざるので伏せてから出す。
   return {
     kind: "internal",
     code: 1,
-    message: safeMessage(String(err?.message ?? e)),
+    message: outwardMessage(String(err?.message ?? e)),
     detail: err?.stack ?? err?.name ?? typeof e,
   };
 }
