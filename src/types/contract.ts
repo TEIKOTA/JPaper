@@ -229,6 +229,8 @@ export interface LlmCallEvent {
   cacheReadTokens?: number;
   cacheCreationTokens?: number;
   costUsd?: number;
+  // 呼び出しが失敗したか。失敗した呼び出しも課金されるので、記録から落とすと過小計上になる。
+  failed?: boolean;
 }
 export type LlmCallRecord = LlmCallEvent & { runId: string };
 export type TraceSink = (ev: LlmCallEvent) => void;

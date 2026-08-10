@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { resolveExitCode, isTransient, JpaperError } from "./errors.js";
+import { resolveExitCode, isTransient, JpaperError, redactPaths } from "./errors.js";
 
 describe("resolveExitCode", () => {
   it("失敗が無ければ 0", () => {
@@ -69,5 +69,25 @@ describe("JpaperError", () => {
     expect(e.code).toBe(2);
     expect(e.kind).toBe("provider");
     expect(e).toBeInstanceOf(Error);
+  });
+});
+
+describe("redactPaths", () => {
+  it("ホストの絶対パスを伏せる（Unix / Windows / UNC / ~）", () => {
+    expect(redactPaths("open /Users/a/JPaper/secret.tex")).toBe("open <path>");
+    expect(redactPaths("C:\\Users\\a\\secret.tex")).toBe("<path>");
+    expect(redactPaths("\\\\server\\share\\secret.tex")).toBe("<path>");
+    expect(redactPaths("~/.jpaper/db.sqlite が読めません")).toBe("<path> が読めません");
+    expect(redactPaths("cannot write /etc")).toBe("cannot write <path>");
+  });
+
+  it("URL・相対パス・日付は伏せない（外向きの唯一の診断情報を壊さない）", () => {
+    const url = "https://arxiv.org/abs/2401.12345 に到達できません";
+    expect(redactPaths(url)).toBe(url);
+    expect(redactPaths("出力先 ./out/ja を確認してください")).toBe(
+      "出力先 ./out/ja を確認してください",
+    );
+    expect(redactPaths("期限 2026/08/11 を超過しました")).toBe("期限 2026/08/11 を超過しました");
+    expect(redactPaths("図 fig/x.png が見つかりません")).toBe("図 fig/x.png が見つかりません");
   });
 });

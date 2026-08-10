@@ -91,7 +91,10 @@ const MAX_MESSAGE_CHARS = 500;
 const UNSAFE_CHARS = /[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069\ufeff]/g;
 
 // ホストの絶対パスは運用者にしか意味がなく、外へ出すと配置が漏れる。detail 側にだけ残す。
-const ABSOLUTE_PATH = /(?:[A-Za-z]:)?(?:~|\/)[^\s'"`,;)\]]*\/[^\s'"`,;)\]]*/g;
+// 語中の / は対象にしない（URL の "https://…" や日付 "2026/08/11" まで伏せると、
+// 外向きメッセージが唯一の診断情報になる web で何が起きたか分からなくなる）。
+const ABSOLUTE_PATH =
+  /(?<![\w:~./])(?:~\/|\/)[^\s'"`,;)\]]*|(?<![\w])[A-Za-z]:[\\/][^\s'"`,;)\]]*|\\\\[^\s'"`,;)\]]+/g;
 export function redactPaths(s: string): string {
   return s.replace(ABSOLUTE_PATH, "<path>");
 }

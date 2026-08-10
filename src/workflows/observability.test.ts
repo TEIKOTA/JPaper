@@ -130,3 +130,18 @@ describe("注入クライアントの観測", () => {
     expect(seen.some((e) => e.phase === "context")).toBe(true);
   });
 });
+
+describe("失敗した呼び出しの記録", () => {
+  it("失敗もトレースに残る（課金は成功回数ではなく試行回数）", async () => {
+    const { withTrace } = await import("../runtime/trace.js");
+    const events: LlmCallEvent[] = [];
+    const client = withTrace(
+      { complete: () => Promise.reject(new Error("boom")) },
+      (e) => events.push(e),
+      "ollama",
+    );
+    await client.complete({ system: "s", user: "u" }).catch(() => undefined);
+    expect(events).toHaveLength(1);
+    expect(events[0]!.failed).toBe(true);
+  });
+});

@@ -41,17 +41,25 @@ export function withTrace(
   return {
     async complete(req) {
       const started = now();
-      const out = await client.complete(req);
-      trace({
-        ts: new Date().toISOString(),
-        provider,
-        role: req.meta?.role,
-        phase: req.meta?.phase,
-        segmentId: req.meta?.segmentId,
-        pass: req.meta?.pass,
-        latencyMs: now() - started,
-      });
-      return out;
+      let failed = false;
+      try {
+        return await client.complete(req);
+      } catch (e) {
+        failed = true;
+        throw e;
+      } finally {
+        // 失敗した呼び出しも課金されるので記録する（RunSummary.llmCalls と行数を揃える）。
+        trace({
+          ts: new Date().toISOString(),
+          provider,
+          role: req.meta?.role,
+          phase: req.meta?.phase,
+          segmentId: req.meta?.segmentId,
+          pass: req.meta?.pass,
+          latencyMs: now() - started,
+          ...(failed ? { failed: true } : {}),
+        });
+      }
     },
   };
 }

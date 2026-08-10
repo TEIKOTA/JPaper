@@ -155,3 +155,29 @@ describe("待ち行列の上限", () => {
     expect(resolveMaxLlmQueue({ JPAPER_MAX_LLM_QUEUE: "0" } as NodeJS.ProcessEnv)).toBe(1);
   });
 });
+
+describe("中断済み待機者の掃除", () => {
+  it("待ち行列から取り除き、上限判定を汚さない", async () => {
+    const gate = makeGate(1, 2);
+    const held = gate.run(() => new Promise<void>(() => undefined));
+    await Promise.resolve();
+
+    const c = new AbortController();
+    const doomed = [
+      gate.run(async () => "a", c.signal).catch(() => "canceled"),
+      gate.run(async () => "b", c.signal).catch(() => "canceled"),
+    ];
+    await Promise.resolve();
+    expect(gate.waiting()).toBe(2);
+    c.abort();
+    expect(await Promise.all(doomed)).toEqual(["canceled", "canceled"]);
+    expect(gate.waiting()).toBe(0);
+
+    // 墓標が残っていれば、ここで busy になる（待ち行列は本当は空）。
+    const next = gate.run(async () => "ok").catch((e: unknown) => e);
+    await Promise.resolve();
+    expect(gate.waiting()).toBe(1);
+    void held;
+    void next;
+  });
+});

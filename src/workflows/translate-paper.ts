@@ -118,7 +118,8 @@ async function mapLimit<T, R>(
     }
   }
   await Promise.all(
-    Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, worker),
+    // limit が壊れていても 1 本は回す（0 本だと結果配列が穴だらけのまま返る）。
+    Array.from({ length: Math.max(1, Math.min(Math.floor(limit) || 1, items.length)) }, worker),
   );
   return results;
 }
@@ -391,17 +392,29 @@ async function typeset(
   return { layout: "template", buildOk: false, exitCode: 5, message: m };
 }
 
+// 入口の検証。web は文字列由来の値（Number(req.query.x)）をそのまま渡してくるので、
+// 形が違うものは黙って既定へ倒さず input で拒否する（timeoutMs と同じ扱いに揃える）。
+function entryError(input: JpaperInput, opts: TranslateOptions): string | undefined {
+  if (!JpaperInputSchema.safeParse(input).success) {
+    return "入力の指定が不正です（kind と path/id を確認してください）";
+  }
+  if (!ProviderSchema.safeParse(opts.provider).success) {
+    return `provider が不正です: ${outwardMessage(String(opts.provider))}`;
+  }
+  const c = opts.concurrency;
+  if (c !== undefined && (typeof c !== "number" || !Number.isFinite(c) || c < 1)) {
+    return `concurrency が不正です: ${outwardMessage(String(c))}`;
+  }
+  return undefined;
+}
+
 export async function translatePaper(
   input: JpaperInput,
   opts: TranslateOptions,
   deps: TranslateDeps = {},
 ): Promise<Result> {
   // 入口の検証。web ハンドラへ生の例外を漏らさない（契約付録 §8「例外は投げず戻り値で表現」）。
-  const badInput = JpaperInputSchema.safeParse(input).success
-    ? ProviderSchema.safeParse(opts.provider).success
-      ? undefined
-      : `provider が不正です: ${outwardMessage(String(opts.provider))}`
-    : "入力の指定が不正です（kind と path/id を確認してください）";
+  const badInput = entryError(input, opts);
   if (badInput !== undefined) {
     return failResult("unknown", opts.outDir ?? "", { kind: "input", code: 2, message: badInput });
   }
@@ -452,11 +465,10 @@ export async function translatePaper(
       work.maxLlmCalls,
     );
     llmCalls = callBudget.used;
-    const client = withGate(
-      deps.gate === undefined ? callBudget.client : withGate(callBudget.client, deps.gate, signal),
-      llmGate(),
-      signal,
-    );
+    // プロセスゲートを内側に置く。外側で先に取ると、内側で待つ間もプロセス枠を占有して
+    // 無関係なテナントを待たせる（実測: 実行中 1 本でプロセス枠を 2 消費）。
+    const gated = withGate(callBudget.client, llmGate(), signal);
+    const client = deps.gate === undefined ? gated : withGate(gated, deps.gate, signal);
     // チェックポイントは runDir 単位なので、同一 outDir の並行実行は訳文を混ぜる。契約付録 §8。
     lock = acquireRunLock(runDir);
     if (deps.db) {

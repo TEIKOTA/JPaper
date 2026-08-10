@@ -89,3 +89,31 @@ describe("注入ゲート", () => {
     }
   });
 });
+
+describe("concurrency の検証", () => {
+  it("不正な concurrency は internal ではなく input で返る", async () => {
+    const { translatePaper } = await import("./translate-paper.js");
+    const { makeTar } = await import("../ingest/archive.fixtures.js");
+    const work = tmp();
+    const tar = path.join(work, "p.tar");
+    writeFileSync(
+      tar,
+      makeTar([
+        {
+          name: "main.tex",
+          content: "\\documentclass{a}\\begin{document}\\section{I}Alpha.\\end{document}",
+        },
+      ]),
+    );
+    // web の Number(req.query.concurrency) で普通に起きる値。
+    for (const bad of [Number("abc"), 0, -3, Infinity]) {
+      const r = await translatePaper({ kind: "path", path: tar }, {
+        provider: "ollama",
+        outDir: path.join(work, `out-${String(bad)}`),
+        concurrency: bad,
+      });
+      expect(r.error?.kind).toBe("input");
+      expect(r.error?.message).toContain("concurrency");
+    }
+  });
+});

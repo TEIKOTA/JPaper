@@ -89,16 +89,22 @@ export async function checkpoint<S extends z.ZodTypeAny>(
 // 同じ step の旧世代（無効化ハッシュ違い）を消す。残すと、論文を直して再投入するたびに
 // 原文全文・訳文が世代ぶん積み上がり、ディスクが線形に増え続ける（実測 8 世代で 5 倍）。
 function dropOldGenerations(dir: string, stepId: string, keep: string): void {
+  let names: string[] = [];
   try {
-    for (const name of readdirSync(dir)) {
+    names = readdirSync(dir);
+  } catch {
+    return;
+  }
+  for (const name of names) {
+    try {
       if (name === keep) continue;
       // "<stepId>.<hash>.json" と、無効化なしの "<stepId>.json" だけを対象にする。
       if (!name.startsWith(`${stepId}.`) || !name.endsWith(".json")) continue;
       const middle = name.slice(stepId.length + 1, -".json".length);
       if (middle !== "" && !/^[0-9a-f]+$/.test(middle)) continue;
       rmSync(path.join(dir, name), { force: true });
+    } catch {
+      // GC は最善努力。1 エントリの失敗で残りを諦めない（諦めると線形増加が復活する）。
     }
-  } catch {
-    // GC は最善努力。失敗しても run は続行する（ディスクが増えるだけ）。
   }
 }

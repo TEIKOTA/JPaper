@@ -68,6 +68,10 @@ export function makeGate(limit: number, maxQueue = resolveMaxLlmQueue()): Gate {
           // 期限を持つ他テナントの run まで返らなくなる。
           const onAbort = (): void => {
             waiter.canceled = true;
+            // 墓標を残さず待ち行列から外す。残すと上限判定（queue.length）だけが増えて、
+            // waiting() が 0 のまま正当な呼び出しが busy で弾かれる。
+            const at = queue.indexOf(waiter);
+            if (at !== -1) queue.splice(at, 1);
             cleanup();
             reject(canceledError("LLM 同時実行の待機"));
             // 自分の順番が回ってきていたぶんを次へ譲る。
