@@ -93,7 +93,7 @@ export async function fetchArxivSource(
       // 予約せずに抜ける（自分のぶんで待ち行列をさらに伸ばさない）。
       throw new JpaperError(
         2,
-        "conflict",
+        "busy",
         `arXiv 取得の待ち行列が長すぎます（推定 ${Math.round(wait0 / 1000)} 秒 > 上限 ${Math.round(maxQueueWait / 1000)} 秒）。時間をおいて再実行してください`,
       );
     }
@@ -122,7 +122,9 @@ export async function fetchArxivSource(
         lastErr = new Error(`HTTP ${res.status}`);
         continue;
       }
-      throw new JpaperError(2, "input", `arXiv 取得に失敗: HTTP ${res.status}`);
+      // 404 等は入力（存在しない ID）、それ以外の 4xx/5xx は上流側の問題。
+      const kind = res.status === 404 ? "input" : "upstream";
+      throw new JpaperError(2, kind, `arXiv 取得に失敗: HTTP ${res.status}`);
     } catch (e) {
       if (e instanceof JpaperError) throw e;
       throwIfAborted(signal, "arXiv 取得中");
@@ -130,16 +132,17 @@ export async function fetchArxivSource(
         lastErr = e;
         continue;
       }
+      // ネットワーク到達不能は利用者の入力ミスではない。監視で 5xx として見えるようにする。
       throw new JpaperError(
         2,
-        "input",
+        "upstream",
         `arXiv 取得に失敗: ${String((e as Error)?.message ?? e)}`,
       );
     }
   }
   throw new JpaperError(
     2,
-    "input",
+    "upstream",
     `arXiv 取得に失敗（リトライ上限）: ${String((lastErr as Error)?.message ?? lastErr)}`,
   );
 }

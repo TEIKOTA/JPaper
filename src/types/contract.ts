@@ -163,6 +163,9 @@ export const ErrorKind = z.enum([
   "quality",
   "typeset",
   "canceled",
+  "busy",
+  "upstream",
+  "infra",
   "internal",
 ]);
 

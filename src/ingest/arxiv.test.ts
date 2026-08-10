@@ -166,7 +166,7 @@ describe("待ち行列の上限と中断", () => {
     const state = { lastRequestAt: 30_000 }; // 既に 30 秒先まで予約済み
     await expect(
       fetchArxivSource("2203.06060", { ...common, state, maxQueueWaitMs: 10_000 }),
-    ).rejects.toMatchObject({ code: 2, kind: "conflict" });
+    ).rejects.toMatchObject({ code: 2, kind: "busy" });
     // 断ったぶんで待ち行列をさらに伸ばさない。
     expect(state.lastRequestAt).toBe(30_000);
   });

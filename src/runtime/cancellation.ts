@@ -33,3 +33,25 @@ export function withSignal(client: LlmClient, signal: AbortSignal | undefined): 
     },
   };
 }
+
+// 注入クライアント（web のテナント別資格情報など）が投げた素の例外を provider ドメインへ写す。
+// internal（＝JPaper のバグ）に落とすと、401 やクォータ超過が 500 として出てしまう。
+export function withProviderErrors(client: LlmClient): LlmClient {
+  return {
+    async complete(req) {
+      try {
+        return await client.complete(req);
+      } catch (e) {
+        if (e instanceof JpaperError) throw e;
+        const err = new JpaperError(
+          2,
+          "provider",
+          `LLM クライアントが失敗しました: ${String((e as Error)?.message ?? e)}`,
+        );
+        // 呼び出し側が transient を主張していれば尊重する（リトライ判定を壊さない）。
+        if ((e as { transient?: unknown }).transient === true) Object.assign(err, { transient: true });
+        return Promise.reject(err);
+      }
+    },
+  };
+}

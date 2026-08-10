@@ -41,7 +41,7 @@ import { buildNotes } from "./notes.js";
 import { untranslatedHeadings } from "./quality-gate.js";
 import { checkpoint, hashContext } from "../durable/checkpoint.js";
 import { acquireRunLock, type RunLock } from "../durable/run-lock.js";
-import { throwIfAborted, withSignal } from "../runtime/cancellation.js";
+import { throwIfAborted, withSignal, withProviderErrors } from "../runtime/cancellation.js";
 import { llmGate, withGate, type Gate } from "../runtime/concurrency.js";
 import { assembleWithMap, type Layout } from "../tools/assemble-latex.js";
 import {
@@ -370,7 +370,10 @@ export async function translatePaper(
   // 中断は境界 1 箇所（client ラッパ）で効かせる。各エージェントの引数は増やさない。
   // ゲートを外側に置くのは、枠を取ってから中断を見るため（待ち行列に中断済みが居座らない）。
   // 注入クライアントにも掛ける（web が自前クライアントを渡すとプロセス上限が消えていた）。
-  const client = withGate(withSignal(client0, opts.signal), deps.gate ?? llmGate());
+  const client = withGate(
+    withProviderErrors(withSignal(client0, opts.signal)),
+    deps.gate ?? llmGate(),
+  );
   let db: GlossaryDb | undefined;
   let lock: RunLock | undefined;
 

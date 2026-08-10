@@ -10,7 +10,16 @@ import {
   linkSync,
 } from "node:fs";
 import path from "node:path";
-import { JpaperError } from "../types/errors.js";
+import { JpaperError, isInfraError } from "../types/errors.js";
+
+function infraError(e: unknown, runDir: string): JpaperError {
+  const code = (e as NodeJS.ErrnoException).code ?? "";
+  return new JpaperError(
+    1,
+    "infra",
+    `出力先を用意できません（${code}）。権限と空き容量を確認してください: ${runDir}`,
+  );
+}
 
 // 保持者は生きている限り beatAt を更新する。更新が途切れたロックだけを失効とみなす。
 // pid の生存確認だけに頼ると pid 再利用で誤って「進行中」になるため、鮮度で上限を掛ける。
@@ -140,7 +149,13 @@ function writeAll(file: string, body: string): void {
 }
 
 export function acquireRunLock(runDir: string, now: () => number = Date.now): RunLock {
-  mkdirSync(runDir, { recursive: true });
+  // 生の fs エラーを外へ出さない（契約付録 §8）。権限・容量・パス衝突は infra として分類する。
+  try {
+    mkdirSync(runDir, { recursive: true });
+  } catch (e) {
+    if (isInfraError(e)) throw infraError(e, runDir);
+    throw e;
+  }
   const file = path.join(runDir, "run.lock");
   const stealFile = `${file}.steal`;
 

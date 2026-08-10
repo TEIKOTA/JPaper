@@ -35,15 +35,15 @@ describe("makeClaudeClient", () => {
     expect(args.filter((a) => a === "--output-format")).toHaveLength(1); // 既存の envelope 用のみ
   });
 
-  it("非 JSON 応答は transient な code 1（withRetry 対象）", async () => {
+  it("非 JSON 応答は transient な provider 失敗（withRetry 対象）", async () => {
     const c = makeClaudeClient({ run: async () => "not json" });
-    await expect(c.complete({ system: "s", user: "u" })).rejects.toMatchObject({ code: 1 });
+    await expect(c.complete({ system: "s", user: "u" })).rejects.toMatchObject({ code: 2, kind: "provider" });
     await c.complete({ system: "s", user: "u" }).catch((e) => expect(isTransient(e)).toBe(true));
   });
 
-  it("result 欠如は非 transient な code 1（契約不一致＝retry せず即 surface）", async () => {
+  it("result 欠如は非 transient な provider 失敗（契約不一致＝retry せず即 surface）", async () => {
     const c = makeClaudeClient({ run: async () => JSON.stringify({ foo: "bar" }) });
-    await expect(c.complete({ system: "s", user: "u" })).rejects.toMatchObject({ code: 1 });
+    await expect(c.complete({ system: "s", user: "u" })).rejects.toMatchObject({ code: 2, kind: "provider" });
     await c.complete({ system: "s", user: "u" }).catch((e) => expect(isTransient(e)).toBe(false));
   });
 

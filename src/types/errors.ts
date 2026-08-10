@@ -5,7 +5,8 @@ export type FailureCode = 2 | 3 | 4 | 5 | 6;
 // 失敗の分類。exitCode（§6）より細かく、呼び出し側が応答を出し分けるための軸。
 // input=入力が不正 / conflict=出力先が使用中 / too-large=サイズ上限超過 /
 // provider=LLM プロバイダ利用不能 / formal=形式検査不通過 / quality=品質未達 /
-// typeset=全文組版失敗 / canceled=呼び出し側の中断 / internal=想定外。
+// typeset=全文組版失敗 / canceled=呼び出し側の中断 / busy=一時的な過負荷（後で再試行可）/
+// upstream=外部サービス側の障害 / infra=実行環境の障害（権限・容量・パス）/ internal=想定外。
 export type ErrorKind =
   | "input"
   | "conflict"
@@ -15,6 +16,9 @@ export type ErrorKind =
   | "quality"
   | "typeset"
   | "canceled"
+  | "busy"
+  | "upstream"
+  | "infra"
   | "internal";
 
 export class JpaperError extends Error {
@@ -36,16 +40,58 @@ export interface RunError {
   detail?: string;
 }
 
+// 実行環境の障害（権限・容量・パス衝突）。コードのバグと区別できないと運用で切り分けられない。
+const INFRA_SYSCODES = new Set([
+  "EACCES",
+  "EPERM",
+  "ENOTDIR",
+  "EISDIR",
+  "ENOSPC",
+  "EROFS",
+  "EMFILE",
+  "ENFILE",
+  "EDQUOT",
+  "ENAMETOOLONG",
+  "ELOOP",
+  "EXDEV",
+]);
+
+function syscodeOf(e: unknown): string {
+  const code = (e as NodeJS.ErrnoException | undefined)?.code;
+  return typeof code === "string" ? code : "";
+}
+
+export function isInfraError(e: unknown): boolean {
+  return INFRA_SYSCODES.has(syscodeOf(e));
+}
+
+// 外向きメッセージから制御文字を落とす。論文由来の文字列や外部プロセスの出力が
+// そのまま端末・HTTP 応答へ流れるため（表示の偽装を防ぐ）。長さも抑える。
+const MAX_MESSAGE_CHARS = 500;
+export function safeMessage(s: string): string {
+  const flat = s.replace(/[\u0000-\u001f\u007f-\u009f]/g, " ").trim();
+  return flat.length > MAX_MESSAGE_CHARS ? `${flat.slice(0, MAX_MESSAGE_CHARS)}…` : flat;
+}
+
 // 想定外の例外も分類済みの形に落とす。原因の型名は detail に残す（web のログ用）。
 export function toRunError(e: unknown): RunError {
   if (e instanceof JpaperError) {
-    return { kind: e.kind, code: e.code, message: e.message };
+    return { kind: e.kind, code: e.code, message: safeMessage(e.message) };
   }
   const err = e as Error | undefined;
+  if (isInfraError(e)) {
+    // 生の errno と絶対パスは detail（サーバ側ログ用）に留め、message には出さない。
+    return {
+      kind: "infra",
+      code: 1,
+      message: `実行環境の障害です（${syscodeOf(e)}）。出力先・DB の権限と空き容量を確認してください`,
+      detail: err?.stack ?? String(err?.message ?? e),
+    };
+  }
   return {
     kind: "internal",
     code: 1,
-    message: String(err?.message ?? e),
+    message: safeMessage(String(err?.message ?? e)),
     detail: err?.stack ?? err?.name ?? typeof e,
   };
 }
