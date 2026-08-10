@@ -9,6 +9,8 @@ import {
   checkFigures,
   sandboxEnv,
   SRC_PKG_DIR,
+  parseResolved,
+  unsafeSupportFiles,
 } from "./build-gate.js";
 import type { SourceSpan } from "./assemble-latex.js";
 import type { LatexRunner } from "./build-gate.js";
@@ -342,3 +344,26 @@ describe("組版の中断", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 });
+
+describe("配布パッケージの解決", () => {
+  it("一部だけ解決できた出力からも集合を作れる", () => {
+    // kpsewhich は 1 つでも未解決だと exit != 0 を返すが、解決分は stdout に出ている。
+    // throw を「全滅」として扱うと、read プリミティブを含む配布パッケージ（TeX Live の
+    // tex/latex 6,000 件のうち実測 4.4%）を同梱しただけの正規論文が組版前に落ちる。
+    // arXiv 提出物は .bbl を同梱するのが常道なので、未解決が混ざるのはむしろ普通。
+    const out = "/usr/share/texmf/tex/latex/cleveref/cleveref.sty\n\n";
+    expect([...parseResolved(out)]).toEqual(["cleveref.sty"]);
+    expect(parseResolved("").size).toBe(0);
+  });
+
+  it("解決できた配布パッケージは危険判定から除外される", () => {
+    const dir = mkTemp();
+    writeFileSync(path.join(dir, "vendor.sty"), "\\openin1=x \\read1 to \\y");
+    writeFileSync(path.join(dir, "mine.sty"), "\\directlua{print(1)}");
+    const bad = unsafeSupportFiles(dir, (names) =>
+      names.includes("vendor.sty") ? new Set(["vendor.sty"]) : new Set(),
+    );
+    expect(bad.map((b) => b.file)).toEqual(["mine.sty"]);
+  });
+});
+

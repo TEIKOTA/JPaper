@@ -139,24 +139,36 @@ export const SRC_PKG_DIR = "srcpkg";
 // ファイル数に比例した subprocess 起動を避けるため、名前をまとめて 1 回だけ問う。
 export type PackageResolver = (names: string[]) => Set<string>;
 
+// kpsewhich は 1 つでも未解決の名前があると終了コード != 0 を返すが、解決できた分は
+// stdout に出ている。throw を「全滅」として扱うと配布版の判定材料が消え、read
+// プリミティブを含む配布パッケージ（実測: TeX Live の tex/latex 6,000 件のうち 4.4%）を
+// 同梱しただけの正規論文が組版前に拒否される。arXiv 提出物は .bbl を同梱するのが
+// 常道なので、未解決が混ざるのはむしろ普通。
 const defaultResolver: PackageResolver = (names) => {
   if (names.length === 0) return new Set();
+  let out: string;
   try {
-    const out = execFileSync("kpsewhich", names, {
+    out = execFileSync("kpsewhich", names, {
       encoding: "utf8",
       timeout: 30_000,
       stdio: ["ignore", "pipe", "ignore"],
     });
-    const found = new Set<string>();
-    for (const line of out.split("\n")) {
-      const base = path.basename(line.trim());
-      if (base !== "") found.add(base);
-    }
-    return found;
-  } catch {
-    return new Set();
+  } catch (e) {
+    // kpsewhich が無い環境では stdout も無い＝空集合（全て走査）へフォールバックする。
+    out = String((e as { stdout?: string | Buffer }).stdout ?? "");
   }
+  return parseResolved(out);
 };
+
+// kpsewhich の出力（解決できたパスの行）を basename の集合にする。
+export function parseResolved(out: string): Set<string> {
+  const found = new Set<string>();
+  for (const line of out.split("\n")) {
+    const base = path.basename(line.trim());
+    if (base !== "") found.add(base);
+  }
+  return found;
+}
 
 export interface UnsafeSupportFile {
   file: string;
