@@ -3,6 +3,7 @@ import { detectInput } from "./ingest/detect-input.js";
 import { translatePaper } from "./workflows/translate-paper.js";
 import { Provider, type Result } from "./types/contract.js";
 import { JpaperError } from "./types/errors.js";
+import { forTerminal } from "./runtime/untrusted.js";
 
 export interface CliDeps {
   translate?: typeof translatePaper;
@@ -13,7 +14,9 @@ export interface CliDeps {
 export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number> {
   const translate = deps.translate ?? translatePaper;
   const stdout = deps.stdout ?? ((s) => process.stdout.write(s));
-  const stderr = deps.stderr ?? ((s) => process.stderr.write(s));
+  // 論文由来の文字列が混ざるため、端末へ出す前に ESC 等の制御文字を落とす。
+  const rawStderr = deps.stderr ?? ((s: string) => process.stderr.write(s));
+  const stderr = (s: string): void => rawStderr(forTerminal(s));
 
   const args = argv.slice(2);
 

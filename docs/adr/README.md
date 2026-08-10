@@ -56,3 +56,4 @@
 | 2026-07-23 | [構造化出力をプロバイダ能力で分岐（Ollama ネイティブ JSON モード・claude プロンプト維持）](./20260723-provider-branched-structured-output.md) | accepted |
 | 2026-08-09 | [組版の堅牢化: LuaTeX 互換 shim の注入と共通テンプレによる原前文の吸収](./20260809-typesetting-shims-luatex-compat-and-class-absorption.md) | accepted |
 | 2026-08-11 | [組版サンドボックス: shell escape 明示禁止と同梱パッケージの探索順後置](./20260811-typesetting-sandbox-and-package-precedence.md) | accepted |
+| 2026-08-11 | [プロンプト注入対策: 論文・LLM 由来のテキストを指示面へ載せない](./20260811-untrusted-text-never-becomes-instructions.md) | accepted |

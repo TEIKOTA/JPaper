@@ -1,5 +1,6 @@
 // 契約付録 §1-8 の写経（値の正本＝docs/design/contract-appendix.md）。
 import { z } from "zod";
+import { MAX_ISSUE_CHARS, MAX_ISSUES } from "../runtime/untrusted.js";
 
 // ── §1 用語 ───────────────────────────────────────────────
 export const TermClass = z.enum([
@@ -57,8 +58,9 @@ export type TranslatorOut = z.infer<typeof TranslatorOut>;
 // ── §1 evaluator ─────────────────────────────────────────
 export const EvalIssue = z.object({
   severity: z.enum(["error", "warn"]),
-  message: z.string(),
-  span: z.string().optional(),
+  // 上限は prompt 膨張（＝コスト増幅）と指示文の埋め込みを抑えるため。プロンプト注入 ADR(20260811)。
+  message: z.string().max(MAX_ISSUE_CHARS),
+  span: z.string().max(MAX_ISSUE_CHARS).optional(),
 });
 export type EvalIssue = z.infer<typeof EvalIssue>;
 
@@ -71,7 +73,7 @@ export type EvaluatorIn = z.infer<typeof EvaluatorIn>;
 
 export const EvaluatorOut = z.object({
   verdict: z.enum(["pass", "revise", "fail"]),
-  issues: z.array(EvalIssue),
+  issues: z.array(EvalIssue).max(MAX_ISSUES),
 });
 export type EvaluatorOut = z.infer<typeof EvaluatorOut>;
 

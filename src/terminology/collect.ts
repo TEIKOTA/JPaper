@@ -1,4 +1,6 @@
 // 契約付録 §8。決定的な用語候補収集（固定5パターン＋DB 最長一致）。網羅性は求めない。
+import { oneLine, MAX_TERM_CHARS } from "../runtime/untrusted.js";
+
 export interface Candidate {
   src: string;
   definedInPaper: boolean;
@@ -27,8 +29,9 @@ const PATTERNS: { re: RegExp; def: boolean }[] = [
   { re: /\b([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)+)\b/g, def: false },
 ];
 
+// 候補は論文本文そのもの。\emph{...} は改行を跨げるため、1 行化と長さ上限で指示文の注入を潰す。
 function add(map: Map<string, Acc>, raw: string, def: boolean, pos: number): void {
-  const src = raw.trim();
+  const src = oneLine(raw, MAX_TERM_CHARS);
   if (src === "") return;
   const cur = map.get(src);
   if (cur) {

@@ -31,7 +31,7 @@ export async function buildGlossary(
   client: LlmClient,
   input: GlossaryBuilderIn,
 ): Promise<GlossaryBuilderOut> {
-  const system = buildSystemPrompt("glossary-builder", {});
+  const system = buildSystemPrompt("glossary-builder");
   return runAgent(
     client,
     { system, user: renderUser(input), meta: { role: "glossary-builder", phase: "glossary" } },
