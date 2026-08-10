@@ -1,7 +1,7 @@
 // 契約付録 §6(exit5)・§7／2層化 ADR(20260709) 決定1・4。全文組版ゲート（ビルド＋エラー分類＋逆引き）。
 import { existsSync, mkdirSync, rmSync, writeFileSync, cpSync, readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { segmentAtLine, type SourceSpan } from "./assemble-latex.js";
 
 export interface FailedSegment {
@@ -27,7 +27,7 @@ export interface RunResult {
   code: number;
   log: string;
 }
-export type LatexRunner = (buildDir: string) => RunResult;
+export type LatexRunner = (buildDir: string) => RunResult | Promise<RunResult>;
 
 export interface StageInput {
   sourceDir: string;
@@ -127,18 +127,25 @@ function collectSupportFiles(dir: string, acc: string[] = []): string[] {
 export const SRC_PKG_DIR = "srcpkg";
 
 // 配布パッケージと同名かは kpsewhich に問う。解決できない環境では検出なし（防御は探索順で既に効いている）。
-export type PackageResolver = (name: string) => boolean;
+// ファイル数に比例した subprocess 起動を避けるため、名前をまとめて 1 回だけ問う。
+export type PackageResolver = (names: string[]) => Set<string>;
 
-const defaultResolver: PackageResolver = (name) => {
+const defaultResolver: PackageResolver = (names) => {
+  if (names.length === 0) return new Set();
   try {
-    const out = execFileSync("kpsewhich", [name], {
+    const out = execFileSync("kpsewhich", names, {
       encoding: "utf8",
-      timeout: 10_000,
+      timeout: 30_000,
       stdio: ["ignore", "pipe", "ignore"],
     });
-    return out.trim() !== "";
+    const found = new Set<string>();
+    for (const line of out.split("\n")) {
+      const base = path.basename(line.trim());
+      if (base !== "") found.add(base);
+    }
+    return found;
   } catch {
-    return false;
+    return new Set();
   }
 };
 
@@ -154,12 +161,14 @@ export function stageBuild(
   writeFileSync(path.join(buildDir, "main.tex"), mainTex);
   const pkgDir = path.join(buildDir, SRC_PKG_DIR);
   mkdirSync(pkgDir, { recursive: true });
-  const shadowed: string[] = [];
+  const bases: string[] = [];
   for (const sty of collectSupportFiles(opts.sourceDir)) {
     const base = path.basename(sty);
     cpSync(sty, path.join(pkgDir, base));
-    if (resolver(base)) shadowed.push(base);
+    bases.push(base);
   }
+  const distributed = resolver(bases);
+  const shadowed = bases.filter((b) => distributed.has(b));
   for (const fig of opts.figures) {
     const abs = path.isAbsolute(fig) ? fig : path.join(opts.mainDir, fig);
     if (!existsSync(abs)) continue;
@@ -193,9 +202,13 @@ function readLog(buildDir: string): string {
   return "";
 }
 
-const defaultRunner: LatexRunner = (buildDir) => {
-  try {
-    execFileSync(
+export const BUILD_TIMEOUT_MS = 300_000;
+
+// latexmk は子（lualatex）を起こす。detached でプロセスグループを作り、超過時はグループごと止める。
+// execFileSync の timeout は直接の子にしか届かず、孫が孤児として生き残るため。
+const defaultRunner: LatexRunner = (buildDir) =>
+  new Promise<RunResult>((resolve) => {
+    const child = spawn(
       "latexmk",
       [
         "-lualatex",
@@ -207,19 +220,40 @@ const defaultRunner: LatexRunner = (buildDir) => {
       ],
       {
         cwd: buildDir,
-        encoding: "utf8",
-        timeout: 300_000,
-        stdio: ["ignore", "pipe", "pipe"],
+        stdio: ["ignore", "ignore", "ignore"],
         env: sandboxEnv(process.env, buildDir),
+        detached: true,
       },
     );
-    return { code: 0, log: readLog(buildDir) };
-  } catch (e) {
-    return { code: (e as { status?: number }).status ?? 1, log: readLog(buildDir) };
-  }
-};
+    let settled = false;
+    const finish = (code: number): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve({ code, log: readLog(buildDir) });
+    };
+    const timer = setTimeout(() => {
+      killGroup(child.pid);
+      finish(1);
+    }, BUILD_TIMEOUT_MS);
+    child.on("error", () => finish(1));
+    child.on("close", (code) => finish(code ?? 1));
+  });
 
-export function runBuildGate(
+export function killGroup(pid: number | undefined): void {
+  if (pid === undefined) return;
+  try {
+    process.kill(-pid, "SIGKILL"); // 負の pid＝プロセスグループ全体
+  } catch {
+    try {
+      process.kill(pid, "SIGKILL");
+    } catch {
+      // 既に終了している
+    }
+  }
+}
+
+export async function runBuildGate(
   input: {
     buildDir: string;
     mainTex: string;
@@ -230,13 +264,13 @@ export function runBuildGate(
     originalTex?: string;
   },
   runner: LatexRunner = defaultRunner,
-): BuildGateResult {
+): Promise<BuildGateResult> {
   const shadowedPackages = stageBuild(input.buildDir, input.mainTex, {
     sourceDir: input.sourceDir,
     mainDir: input.mainDir,
     figures: input.figures,
   });
-  const { code, log } = runner(input.buildDir);
+  const { code, log } = await runner(input.buildDir);
   const cls = classifyLog(log, input.sourceMap, input.originalTex);
   const droppedFigures = checkFigures(input.mainTex, input.mainDir, input.figures);
   const pdf = path.join(input.buildDir, "main.pdf");

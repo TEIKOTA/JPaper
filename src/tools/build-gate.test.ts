@@ -11,6 +11,7 @@ import {
   SRC_PKG_DIR,
 } from "./build-gate.js";
 import type { SourceSpan } from "./assemble-latex.js";
+import type { LatexRunner } from "./build-gate.js";
 
 const MAP: SourceSpan[] = [
   { id: "seg-0000", startLine: 10, endLine: 20 },
@@ -122,7 +123,7 @@ describe("stageBuild", () => {
       build,
       "MAIN",
       { sourceDir: src, mainDir: src, figures: [path.join(src, "Figures", "a.png")] },
-      () => false,
+      () => new Set<string>(),
     );
     const pkg = path.join(build, SRC_PKG_DIR);
     expect(existsSync(path.join(build, "main.tex"))).toBe(true);
@@ -136,7 +137,7 @@ describe("stageBuild", () => {
     const src = mkTemp();
     writeFileSync(path.join(src, "graphicx.sty"), "% EVIL");
     const build = path.join(mkTemp(), "b");
-    stageBuild(build, "MAIN", { sourceDir: src, mainDir: src, figures: [] }, () => false);
+    stageBuild(build, "MAIN", { sourceDir: src, mainDir: src, figures: [] }, () => new Set<string>());
     expect(existsSync(path.join(build, "graphicx.sty"))).toBe(false);
     expect(existsSync(path.join(build, SRC_PKG_DIR, "graphicx.sty"))).toBe(true);
   });
@@ -149,7 +150,7 @@ describe("stageBuild", () => {
       build,
       "MAIN",
       { sourceDir: src, mainDir: src, figures: [] },
-      (name) => name === "graphicx.sty",
+      (names) => new Set(names.filter((n) => n === "graphicx.sty")),
     );
     expect(shadowed).toEqual(["graphicx.sty"]);
   });
@@ -189,34 +190,86 @@ describe("runBuildGate", () => {
     writeFileSync(path.join(s, "s.sty"), "% x");
     return s;
   };
-  it("ビルド成功＋警告なしは buildOk かつ pdfPath", () => {
+  it("ビルド成功＋警告なしは buildOk かつ pdfPath", async () => {
     const s = src();
     const build = path.join(mkTemp(), "b");
     const runner = (dir: string) => {
       writeFileSync(path.join(dir, "main.pdf"), "%PDF");
       return { code: 0, log: "Output written on main.pdf (15 pages)." };
     };
-    const r = runBuildGate({ buildDir: build, mainTex: "M", sourceDir: s, mainDir: s, figures: [], sourceMap: MAP }, runner);
+    const r = await runBuildGate({ buildDir: build, mainTex: "M", sourceDir: s, mainDir: s, figures: [], sourceMap: MAP }, runner);
     expect(r.buildOk).toBe(true);
     expect(r.pdfPath).toBe(path.join(build, "main.pdf"));
   });
-  it("翻訳起因の fatal は buildOk=false かつ failedSegments に載る", () => {
+  it("翻訳起因の fatal は buildOk=false かつ failedSegments に載る", async () => {
     const s = src();
     const build = path.join(mkTemp(), "b");
     const runner = () => ({ code: 1, log: "./main.tex:25: Missing $ inserted." });
-    const r = runBuildGate({ buildDir: build, mainTex: "M", sourceDir: s, mainDir: s, figures: [], sourceMap: MAP }, runner);
+    const r = await runBuildGate({ buildDir: build, mainTex: "M", sourceDir: s, mainDir: s, figures: [], sourceMap: MAP }, runner);
     expect(r.buildOk).toBe(false);
     expect(r.failedSegments[0]!.id).toBe("seg-0001");
   });
-  it("欠図（構造起因）は成功終了でも buildOk=false", () => {
+  it("欠図（構造起因）は成功終了でも buildOk=false", async () => {
     const s = src();
     const build = path.join(mkTemp(), "b");
     const runner = (dir: string) => {
       writeFileSync(path.join(dir, "main.pdf"), "%PDF");
       return { code: 0, log: "LaTeX Warning: File `Figures/x.png' not found." };
     };
-    const r = runBuildGate({ buildDir: build, mainTex: "M", sourceDir: s, mainDir: s, figures: [], sourceMap: MAP }, runner);
+    const r = await runBuildGate({ buildDir: build, mainTex: "M", sourceDir: s, mainDir: s, figures: [], sourceMap: MAP }, runner);
     expect(r.buildOk).toBe(false);
     expect(r.missingFigures).toEqual(["Figures/x.png"]);
+  });
+});
+
+describe("組版はイベントループを止めない", () => {
+  it("runner の待ち時間中もタイマーが進む", async () => {
+    const s = mkTemp();
+    const build = path.join(mkTemp(), "b");
+    let ticks = 0;
+    const timer = setInterval(() => {
+      ticks++;
+    }, 10);
+    const slowRunner: LatexRunner = async (dir) => {
+      await new Promise((r) => setTimeout(r, 300));
+      writeFileSync(path.join(dir, "main.pdf"), "%PDF");
+      return { code: 0, log: "" };
+    };
+    await runBuildGate(
+      { buildDir: build, mainTex: "M", sourceDir: s, mainDir: s, figures: [], sourceMap: MAP },
+      slowRunner,
+    );
+    clearInterval(timer);
+    expect(ticks).toBeGreaterThan(5); // 同期実行なら 0 になる
+  });
+
+  it("同期 runner も従来どおり受け付ける", async () => {
+    const s = mkTemp();
+    const build = path.join(mkTemp(), "b");
+    const r = await runBuildGate(
+      { buildDir: build, mainTex: "M", sourceDir: s, mainDir: s, figures: [], sourceMap: MAP },
+      (dir) => {
+        writeFileSync(path.join(dir, "main.pdf"), "%PDF");
+        return { code: 0, log: "" };
+      },
+    );
+    expect(r.buildOk).toBe(true);
+  });
+});
+
+describe("kpsewhich はまとめて 1 回だけ問う", () => {
+  it("支援ファイルが何個でも resolver 呼び出しは 1 回", () => {
+    const src = mkTemp();
+    for (const n of ["a.sty", "b.sty", "c.cls", "d.bib"]) {
+      writeFileSync(path.join(src, n), "%");
+    }
+    const build = path.join(mkTemp(), "b");
+    let calls = 0;
+    stageBuild(build, "MAIN", { sourceDir: src, mainDir: src, figures: [] }, (names) => {
+      calls++;
+      expect(names).toHaveLength(4);
+      return new Set<string>();
+    });
+    expect(calls).toBe(1);
   });
 });

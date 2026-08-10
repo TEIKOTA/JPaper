@@ -203,15 +203,15 @@ function summarizeGateFailure(g: BuildGateResult): string {
 }
 
 // 全文組版ゲート: 原プリアンブル温存を試し、構造起因失敗のみ共通テンプレへ明示的にフォールバック（surface）。
-function typeset(
+async function typeset(
   cleanLatex: string,
   segments: { id: string; tex: string }[],
   opts: { outDir: string; sourceDir: string; mainDir: string; figures: string[] },
   runner: LatexRunner | undefined,
   surface: (m: string) => void,
-): TypesetOutcome {
+): Promise<TypesetOutcome> {
   const buildDir = path.join(opts.outDir, "translation", "build");
-  const run = (mode: Layout): BuildGateResult => {
+  const run = (mode: Layout): Promise<BuildGateResult> => {
     const { mainTex, sourceMap } = assembleWithMap({ cleanLatex, segments, mode });
     return runBuildGate(
       {
@@ -232,7 +232,7 @@ function typeset(
       surface(`配布版を優先し同梱パッケージを無効化: ${g.shadowedPackages.join(", ")}`);
   };
   // pdfPath は buildOk のときだけ返す（ゲート棄却済みの成果物を成功として渡さない）。
-  const orig = run("original");
+  const orig = await run("original");
   noteShadowed(orig);
   if (orig.buildOk) return { layout: "original", buildOk: true, pdfPath: orig.pdfPath, exitCode: 0 };
   if (orig.failedSegments.length > 0) {
@@ -241,7 +241,7 @@ function typeset(
     return { layout: "original", buildOk: false, exitCode: 5 };
   }
   surface(`原プリアンブルで組めず共通テンプレへフォールバック: ${summarizeGateFailure(orig)}`);
-  const tmpl = run("template");
+  const tmpl = await run("template");
   if (tmpl.buildOk) return { layout: "template", buildOk: true, pdfPath: tmpl.pdfPath, exitCode: 0 };
   surface(`組版失敗(テンプレでも不可): ${summarizeGateFailure(tmpl)}`);
   return { layout: "template", buildOk: false, exitCode: 5 };
@@ -362,7 +362,7 @@ export async function translatePaper(
       }));
       const backmatter = renderBackmatter(notes, formBySrc);
       if (backmatter) rendered.push({ id: "backmatter", tex: backmatter });
-      const outcome = typeset(
+      const outcome = await typeset(
         ingested.cleanLatex,
         rendered,
         {
