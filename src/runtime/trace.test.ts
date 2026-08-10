@@ -63,3 +63,20 @@ describe("トレースのローテーション", () => {
     }
   });
 });
+
+describe("ローテーションはファイル単位", () => {
+  it("同じファイルへ複数のシンクを向けても上限を超えない", () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "jpaper-trace-multi-"));
+    try {
+      const file = path.join(dir, "llm-trace.jsonl");
+      const sinks = Array.from({ length: 8 }, (_, i) => makeJsonlTrace(file, `run-${String(i)}`, 4096));
+      for (let i = 0; i < 200; i++) {
+        sinks[i % sinks.length]!({ ts: new Date().toISOString(), provider: "ollama", latencyMs: i });
+      }
+      const total = readdirSync(dir).reduce((a, f) => a + statSync(path.join(dir, f)).size, 0);
+      expect(total).toBeLessThanOrEqual(4096 * 2 + 512);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});

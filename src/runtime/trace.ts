@@ -23,26 +23,24 @@ export function makeJsonlTrace(
   maxBytes = TRACE_MAX_BYTES,
 ): TraceSink {
   let ready = false;
-  let written = 0;
   return (ev: LlmCallEvent) => {
     const record: LlmCallRecord = { runId, ...ev };
     const line = JSON.stringify(record) + "\n";
     try {
       if (!ready) {
         mkdirSync(path.dirname(filePath), { recursive: true });
-        try {
-          written = statSync(filePath).size;
-        } catch {
-          written = 0; // まだ無い。
-        }
         ready = true;
       }
-      if (written + line.length > maxBytes) {
-        renameSync(filePath, `${filePath}.1`);
-        written = 0;
+      // 判定は実ファイルのサイズで行う。シンクごとのカウンタだと、同じファイルへ複数の
+      // シンクを向けた瞬間に上限が壊れる（実測 8 シンクで宣言上限の 3.9 倍）。
+      let size = 0;
+      try {
+        size = statSync(filePath).size;
+      } catch {
+        size = 0; // まだ無い。
       }
+      if (size + line.length > maxBytes) renameSync(filePath, `${filePath}.1`);
       appendFileSync(filePath, line);
-      written += line.length;
     } catch {
       // トレース書き込み失敗は無視（run は継続）。
     }

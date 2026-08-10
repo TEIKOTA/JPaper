@@ -402,6 +402,9 @@ function entryError(input: JpaperInput, opts: TranslateOptions): string | undefi
   if (!ProviderSchema.safeParse(opts.provider).success) {
     return `provider が不正です: ${outwardMessage(String(opts.provider))}`;
   }
+  if (opts.outDir !== undefined && (typeof opts.outDir !== "string" || opts.outDir.trim() === "")) {
+    return `outDir が不正です: ${outwardMessage(String(opts.outDir))}`;
+  }
   const c = opts.concurrency;
   if (c !== undefined && (typeof c !== "number" || !Number.isFinite(c) || c < 1)) {
     return `concurrency が不正です: ${outwardMessage(String(c))}`;
@@ -417,7 +420,9 @@ export async function translatePaper(
   // 入口の検証。web ハンドラへ生の例外を漏らさない（契約付録 §8「例外は投げず戻り値で表現」）。
   const badInput = entryError(input, opts);
   if (badInput !== undefined) {
-    return failResult("unknown", opts.outDir ?? "", { kind: "input", code: 2, message: badInput });
+    // outDir 自体が不正な場合もあるので、サマリには文字列として安全な値だけ載せる。
+    const shown = typeof opts.outDir === "string" ? opts.outDir : "";
+    return failResult("unknown", shown, { kind: "input", code: 2, message: badInput });
   }
   let paperId: string;
   let outDir: string;
@@ -429,7 +434,7 @@ export async function translatePaper(
     runDir = path.join(outDir, ".run");
     sharedDefaults = sharedDefaultsOf(opts, deps);
   } catch (e) {
-    return failResult("unknown", opts.outDir ?? "", toRunError(e));
+    return failResult("unknown", typeof opts.outDir === "string" ? opts.outDir : "", toRunError(e));
   }
   if (sharedDefaults.length > 0) {
     // ここはまだ notify を組み立てる前。通知の失敗で run を落とさない。

@@ -213,3 +213,19 @@ describe("期限の印は内部タイマーだけが付ける", () => {
     d.dispose();
   });
 });
+
+describe("期限の印は内部タイマー限定（timeoutMs 未指定でも）", () => {
+  it("timeoutMs を渡さない run で偽の reason を載せても canceled のまま", async () => {
+    const { withDeadline, throwIfAborted } = await import("../runtime/cancellation.js");
+    const c = new AbortController();
+    const d = withDeadline(c.signal, undefined);
+    c.abort({ jpaperDeadlineMs: 99_999 });
+    let err: unknown;
+    try {
+      throwIfAborted(d.signal, "x");
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toMatchObject({ kind: "canceled" });
+  });
+});

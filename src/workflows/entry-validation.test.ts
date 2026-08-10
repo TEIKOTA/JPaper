@@ -117,3 +117,17 @@ describe("concurrency の検証", () => {
     }
   });
 });
+
+describe("outDir の検証", () => {
+  it("null / 空文字 / 数値は input で返る（JSON body の null が 500 にならない）", async () => {
+    const { translatePaper } = await import("./translate-paper.js");
+    for (const bad of [null, "", "   ", 42]) {
+      const r = await translatePaper({ kind: "path", path: "/tmp/x.tar" }, {
+        provider: "ollama",
+        outDir: bad as unknown as string,
+      });
+      expect(r.error?.kind).toBe("input");
+      expect(r.error?.message).toContain("outDir");
+    }
+  });
+});

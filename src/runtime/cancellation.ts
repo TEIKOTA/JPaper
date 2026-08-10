@@ -2,20 +2,23 @@
 import type { LlmClient } from "../types/contract.js";
 import { JpaperError } from "../types/errors.js";
 
-// 期限超過の目印。abort の reason に載せて、切断（499）と期限超過（504）を区別する。
-interface DeadlineReason {
-  jpaperDeadlineMs: number;
+// 期限超過の目印。呼び出し側が渡す reason は信用せず、内部で作った signal だけを覚える
+// （reason を見ると、web が client 由来の値を載せた瞬間に切断が期限超過に化ける）。
+const deadlineSignals = new WeakMap<AbortSignal, number>();
+// 親由来の中断で abort された場合は期限超過ではない。内部タイマーが落としたときだけ印が立つ。
+const expiredSignals = new WeakSet<AbortSignal>();
+function expired(signal?: AbortSignal): boolean {
+  return signal !== undefined && expiredSignals.has(signal);
 }
 function deadlineMsOf(signal?: AbortSignal): number | undefined {
-  const r = signal?.reason as DeadlineReason | undefined;
-  return typeof r?.jpaperDeadlineMs === "number" ? r.jpaperDeadlineMs : undefined;
+  return signal === undefined ? undefined : deadlineSignals.get(signal);
 }
 
 // 中断は終了コード 6。retry の対象にしない（transient を付けない）。
 // 期限超過だけ kind を分ける。web が 504 と 499 を出し分けられないと、過負荷で
 // テナントが飢えた結果の期限超過が「利用者が切った」と同じに見えてしまう。
 export function canceledError(where: string, signal?: AbortSignal): JpaperError {
-  const ms = deadlineMsOf(signal);
+  const ms = expired(signal) ? deadlineMsOf(signal) : undefined;
   if (ms !== undefined) {
     return new JpaperError(6, "timeout", `実行が期限 ${ms}ms を超えました（${where}）`);
   }
@@ -90,7 +93,12 @@ export function withDeadline(signal: AbortSignal | undefined, timeoutMs?: number
   const ctl = new AbortController();
   // unref しない。ref された handle が無い実行形（キュー worker 等）で期限が黙って
   // 無効になるため。dispose で必ず clearTimeout するので run の寿命は伸びない。
-  const timer = setTimeout(() => ctl.abort({ jpaperDeadlineMs: ms } as DeadlineReason), ms);
+  deadlineSignals.set(ctl.signal, ms);
+  // reason は使わない（印は WeakMap 側）。
+  const timer = setTimeout(() => {
+    expiredSignals.add(ctl.signal);
+    ctl.abort();
+  }, ms);
   // 親の reason は引き継がない。呼び出し側が jpaperDeadlineMs を含む reason で中断すると、
   // 切断（499）が期限超過（504）に化けて監視が反転する。期限の印は内部タイマーだけが付ける。
   const onParent = (): void => ctl.abort();

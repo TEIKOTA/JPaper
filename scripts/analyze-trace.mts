@@ -1,7 +1,7 @@
 #!/usr/bin/env tsx
 // llm-trace.jsonl を読んでコスト内訳を表示する（LLM トレース ADR 20260722）。
 // 使い方: npx tsx scripts/analyze-trace.mts <path/to/llm-trace.jsonl>
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { summarizeTrace } from "../src/tools/analyze-trace.js";
 import type { LlmCallRecord } from "../src/types/contract.js";
 
@@ -11,8 +11,10 @@ if (!file) {
   process.exit(2);
 }
 
-const records: LlmCallRecord[] = readFileSync(file, "utf8")
-  .split("\n")
+// 退避ファイル（.1）も読む。読まないとローテーション後の集計が黙って過少になる。
+const sources = [`${file}.1`, file].filter((f) => existsSync(f));
+const records: LlmCallRecord[] = sources
+  .flatMap((f) => readFileSync(f, "utf8").split("\n"))
   .filter((l) => l.trim() !== "")
   .map((l) => JSON.parse(l) as LlmCallRecord);
 
