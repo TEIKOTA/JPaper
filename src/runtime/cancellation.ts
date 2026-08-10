@@ -22,6 +22,26 @@ export function abortPromise(signal: AbortSignal, where: string): Promise<never>
   });
 }
 
+// 中断されたら、下位の promise が決着しなくても抜ける。
+// 注入クライアント（契約は signal の尊重を強制できない）が中断を無視した場合、
+// await し続けると同時実行ゲートの枠が永久に返らず、プロセス全体の枠が枯れる。
+// 漏れた呼び出し自体は止められないので、枠だけ返して未処理 rejection を握り潰す。
+export function raceAbort<T>(p: Promise<T>, signal: AbortSignal, where: string): Promise<T> {
+  if (signal.aborted) {
+    void p.catch(() => undefined);
+    return Promise.reject(canceledError(where));
+  }
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = (): void => {
+      void p.catch(() => undefined);
+      reject(canceledError(where));
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+    // listener を必ず外す（run が長い間、呼び出しごとに溜まると leak になる）。
+    p.then(resolve, reject).finally(() => signal.removeEventListener("abort", onAbort));
+  });
+}
+
 // 全ての LLM 呼び出しに signal を載せる薄いラッパ。
 // エージェント側の関数シグネチャを増やさずに、run 単位の中断を境界 1 箇所で効かせる。
 export function withSignal(client: LlmClient, signal: AbortSignal | undefined): LlmClient {
@@ -29,7 +49,32 @@ export function withSignal(client: LlmClient, signal: AbortSignal | undefined): 
   return {
     async complete(req) {
       throwIfAborted(signal, "LLM 呼び出し");
-      return client.complete({ ...req, signal });
+      return raceAbort(client.complete({ ...req, signal }), signal, "LLM 呼び出し");
+    },
+  };
+}
+
+export interface Deadline {
+  signal: AbortSignal | undefined;
+  dispose: () => void;
+}
+
+// run 全体の期限。呼び出し側の signal と OR で合流させる。
+// web ハンドラごとに setTimeout を書かせないため、run 層で 1 度だけ用意する。
+export function withDeadline(signal: AbortSignal | undefined, timeoutMs?: number): Deadline {
+  if (timeoutMs === undefined || !Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+    return { signal, dispose: () => undefined };
+  }
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(new Error(`deadline ${timeoutMs}ms`)), timeoutMs);
+  timer.unref?.();
+  const onParent = (): void => ctl.abort();
+  signal?.addEventListener("abort", onParent, { once: true });
+  return {
+    signal: ctl.signal,
+    dispose: () => {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", onParent);
     },
   };
 }

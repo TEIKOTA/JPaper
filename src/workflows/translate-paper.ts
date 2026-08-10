@@ -41,7 +41,12 @@ import { buildNotes } from "./notes.js";
 import { untranslatedHeadings } from "./quality-gate.js";
 import { checkpoint, hashContext } from "../durable/checkpoint.js";
 import { acquireRunLock, type RunLock } from "../durable/run-lock.js";
-import { throwIfAborted, withSignal, withProviderErrors } from "../runtime/cancellation.js";
+import {
+  throwIfAborted,
+  withSignal,
+  withProviderErrors,
+  withDeadline,
+} from "../runtime/cancellation.js";
 import { llmGate, withGate, type Gate } from "../runtime/concurrency.js";
 import {
   resolveWorkLimits,
@@ -82,6 +87,8 @@ export interface TranslateOptions {
   concurrency?: number;
   // 呼び出し側の中断。LLM 呼び出し・組版・arXiv 取得へ伝播し、exitCode 6 で返る。
   signal?: AbortSignal;
+  // run 全体の期限（ms）。超過すると中断と同じ経路で exitCode 6 で返る。
+  timeoutMs?: number;
 }
 
 // subprocess プロバイダは無制限並列に耐えないため翻訳の同時実行数を制限する。
@@ -378,8 +385,11 @@ export async function translatePaper(
   // ゲートを外側に置くのは、枠を取ってから中断を見るため（待ち行列に中断済みが居座らない）。
   // 注入クライアントにも掛ける（web が自前クライアントを渡すとプロセス上限が消えていた）。
   const work = resolveWorkLimits(deps.work);
+  // 期限は呼び出し側の signal と合流させる。以降は signal（合流後）だけを見る。
+  const deadline = withDeadline(opts.signal, opts.timeoutMs);
+  const signal = deadline.signal;
   const client = withGate(
-    withCallBudget(withProviderErrors(withSignal(client0, opts.signal)), work.maxLlmCalls),
+    withCallBudget(withProviderErrors(withSignal(client0, signal)), work.maxLlmCalls),
     deps.gate ?? llmGate(),
   );
   let db: GlossaryDb | undefined;
@@ -406,7 +416,7 @@ export async function translatePaper(
         ingest(input, path.join(runDir, "source"), {
           ...deps.ingest,
           limits: deps.limits ?? deps.ingest?.limits,
-          arxiv: { ...deps.ingest?.arxiv, signal: opts.signal },
+          arxiv: { ...deps.ingest?.arxiv, signal },
         }),
       { invalidation: inputSignature(input), key: deps.cacheKey },
     );
@@ -473,7 +483,7 @@ export async function translatePaper(
         () => runSectionLoop(client, seg, slice, { brief: ctx.brief, style: ctx.style }),
         { invalidation, cacheable: (r) => r.passed, key: deps.cacheKey },
       );
-    }, opts.signal);
+    }, signal);
 
     // 見出し未訳の非ブロッキング lint。keep-original 確定語は除外して訳注へ流す（ビルドは壊さない）。
     const keepOriginal = ctx.resolved
@@ -533,7 +543,7 @@ export async function translatePaper(
         },
         deps.latexRunner,
         (m) => deps.onError?.(m),
-        opts.signal,
+        signal,
       );
       ({ layout, buildOk, pdfPath, exitCode } = outcome);
       typesetMessage = outcome.message;
@@ -561,6 +571,7 @@ export async function translatePaper(
     deps.onError?.(error.message);
     return failResult(paperId, outDir, error, sharedDefaults);
   } finally {
+    deadline.dispose();
     if (!deps.db) db?.close();
     lock?.release();
   }
