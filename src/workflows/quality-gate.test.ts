@@ -326,3 +326,31 @@ describe("回避の再検査（ラウンド2）", () => {
     expect(decodeCarets("\\section{Intro} x^2")).toBe("\\section{Intro} x^2");
   });
 });
+
+describe("untranslated の誤検知", () => {
+  const bib = Array.from({ length: 30 }, (_, i) =>
+    `\\bibitem{r${String(i)}} A. Author and B. Writer, "A fairly long paper title about neural machine translation", Journal of Things, 2020.`,
+  ).join("\n");
+
+  it("参考文献を原文のまま残した忠実な訳を落とさない", () => {
+    // 参考文献の著者名・論題を地の文と数えていた頃は、忠実な訳ほど日本語比率が
+    // 下がって必ず発火し、revision を使い切って run が exit 3 で失敗した。
+    const src = `\\section{References}\n\\begin{thebibliography}{99}\n${bib}\n\\end{thebibliography}`;
+    const ja = `\\section{参考文献}\n\\begin{thebibliography}{99}\n${bib}\n\\end{thebibliography}`;
+    expect(formalCheck(src, ja, []).filter((f) => f.kind === "untranslated")).toEqual([]);
+  });
+
+  it("コードリストを原文のまま残した忠実な訳を落とさない", () => {
+    const code = Array.from({ length: 20 }, () => "for item in collection: process(item, verbose=True)").join("\n");
+    const src = `\\section{Appendix}\n\\begin{lstlisting}\n${code}\n\\end{lstlisting}`;
+    const ja = `\\section{付録}\n\\begin{lstlisting}\n${code}\n\\end{lstlisting}`;
+    expect(formalCheck(src, ja, []).filter((f) => f.kind === "untranslated")).toEqual([]);
+  });
+
+  it("本当に未訳の地の文は従来どおり検出する", () => {
+    const body = "This section describes the proposed method and reports experimental results on several benchmarks.";
+    const found = formalCheck(`\\section{Method}\n${body}`, `\\section{Method}\n${body}`, []);
+    expect(found.some((f) => f.kind === "untranslated")).toBe(true);
+  });
+});
+

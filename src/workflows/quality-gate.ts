@@ -62,9 +62,36 @@ function normalizeForCompare(s: string): string {
   return s.replace(/\s+/g, " ").trim();
 }
 
+// 訳さないのが正しい環境。参考文献の著者名・論題やコードリストを「地の文」と数えると、
+// 忠実な訳ほど日本語比率が下がって untranslated が必ず発火する（実測: 30 件の
+// thebibliography でラテン語 422 語と判定され、revision を使い切って exit 3）。
+const NON_PROSE_ENVS = ["thebibliography", "verbatim", "lstlisting", "minted", "alltt"];
+
+// 環境ごとに左から 1 回だけ走査する（閉じが無ければ以降のどの開始位置でも見つからない）。
+// 正規表現の遅延一致だと閉じない \begin が並ぶ入力で二次になる。
+function stripNonProseEnvs(tex: string): string {
+  let out = tex;
+  for (const env of NON_PROSE_ENVS) {
+    const open = `\\begin{${env}}`;
+    const close = `\\end{${env}}`;
+    let acc = "";
+    let pos = 0;
+    for (;;) {
+      const start = out.indexOf(open, pos);
+      if (start === -1) break;
+      const endAt = out.indexOf(close, start + open.length);
+      if (endAt === -1) break;
+      acc += `${out.slice(pos, start)} `;
+      pos = endAt + close.length;
+    }
+    if (pos > 0) out = acc + out.slice(pos);
+  }
+  return out;
+}
+
 // 制御綴りと記号を線形時間で落として地の文だけを残す（壊れた入力でも O(n)）。
 function proseOf(tex: string): string {
-  return tex
+  return stripNonProseEnvs(tex)
     .replace(/\\[a-zA-Z@]+\*?/g, " ")
     .replace(/[{}[\]$&%#_^~\\]/g, " ");
 }
