@@ -1,8 +1,9 @@
 // 設計メモ §11。ファイル checkpoint（tmp→rename・idempotent-skip・無効化ハッシュ）。
-import { createHash } from "node:crypto";
+import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import type { z } from "zod";
+import { loadCacheKey } from "./cache-key.js";
 
 export function hashContext(...parts: string[]): string {
   const h = createHash("sha256");
@@ -13,6 +14,30 @@ export function hashContext(...parts: string[]): string {
 export interface CheckpointOptions<T = unknown> {
   invalidation?: string;
   cacheable?: (result: T) => boolean;
+  // 署名鍵（テスト用に注入可能）。既定は JPAPER_HOME 配下の鍵。
+  key?: Buffer;
+}
+
+// 保存形式。value だけでなく step/invalidation も署名対象にして差し替えを防ぐ。
+interface Envelope {
+  v: 1;
+  sig: string;
+  value: unknown;
+}
+
+function sign(key: Buffer, stepId: string, invalidation: string, value: unknown): string {
+  return createHmac("sha256", key)
+    .update(stepId)
+    .update("\0")
+    .update(invalidation)
+    .update("\0")
+    .update(JSON.stringify(value) ?? "")
+    .digest("hex");
+}
+
+function signatureMatches(expected: string, actual: unknown): boolean {
+  if (typeof actual !== "string" || actual.length !== expected.length) return false;
+  return timingSafeEqual(Buffer.from(expected), Buffer.from(actual));
 }
 
 export async function checkpoint<S extends z.ZodTypeAny>(
@@ -26,9 +51,16 @@ export async function checkpoint<S extends z.ZodTypeAny>(
   const suffix = opts.invalidation ? `.${opts.invalidation}` : "";
   const file = path.join(dir, `${stepId}${suffix}.json`);
 
+  const key = opts.key ?? loadCacheKey();
+  const invalidation = opts.invalidation ?? "";
+
   if (existsSync(file)) {
     try {
-      return schema.parse(JSON.parse(readFileSync(file, "utf8")));
+      const env = JSON.parse(readFileSync(file, "utf8")) as Envelope;
+      // 署名が合わないキャッシュ（改竄・旧形式・別鍵）は採用しない。
+      if (signatureMatches(sign(key, stepId, invalidation, env?.value), env?.sig)) {
+        return schema.parse(env.value);
+      }
     } catch {
       // 破損/スキーマ不整合のキャッシュは無視して再計算する。
     }
@@ -37,8 +69,9 @@ export async function checkpoint<S extends z.ZodTypeAny>(
   const result = await fn();
   if (opts.cacheable === undefined || opts.cacheable(result)) {
     mkdirSync(dir, { recursive: true });
+    const env: Envelope = { v: 1, sig: sign(key, stepId, invalidation, result), value: result };
     const tmp = `${file}.tmp`;
-    writeFileSync(tmp, JSON.stringify(result));
+    writeFileSync(tmp, JSON.stringify(env));
     renameSync(tmp, file);
   }
   return result;
