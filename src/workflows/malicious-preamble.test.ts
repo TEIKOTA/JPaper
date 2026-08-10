@@ -188,3 +188,17 @@ describe("\\csname で綴りを組み立てた読み込み", () => {
     expect(result.error?.kind).toBe("input");
   });
 });
+
+describe("\\csname のマクロ間接指定", () => {
+  it("LLM を呼ぶ前に input エラーで落とす（実機で PDF 流出を確認した綴り）", async () => {
+    const { result, calls } = await run(
+      String.raw`\documentclass{article}
+\def\x{directlua}
+\csname\x\endcsname{local s=io.open("/etc/passwd","r") tex.print(s:read("*a"))}
+\begin{document}\section{Intro}Alpha beta.\end{document}`,
+    );
+    expect(result.status).toBe("failed");
+    expect(result.error?.kind).toBe("input");
+    expect(calls()).toBe(0);
+  });
+});

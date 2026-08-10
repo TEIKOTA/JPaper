@@ -61,3 +61,4 @@
 | 2026-08-11 | [検査面に同梱支援ファイルを含める（狭い denylist を分ける）](./20260811-support-files-are-part-of-the-inspection-surface.md) | accepted |
 | 2026-08-11 | [読み込みコマンドは名前ではなく引数の形で判定する](./20260811-read-commands-judged-by-argument-not-name.md) | accepted |
 | 2026-08-11 | [読み込みコマンドの引数は静的に検証できなければ拒否する（main.tex のみ）](./20260811-read-arguments-must-be-statically-verifiable.md) | accepted |
+| 2026-08-11 | [綴りが実行時に決まる \csname は main.tex では拒否する](./20260811-dynamic-csname-is-unsafe-in-main-tex.md) | accepted |

@@ -182,6 +182,19 @@ function obfuscatedReadHits(tex: string): string[] {
   return hits;
 }
 
+// \csname の本体に制御綴りが混ざる形。\def\x{directlua}\csname\x\endcsname のように
+// 実行時に綴りが決まるので、静的には何が発火するか分からない（実機で \directlua による
+// 任意ファイル読み出しと PDF への流出を確認した）。著者のプリアンブルで綴りを
+// マクロ越しに組み立てる正規の理由は無いので、main.tex では一律拒否する。
+const CSNAME_BODY = /\\csname((?:(?!\\endcsname)[\s\S])*)\\endcsname/g;
+
+function hasDynamicCsname(tex: string): boolean {
+  for (const m of tex.matchAll(CSNAME_BODY)) {
+    if (/\\[a-zA-Z@]/.test(m[1]!)) return true;
+  }
+  return false;
+}
+
 function scan(tex: string, deny: ReadonlySet<string>, strictReadArgs: boolean): string[] {
   const src = stripTexComments(decodeCarets(tex));
   const hits: string[] = [];
@@ -191,6 +204,8 @@ function scan(tex: string, deny: ReadonlySet<string>, strictReadArgs: boolean): 
   // 制御綴りは大小文字を区別する（\OPENIN は \openin ではない）ので、そのまま照合する。
   for (const m of src.matchAll(/\\([a-zA-Z]+)/g)) add(m[1]!);
   for (const name of csnameNames(src)) add(name);
+  // 綴りが実行時に決まる \csname は、何が発火するか静的に分からない＝安全と示せない。
+  if (strictReadArgs && hasDynamicCsname(src)) hits.push("csname");
   // 読み込みコマンドは名前では落とせないので、引数の形と難読化で判定する。
   for (const name of [...readPathHits(src, strictReadArgs), ...obfuscatedReadHits(src)]) {
     if (!hits.includes(name)) hits.push(name);

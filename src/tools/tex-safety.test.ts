@@ -178,3 +178,34 @@ describe("TeX の空白（改行・CR）を挟む回避", () => {
     ).toEqual([]);
   });
 });
+
+describe("\\csname の本体にマクロを挟む回避", () => {
+  it("綴りが実行時に決まる \\csname は main.tex では拒否する", () => {
+    // \def\x{directlua}\csname\x\endcsname は実機で \directlua として発火し、
+    // io.open による任意ファイル読み出しが PDF に出ることを確認した。
+    expect(findUnsafeTexCommands(String.raw`\def\x{directlua}\csname\x\endcsname{io.open("/etc/passwd")}`)).toContain(
+      "csname",
+    );
+    expect(findUnsafeTexCommands(String.raw`\csname\romannumeral0 directlua\endcsname{x}`)).toContain("csname");
+    expect(findUnsafeTexCommands(String.raw`\def\x{input}\csname\x\endcsname{/etc/passwd}`)).toContain("csname");
+  });
+
+  it("静的に決まる \\csname は従来どおり名前で判定する", () => {
+    expect(findUnsafeTexCommands(String.raw`\csname directlua\endcsname`)).toEqual(["directlua"]);
+    expect(findUnsafeTexCommands(String.raw`\csname section\endcsname`)).toEqual([]);
+  });
+
+  it("同梱 .sty/.cls には適用しない（配布クラスが日常的に使う）", () => {
+    // 実測: 配布 18 件のうち 12 件が \csname の本体に制御綴りを含む。ここで落とすと
+    // 会議テンプレを同梱した正規の論文が通らなくなる。
+    expect(findUnsafeSupportCommands(String.raw`\csname\@currenvir\endcsname`)).toEqual([]);
+  });
+
+  it("正常なプリアンブルは通す", () => {
+    expect(
+      findUnsafeTexCommands(
+        String.raw`\documentclass{article}\usepackage{amsmath}\newcommand\x{y}\begin{document}A\end{document}`,
+      ),
+    ).toEqual([]);
+  });
+});
