@@ -91,7 +91,9 @@ export function withDeadline(signal: AbortSignal | undefined, timeoutMs?: number
   // unref しない。ref された handle が無い実行形（キュー worker 等）で期限が黙って
   // 無効になるため。dispose で必ず clearTimeout するので run の寿命は伸びない。
   const timer = setTimeout(() => ctl.abort({ jpaperDeadlineMs: ms } as DeadlineReason), ms);
-  const onParent = (): void => ctl.abort(signal?.reason);
+  // 親の reason は引き継がない。呼び出し側が jpaperDeadlineMs を含む reason で中断すると、
+  // 切断（499）が期限超過（504）に化けて監視が反転する。期限の印は内部タイマーだけが付ける。
+  const onParent = (): void => ctl.abort();
   signal?.addEventListener("abort", onParent, { once: true });
   return {
     signal: ctl.signal,

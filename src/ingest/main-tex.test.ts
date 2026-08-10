@@ -152,3 +152,24 @@ describe("expandInputs", () => {
     expect(expandInputs(src, "main.tex")).toBe("AB");
   });
 });
+
+describe("main.tex 検出の上限", () => {
+  it("参照されない巨大な .tex を全部メモリへ載せない", () => {
+    const huge = `% ${"x".repeat(2 * 1024 * 1024)}`; // 前文に \\documentclass を含まない
+    const d = tmp({
+      "main.tex": "\\documentclass{a}\\begin{document}本文\\end{document}",
+      "appendix-huge.tex": huge,
+    });
+    // 読むのは先頭 256KB までなので、巨大ファイルがあっても検出は成立する。
+    expect(detectMainTex(d)).toBe("main.tex");
+  });
+
+  it(".tex の数が上限を超えたら too-large", () => {
+    const files: Record<string, string> = {
+      "main.tex": "\\documentclass{a}\\begin{document}x\\end{document}",
+    };
+    for (let i = 0; i < 5; i++) files[`extra${String(i)}.tex`] = "% pad";
+    const d = tmp(files);
+    expect(() => detectMainTex(d, 3)).toThrowError(/上限/);
+  });
+});

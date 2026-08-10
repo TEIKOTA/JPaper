@@ -195,3 +195,21 @@ describe("期限超過と切断の区別", () => {
     d.dispose();
   });
 });
+
+describe("期限の印は内部タイマーだけが付ける", () => {
+  it("親由来の reason が timeout に化けない（監視シグナルの反転を防ぐ）", async () => {
+    const { withDeadline, throwIfAborted } = await import("../runtime/cancellation.js");
+    const c = new AbortController();
+    const d = withDeadline(c.signal, 10_000);
+    // web 層が client 由来の値をそのまま reason に載せた場合。
+    c.abort({ jpaperDeadlineMs: 1 });
+    let err: unknown;
+    try {
+      throwIfAborted(d.signal, "x");
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toMatchObject({ kind: "canceled" });
+    d.dispose();
+  });
+});

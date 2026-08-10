@@ -565,6 +565,8 @@ export async function translatePaper(
     );
 
     let doneSegments = 0;
+    let donePassed = 0;
+    let doneFailed = 0;
     progress({ phase: "context", done: 1, total: 1 });
     progress({ phase: "translate", done: 0, total: segments.length });
     const results = await mapLimit(segments, opts.concurrency ?? 4, (seg) => {
@@ -586,7 +588,9 @@ export async function translatePaper(
         { invalidation, cacheable: (r) => r.passed, key: deps.cacheKey },
       ).then((r) => {
         doneSegments++;
-        reached = { total: segments.length, passed: doneSegments, failed: 0 };
+        if (r.passed) donePassed++;
+        else doneFailed++;
+        reached = { total: segments.length, passed: donePassed, failed: doneFailed };
         progress({
           phase: "translate",
           segmentId: seg.id,

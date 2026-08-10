@@ -94,7 +94,7 @@ export async function ingest(
 ): Promise<Ingested> {
   const limits = deps.limits ?? DEFAULT_LIMITS;
   const { sourceDir, mainRel, limited } = await materialize(input, workDir, deps);
-  const main = mainRel ?? detectMainTex(sourceDir);
+  const main = mainRel ?? detectMainTex(sourceDir, limits.maxEntries);
   const cleanLatex = expandInputs(sourceDir, main);
   // 展開経路（アーカイブ）は Budget が累積を見ているが、素の .tex とディレクトリは
   // ここが唯一の関門。checkpoint へ書く前に判定する（拒否した入力にディスクを使わない）。
