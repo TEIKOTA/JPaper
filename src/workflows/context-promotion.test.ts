@@ -73,6 +73,29 @@ describe("中断した run の中間物", () => {
     }
   });
 
+  it("組版に失敗した run は正本を確定しない", async () => {
+    // 正本の確定が組版より前だった頃は、exit 5 でも glossary.md / .paper-id が
+    // 書かれ、壊れた出力先が次の run の正本になった（契約付録 §2）。
+    const { translatePaper } = await import("./translate-paper.js");
+    const { GlossaryDb } = await import("../terminology/db.js");
+    const { tar } = await fixture("a", "秘密A");
+    const outDir = path.join(tmp(), "out");
+
+    const r = await translatePaper(
+      { kind: "path", path: tar },
+      { provider: "ollama", outDir, concurrency: 1 },
+      {
+        client: await client("秘密A"),
+        db: new GlossaryDb(),
+        latexRunner: () => ({ code: 1, log: "! LaTeX Error." }),
+      },
+    );
+    expect(r.exitCode).toBe(5);
+    for (const f of ["brief.md", "style.md", "glossary.md", ".paper-id"]) {
+      expect(existsSync(path.join(outDir, f))).toBe(false);
+    }
+  });
+
   it("中断後に入力を直して再実行すると、新しい文脈が使われる", async () => {
     const { translatePaper } = await import("./translate-paper.js");
     const { GlossaryDb } = await import("../terminology/db.js");

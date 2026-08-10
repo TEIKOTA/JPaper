@@ -546,8 +546,20 @@ export async function translatePaper(
       );
     }
 
-    // 用語バリア: 並列翻訳の前に resolved/brief/style を確定する。
     progress({ phase: "ingest", done: 1, total: 1 });
+    const budget = segmentBudgetFor(contextWindowFor(opts.provider, opts.ollama));
+    const segments = segment(ingested.cleanLatex, budget);
+    // LLM を 1 回も呼ぶ前に判定する（超過が確定した入力に課金しない。契約付録 §8）。
+    // glossary は run 中で最大コンテキストの呼び出しなので、この順序が逆だと
+    // 落ちると分かっている入力に一番高い 1 回を払うことになる。
+    if (segments.length > work.maxSegments) {
+      throw new JpaperError(
+        2,
+        "too-large",
+        `翻訳対象セグメント数 ${segments.length} が上限 ${work.maxSegments} を超えています`,
+      );
+    }
+    // 用語バリア: 並列翻訳の前に resolved/brief/style を確定する。
     progress({ phase: "context", done: 0, total: 1 });
     const ctx = await loadOrBuildContext(
       runDir,
@@ -559,16 +571,6 @@ export async function translatePaper(
       deps.cacheKey,
       (m) => notify(m),
     );
-    const budget = segmentBudgetFor(contextWindowFor(opts.provider, opts.ollama));
-    const segments = segment(ingested.cleanLatex, budget);
-    // 節ループを 1 本も回す前に判定する（超過が確定した入力にコストを払わない）。
-    if (segments.length > work.maxSegments) {
-      throw new JpaperError(
-        2,
-        "too-large",
-        `翻訳対象セグメント数 ${segments.length} が上限 ${work.maxSegments} を超えています`,
-      );
-    }
     const firstOcc = buildFirstOccurrenceIndex(
       segments,
       ctx.resolved.map((r) => r.src),
@@ -629,12 +631,6 @@ export async function translatePaper(
       })),
     });
 
-    // ここまで来た run だけが outDir の正本を更新する。
-    // 今回使わなかった step の checkpoint を掃除する（節が減った再実行の孤児が
-    // 残ると、前の論文の訳文がそのまま出力先に居座る）。
-    pruneSteps(runDir, new Set(["ingest", "glossary", ...segments.map((s) => s.id)]));
-    promoteContext(outDir, ingested.paperId, ctx.pending);
-
     const chaptersDir = path.join(outDir, "translation", "chapters");
     rmSync(chaptersDir, { recursive: true, force: true }); // 縮小時の古い chapter を残さない
     mkdirSync(chaptersDir, { recursive: true });
@@ -679,6 +675,19 @@ export async function translatePaper(
       ({ layout, buildOk, pdfPath, exitCode } = outcome);
       typesetMessage = outcome.message;
       progress({ phase: "typeset", done: 1, total: 1 });
+    }
+
+    // 正本の確定は組版まで到達してから（契約付録 §2）。組版に失敗した run で
+    // glossary.md / brief.md / style.md と .paper-id を確定すると、壊れた出力先が
+    // 次の run の正本になる。LLM の成果は .run/steps の checkpoint に残るので、
+    // 確定を見送っても再実行のコストは増えない。
+    // 翻訳自体が失敗して組版へ進まなかった run（failed > 0）は、run としては最後まで
+    // 到達しているので従来どおり確定する。
+    if (buildOk !== false) {
+      // 今回使わなかった step の checkpoint を掃除する（節が減った再実行の孤児が
+      // 残ると、前の論文の訳文がそのまま出力先に居座る）。
+      pruneSteps(runDir, new Set(["ingest", "glossary", ...segments.map((s) => s.id)]));
+      promoteContext(outDir, ingested.paperId, ctx.pending);
     }
 
     const summary = RunSummary.parse({

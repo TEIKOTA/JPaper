@@ -76,6 +76,10 @@ describe("1 run の仕事量の上限", () => {
     // 節ループのチェックポイントが 1 つも作られていない＝翻訳に課金していない。
     const steps = readdirSync(path.join(outDir, ".run", "steps"));
     expect(steps.filter((f) => f.startsWith("seg-"))).toEqual([]);
+    // glossary も呼ばない。run 中で最大コンテキストの呼び出しなので、落ちると
+    // 分かっている入力に一番高い 1 回を払わない（契約付録 §8）。
+    expect(count.n).toBe(0);
+    expect(r.summary.llmCalls).toBe(0);
   });
 
   it("呼び出し回数超過は too-large で落ちる（サイズ上限は全て満たしていても止まる）", async () => {
