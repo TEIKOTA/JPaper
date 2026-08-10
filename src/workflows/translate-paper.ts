@@ -254,7 +254,7 @@ function countByTrigger(notes: TranslatorNote[]): Record<string, number> {
 
 // 単一ユーザ既定にフォールバックした資源を数える。マルチテナントで気づかず共有したまま
 // 本番に出るのを防ぐため、observable にして警告も出す（契約付録 §8）。
-type SharedDefault = "db" | "cacheKey" | "outDir";
+type SharedDefault = "db" | "cacheKey" | "outDir" | "limits" | "work";
 function sharedDefaultsOf(opts: TranslateOptions, deps: TranslateDeps): SharedDefault[] {
   const shared: SharedDefault[] = [];
   if (deps.db === undefined && (deps.dbPath === undefined || deps.dbPath.trim() === "")) {
@@ -262,6 +262,11 @@ function sharedDefaultsOf(opts: TranslateOptions, deps: TranslateDeps): SharedDe
   }
   if (deps.cacheKey === undefined) shared.push("cacheKey");
   if (opts.outDir === undefined || opts.outDir.trim() === "") shared.push("outDir");
+  // 既定の取り込み上限・仕事量上限は CLI 単体利用向けに緩い。実測では資源の分離より
+  // こちらのほうがプロセスの生死を左右する（既定のまま 506KiB の .tar.gz が 508MiB に
+  // 展開されて成功し、4 本併走で正常リクエストの p50 が 79ms→1,789ms になった）。
+  if (deps.limits === undefined) shared.push("limits");
+  if (deps.work === undefined) shared.push("work");
   return shared;
 }
 
@@ -440,7 +445,7 @@ export async function translatePaper(
     // ここはまだ notify を組み立てる前。通知の失敗で run を落とさない。
     try {
       deps.onError?.(
-        `単一ユーザ既定を使用: ${sharedDefaults.join(", ")}（マルチテナントでは dbPath / cacheKey / outDir を明示的に渡すこと）`,
+        `単一ユーザ既定を使用: ${sharedDefaults.join(", ")}（マルチテナントでは dbPath / cacheKey / outDir / limits / work を明示的に渡すこと）`,
       );
     } catch {
       // 通知の失敗は run を壊さない。

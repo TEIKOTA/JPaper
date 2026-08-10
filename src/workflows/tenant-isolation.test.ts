@@ -3,6 +3,8 @@ import { mkdtempSync, rmSync, readdirSync, readFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { checkpoint } from "../durable/checkpoint.js";
+import { DEFAULT_LIMITS } from "../ingest/limits.js";
+import { DEFAULT_WORK_LIMITS } from "../runtime/work-budget.js";
 import { z } from "zod";
 
 const dirs: string[] = [];
@@ -231,6 +233,8 @@ describe("単一ユーザ既定の可視化", () => {
         client: client(),
         db: new GlossaryDb(),
         cacheKey: Buffer.alloc(32, 7),
+        limits: DEFAULT_LIMITS,
+        work: DEFAULT_WORK_LIMITS,
         latexRunner: () => ({ code: 1, log: "" }),
         onError: (m) => warns.push(m),
       },
@@ -256,6 +260,10 @@ describe("単一ユーザ既定の可視化", () => {
     expect(r.summary.sharedDefaults).toContain("cacheKey");
     expect(r.summary.sharedDefaults).toContain("outDir");
     expect(r.summary.sharedDefaults).not.toContain("db");
+    // 既定の取り込み上限・仕事量上限も可視化する。実測では資源の分離より、こちらの
+    // ほうがプロセスの生死を左右した（506KiB の .tar.gz が 508MiB に展開されて成功）。
+    expect(r.summary.sharedDefaults).toContain("limits");
+    expect(r.summary.sharedDefaults).toContain("work");
     expect(warns.some((w) => w.includes("単一ユーザ既定"))).toBe(true);
     rmSync(path.join(process.cwd(), `${r.summary.paperId}-ja`), {
       recursive: true,
