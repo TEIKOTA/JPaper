@@ -59,7 +59,7 @@ export function acquireRunLock(
     if (info !== null && holderAlive(info, now())) {
       throw new JpaperError(
         2,
-        "input",
+        "conflict",
         `同じ出力先で別の実行が進行中です（pid ${info.pid}）。出力先を分けてください: ${runDir}`,
       );
     }

@@ -55,7 +55,7 @@ function paxPath(data: Buffer): string | null {
 }
 
 function tooLarge(what: string, limit: number): JpaperError {
-  return new JpaperError(2, "input", `${what}が上限 ${limit} バイトを超えています`);
+  return new JpaperError(2, "too-large", `${what}が上限 ${limit} バイトを超えています`);
 }
 
 // 展開量の累積を 1 箇所で監視する（tar/zip/gzip のどの経路でも同じ上限を効かせる）。
@@ -65,7 +65,7 @@ class Budget {
   constructor(private readonly limits: IngestLimits) {}
   admit(size: number): void {
     if (++this.entries > this.limits.maxEntries) {
-      throw new JpaperError(2, "input", `アーカイブのエントリ数が上限 ${this.limits.maxEntries} を超えています`);
+      throw new JpaperError(2, "too-large", `アーカイブのエントリ数が上限 ${this.limits.maxEntries} を超えています`);
     }
     if (size > this.limits.maxEntryBytes) throw tooLarge("アーカイブ内の単一ファイル", this.limits.maxEntryBytes);
     this.total += size;

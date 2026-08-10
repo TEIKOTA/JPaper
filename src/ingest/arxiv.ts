@@ -30,7 +30,7 @@ function isTransientStatus(status: number): boolean {
 async function readCapped(res: Response, maxBytes: number): Promise<Buffer> {
   const declared = Number(res.headers?.get?.("content-length"));
   if (Number.isFinite(declared) && declared > maxBytes) {
-    throw new JpaperError(2, "input", `arXiv 応答が上限 ${maxBytes} バイトを超えています`);
+    throw new JpaperError(2, "too-large", `arXiv 応答が上限 ${maxBytes} バイトを超えています`);
   }
   const body = res.body;
   if (!body) return Buffer.from(await res.arrayBuffer());
@@ -43,7 +43,7 @@ async function readCapped(res: Response, maxBytes: number): Promise<Buffer> {
     total += value.byteLength;
     if (total > maxBytes) {
       await reader.cancel();
-      throw new JpaperError(2, "input", `arXiv 応答が上限 ${maxBytes} バイトを超えています`);
+      throw new JpaperError(2, "too-large", `arXiv 応答が上限 ${maxBytes} バイトを超えています`);
     }
     chunks.push(Buffer.from(value));
   }

@@ -17,7 +17,7 @@ import {
   type Provider,
   type TranslatorNote,
 } from "../types/contract.js";
-import { JpaperError, resolveExitCode } from "../types/errors.js";
+import { resolveExitCode, toRunError, type RunError } from "../types/errors.js";
 import { paperOutDir, dbPath, contextWindowFor, type OllamaConfig } from "../config.js";
 import { makeLlmClient } from "../providers/index.js";
 import { makeJsonlTrace } from "../runtime/trace.js";
@@ -165,10 +165,12 @@ function countByTrigger(notes: TranslatorNote[]): Record<string, number> {
   return acc;
 }
 
-function failResult(paperId: string, outDir: string, exitCode: number): Result {
+function failResult(paperId: string, outDir: string, error: RunError): Result {
+  const exitCode = error.code;
   return {
     status: "failed",
     exitCode,
+    error,
     summary: RunSummary.parse({
       paperId,
       outDir,
@@ -188,6 +190,27 @@ interface TypesetOutcome {
   buildOk: boolean | null;
   pdfPath?: string;
   exitCode: number;
+  message?: string;
+}
+
+// 節ループ・組版ゲートの失敗は例外ではなく戻り値で来るので、ここで構造化エラーに写す。
+function gateError(
+  exitCode: number,
+  results: readonly { segmentId: string; passed: boolean; failCode?: number }[],
+  typesetMessage?: string,
+): RunError {
+  const bad = results.filter((r) => !r.passed);
+  const ids = bad.map((r) => r.segmentId).slice(0, 10).join(", ");
+  if (exitCode === 3) {
+    return { kind: "formal", code: 3, message: `形式検査を通過しないセグメントがあります: ${ids}` };
+  }
+  if (exitCode === 4) {
+    return { kind: "quality", code: 4, message: `品質基準に達しないセグメントがあります: ${ids}` };
+  }
+  if (exitCode === 5) {
+    return { kind: "typeset", code: 5, message: typesetMessage ?? "全文組版ゲートに失敗しました" };
+  }
+  return { kind: "internal", code: exitCode, message: `未分類の失敗です（exitCode ${exitCode}）` };
 }
 
 function summarizeGateFailure(g: BuildGateResult): string {
@@ -238,14 +261,16 @@ async function typeset(
   if (orig.buildOk) return { layout: "original", buildOk: true, pdfPath: orig.pdfPath, exitCode: 0 };
   if (orig.failedSegments.length > 0) {
     // 翻訳起因のビルド失敗。再訳ループ(WP10)未実装のため明示的失敗として surface する。
-    surface(`組版失敗(翻訳起因・要再訳): ${summarizeGateFailure(orig)}`);
-    return { layout: "original", buildOk: false, exitCode: 5 };
+    const m = `組版失敗(翻訳起因・要再訳): ${summarizeGateFailure(orig)}`;
+    surface(m);
+    return { layout: "original", buildOk: false, exitCode: 5, message: m };
   }
   surface(`原プリアンブルで組めず共通テンプレへフォールバック: ${summarizeGateFailure(orig)}`);
   const tmpl = await run("template");
   if (tmpl.buildOk) return { layout: "template", buildOk: true, pdfPath: tmpl.pdfPath, exitCode: 0 };
-  surface(`組版失敗(テンプレでも不可): ${summarizeGateFailure(tmpl)}`);
-  return { layout: "template", buildOk: false, exitCode: 5 };
+  const m = `組版失敗(テンプレでも不可): ${summarizeGateFailure(tmpl)}`;
+  surface(m);
+  return { layout: "template", buildOk: false, exitCode: 5, message: m };
 }
 
 export async function translatePaper(
@@ -356,6 +381,7 @@ export async function translatePaper(
     let layout: Layout | null = null;
     let buildOk: boolean | null = null;
     let pdfPath: string | undefined;
+    let typesetMessage: string | undefined;
     let exitCode = resolveExitCode(results.filter((r) => !r.passed).map((r) => r.failCode ?? 4));
     if (failed === 0) {
       // 訳注を本文へ反映（初出脚注＋巻末一覧）してから組版する。
@@ -379,6 +405,7 @@ export async function translatePaper(
         (m) => deps.onError?.(m),
       );
       ({ layout, buildOk, pdfPath, exitCode } = outcome);
+      typesetMessage = outcome.message;
     }
 
     const summary = RunSummary.parse({
@@ -395,10 +422,12 @@ export async function translatePaper(
       buildOk,
       exitCode,
     });
-    return { status: exitCode === 0 ? "ok" : "failed", exitCode, pdfPath, summary };
+    if (exitCode === 0) return { status: "ok", exitCode, pdfPath, summary };
+    return { status: "failed", exitCode, pdfPath, error: gateError(exitCode, results, typesetMessage), summary };
   } catch (e) {
-    deps.onError?.(String((e as Error)?.message ?? e));
-    return failResult(paperId, outDir, e instanceof JpaperError ? e.code : 1);
+    const error = toRunError(e);
+    deps.onError?.(error.message);
+    return failResult(paperId, outDir, error);
   } finally {
     if (!deps.db) db?.close();
     lock?.release();

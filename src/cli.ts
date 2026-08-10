@@ -55,6 +55,7 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number
     );
     stdout(`${JSON.stringify(result.summary, null, 2)}\n`);
     if (result.pdfPath) stdout(`PDF: ${result.pdfPath}\n`);
+    if (result.error) stderr(`失敗[${result.error.kind}]: ${result.error.message}\n`);
     return result.exitCode;
   } catch (e) {
     if (e instanceof JpaperError) {

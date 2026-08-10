@@ -2,15 +2,51 @@
 
 export type FailureCode = 2 | 3 | 4 | 5;
 
+// 失敗の分類。exitCode（§6）より細かく、呼び出し側が応答を出し分けるための軸。
+// input=入力が不正 / conflict=出力先が使用中 / too-large=サイズ上限超過 /
+// provider=LLM プロバイダ利用不能 / formal=形式検査不通過 / quality=品質未達 /
+// typeset=全文組版失敗 / internal=想定外。
+export type ErrorKind =
+  | "input"
+  | "conflict"
+  | "too-large"
+  | "provider"
+  | "formal"
+  | "quality"
+  | "typeset"
+  | "internal";
+
 export class JpaperError extends Error {
   constructor(
     public readonly code: FailureCode | 1,
-    public readonly kind: string,
+    public readonly kind: ErrorKind,
     message: string,
   ) {
     super(message);
     this.name = "JpaperError";
   }
+}
+
+// 失敗を戻り値へ載せる形（契約付録 §8）。例外は境界の外へ出さない。
+export interface RunError {
+  kind: ErrorKind;
+  code: number;
+  message: string;
+  detail?: string;
+}
+
+// 想定外の例外も分類済みの形に落とす。原因の型名は detail に残す（web のログ用）。
+export function toRunError(e: unknown): RunError {
+  if (e instanceof JpaperError) {
+    return { kind: e.kind, code: e.code, message: e.message };
+  }
+  const err = e as Error | undefined;
+  return {
+    kind: "internal",
+    code: 1,
+    message: String(err?.message ?? e),
+    detail: err?.stack ?? err?.name ?? typeof e,
+  };
 }
 
 // 優先順位は契約付録 §8。

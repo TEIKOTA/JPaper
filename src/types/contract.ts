@@ -152,10 +152,31 @@ export const RunSummary = z.object({
 });
 export type RunSummary = z.infer<typeof RunSummary>;
 
+export const ErrorKind = z.enum([
+  "input",
+  "conflict",
+  "too-large",
+  "provider",
+  "formal",
+  "quality",
+  "typeset",
+  "internal",
+]);
+
+export const RunError = z.object({
+  kind: ErrorKind,
+  code: z.number().int(),
+  message: z.string(),
+  detail: z.string().optional(),
+});
+export type RunError = z.infer<typeof RunError>;
+
 export const Result = z.object({
   status: z.enum(["ok", "failed"]),
   pdfPath: z.string().optional(),
   exitCode: z.number().int(),
+  // 失敗の理由。status="failed" のとき必ず入る（契約付録 §8）。
+  error: RunError.optional(),
   summary: RunSummary,
 });
 export type Result = z.infer<typeof Result>;
