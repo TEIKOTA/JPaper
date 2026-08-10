@@ -43,6 +43,11 @@ import { checkpoint, hashContext } from "../durable/checkpoint.js";
 import { acquireRunLock, type RunLock } from "../durable/run-lock.js";
 import { throwIfAborted, withSignal, withProviderErrors } from "../runtime/cancellation.js";
 import { llmGate, withGate, type Gate } from "../runtime/concurrency.js";
+import {
+  resolveWorkLimits,
+  withCallBudget,
+  type WorkLimits,
+} from "../runtime/work-budget.js";
 import { assembleWithMap, type Layout } from "../tools/assemble-latex.js";
 import {
   runBuildGate,
@@ -111,6 +116,8 @@ export interface TranslateDeps {
   ingest?: IngestDeps;
   // 取り込みのサイズ上限。web ではプラン別に締めたいので注入可能にする。
   limits?: IngestLimits;
+  // 1 run が費やせる仕事量の上限（セグメント数・LLM 呼び出し回数）。プラン別に締められる。
+  work?: Partial<WorkLimits>;
   // LLM 同時実行ゲート。既定はプロセス共有（リクエストをまたいで効く）。
   gate?: Gate;
   onError?: (message: string) => void;
@@ -370,8 +377,9 @@ export async function translatePaper(
   // 中断は境界 1 箇所（client ラッパ）で効かせる。各エージェントの引数は増やさない。
   // ゲートを外側に置くのは、枠を取ってから中断を見るため（待ち行列に中断済みが居座らない）。
   // 注入クライアントにも掛ける（web が自前クライアントを渡すとプロセス上限が消えていた）。
+  const work = resolveWorkLimits(deps.work);
   const client = withGate(
-    withProviderErrors(withSignal(client0, opts.signal)),
+    withCallBudget(withProviderErrors(withSignal(client0, opts.signal)), work.maxLlmCalls),
     deps.gate ?? llmGate(),
   );
   let db: GlossaryDb | undefined;
@@ -434,6 +442,14 @@ export async function translatePaper(
     );
     const budget = segmentBudgetFor(contextWindowFor(opts.provider, opts.ollama));
     const segments = segment(ingested.cleanLatex, budget);
+    // 節ループを 1 本も回す前に判定する（超過が確定した入力にコストを払わない）。
+    if (segments.length > work.maxSegments) {
+      throw new JpaperError(
+        2,
+        "too-large",
+        `翻訳対象セグメント数 ${segments.length} が上限 ${work.maxSegments} を超えています`,
+      );
+    }
     const firstOcc = buildFirstOccurrenceIndex(
       segments,
       ctx.resolved.map((r) => r.src),
