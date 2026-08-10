@@ -100,3 +100,31 @@ describe("collectFigures", () => {
     ).toEqual([]);
   });
 });
+
+describe("図の解決コストの上限", () => {
+  it("未解決参照が多くてもツリーを 1 度しか走査しない", () => {
+    // 参照ごとに listAllFiles を呼んでいた頃は O(参照数 × ファイル数) で、
+    // 2,000 参照 × 500 ファイル（main.tex 49KB）が 770ms 同期でイベントループを止めた。
+    const files = Array.from({ length: 500 }, (_, i) => `pad/p${String(i)}.png`);
+    const d = tmp(files);
+    const latex = Array.from(
+      { length: 2000 },
+      (_, i) => `\\includegraphics{nope${String(i)}}`,
+    ).join("");
+    const started = Date.now();
+    expect(collectFigures(latex, d)).toEqual([]);
+    expect(Date.now() - started).toBeLessThan(500);
+  });
+
+  it("図の参照が上限を超えたら too-large", () => {
+    const d = tmp(["fig.png"]);
+    const latex = Array.from(
+      { length: 20 },
+      (_, i) => `\\includegraphics{nope${String(i)}}`,
+    ).join("");
+    expect(() => collectFigures(latex, d, d, 10)).toThrowError(/上限/);
+    // 同じ参照の繰り返しは 1 件として数える（正規の論文が同じ図を並べても落ちない）。
+    const repeated = "\\includegraphics{fig}".repeat(50);
+    expect(collectFigures(repeated, d, d, 10)).toEqual([path.resolve(d, "fig.png")]);
+  });
+});

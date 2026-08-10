@@ -106,6 +106,6 @@ export async function ingest(
     );
   }
   const mainDir = path.join(sourceDir, path.dirname(main));
-  const figures = collectFigures(cleanLatex, mainDir, sourceDir);
+  const figures = collectFigures(cleanLatex, mainDir, sourceDir, limits.maxFigureRefs);
   return { cleanLatex, figures, paperId: derivePaperId(input), sourceDir, mainDir };
 }

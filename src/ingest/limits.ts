@@ -11,6 +11,9 @@ export interface IngestLimits {
   // 取り込み後の LaTeX 本文（\input 展開込み）のバイト数。図（バイナリ）とは桁が違うので
   // 別に持つ。ここを図と同じ上限で見ていたため、40MB の .tex が既定で通っていた。
   maxLatexBytes: number;
+  // \includegraphics の参照件数。索引化しても 1 参照あたり existsSync が拡張子ぶん走るため、
+  // バイト数の上限内でも参照を並べるだけで同期処理が数秒に伸びる。実在の論文は多くても数百件。
+  maxFigureRefs: number;
 }
 
 export const DEFAULT_LIMITS: IngestLimits = {
@@ -19,4 +22,5 @@ export const DEFAULT_LIMITS: IngestLimits = {
   maxEntryBytes: 128 * 1024 * 1024,
   maxEntries: 10_000,
   maxLatexBytes: 8 * 1024 * 1024,
+  maxFigureRefs: 5_000,
 };
