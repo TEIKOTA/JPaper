@@ -1,6 +1,6 @@
 // 契約付録 §1-8 の写経（値の正本＝docs/design/contract-appendix.md）。
 import { z } from "zod";
-import { MAX_ISSUE_CHARS, MAX_ISSUES } from "../runtime/untrusted.js";
+import { MAX_ISSUE_CHARS, MAX_ISSUES, MAX_NOTE_CHARS, MAX_TERM_CHARS, MAX_TERMS } from "../runtime/untrusted.js";
 
 // ── §1 用語 ───────────────────────────────────────────────
 export const TermClass = z.enum([
@@ -15,12 +15,13 @@ export const Rendering = z.enum(["translate", "bilingual", "keep-original"]);
 export type Rendering = z.infer<typeof Rendering>;
 
 export const ResolvedTerm = z.object({
-  src: z.string(),
-  form: z.string(),
+  // 空の src は seg.latex.includes("") が常に真になり、全用語が全セグメントに乗る。
+  src: z.string().min(1).max(MAX_TERM_CHARS),
+  form: z.string().min(1).max(MAX_TERM_CHARS),
   class: TermClass,
   rendering: Rendering,
   firstOccurrence: z.boolean(),
-  note: z.string().optional(),
+  note: z.string().max(MAX_NOTE_CHARS).optional(),
 });
 export type ResolvedTerm = z.infer<typeof ResolvedTerm>;
 
@@ -97,7 +98,8 @@ export const GlossaryBuilderIn = z.object({
 export type GlossaryBuilderIn = z.infer<typeof GlossaryBuilderIn>;
 
 export const GlossaryBuilderOut = z.object({
-  resolved: z.array(ResolvedTerm.omit({ firstOccurrence: true })),
+  // 件数の上限はプロンプト膨張（＝コスト増幅）を抑えるため。EvalIssue と同じ理由。
+  resolved: z.array(ResolvedTerm.omit({ firstOccurrence: true })).max(MAX_TERMS),
   brief: DocumentBrief,
   style: StyleContract,
 });

@@ -127,3 +127,36 @@ describe("contract zod schemas", () => {
     expect(s.layout).toBeNull();
   });
 });
+
+describe("用語集の上限", () => {
+  const term = (over: Record<string, unknown> = {}) => ({
+    src: "value",
+    form: "値",
+    class: "paper-defined",
+    rendering: "bilingual",
+    ...over,
+  });
+  const wrap = (resolved: unknown[]) => ({
+    resolved,
+    brief: { thesis: "t", sectionRoles: [], notationConventions: [] },
+    style: { tensePolicy: "a", headingStyle: "b", numberStyle: "c" },
+  });
+
+  it("件数の上限を超えたら弾く", () => {
+    // 上限が無かった頃は 2 万件を返させて、275 バイトの入力から 1 run で
+    // 560 万文字ぶんのプロンプトを吐かせられた（maxLlmCalls は回数しか見ない）。
+    expect(() => GlossaryBuilderOut.parse(wrap(Array.from({ length: 501 }, () => term())))).toThrow();
+    expect(GlossaryBuilderOut.parse(wrap(Array.from({ length: 500 }, () => term()))).resolved).toHaveLength(500);
+  });
+
+  it("空の src を弾く", () => {
+    // 用語スライスは seg.latex.includes(src) で選ぶので、空だと全件が全セグメントに乗る。
+    expect(() => GlossaryBuilderOut.parse(wrap([term({ src: "" })]))).toThrow();
+  });
+
+  it("長すぎる src/form を弾く", () => {
+    expect(() => GlossaryBuilderOut.parse(wrap([term({ src: "x".repeat(201) })]))).toThrow();
+    expect(() => GlossaryBuilderOut.parse(wrap([term({ form: "x".repeat(201) })]))).toThrow();
+  });
+});
+

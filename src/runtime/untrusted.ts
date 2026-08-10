@@ -11,6 +11,9 @@ export const MAX_TERM_CHARS = 200;
 export const MAX_NOTE_CHARS = 400;
 export const MAX_ISSUE_CHARS = 500;
 export const MAX_ISSUES = 20;
+// 1 論文の用語集の件数上限。用語スライスは src の部分一致で選ぶので、短い綴りを
+// 大量に返されると全セグメントのプロンプトに全件乗る（実測 2 万件で 1 run 560 万文字）。
+export const MAX_TERMS = 500;
 
 // 改行・制御文字を落として 1 行に畳み、長さで切る。切ったことは省略記号で残す。
 export function oneLine(s: string, max: number): string {
