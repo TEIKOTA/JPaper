@@ -39,6 +39,7 @@ import { runSectionLoop } from "./section-loop.js";
 import { buildNotes } from "./notes.js";
 import { untranslatedHeadings } from "./quality-gate.js";
 import { checkpoint, hashContext } from "../durable/checkpoint.js";
+import { acquireRunLock, type RunLock } from "../durable/run-lock.js";
 import { assembleWithMap, type Layout } from "../tools/assemble-latex.js";
 import { runBuildGate, type LatexRunner, type BuildGateResult } from "../tools/build-gate.js";
 import { injectFootnotes, renderBackmatter } from "../tools/render-notes.js";
@@ -264,8 +265,11 @@ export async function translatePaper(
       trace: makeJsonlTrace(path.join(runDir, "llm-trace.jsonl"), runId),
     });
   let db: GlossaryDb | undefined;
+  let lock: RunLock | undefined;
 
   try {
+    // チェックポイントは runDir 単位なので、同一 outDir の並行実行は訳文を混ぜる。契約付録 §8。
+    lock = acquireRunLock(runDir);
     if (deps.db) {
       db = deps.db;
     } else {
@@ -397,5 +401,6 @@ export async function translatePaper(
     return failResult(paperId, outDir, e instanceof JpaperError ? e.code : 1);
   } finally {
     if (!deps.db) db?.close();
+    lock?.release();
   }
 }

@@ -187,6 +187,7 @@ CREATE INDEX idx_term_src ON term(src);
   - `keep-original`（および `paper-defined` で keep-original 確定の語）＝**全出現で原形**が保たれているか。
   - `bilingual`＝**文書全体で初出のセグメントでは併記形 `form`（例 `値(Value)`）、以降のセグメントでは日本語部分のみ（例 `値`）**が使われているか。初出判定は `firstOccurrence`（文書全体基準の決定的インデクサ）に一致させる。
   - いずれも「form が全出現で一致」ではなく上記の rendering 別規則で判定する（決定的テスト可）。
+- **出力先の排他（run lock）**: checkpoint は `<outDir>/.run` 単位で共有されるため、同一 `outDir` の並行実行は互いの訳文・用語文脈を混ぜたまま**両方が成功を返す**。`translatePaper` は開始時に `<outDir>/.run/run.lock` を `O_EXCL` で取得し、取得できなければ**終了コード 2**（入力エラー）で明示的に失敗する。ロックは `pid` と `startedAt` を持ち、保持プロセスが消えているか `LOCK_TTL_MS`（30 分）を過ぎていれば奪う（クラッシュしたランで出力先を永久に塞がないため）。実装の正本は `src/durable/run-lock.ts`。web ハンドラから呼ぶ場合、同時リクエストは outDir を分けるか、この失敗を 409 相当として扱う。
 - **単一終了コード決定規則**（1 run で複数原因が混在時）: `2`（入力/プロバイダ）> `3`（形式失敗）> `4`（品質失敗）> `5`（全文ゲート=(B)）の優先順位で1つに決める。
 - **大セグメント再分割後の扱い**: 再分割した各断片で `MAX_REVISIONS` 区分（小/中/大＝絶対トークン閾値）を**断片ごとに再判定**。`firstOccurrence` は断片をまたいでも**文書全体で1回**（決定的インデクサが全文基準で付与、分割の影響を受けない）。
 - **収集[決定的] の v1 最小仕様（(A) 固定スコープ・工数を pin）**: 定義パターンは**固定セット**に限定する — (1) `\newcommand`、(2) `we (call|define|term|denote) X` / `we refer to ... as X`、(3) `X (is|are) defined as`、(4) `\emph{}`/`\textit{}`/`\textbf{}` の初出、(5) 大文字始まりの複合固有名。加えて DB `src` への**最長一致**。**網羅性は求めない**（取りこぼしは全文を読む glossary-builder が補う）。パターン拡充・ネット検索連携は roadmap（本付録 §7 の (B)/Phase2 外の enhancement）。
