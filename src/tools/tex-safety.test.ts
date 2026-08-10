@@ -97,3 +97,40 @@ describe("findUnsafeSupportCommands（同梱 .sty/.cls 向けの狭い denylist�
     expect(findUnsafeSupportCommands(String.raw`\openout15=\jobname.aux`)).toEqual([]);
   });
 });
+
+describe("読み込みコマンド（\\input 系）の判定", () => {
+  it("\\csname で綴りを組み立てた読み込みは引数に関わらず落とす", () => {
+    // expandInputs の正規表現をすり抜けてプリアンブルに残る経路。
+    expect(findUnsafeTexCommands(String.raw`\csname input\endcsname{/etc/passwd}`)).toContain(
+      "input",
+    );
+    expect(findUnsafeTexCommands(String.raw`\lowercase{\csname INPUT\endcsname{x}}`)).toContain(
+      "input",
+    );
+    expect(findUnsafeSupportCommands(String.raw`\csname input\endcsname{secret}`)).toContain(
+      "input",
+    );
+  });
+
+  it("build ツリーの外を指す引数を落とす（括弧なしの TeX 形式も）", () => {
+    expect(findUnsafeTexCommands(String.raw`\input{/etc/passwd}`)).toContain("input");
+    expect(findUnsafeTexCommands(String.raw`\input /etc/passwd `)).toContain("input");
+    expect(findUnsafeTexCommands(String.raw`\include{../../secret}`)).toContain("include");
+    expect(findUnsafeTexCommands(String.raw`\input{~/.ssh/id_rsa}`)).toContain("input");
+    expect(findUnsafeTexCommands(String.raw`\InputIfFileExists{/proc/self/environ}{}{}`)).toContain(
+      "InputIfFileExists",
+    );
+  });
+
+  it("build ツリー内を指す正規の読み込みは通す（誤検知で論文を落とさない）", () => {
+    expect(findUnsafeTexCommands(String.raw`\input{chapters/intro.tex}\include{sec2}`)).toEqual([]);
+    expect(findUnsafeSupportCommands(String.raw`\input{myclass.def}`)).toEqual([]);
+    // ..を含む語であってもパス区切りで分かれていなければ別物。
+    expect(findUnsafeTexCommands(String.raw`\input{fig..old/x}`)).toEqual([]);
+  });
+
+  it("\\csname の本体全体でのみ照合する（部分一致で配布 .sty を落とさない）", () => {
+    expect(findUnsafeTexCommands(String.raw`\csname my-input\endcsname`)).toEqual([]);
+    expect(findUnsafeTexCommands(String.raw`\csname the@input\endcsname`)).toEqual([]);
+  });
+});

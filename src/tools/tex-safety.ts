@@ -57,8 +57,46 @@ export const SUPPORT_READ_EXEC_COMMANDS = [
   "readline",
 ] as const;
 
+// ファイルを読み込むコマンド。正規の用途があるため名前だけでは落とせない（\input は日常的）。
+// 判定は 2 つ: (1) 引数が絶対パスまたは .. を含む、(2) \csname で綴りを組み立てている。
+// (2) は expandInputs（main-tex.ts）の正規表現をすり抜けてプリアンブルに残る経路そのもの。
+export const READ_PATH_COMMANDS = [
+  "input",
+  "include",
+  "@@input",
+  "InputIfFileExists",
+  "IfFileExists",
+  "import",
+  "subimport",
+  "includefrom",
+  "subincludefrom",
+] as const;
+
+const READ_PATH = new Set<string>(READ_PATH_COMMANDS);
 const DENY = new Set<string>(READ_EXEC_COMMANDS);
 const SUPPORT_DENY = new Set<string>(SUPPORT_READ_EXEC_COMMANDS);
+
+// build ツリーの外を指す引数。~ と Windows のドライブ指定も絶対パス扱いにする。
+function escapesBuildTree(arg: string): boolean {
+  const a = arg.trim();
+  if (a === "") return false;
+  if (a.startsWith("/") || a.startsWith("~") || /^[a-zA-Z]:[\\/]/.test(a)) return true;
+  return a.split(/[\\/]/).includes("..");
+}
+
+// \input{path} と、括弧を書かない TeX 形式 \input path（空白で終端）の両方を拾う。
+function readPathHits(src: string): string[] {
+  const hits: string[] = [];
+  const add = (name: string): void => {
+    if (!hits.includes(name)) hits.push(name);
+  };
+  for (const m of src.matchAll(/\\([a-zA-Z@]+)\s*(?:\{([^}]*)\}|([^\s{}\\]+))/g)) {
+    const name = m[1]!;
+    if (!READ_PATH.has(name)) continue;
+    if (escapesBuildTree(m[2] ?? m[3] ?? "")) add(name);
+  }
+  return hits;
+}
 
 // \csname openin\endcsname のように綴りを組み立てる回避も拾う。
 // TeX の \lowercase は文字トークンだけを畳むので、\lowercase{\csname OPENIN\endcsname} は
@@ -73,6 +111,19 @@ function csnameNames(tex: string): string[] {
   return names;
 }
 
+// \csname で組み立てた読み込みコマンド。綴りを分解する正規の理由が無いため、
+// 引数の形に関わらず落とす（トークン分割ではなく本体全体で照合し、誤検知を避ける）。
+function obfuscatedReadHits(tex: string): string[] {
+  const hits: string[] = [];
+  for (const m of tex.matchAll(/\\csname([^\\]*?)\\endcsname/g)) {
+    const body = m[1]!.toLowerCase().replace(/\s+/g, "");
+    for (const name of READ_PATH) {
+      if (body === name.toLowerCase() && !hits.includes(name)) hits.push(name);
+    }
+  }
+  return hits;
+}
+
 function scan(tex: string, deny: ReadonlySet<string>): string[] {
   const src = stripTexComments(decodeCarets(tex));
   const hits: string[] = [];
@@ -82,6 +133,10 @@ function scan(tex: string, deny: ReadonlySet<string>): string[] {
   // 制御綴りは大小文字を区別する（\OPENIN は \openin ではない）ので、そのまま照合する。
   for (const m of src.matchAll(/\\([a-zA-Z]+)/g)) add(m[1]!);
   for (const name of csnameNames(src)) add(name);
+  // 読み込みコマンドは名前では落とせないので、引数の形と難読化で判定する。
+  for (const name of [...readPathHits(src), ...obfuscatedReadHits(src)]) {
+    if (!hits.includes(name)) hits.push(name);
+  }
   return hits;
 }
 

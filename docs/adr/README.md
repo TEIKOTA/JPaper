@@ -59,3 +59,4 @@
 | 2026-08-11 | [プロンプト注入対策: 論文・LLM 由来のテキストを指示面へ載せない](./20260811-untrusted-text-never-becomes-instructions.md) | accepted |
 | 2026-08-11 | [プリアンブルを「レイアウト設定」ではなく「攻撃者が書いた実行コード」として扱う](./20260811-preamble-is-untrusted-code-not-just-layout.md) | accepted |
 | 2026-08-11 | [検査面に同梱支援ファイルを含める（狭い denylist を分ける）](./20260811-support-files-are-part-of-the-inspection-surface.md) | accepted |
+| 2026-08-11 | [読み込みコマンドは名前ではなく引数の形で判定する](./20260811-read-commands-judged-by-argument-not-name.md) | accepted |

@@ -162,3 +162,29 @@ describe("同梱 .sty 経由の読み出し", () => {
     expect(result.status).toBe("ok");
   });
 });
+
+describe("\\csname で綴りを組み立てた読み込み", () => {
+  // expandInputs の正規表現をすり抜けてプリアンブルに残り、latexmk が実際に読む経路。
+  const EXFIL = String.raw`\documentclass{article}
+\begin{document}\section{Intro}Exfil: \csname input\endcsname{/etc/passwd} Alpha beta.\end{document}`;
+
+  it("LLM を呼ぶ前に input エラーで落とす", async () => {
+    const { result, calls } = await run(EXFIL);
+    expect(result.status).toBe("failed");
+    expect(result.error?.kind).toBe("input");
+    expect(result.error?.message).toContain("input");
+    expect(calls()).toBe(0);
+  });
+
+  it("expandInputs が畳まない綴り（\\InputIfFileExists）の絶対パスも落とす", async () => {
+    // 素の \input{/abs} は expandInputs が除去するため cleanLatex に残らない。
+    // 残るのは畳まれない綴りの方で、そこが実際の流出経路。
+    const { result } = await run(
+      String.raw`\documentclass{article}
+\InputIfFileExists{/etc/passwd}{}{}
+\begin{document}\section{Intro}Alpha beta.\end{document}`,
+    );
+    expect(result.status).toBe("failed");
+    expect(result.error?.kind).toBe("input");
+  });
+});
