@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { formalCheck, untranslatedHeadings } from "./quality-gate.js";
+import { formalCheck, untranslatedHeadings, introducedUnsafeCommands } from "./quality-gate.js";
 import type { ResolvedTerm } from "../types/contract.js";
 
 const kinds = (src: string, ja: string, terms: ResolvedTerm[] = []) =>
@@ -235,5 +235,57 @@ describe("formalCheck: bilingual", () => {
       firstOccurrence: false,
     };
     expect(formalCheck("y", "用語（仮称）を繰り返し使う", [jaParen])).toEqual([]);
+  });
+});
+
+describe("formalCheck: 未翻訳の検出", () => {
+  const PROSE =
+    "We evaluate the proposed method on three benchmark datasets and report accuracy, " +
+    "precision and recall for every configuration considered in this study.";
+
+  it("原文をそのままコピーした訳文は落とす", () => {
+    const issues = formalCheck(PROSE, PROSE, []);
+    expect(issues.map((i) => i.kind)).toContain("untranslated");
+    expect(issues.find((i) => i.kind === "untranslated")!.message).toContain("原文と同一");
+  });
+
+  it("日本語を含まない別文でも落とす", () => {
+    const issues = formalCheck(PROSE, `${PROSE} Additionally we discuss limitations.`, []);
+    expect(issues.map((i) => i.kind)).toContain("untranslated");
+  });
+
+  it("和訳されていれば通す", () => {
+    const ja =
+      "提案手法を 3 つのベンチマークデータセットで評価し、検討した全ての構成について" +
+      "正解率・適合率・再現率を報告する。";
+    expect(formalCheck(PROSE, ja, []).filter((i) => i.kind === "untranslated")).toEqual([]);
+  });
+
+  it("数式・図だけの節は原文と一致しても未翻訳としない", () => {
+    const seg = "\\begin{equation}\n E = mc^2 \\label{eq:e}\n\\end{equation}\n\\includegraphics{a.pdf}";
+    expect(formalCheck(seg, seg, []).filter((i) => i.kind === "untranslated")).toEqual([]);
+  });
+});
+
+describe("formalCheck: 危険コマンドの持ち込み", () => {
+  const SRC = "\\section{Intro} The accuracy is $95\\%$.";
+
+  it("訳文が原文に無い \\directlua を持ち込んだら落とす", () => {
+    const ja = "\\section{はじめに} 正解率は $95\\%$ である。\\directlua{os.execute(\"touch /tmp/x\")}";
+    const issues = formalCheck(SRC, ja, []);
+    expect(issues.map((i) => i.kind)).toContain("unsafe-command");
+  });
+
+  it("原文にあるコマンドは翻訳者の持ち込みではないので落とさない", () => {
+    const src = "\\input{chapter1}\n本文";
+    const ja = "\\input{chapter1}\n本文の訳";
+    expect(formalCheck(src, ja, []).filter((i) => i.kind === "unsafe-command")).toEqual([]);
+  });
+
+  it("introducedUnsafeCommands は持ち込まれた名前だけ返す", () => {
+    expect(introducedUnsafeCommands("\\input{a}", "\\input{a}\\write18{x}\\openout1=y")).toEqual([
+      "write",
+      "openout",
+    ]);
   });
 });

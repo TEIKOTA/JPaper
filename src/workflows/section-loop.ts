@@ -56,6 +56,11 @@ export async function runSectionLoop(
     lastJa = out.ja;
 
     const formal = formalCheck(segment.latex, out.ja, glossarySlice);
+    // 危険コマンドの持ち込みは再訳の対象にしない（直せる誤りではなく、汚染の兆候として即失敗させる）。
+    if (formal.some((f) => f.kind === "unsafe-command")) {
+      lastFailCode = 3;
+      break;
+    }
     if (formal.length > 0) {
       lastFailCode = 3;
       if (revisions >= maxRevisions) break;

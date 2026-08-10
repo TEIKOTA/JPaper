@@ -2,8 +2,72 @@
 import type { ResolvedTerm } from "../types/contract.js";
 
 export interface FormalIssue {
-  kind: "math" | "graphics" | "label" | "paragraph" | "keep-original" | "bilingual";
+  kind:
+    | "math"
+    | "graphics"
+    | "label"
+    | "paragraph"
+    | "keep-original"
+    | "bilingual"
+    | "untranslated"
+    | "unsafe-command";
   message: string;
+}
+
+// 未翻訳と断ずるのに必要な地の文の語数。数式・図だけの節を誤検知しないための下限。
+const MIN_PROSE_WORDS = 12;
+
+// 実行・入出力に触れる制御綴り。訳文が原文に無いこれらを持ち込むのは翻訳ではない。
+const UNSAFE_COMMANDS = [
+  "directlua",
+  "latelua",
+  "luaescapestring",
+  "write", // \write18 は \write の 18 番ストリーム。番号は綴りに含まれない。
+  "immediate",
+  "openout",
+  "openin",
+  "read",
+  "catcode",
+  "csname",
+  "expandafter",
+  "special",
+  "shellescape",
+  "ShellEscape",
+  "usepackage",
+  "RequirePackage",
+  "input",
+  "include",
+  "documentclass",
+  "makeatletter",
+];
+
+function usedCommands(tex: string): Set<string> {
+  const found = new Set<string>();
+  for (const m of tex.matchAll(/\\([a-zA-Z]+)/g)) found.add(m[1]!);
+  return found;
+}
+
+// 訳文が持ち込んだ危険コマンド（原文にあるものは翻訳者の仕業ではないので対象外）。
+export function introducedUnsafeCommands(srcLatex: string, ja: string): string[] {
+  const inSrc = usedCommands(srcLatex);
+  const inJa = usedCommands(ja);
+  return UNSAFE_COMMANDS.filter((c) => inJa.has(c) && !inSrc.has(c));
+}
+
+function normalizeForCompare(s: string): string {
+  return s.replace(/\s+/g, " ").trim();
+}
+
+// 制御綴りと記号を線形時間で落として地の文だけを残す（壊れた入力でも O(n)）。
+function proseOf(tex: string): string {
+  return tex
+    .replace(/\\[a-zA-Z@]+\*?/g, " ")
+    .replace(/[{}[\]$&%#_^~\\]/g, " ");
+}
+
+// 3 文字以上のラテン語の語数。数式記号や略号を「地の文」と数えないための近似。
+function proseWordCount(tex: string): number {
+  return (proseOf(tex).match(/[A-Za-z]{3,}/g) ?? []).length;
 }
 
 const HEADING_CMDS = ["part", "chapter", "section", "subsection", "subsubsection", "paragraph", "subparagraph"];
@@ -130,6 +194,27 @@ export function formalCheck(
   terms: ResolvedTerm[],
 ): FormalIssue[] {
   const issues: FormalIssue[] = [];
+
+  // LLM の判定に依存しない下限。evaluator が汚染されても素通しさせない。
+  const unsafe = introducedUnsafeCommands(srcLatex, ja);
+  if (unsafe.length > 0) {
+    issues.push({
+      kind: "unsafe-command",
+      message: `訳文が原文に無い危険コマンドを持ち込んだ: ${unsafe.map((c) => `\\${c}`).join(", ")}`,
+    });
+  }
+
+  // 地の文が十分ある節でのみ判定する（数式・図だけの節は原文と一致しても正常）。
+  const words = proseWordCount(ja);
+  if (words >= MIN_PROSE_WORDS && !JAPANESE.test(ja)) {
+    const identical = normalizeForCompare(srcLatex) === normalizeForCompare(ja);
+    issues.push({
+      kind: "untranslated",
+      message: identical
+        ? "訳文が原文と同一（未翻訳）"
+        : `地の文に日本語が無い（未翻訳の疑い・ラテン語 ${words} 語）`,
+    });
+  }
 
   const srcMath = countMath(srcLatex);
   const jaMath = countMath(ja);
