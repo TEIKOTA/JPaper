@@ -19,6 +19,19 @@ describe("makeOllamaClient", () => {
     expect(body.messages?.[0]?.content).toBe("SYS");
   });
 
+  it("jsonMode でネイティブ JSON モード（format:json）を付与し、無指定では付けない", async () => {
+    let body: { format?: unknown } = {};
+    const fetchImpl = (async (_url: string, init: { body: string }) => {
+      body = JSON.parse(init.body);
+      return okChat('{"ok":true}');
+    }) as unknown as typeof fetch;
+    const c = makeOllamaClient(DEFAULT_OLLAMA, { fetchImpl });
+    await c.complete({ system: "s", user: "u", jsonMode: true });
+    expect(body.format).toBe("json");
+    await c.complete({ system: "s", user: "u" });
+    expect(body.format).toBeUndefined();
+  });
+
   it("接続拒否時は daemon を起動して再試行", async () => {
     let calls = 0;
     const fetchImpl = (async () => {

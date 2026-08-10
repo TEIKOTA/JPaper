@@ -171,6 +171,9 @@ export interface LlmRequest {
   system: string;
   user: string;
   meta?: LlmCallMeta;
+  // JSON 出力を期待する呼び出し。ネイティブ構造化出力を持つプロバイダ（Ollama）だけが強制に使う。
+  // claude CLI は該当機能が無いので無視しプロンプト指定に委ねる。構造化出力 ADR。
+  jsonMode?: boolean;
 }
 export interface LlmClient {
   complete(req: LlmRequest): Promise<string>;
