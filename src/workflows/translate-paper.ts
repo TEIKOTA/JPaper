@@ -17,7 +17,7 @@ import {
   type Provider,
   type TranslatorNote,
 } from "../types/contract.js";
-import { resolveExitCode, toRunError, type RunError } from "../types/errors.js";
+import { JpaperError, resolveExitCode, toRunError, type RunError } from "../types/errors.js";
 import { paperOutDir, dbPath, contextWindowFor, type OllamaConfig } from "../config.js";
 import { makeLlmClient } from "../providers/index.js";
 import { makeJsonlTrace } from "../runtime/trace.js";
@@ -45,6 +45,7 @@ import { throwIfAborted, withSignal } from "../runtime/cancellation.js";
 import { assembleWithMap, type Layout } from "../tools/assemble-latex.js";
 import { runBuildGate, type LatexRunner, type BuildGateResult } from "../tools/build-gate.js";
 import { injectFootnotes, renderBackmatter } from "../tools/render-notes.js";
+import { findUnsafeTexCommands } from "../tools/tex-safety.js";
 
 const IngestCache = z.object({
   cleanLatex: z.string(),
@@ -353,6 +354,17 @@ export async function translatePaper(
         }),
       { invalidation: inputSignature(input), key: deps.cacheKey },
     );
+
+    // プリアンブルは翻訳対象ではなく verbatim に持ち越されるため、節ループの品質ゲートでは
+    // 検査されない。LLM を呼ぶ前にここで弾く（悪意ある論文にコストを払わない）。組版安全 ADR。
+    const unsafe = findUnsafeTexCommands(ingested.cleanLatex);
+    if (unsafe.length > 0) {
+      throw new JpaperError(
+        2,
+        "input",
+        `論文が組版時にファイル読み書き・Lua 実行を行うコマンドを含んでいます: ${unsafe.map((c) => `\\${c}`).join(", ")}`,
+      );
+    }
 
     // 用語バリア: 並列翻訳の前に resolved/brief/style を確定する。
     const ctx = await loadOrBuildContext(

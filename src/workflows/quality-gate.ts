@@ -17,6 +17,10 @@ export interface FormalIssue {
 // 未翻訳と断ずるのに必要な地の文の語数。数式・図だけの節を誤検知しないための下限。
 const MIN_PROSE_WORDS = 12;
 
+// ^^ 記法の展開は組版側の検査と同一実装を使う（正本は tools/tex-safety.ts）。
+export { decodeCarets } from "../tools/tex-safety.js";
+import { decodeCarets as decode } from "../tools/tex-safety.js";
+
 // 実行・入出力に触れる制御綴り。訳文が原文に無いこれらを持ち込むのは翻訳ではない。
 const UNSAFE_COMMANDS = [
   "directlua",
@@ -41,26 +45,9 @@ const UNSAFE_COMMANDS = [
   "makeatletter",
 ];
 
-// TeX の ^^ 記法を実文字へ戻す。^^41→"A"、^^64→"d"、^^M→制御文字（コード XOR 64）。
-// これを戻さずに制御綴りを抽出すると \^^64irectlua が \directlua として発火するのに検知できない。
-export function decodeCarets(tex: string): string {
-  let prev = "";
-  let cur = tex;
-  // ^^ が入れ子で書かれても収束するまで戻す。長さは単調減少なので停止する。
-  while (cur !== prev) {
-    prev = cur;
-    cur = cur
-      .replace(/\^\^([0-9a-f]{2})/g, (_, hex: string) => String.fromCharCode(parseInt(hex, 16)))
-      .replace(/\^\^([\u0040-\u007e])/g, (_, c: string) =>
-        String.fromCharCode(c.charCodeAt(0) ^ 64),
-      );
-  }
-  return cur;
-}
-
 function usedCommands(tex: string): Set<string> {
   const found = new Set<string>();
-  for (const m of decodeCarets(tex).matchAll(/\\([a-zA-Z]+)/g)) found.add(m[1]!);
+  for (const m of decode(tex).matchAll(/\\([a-zA-Z]+)/g)) found.add(m[1]!);
   return found;
 }
 

@@ -4,6 +4,7 @@ import path from "node:path";
 import { execFileSync, spawn } from "node:child_process";
 import { segmentAtLine, type SourceSpan } from "./assemble-latex.js";
 import { throwIfAborted } from "../runtime/cancellation.js";
+import { findUnsafeTexCommands } from "./tex-safety.js";
 
 export interface FailedSegment {
   id: string;
@@ -276,6 +277,22 @@ export async function runBuildGate(
   runner: LatexRunner = defaultRunner,
 ): Promise<BuildGateResult> {
   throwIfAborted(input.signal, "組版前");
+  // 多層防御。ingest 段で弾いているが、組立後の main.tex も latexmk へ渡す前に検査する。
+  // kpathsea の openin_any=p は luaotfload のフォント読み込みごと壊すため使えない（実測）。
+  const unsafe = findUnsafeTexCommands(input.mainTex);
+  if (unsafe.length > 0) {
+    return {
+      buildOk: false,
+      droppedFigures: [],
+      shadowedPackages: [],
+      failedSegments: [],
+      structuralErrors: [
+        `組版時にファイル読み書き・Lua 実行を行うコマンドを含むため実行しません: ${unsafe.map((c) => `\\${c}`).join(", ")}`,
+      ],
+      missingFigures: [],
+      unresolvedRefs: [],
+    };
+  }
   const shadowedPackages = stageBuild(input.buildDir, input.mainTex, {
     sourceDir: input.sourceDir,
     mainDir: input.mainDir,
