@@ -203,10 +203,23 @@ export function extractArchive(bytes: Buffer, limits: IngestLimits = DEFAULT_LIM
   }
 }
 
+// エントリ名そのものが不正で書けない場合の syscode。権限・容量（EACCES/ENOSPC 等）とは
+// 分けて扱う。"." エントリやファイル a と a/b の衝突は入力起因なのに、素通しすると
+// infra（exit 1＝サーバ側の障害）として報告され、誤ったアラートと自動リトライを誘発する。
+const ENTRY_NAME_SYSCODES = new Set(["EISDIR", "EEXIST", "ENOTDIR", "ENAMETOOLONG"]);
+
 export function writeFileMap(files: FileMap, destDir: string): void {
   for (const [rel, content] of files) {
     const abs = path.join(destDir, rel);
-    mkdirSync(path.dirname(abs), { recursive: true });
-    writeFileSync(abs, content);
+    try {
+      mkdirSync(path.dirname(abs), { recursive: true });
+      writeFileSync(abs, content);
+    } catch (e) {
+      const code = (e as { code?: string }).code;
+      if (code !== undefined && ENTRY_NAME_SYSCODES.has(code)) {
+        throw new JpaperError(2, "input", `アーカイブのエントリ名が不正です: ${rel}`);
+      }
+      throw e;
+    }
   }
 }
