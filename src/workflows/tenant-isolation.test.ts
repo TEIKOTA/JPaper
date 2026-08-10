@@ -186,3 +186,94 @@ describe("取り込み上限の注入", () => {
     expect(calls).toBe(0);
   });
 });
+
+describe("単一ユーザ既定の可視化", () => {
+  const makeRun = async () => {
+    const { translatePaper } = await import("./translate-paper.js");
+    const { FakeLlmClient } = await import("../testing/fake-llm.js");
+    const { GlossaryDb } = await import("../terminology/db.js");
+    const { makeTar } = await import("../ingest/archive.fixtures.js");
+    const { writeFileSync } = await import("node:fs");
+
+    const work = tmp();
+    const tar = path.join(work, "p.tar");
+    writeFileSync(
+      tar,
+      makeTar([
+        {
+          name: "main.tex",
+          content: "\\documentclass{a}\\begin{document}\\section{I}Alpha text.\\end{document}",
+        },
+      ]),
+    );
+    const client = () =>
+      new FakeLlmClient((req) => {
+        if (req.system.includes("編纂者")) {
+          return JSON.stringify({
+            resolved: [],
+            brief: { thesis: "核", sectionRoles: [], notationConventions: [] },
+            style: { tensePolicy: "a", headingStyle: "b", numberStyle: "c" },
+          });
+        }
+        if (req.system.includes("審査者")) return '{"verdict":"pass","issues":[]}';
+        return '{"segmentId":"x","ja":"これは訳文である。"}';
+      });
+    return { translatePaper, tar, client, GlossaryDb, work };
+  };
+
+  it("分離を渡していれば sharedDefaults は空になる", async () => {
+    const { translatePaper, tar, client, GlossaryDb, work } = await makeRun();
+    const warns: string[] = [];
+    const r = await translatePaper(
+      { kind: "path", path: tar },
+      { provider: "ollama", outDir: path.join(work, "tenant-a") },
+      {
+        client: client(),
+        db: new GlossaryDb(),
+        cacheKey: Buffer.alloc(32, 7),
+        latexRunner: () => ({ code: 1, log: "" }),
+        onError: (m) => warns.push(m),
+      },
+    );
+    expect(r.summary.sharedDefaults).toEqual([]);
+    expect(warns.filter((w) => w.includes("単一ユーザ既定"))).toEqual([]);
+  });
+
+  it("既定へ落ちた資源を summary と警告で観測できる", async () => {
+    const { translatePaper, tar, client, GlossaryDb, work } = await makeRun();
+    const warns: string[] = [];
+    const r = await translatePaper(
+      { kind: "path", path: tar },
+      // outDir を渡さない＝cwd 直下の <paperId>-ja へ書く単一ユーザ既定。
+      { provider: "ollama" },
+      {
+        client: client(),
+        db: new GlossaryDb(), // db は注入済みなので shared に数えない
+        latexRunner: () => ({ code: 1, log: "" }),
+        onError: (m) => warns.push(m),
+      },
+    );
+    expect(r.summary.sharedDefaults).toContain("cacheKey");
+    expect(r.summary.sharedDefaults).toContain("outDir");
+    expect(r.summary.sharedDefaults).not.toContain("db");
+    expect(warns.some((w) => w.includes("単一ユーザ既定"))).toBe(true);
+    rmSync(path.join(process.cwd(), `${r.summary.paperId}-ja`), {
+      recursive: true,
+      force: true,
+    });
+    expect(work).toBeTruthy();
+  });
+
+  it("失敗して抜けた run でも sharedDefaults を返す", async () => {
+    const { translatePaper } = await import("./translate-paper.js");
+    const { FakeLlmClient } = await import("../testing/fake-llm.js");
+    const { GlossaryDb } = await import("../terminology/db.js");
+    const r = await translatePaper(
+      { kind: "path", path: path.join(tmp(), "missing.tar") },
+      { provider: "ollama", outDir: path.join(tmp(), "out") },
+      { client: new FakeLlmClient(() => "{}"), db: new GlossaryDb() },
+    );
+    expect(r.status).toBe("failed");
+    expect(r.summary.sharedDefaults).toContain("cacheKey");
+  });
+});

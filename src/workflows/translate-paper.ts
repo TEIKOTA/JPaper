@@ -174,7 +174,25 @@ function countByTrigger(notes: TranslatorNote[]): Record<string, number> {
   return acc;
 }
 
-function failResult(paperId: string, outDir: string, error: RunError): Result {
+// 単一ユーザ既定にフォールバックした資源を数える。マルチテナントで気づかず共有したまま
+// 本番に出るのを防ぐため、observable にして警告も出す（契約付録 §8）。
+type SharedDefault = "db" | "cacheKey" | "outDir";
+function sharedDefaultsOf(opts: TranslateOptions, deps: TranslateDeps): SharedDefault[] {
+  const shared: SharedDefault[] = [];
+  if (deps.db === undefined && (deps.dbPath === undefined || deps.dbPath.trim() === "")) {
+    shared.push("db");
+  }
+  if (deps.cacheKey === undefined) shared.push("cacheKey");
+  if (opts.outDir === undefined || opts.outDir.trim() === "") shared.push("outDir");
+  return shared;
+}
+
+function failResult(
+  paperId: string,
+  outDir: string,
+  error: RunError,
+  sharedDefaults: SharedDefault[] = [],
+): Result {
   const exitCode = error.code;
   return {
     status: "failed",
@@ -189,6 +207,7 @@ function failResult(paperId: string, outDir: string, error: RunError): Result {
       notes: { total: 0, byTrigger: {} },
       layout: null,
       buildOk: null,
+      sharedDefaults,
       exitCode,
     }),
   };
@@ -292,6 +311,12 @@ export async function translatePaper(
   const paperId = derivePaperId(input);
   const outDir = paperOutDir(paperId, opts.outDir);
   const runDir = path.join(outDir, ".run");
+  const sharedDefaults = sharedDefaultsOf(opts, deps);
+  if (sharedDefaults.length > 0) {
+    deps.onError?.(
+      `単一ユーザ既定を使用: ${sharedDefaults.join(", ")}（マルチテナントでは dbPath / cacheKey / outDir を明示的に渡すこと）`,
+    );
+  }
   // 注入 client（テスト）はそのまま尊重し、内部生成時のみトレースを配線する。LLM トレース ADR。
   const runId = `${paperId}-${Date.now()}`;
   const client0 =
@@ -439,6 +464,7 @@ export async function translatePaper(
       notes: { total: notes.length, byTrigger: countByTrigger(notes) },
       layout,
       buildOk,
+      sharedDefaults,
       exitCode,
     });
     if (exitCode === 0) return { status: "ok", exitCode, pdfPath, summary };
@@ -446,7 +472,7 @@ export async function translatePaper(
   } catch (e) {
     const error = toRunError(e);
     deps.onError?.(error.message);
-    return failResult(paperId, outDir, error);
+    return failResult(paperId, outDir, error, sharedDefaults);
   } finally {
     if (!deps.db) db?.close();
     lock?.release();

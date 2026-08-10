@@ -148,6 +148,8 @@ export const RunSummary = z.object({
   }),
   layout: z.enum(["original", "template"]).nullable(),
   buildOk: z.boolean().nullable(),
+  // 単一ユーザ既定にフォールバックした資源。マルチテナントでは空でなければ分離できていない。
+  sharedDefaults: z.array(z.enum(["db", "cacheKey", "outDir"])).default([]),
   exitCode: z.number().int(),
 });
 export type RunSummary = z.infer<typeof RunSummary>;
