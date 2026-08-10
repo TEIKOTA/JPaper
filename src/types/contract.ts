@@ -150,6 +150,8 @@ export const RunSummary = z.object({
   buildOk: z.boolean().nullable(),
   // 単一ユーザ既定にフォールバックした資源。マルチテナントでは空でなければ分離できていない。
   sharedDefaults: z.array(z.enum(["db", "cacheKey", "outDir"])).default([]),
+  // run 中に実際に発行した LLM 呼び出し回数（失敗した run でも返す＝課金相当の仕事量）。
+  llmCalls: z.number().int().nonnegative().default(0),
   exitCode: z.number().int(),
 });
 export type RunSummary = z.infer<typeof RunSummary>;

@@ -44,7 +44,19 @@ export function resolveWorkLimits(given?: Partial<WorkLimits>): WorkLimits {
 
 // 呼び出し回数を run 単位で数える。ゲート（同時実行）は総量を抑えないため別に要る。
 // リトライも 1 回として数える（課金されるのは試行回数であって成功回数ではない）。
-export function withCallBudget(client: LlmClient, max: number): LlmClient {
+export interface CallBudget {
+  client: LlmClient;
+  // 実際に発行した回数。失敗した run でも「どこまで課金相当の仕事をしたか」を返すために要る。
+  used: () => number;
+}
+
+export function createCallBudget(client: LlmClient, max: number): CallBudget {
+  let counter = 0;
+  const wrapped = withCallBudget(client, max, () => counter++);
+  return { client: wrapped, used: () => counter };
+}
+
+export function withCallBudget(client: LlmClient, max: number, onCall?: () => void): LlmClient {
   // 呼び出し側が壊れた値を渡しても数え続ける（NaN との比較は常に false で無制限になる）。
   const limit = positiveInt(max, DEFAULT_WORK_LIMITS.maxLlmCalls, WORK_LIMIT_CAPS.maxLlmCalls);
   let used = 0;
@@ -60,6 +72,7 @@ export function withCallBudget(client: LlmClient, max: number): LlmClient {
           ),
         );
       }
+      onCall?.(); // 実際に発行した呼び出しだけ数える（上限で弾いたものは課金されない）。
       return client.complete(req);
     },
   };

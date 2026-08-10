@@ -16,6 +16,7 @@ import {
   JpaperInput as JpaperInputSchema,
   Provider as ProviderSchema,
   type Result,
+  type TraceSink,
   type Provider,
   type TranslatorNote,
 } from "../types/contract.js";
@@ -28,7 +29,7 @@ import {
 } from "../types/errors.js";
 import { paperOutDir, dbPath, contextWindowFor, type OllamaConfig } from "../config.js";
 import { makeLlmClient } from "../providers/index.js";
-import { makeJsonlTrace } from "../runtime/trace.js";
+import { makeJsonlTrace, withTrace } from "../runtime/trace.js";
 import { ingest, derivePaperId, type IngestDeps } from "../ingest/index.js";
 import type { IngestLimits } from "../ingest/limits.js";
 import { GlossaryDb } from "../terminology/db.js";
@@ -59,7 +60,7 @@ import {
 import { llmGate, withGate, type Gate } from "../runtime/concurrency.js";
 import {
   resolveWorkLimits,
-  withCallBudget,
+  createCallBudget,
   type WorkLimits,
 } from "../runtime/work-budget.js";
 import { assembleWithMap, type Layout } from "../tools/assemble-latex.js";
@@ -136,8 +137,19 @@ export interface TranslateDeps {
   work?: Partial<WorkLimits>;
   // LLM 同時実行ゲート。既定はプロセス共有（リクエストをまたいで効く）。
   gate?: Gate;
+  // LLM トレースの宛先。既定は <outDir>/.run/llm-trace.jsonl。注入クライアントにも掛かる。
+  trace?: TraceSink;
   onError?: (message: string) => void;
+  // 進捗。web の UI が「12/35 節完了」を出せるようにする副作用チャネル。
+  onProgress?: (e: RunProgress) => void;
   latexRunner?: LatexRunner;
+}
+
+export interface RunProgress {
+  phase: "ingest" | "context" | "translate" | "typeset";
+  segmentId?: string;
+  done: number;
+  total: number;
 }
 
 interface PaperContext {
@@ -257,6 +269,7 @@ function failResult(
   outDir: string,
   error: RunError,
   sharedDefaults: SharedDefault[] = [],
+  llmCalls = 0,
 ): Result {
   const exitCode = error.code;
   return {
@@ -273,6 +286,7 @@ function failResult(
       layout: null,
       buildOk: null,
       sharedDefaults,
+      llmCalls,
       exitCode,
     }),
   };
@@ -410,12 +424,13 @@ export async function translatePaper(
   }
   // 注入 client（テスト）はそのまま尊重し、内部生成時のみトレースを配線する。LLM トレース ADR。
   const runId = `${paperId}-${Date.now()}`;
+  const trace = deps.trace ?? makeJsonlTrace(path.join(runDir, "llm-trace.jsonl"), runId);
+  // 注入クライアントにもトレースを掛ける。web はテナント別資格情報のために必ず注入するので、
+  // プロバイダ生成側にだけ配線すると課金の記録が構造的に消える。
   const client0 =
-    deps.client ??
-    makeLlmClient(opts.provider, {
-      ollama: opts.ollama,
-      trace: makeJsonlTrace(path.join(runDir, "llm-trace.jsonl"), runId),
-    });
+    deps.client === undefined
+      ? makeLlmClient(opts.provider, { ollama: opts.ollama, trace })
+      : withTrace(deps.client, trace, opts.provider);
   // 中断は境界 1 箇所（client ラッパ）で効かせる。各エージェントの引数は増やさない。
   // ゲートを外側に置くのは、枠を取ってから中断を見るため（待ち行列に中断済みが居座らない）。
   // 注入クライアントにも掛ける（web が自前クライアントを渡すとプロセス上限が消えていた）。
@@ -423,6 +438,7 @@ export async function translatePaper(
   let db: GlossaryDb | undefined;
   let lock: RunLock | undefined;
   let deadline: Deadline = { signal: opts.signal, dispose: () => undefined };
+  let llmCalls: () => number = () => 0;
 
   try {
     // 期限は呼び出し側の signal と合流させる。以降は signal（合流後）だけを見る。
@@ -431,9 +447,13 @@ export async function translatePaper(
     const signal = deadline.signal;
     // 注入ゲートはプロセス上限を置き換えず、内側の第 2 段として重ねる。
     // 置き換えにすると、web がリクエスト単位でゲートを作った瞬間にプロセス上限が消える。
-    const inner = withCallBudget(withProviderErrors(withSignal(client0, signal)), work.maxLlmCalls);
+    const callBudget = createCallBudget(
+      withProviderErrors(withSignal(client0, signal)),
+      work.maxLlmCalls,
+    );
+    llmCalls = callBudget.used;
     const client = withGate(
-      deps.gate === undefined ? inner : withGate(inner, deps.gate, signal),
+      deps.gate === undefined ? callBudget.client : withGate(callBudget.client, deps.gate, signal),
       llmGate(),
       signal,
     );
@@ -481,6 +501,7 @@ export async function translatePaper(
     }
 
     // 用語バリア: 並列翻訳の前に resolved/brief/style を確定する。
+    deps.onProgress?.({ phase: "context", done: 0, total: 1 });
     const ctx = await loadOrBuildContext(
       runDir,
       outDir,
@@ -506,6 +527,8 @@ export async function translatePaper(
       ctx.resolved.map((r) => r.src),
     );
 
+    let doneSegments = 0;
+    deps.onProgress?.({ phase: "translate", done: 0, total: segments.length });
     const results = await mapLimit(segments, opts.concurrency ?? 4, (seg) => {
       const slice = ctx.resolved
         .filter((t) => seg.latex.includes(t.src))
@@ -523,7 +546,16 @@ export async function translatePaper(
         SectionLoopCache,
         () => runSectionLoop(client, seg, slice, { brief: ctx.brief, style: ctx.style }),
         { invalidation, cacheable: (r) => r.passed, key: deps.cacheKey },
-      );
+      ).then((r) => {
+        doneSegments++;
+        deps.onProgress?.({
+          phase: "translate",
+          segmentId: seg.id,
+          done: doneSegments,
+          total: segments.length,
+        });
+        return r;
+      });
     }, signal);
 
     // 見出し未訳の非ブロッキング lint。keep-original 確定語は除外して訳注へ流す（ビルドは壊さない）。
@@ -603,6 +635,7 @@ export async function translatePaper(
       layout,
       buildOk,
       sharedDefaults,
+      llmCalls: llmCalls(),
       exitCode,
     });
     if (exitCode === 0) return { status: "ok", exitCode, pdfPath, summary };
@@ -610,7 +643,7 @@ export async function translatePaper(
   } catch (e) {
     const error = toRunError(e);
     deps.onError?.(error.message);
-    return failResult(paperId, outDir, error, sharedDefaults);
+    return failResult(paperId, outDir, error, sharedDefaults, llmCalls());
   } finally {
     deadline.dispose();
     if (!deps.db) db?.close();
