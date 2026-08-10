@@ -46,6 +46,7 @@ import {
   withSignal,
   withProviderErrors,
   withDeadline,
+  type Deadline,
 } from "../runtime/cancellation.js";
 import { llmGate, withGate, type Gate } from "../runtime/concurrency.js";
 import {
@@ -385,17 +386,20 @@ export async function translatePaper(
   // ゲートを外側に置くのは、枠を取ってから中断を見るため（待ち行列に中断済みが居座らない）。
   // 注入クライアントにも掛ける（web が自前クライアントを渡すとプロセス上限が消えていた）。
   const work = resolveWorkLimits(deps.work);
-  // 期限は呼び出し側の signal と合流させる。以降は signal（合流後）だけを見る。
-  const deadline = withDeadline(opts.signal, opts.timeoutMs);
-  const signal = deadline.signal;
-  const client = withGate(
-    withCallBudget(withProviderErrors(withSignal(client0, signal)), work.maxLlmCalls),
-    deps.gate ?? llmGate(),
-  );
   let db: GlossaryDb | undefined;
   let lock: RunLock | undefined;
+  let deadline: Deadline = { signal: opts.signal, dispose: () => undefined };
 
   try {
+    // 期限は呼び出し側の signal と合流させる。以降は signal（合流後）だけを見る。
+    // 不正な timeoutMs はここで input エラーになるので、try の内側で組み立てる。
+    deadline = withDeadline(opts.signal, opts.timeoutMs);
+    const signal = deadline.signal;
+    const client = withGate(
+      withCallBudget(withProviderErrors(withSignal(client0, signal)), work.maxLlmCalls),
+      deps.gate ?? llmGate(),
+      signal,
+    );
     // チェックポイントは runDir 単位なので、同一 outDir の並行実行は訳文を混ぜる。契約付録 §8。
     lock = acquireRunLock(runDir);
     if (deps.db) {

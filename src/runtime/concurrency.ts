@@ -2,30 +2,62 @@
 // run 単位の上限（TranslateOptions.concurrency）だけでは、1 プロセスで複数リクエストを
 // 捌く web ハンドラで上限が掛からない（リクエスト数 × セグメント並列だけ子プロセスが増える）。
 import type { LlmClient } from "../types/contract.js";
+import { canceledError, throwIfAborted } from "./cancellation.js";
 
 export interface Gate {
-  run<T>(fn: () => Promise<T>): Promise<T>;
+  run<T>(fn: () => Promise<T>, signal?: AbortSignal): Promise<T>;
   readonly limit: number;
   active(): number;
   waiting(): number;
 }
 
+interface Waiter {
+  wake: () => void;
+  canceled: boolean;
+}
+
 export function makeGate(limit: number): Gate {
   const max = Math.max(1, Math.floor(limit));
-  const queue: (() => void)[] = [];
+  const queue: Waiter[] = [];
   let running = 0;
+  // 中断済みの待機者は起こしても枠を使わないので、生きている先頭が出るまで捨てる。
+  const wakeNext = (): void => {
+    for (let w = queue.shift(); w !== undefined; w = queue.shift()) {
+      if (!w.canceled) {
+        w.wake();
+        return;
+      }
+    }
+  };
   const release = (): void => {
     running--;
-    queue.shift()?.();
+    wakeNext();
   };
   return {
     limit: max,
     active: () => running,
-    waiting: () => queue.length,
-    async run<T>(fn: () => Promise<T>): Promise<T> {
+    waiting: () => queue.filter((w) => !w.canceled).length,
+    async run<T>(fn: () => Promise<T>, signal?: AbortSignal): Promise<T> {
       // 起床後に必ず再検査する。release の running-- と待機者の再開（microtask）の間に
       // 新規呼び出しが枠を横取りすると、再検査しなければ待機者が上乗せして上限を破る。
-      while (running >= max) await new Promise<void>((r) => queue.push(r));
+      while (running >= max) {
+        throwIfAborted(signal, "LLM 同時実行の待機");
+        await new Promise<void>((resolve, reject) => {
+          const waiter: Waiter = { wake: () => { cleanup(); resolve(); }, canceled: false };
+          // 待機中も中断が効く。効かないと、枠を握った run が期限を持たない場合に
+          // 期限を持つ他テナントの run まで返らなくなる。
+          const onAbort = (): void => {
+            waiter.canceled = true;
+            cleanup();
+            reject(canceledError("LLM 同時実行の待機"));
+            // 自分の順番が回ってきていたぶんを次へ譲る。
+            if (running < max) wakeNext();
+          };
+          const cleanup = (): void => signal?.removeEventListener("abort", onAbort);
+          signal?.addEventListener("abort", onAbort, { once: true });
+          queue.push(waiter);
+        });
+      }
       running++;
       try {
         return await fn();
@@ -60,6 +92,6 @@ export function setLlmGate(gate: Gate | undefined): void {
   processGate = gate;
 }
 
-export function withGate(client: LlmClient, gate: Gate): LlmClient {
-  return { complete: (req) => gate.run(() => client.complete(req)) };
+export function withGate(client: LlmClient, gate: Gate, signal?: AbortSignal): LlmClient {
+  return { complete: (req) => gate.run(() => client.complete(req), signal) };
 }

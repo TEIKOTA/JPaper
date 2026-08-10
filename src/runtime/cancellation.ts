@@ -61,12 +61,19 @@ export interface Deadline {
 
 // run 全体の期限。呼び出し側の signal と OR で合流させる。
 // web ハンドラごとに setTimeout を書かせないため、run 層で 1 度だけ用意する。
+// setTimeout は 2^31-1 を超えると 1ms に丸められる（＝指定した瞬間に abort される）。
+const MAX_TIMEOUT_MS = 2_147_483_647;
+
 export function withDeadline(signal: AbortSignal | undefined, timeoutMs?: number): Deadline {
-  if (timeoutMs === undefined || !Number.isFinite(timeoutMs) || timeoutMs <= 0) {
-    return { signal, dispose: () => undefined };
+  if (timeoutMs === undefined) return { signal, dispose: () => undefined };
+  // 不正値を黙って「期限なし」にしない。文字列や NaN が素通りすると、期限を設定した
+  // つもりの run が無期限になり、同時実行の枠を握ったまま他テナントを止める。
+  if (typeof timeoutMs !== "number" || !Number.isFinite(timeoutMs) || timeoutMs < 1) {
+    throw new JpaperError(2, "input", `timeoutMs が不正です: ${String(timeoutMs)}`);
   }
+  const ms = Math.min(MAX_TIMEOUT_MS, Math.floor(timeoutMs));
   const ctl = new AbortController();
-  const timer = setTimeout(() => ctl.abort(new Error(`deadline ${timeoutMs}ms`)), timeoutMs);
+  const timer = setTimeout(() => ctl.abort(new Error(`deadline ${ms}ms`)), ms);
   timer.unref?.();
   const onParent = (): void => ctl.abort();
   signal?.addEventListener("abort", onParent, { once: true });

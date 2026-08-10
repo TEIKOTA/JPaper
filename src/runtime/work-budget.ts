@@ -17,23 +17,46 @@ export const DEFAULT_WORK_LIMITS: WorkLimits = {
   maxLlmCalls: 600,
 };
 
+// 上限の上限。プラン設定のミスで事実上の無制限にさせない（concurrency.ts と同じ思想）。
+export const WORK_LIMIT_CAPS: WorkLimits = { maxSegments: 2_000, maxLlmCalls: 20_000 };
+
+// 不正値は黙って緩めない。spread でマージすると、明示的な undefined が既定値を消して
+// 上限が丸ごと無効化される（web が plan.maxSegments を素通しする普通の書き方で起きる）。
+function positiveInt(v: unknown, fallback: number, cap: number): number {
+  if (typeof v !== "number" || !Number.isFinite(v) || v < 1) return fallback;
+  return Math.min(cap, Math.floor(v));
+}
+
 export function resolveWorkLimits(given?: Partial<WorkLimits>): WorkLimits {
-  return { ...DEFAULT_WORK_LIMITS, ...given };
+  return {
+    maxSegments: positiveInt(
+      given?.maxSegments,
+      DEFAULT_WORK_LIMITS.maxSegments,
+      WORK_LIMIT_CAPS.maxSegments,
+    ),
+    maxLlmCalls: positiveInt(
+      given?.maxLlmCalls,
+      DEFAULT_WORK_LIMITS.maxLlmCalls,
+      WORK_LIMIT_CAPS.maxLlmCalls,
+    ),
+  };
 }
 
 // 呼び出し回数を run 単位で数える。ゲート（同時実行）は総量を抑えないため別に要る。
 // リトライも 1 回として数える（課金されるのは試行回数であって成功回数ではない）。
 export function withCallBudget(client: LlmClient, max: number): LlmClient {
+  // 呼び出し側が壊れた値を渡しても数え続ける（NaN との比較は常に false で無制限になる）。
+  const limit = positiveInt(max, DEFAULT_WORK_LIMITS.maxLlmCalls, WORK_LIMIT_CAPS.maxLlmCalls);
   let used = 0;
   return {
     complete(req) {
       used++;
-      if (used > max) {
+      if (used > limit) {
         return Promise.reject(
           new JpaperError(
             2,
             "too-large",
-            `LLM 呼び出し回数が上限 ${max} を超えました（入力を分割してください）`,
+            `LLM 呼び出し回数が上限 ${limit} を超えました（入力を分割してください）`,
           ),
         );
       }
