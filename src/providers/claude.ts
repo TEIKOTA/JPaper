@@ -3,6 +3,7 @@ import { spawn } from "node:child_process";
 import type { LlmClient, LlmCallEvent, LlmCallMeta, TraceSink } from "../types/contract.js";
 import { JpaperError } from "../types/errors.js";
 import { canceledError } from "../runtime/cancellation.js";
+import { MAX_RESPONSE_CHARS } from "../runtime/llm-client.js";
 
 export interface ClaudeDeps {
   run?: (args: string[], signal?: AbortSignal) => Promise<string>;
@@ -52,15 +53,32 @@ async function defaultRun(args: string[], signal?: AbortSignal): Promise<string>
     };
     signal?.addEventListener("abort", onAbort, { once: true });
     const done = (): void => signal?.removeEventListener("abort", onAbort);
-    child.stdout.on("data", (d) => (out += d));
-    child.stderr.on("data", (d) => (err += d));
+    // 上限を超えたら受信を打ち切って子プロセスを落とす。無制限に連結すると、
+    // 応答を誘導できる相手にワーカーのメモリを食わせられる。
+    let overflowed = false;
+    const overflow = (): void => {
+      overflowed = true;
+      child.kill("SIGKILL");
+    };
+    child.stdout.on("data", (d) => {
+      if (overflowed) return;
+      out += d;
+      if (out.length > MAX_RESPONSE_CHARS) overflow();
+    });
+    child.stderr.on("data", (d) => {
+      if (overflowed) return;
+      err += d;
+      if (err.length > MAX_RESPONSE_CHARS) overflow();
+    });
     child.on("error", (e) => {
       done();
       reject(e);
     });
     child.on("close", (code) => {
       done();
-      if (canceled) reject(canceledError("claude 実行中"));
+      if (overflowed) {
+        reject(new Error(`claude 応答が上限 ${MAX_RESPONSE_CHARS} 文字を超えています`));
+      } else if (canceled) reject(canceledError("claude 実行中"));
       else if (code === 0) resolve(out);
       else {
         const detail = (err || out).slice(0, 800);

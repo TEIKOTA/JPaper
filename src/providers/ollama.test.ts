@@ -136,3 +136,25 @@ describe("makeOllamaClient", () => {
     ).rejects.toMatchObject({ code: 2 });
   });
 });
+
+describe("応答サイズの上限", () => {
+  it("上限を超える本文は受信を打ち切って失敗する", async () => {
+    // res.json() は本文を丸ごと載せる。応答を誘導できる相手にメモリを食わせられる。
+    const chunk = new TextEncoder().encode("x".repeat(64 * 1024));
+    let sent = 0;
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (sent > 2 * 1_000_000) controller.close();
+        else {
+          sent += chunk.length;
+          controller.enqueue(chunk);
+        }
+      },
+    });
+    const fetchImpl = (async () =>
+      ({ ok: true, status: 200, body }) as unknown as Response) as unknown as typeof fetch;
+    const c = makeOllamaClient(DEFAULT_OLLAMA, { fetchImpl });
+    await expect(c.complete({ system: "s", user: "u" })).rejects.toThrow(/上限/);
+  });
+});
+

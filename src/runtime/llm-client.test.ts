@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { z } from "zod";
-import { extractJson, runAgent } from "./llm-client.js";
+import { extractJson, runAgent, MAX_RESPONSE_CHARS } from "./llm-client.js";
 import { FakeLlmClient } from "../testing/fake-llm.js";
 
 describe("extractJson", () => {
@@ -113,3 +113,20 @@ describe("契約に合わない応答の分類", () => {
     ).rejects.toBe(boom);
   });
 });
+
+describe("応答の仕事量の上限", () => {
+  it("閉じない括弧が並ぶ応答でも二次にならない", () => {
+    // 候補ごとに末尾まで再走査していた頃は 50 万文字で 25,629ms かかり、
+    // withRetry の 4 試行で 4 倍になった（timeoutMs も割り込めない同期処理）。
+    const text = "\\textbf{x ".repeat(50_000);
+    const started = Date.now();
+    expect(() => extractJson(text)).toThrowError(/JSON が見つかりません/);
+    expect(Date.now() - started).toBeLessThan(2000);
+  });
+
+  it("上限を超える長さの応答は読まずに落とす", () => {
+    const text = "{".repeat(MAX_RESPONSE_CHARS + 1);
+    expect(() => extractJson(text)).toThrowError(/上限/);
+  });
+});
+

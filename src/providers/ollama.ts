@@ -1,6 +1,7 @@
 // 契約付録 §5・§8。Ollama プロバイダ（オンデマンド daemon 起動・/api/chat）。
 import { spawn } from "node:child_process";
 import type { LlmClient, LlmRequest, TraceSink } from "../types/contract.js";
+import { MAX_RESPONSE_CHARS } from "../runtime/llm-client.js";
 import type { OllamaConfig } from "../config.js";
 import { JpaperError } from "../types/errors.js";
 import { canceledError, throwIfAborted } from "../runtime/cancellation.js";
@@ -51,6 +52,26 @@ async function defaultEnsureDaemon(
   throw new JpaperError(2, "provider", "ollama serve を起動できません");
 }
 
+// 上限を超えたら受信を打ち切る。res.json() は本文を丸ごと載せるので、応答を誘導できる
+// 相手にワーカーのメモリを食わせられる。body が無い（テストの偽 Response）場合は json() へ戻る。
+async function readCappedJson(res: Response): Promise<unknown> {
+  const body = res.body;
+  if (!body) return res.json();
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let text = "";
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    text += decoder.decode(value, { stream: true });
+    if (text.length > MAX_RESPONSE_CHARS) {
+      await reader.cancel();
+      throw new Error(`ollama 応答が上限 ${MAX_RESPONSE_CHARS} 文字を超えています`);
+    }
+  }
+  return JSON.parse(text);
+}
+
 export function makeOllamaClient(cfg: OllamaConfig, deps: OllamaDeps = {}): LlmClient {
   const fetchImpl = deps.fetchImpl ?? fetch;
   const sleep = deps.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
@@ -83,7 +104,7 @@ export function makeOllamaClient(cfg: OllamaConfig, deps: OllamaDeps = {}): LlmC
       }),
     });
     if (res.ok) {
-      const data = (await res.json()) as {
+      const data = (await readCappedJson(res)) as {
         message?: { content?: string };
         prompt_eval_count?: number;
         eval_count?: number;

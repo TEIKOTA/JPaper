@@ -4,13 +4,22 @@ import type { LlmClient, LlmRequest } from "../types/contract.js";
 import { withRetry, type RetryOptions } from "./session.js";
 import { JpaperError } from "../types/errors.js";
 
-function tryBalanced(body: string, start: number): { value: unknown } | undefined {
+// 応答の最大文字数。プロバイダ側でも同じ上限で受信を打ち切る。正規の応答は
+// 最大でもセグメント予算（既定 60,000 token ≒ 24 万文字）程度。
+export const MAX_RESPONSE_CHARS = 1_000_000;
+
+// 候補走査の仕事量の上限。閉じない `{` が並ぶ応答は候補ごとに末尾まで再走査するので、
+// 文字数の上限だけでは二次が消えない（実測 50 万文字で 25,629ms、リトライで 4 倍）。
+const MAX_SCAN_STEPS = 20_000_000;
+
+function tryBalanced(body: string, start: number, budget: { steps: number }): { value: unknown } | undefined {
   const open = body[start]!;
   const close = open === "{" ? "}" : "]";
   let depth = 0;
   let inStr = false;
   let esc = false;
   for (let i = start; i < body.length; i++) {
+    if (--budget.steps < 0) return undefined;
     const ch = body[i]!;
     if (inStr) {
       if (esc) esc = false;
@@ -35,6 +44,9 @@ function tryBalanced(body: string, start: number): { value: unknown } | undefine
 }
 
 export function extractJson(text: string): unknown {
+  if (text.length > MAX_RESPONSE_CHARS) {
+    throw new Error(`LLM 応答が上限 ${MAX_RESPONSE_CHARS} 文字を超えています`);
+  }
   const fenced = /```(?:json)?\s*([\s\S]*?)```/.exec(text);
   const body = (fenced ? fenced[1]! : text).trim();
   try {
@@ -42,11 +54,13 @@ export function extractJson(text: string): unknown {
   } catch {
     // フェンス内/前後に散文がある場合は最初に parse できる balanced 候補を走査する。
   }
+  const budget = { steps: MAX_SCAN_STEPS };
   for (let i = 0; i < body.length; i++) {
     const ch = body[i]!;
     if (ch !== "{" && ch !== "[") continue;
-    const found = tryBalanced(body, i);
+    const found = tryBalanced(body, i, budget);
     if (found) return found.value;
+    if (budget.steps < 0) break;
   }
   throw new Error("JSON が見つかりません");
 }
