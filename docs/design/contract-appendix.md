@@ -110,6 +110,7 @@ CREATE INDEX idx_term_src ON term(src);
 ```
 
 - per-paper 確定辞書は人間可読・編集可能な `./<paper>-ja/glossary.md`（正本）＋ `.run/` 内の派生キャッシュ。ユーザーが `glossary.md` を編集→再実行すると durable が未影響ステップを skip し訳語だけ差し替わる。
+- **機械出力の md は run が最後まで到達したときだけ outDir へ確定する**（`glossary.md` / `brief.md` / `style.md`）。中断・例外で抜けた run の中間物を残すと、人間が一度も見ていない機械出力が次の run の正本になり、入力を直しても差し替わらなくなる。確定時に `<outDir>/.paper-id` へ論文 ID を記録し、**別の論文が同じ outDir を使うときは既存 md を採用しない**（警告を出して作り直す）。採用しないと、論文 A の brief が論文 B の全 translator プロンプトへ注入される。印が無い出力先（旧版が作ったもの）はこれまでどおり採用する。
 - 初期シード: **v1 は空で開始**し、翻訳のたびに `proposed` を蓄積して育てる（同梱シードなし）。`input/` は空のまま（`.gitkeep` のみ）。人間が `proposed`→`confirmed` に昇格。
 
 ## 3. 品質ループ（値の正本）

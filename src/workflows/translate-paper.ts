@@ -117,9 +117,24 @@ interface PaperContext {
   brief: DocumentBrief;
   style: StyleContract;
   proposedAdded: number;
+  // 正常完了時に outDir へ書き出す md（パス→中身）。中断時は書かれない。
+  pending: Record<string, string>;
 }
 
-// glossary.md が有れば編集を正本として読み戻す（無ければ builder 実行＋md 描画）。既存 md は上書きしない。
+// 出力先がどの論文のものかを示す印。同じ outDir に別の論文が来たら既存 md を採用しない。
+const PAPER_STAMP = ".paper-id";
+
+function stampedPaperId(outDir: string): string | undefined {
+  try {
+    return readFileSync(path.join(outDir, PAPER_STAMP), "utf8").trim();
+  } catch {
+    return undefined;
+  }
+}
+
+// glossary.md が有れば編集を正本として読み戻す（無ければ builder 実行）。既存 md は上書きしない。
+// 機械出力の md は run が正常に完了したときだけ outDir へ確定する（promote）。中断・例外で
+// 抜けた run の中間物が次の run の正本になると、別論文の文脈まで上書きされる。
 async function loadOrBuildContext(
   runDir: string,
   outDir: string,
@@ -128,6 +143,7 @@ async function loadOrBuildContext(
   paperId: string,
   cleanLatex: string,
   cacheKey?: Buffer,
+  warn?: (m: string) => void,
 ): Promise<PaperContext> {
   const built = await checkpoint(
     runDir,
@@ -137,28 +153,45 @@ async function loadOrBuildContext(
     { invalidation: hashContext(cleanLatex), key: cacheKey },
   );
   const proposedAdded = writeBackResolved(db, built, paperId);
-  mkdirSync(outDir, { recursive: true });
   const glossaryMd = path.join(outDir, "glossary.md");
   const briefMd = path.join(outDir, "brief.md");
   const styleMd = path.join(outDir, "style.md");
 
+  // 印が無い出力先は旧版が作ったもの＝これまでどおり採用する（人間の編集を捨てない）。
+  const stamped = stampedPaperId(outDir);
+  const foreign = stamped !== undefined && stamped !== paperId;
+  if (foreign) {
+    warn?.(
+      `出力先は別の論文（${stamped}）のものなので既存の glossary.md / brief.md / style.md は使いません`,
+    );
+  }
+  const adopt = (file: string): boolean => !foreign && existsSync(file);
+
+  const pending: PaperContext["pending"] = {};
   let resolved: ResolvedRow[] = built.resolved;
-  if (existsSync(glossaryMd)) {
+  if (adopt(glossaryMd)) {
     // 既存 md が正本（空にする編集も尊重する）。
     resolved = parseGlossaryMd(readFileSync(glossaryMd, "utf8"));
   } else {
-    writeFileSync(glossaryMd, renderGlossaryMd(built.resolved));
+    pending[glossaryMd] = renderGlossaryMd(built.resolved);
   }
 
   let brief = built.brief;
-  if (existsSync(briefMd)) brief = parseBriefMd(readFileSync(briefMd, "utf8"));
-  else writeFileSync(briefMd, renderBriefMd(built.brief));
+  if (adopt(briefMd)) brief = parseBriefMd(readFileSync(briefMd, "utf8"));
+  else pending[briefMd] = renderBriefMd(built.brief);
 
   let style = built.style;
-  if (existsSync(styleMd)) style = parseStyleMd(readFileSync(styleMd, "utf8"));
-  else writeFileSync(styleMd, renderStyleMd(built.style));
+  if (adopt(styleMd)) style = parseStyleMd(readFileSync(styleMd, "utf8"));
+  else pending[styleMd] = renderStyleMd(built.style);
 
-  return { resolved, brief, style, proposedAdded };
+  return { resolved, brief, style, proposedAdded, pending };
+}
+
+// run が最後まで到達したときだけ md を確定する。
+function promoteContext(outDir: string, paperId: string, pending: PaperContext["pending"]): void {
+  mkdirSync(outDir, { recursive: true });
+  for (const [file, body] of Object.entries(pending)) writeFileSync(file, body);
+  writeFileSync(path.join(outDir, PAPER_STAMP), paperId);
 }
 
 // ingest キャッシュの無効化キー: 入力が変わったら再取り込み（path 上書き・arXiv v1/v2 は paperId 共有）。
@@ -382,6 +415,7 @@ export async function translatePaper(
       ingested.paperId,
       ingested.cleanLatex,
       deps.cacheKey,
+      (m) => deps.onError?.(m),
     );
     const budget = segmentBudgetFor(contextWindowFor(opts.provider, opts.ollama));
     const segments = segment(ingested.cleanLatex, budget);
@@ -427,6 +461,9 @@ export async function translatePaper(
         untranslatedHeadings: untranslatedHeadings(r.ja, keepOriginal),
       })),
     });
+
+    // ここまで来た run だけが outDir の正本を更新する。
+    promoteContext(outDir, ingested.paperId, ctx.pending);
 
     const chaptersDir = path.join(outDir, "translation", "chapters");
     rmSync(chaptersDir, { recursive: true, force: true }); // 縮小時の古い chapter を残さない
