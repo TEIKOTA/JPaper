@@ -134,3 +134,30 @@ describe("読み込みコマンド（\\input 系）の判定", () => {
     expect(findUnsafeTexCommands(String.raw`\csname the@input\endcsname`)).toEqual([]);
   });
 });
+
+describe("読み込みコマンドの引数（多引数・マクロ）", () => {
+  it("\\import は第 2 引数も検査する（第 1 引数を無害に見せる回避を塞ぐ）", () => {
+    // 実機の latexmk でビルドツリー外の読み取りと PDF への流出を確認した綴り。
+    expect(findUnsafeTexCommands(String.raw`\import{./}{../host/secret}`)).toContain("import");
+    expect(findUnsafeTexCommands(String.raw`\subimport{./}{/etc/passwd}`)).toContain("subimport");
+    expect(findUnsafeTexCommands(String.raw`\import{sections/}{intro.tex}`)).toEqual([]);
+  });
+
+  it("main.tex では引数が制御綴りの読み込みを落とす（静的に検証できない）", () => {
+    expect(findUnsafeTexCommands(String.raw`\def\p{/x/secret}\input\p`)).toContain("input");
+    expect(findUnsafeTexCommands(String.raw`\InputIfFileExists{\p}{}{}`)).toContain(
+      "InputIfFileExists",
+    );
+  });
+
+  it("連続する読み込みを引数と誤認しない", () => {
+    expect(findUnsafeTexCommands(String.raw`\input{chapters/intro.tex}\include{sec2}`)).toEqual([]);
+  });
+
+  it("同梱 .sty/.cls ではマクロ引数を許す（配布クラスが日常的に使う）", () => {
+    // \InputIfFileExists{\@filef@und} 形は配布クラス 18 件中 10 件が使う。ここで落とすと
+    // 会議テンプレを同梱した正規の論文が翻訳できなくなる。絶対パス・.. は引き続き落とす。
+    expect(findUnsafeSupportCommands(String.raw`\InputIfFileExists{\@filef@und}{}{}`)).toEqual([]);
+    expect(findUnsafeSupportCommands(String.raw`\import{./}{../secret}`)).toContain("import");
+  });
+});

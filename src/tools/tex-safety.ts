@@ -84,23 +84,79 @@ function escapesBuildTree(arg: string): boolean {
   return a.split(/[\\/]/).includes("..");
 }
 
-// \input{path} と、括弧を書かない TeX 形式 \input path（空白で終端）の両方を拾う。
-function readPathHits(src: string): string[] {
+// 読み込みコマンドの引数を静的に検査する。\import{dir}{file} のような多引数も、
+// 括弧を書かない TeX 形式（\input path）も、マクロ引数（\input\p）も同じ関門を通す。
+// \import{dir}{file} は 2 引数、その他は 1 引数。多く読もうとすると、直後に続く別の
+// コマンド（\input{a}\include{b}）を引数と誤認して落としてしまう。
+const MULTI_ARG_READ = new Set(["import", "subimport", "includefrom", "subincludefrom"]);
+
+interface ReadArgs {
+  args: string[];
+  // 引数が制御綴りを含む＝実行時に決まるので静的に検証できない。
+  dynamic: boolean;
+}
+
+function readArgsAt(src: string, from: number, argCount: number): ReadArgs {
+  let i = from;
+  const args: string[] = [];
+  let dynamic = false;
+  for (let n = 0; n < argCount; n++) {
+    while (i < src.length && (src[i] === " " || src[i] === "\t")) i++;
+    if (src[i] === "[") {
+      // オプション引数は読み飛ばす（\import には無いが \includefrom 系の派生に備える）。
+      const close = src.indexOf("]", i);
+      if (close === -1) break;
+      i = close + 1;
+      n--;
+      continue;
+    }
+    if (src[i] === "{") {
+      const close = src.indexOf("}", i);
+      if (close === -1) break;
+      const body = src.slice(i + 1, close);
+      if (body.includes("\\")) dynamic = true;
+      args.push(body);
+      i = close + 1;
+      continue;
+    }
+    if (src[i] === "\\") {
+      // \input\p のようにマクロを直接引数にした形。展開結果は静的には分からない。
+      dynamic = true;
+      break;
+    }
+    if (n === 0) {
+      // 括弧なしの TeX 形式（\input path）。空白で終端する。
+      const m = /^[^\s{}\\%]+/.exec(src.slice(i));
+      if (m === null) break;
+      args.push(m[0]);
+      i += m[0].length;
+    }
+    break;
+  }
+  return { args, dynamic };
+}
+
+// strict=false（同梱 .sty/.cls 向け）ではマクロ引数を許す。配布クラス由来のファイルは
+// \InputIfFileExists{\@filef@und} のような動的引数を日常的に使うため（実測 18 件中 10 件）。
+// 著者が書くプリアンブルには動的引数を使う理由が無いので、main.tex 側だけ strict にする。
+function readPathHits(src: string, strict: boolean): string[] {
   const hits: string[] = [];
   const add = (name: string): void => {
     if (!hits.includes(name)) hits.push(name);
   };
-  for (const m of src.matchAll(/\\([a-zA-Z@]+)\s*(?:\{([^}]*)\}|([^\s{}\\]+))/g)) {
+  for (const m of src.matchAll(/\\([a-zA-Z@]+)/g)) {
     const name = m[1]!;
     if (!READ_PATH.has(name)) continue;
-    if (escapesBuildTree(m[2] ?? m[3] ?? "")) add(name);
+    const argCount = MULTI_ARG_READ.has(name) ? 2 : 1;
+    const { args, dynamic } = readArgsAt(src, m.index + m[0].length, argCount);
+    // 引数を連結して判定する（\import{./}{../secret} は第 2 引数だけ見ると無害に見える）。
+    if ((strict && dynamic) || args.some(escapesBuildTree) || escapesBuildTree(args.join(""))) {
+      add(name);
+    }
   }
   return hits;
 }
 
-// \csname openin\endcsname のように綴りを組み立てる回避も拾う。
-// TeX の \lowercase は文字トークンだけを畳むので、\lowercase{\csname OPENIN\endcsname} は
-// 実行時に \openin になる。本文は大小文字を畳んで照合する（実証済みの回避経路）。
 function csnameNames(tex: string): string[] {
   const names: string[] = [];
   for (const m of tex.matchAll(/\\csname([^\\]*?)\\endcsname/g)) {
@@ -124,7 +180,7 @@ function obfuscatedReadHits(tex: string): string[] {
   return hits;
 }
 
-function scan(tex: string, deny: ReadonlySet<string>): string[] {
+function scan(tex: string, deny: ReadonlySet<string>, strictReadArgs: boolean): string[] {
   const src = stripTexComments(decodeCarets(tex));
   const hits: string[] = [];
   const add = (name: string): void => {
@@ -134,7 +190,7 @@ function scan(tex: string, deny: ReadonlySet<string>): string[] {
   for (const m of src.matchAll(/\\([a-zA-Z]+)/g)) add(m[1]!);
   for (const name of csnameNames(src)) add(name);
   // 読み込みコマンドは名前では落とせないので、引数の形と難読化で判定する。
-  for (const name of [...readPathHits(src), ...obfuscatedReadHits(src)]) {
+  for (const name of [...readPathHits(src, strictReadArgs), ...obfuscatedReadHits(src)]) {
     if (!hits.includes(name)) hits.push(name);
   }
   return hits;
@@ -142,10 +198,10 @@ function scan(tex: string, deny: ReadonlySet<string>): string[] {
 
 // 検出したコマンド名（重複なし・入力順）。空配列なら検査通過。
 export function findUnsafeTexCommands(tex: string): string[] {
-  return scan(tex, DENY);
+  return scan(tex, DENY, true);
 }
 
 // 同梱支援ファイル用。誤検知で正規の論文を落とさないよう対象を絞る。
 export function findUnsafeSupportCommands(tex: string): string[] {
-  return scan(tex, SUPPORT_DENY);
+  return scan(tex, SUPPORT_DENY, false);
 }
