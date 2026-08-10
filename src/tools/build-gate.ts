@@ -166,6 +166,9 @@ export interface UnsafeSupportFile {
 // 同梱の .sty/.cls 等のうち「実際に読み込まれるもの」を検査する。
 // 配布版と同名のものは探索順で無効化されるので対象外（そちらを検査すると、論文が
 // elsarticle.cls などを同梱しているだけで落ちる）。
+// 走査する支援ファイルの最大サイズ。配布クラスでも数百 KB に収まる。
+const MAX_SUPPORT_SCAN_BYTES = 8 * 1024 * 1024;
+
 export function unsafeSupportFiles(
   sourceDir: string,
   resolver: PackageResolver = defaultResolver,
@@ -175,6 +178,13 @@ export function unsafeSupportFiles(
   const bad: UnsafeSupportFile[] = [];
   for (const f of files) {
     if (distributed.has(path.basename(f))) continue;
+    // 支援ファイルには maxLatexBytes が効かない（上限は maxEntryBytes の 128MiB だけ）。
+    // 走査は線形だが、巨大な .sty を投げられると走査そのものがメモリと時間を食う。
+    // この大きさの支援ファイルは正規の論文には無いので、読まずに危険として扱う。
+    if (statSync(f).size > MAX_SUPPORT_SCAN_BYTES) {
+      bad.push({ file: path.relative(sourceDir, f), commands: ["too-large"] });
+      continue;
+    }
     const commands = findUnsafeSupportCommands(readFileSync(f, "utf8"));
     if (commands.length > 0) bad.push({ file: path.relative(sourceDir, f), commands });
   }

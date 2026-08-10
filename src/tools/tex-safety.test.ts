@@ -209,3 +209,21 @@ describe("\\csname の本体にマクロを挟む回避", () => {
     ).toEqual([]);
   });
 });
+
+describe("走査コストの上限", () => {
+  it("閉じない \\input{ の羅列で二次にならない", () => {
+    // 引数の閉じ波括弧を末尾まで探していた頃は マッチ数 × 末尾走査 = O(n²) で、
+    // 4MiB の支援ファイルが 20,040ms、6.3KB のアップロードで 40 秒止まった。
+    const tex = "\\input{".repeat(Math.floor((4 * 1024 * 1024) / 7));
+    const started = Date.now();
+    expect(() => findUnsafeSupportCommands(tex)).toThrowError(/上限/);
+    expect(() => findUnsafeTexCommands(tex)).toThrowError(/上限/);
+    expect(Date.now() - started).toBeLessThan(3000);
+  });
+
+  it("実在の論文規模の \\input 件数は通す", () => {
+    const tex = Array.from({ length: 500 }, (_, i) => `\\input{sec/s${String(i)}}`).join("\n");
+    expect(findUnsafeTexCommands(tex)).toEqual([]);
+  });
+});
+

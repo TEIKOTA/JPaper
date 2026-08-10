@@ -1,3 +1,5 @@
+import { JpaperError } from "../types/errors.js";
+
 // 契約付録 §8。論文由来の LaTeX に含まれる読み出し・実行プリミティブの決定的検査。
 // プリアンブルは翻訳対象ではなく verbatim に持ち越されるため、節ループの品質ゲート
 // （訳文が持ち込んだ危険コマンドの検知）では一切カバーされない。ここで別に検査する。
@@ -96,6 +98,25 @@ interface ReadArgs {
   dynamic: boolean;
 }
 
+// 引数として妥当な長さの上限。TeX のファイル名はこれより遥かに短い。閉じ波括弧を
+// 末尾まで探すと、閉じない `\input{` を並べるだけの入力でマッチ数 × 末尾走査 = O(n²)
+// になる（実測 4MiB で 20,040ms、6.3KB のアップロードで 40 秒イベントループ停止）。
+const MAX_ARG_CHARS = 1_024;
+
+// 走査する読み込みコマンドの候補数の上限。長さを縛っても候補は線形に増えるので、
+// 総量（候補数 × 長さ）を抑えるには件数側にも上限が要る。実在の論文は数百件。
+const MAX_READ_CANDIDATES = 20_000;
+
+function findCloseAt(src: string, from: number, close: string): number {
+  const limit = Math.min(src.length, from + MAX_ARG_CHARS);
+  for (let i = from; i < limit; i++) if (src[i] === close) return i;
+  return -1;
+}
+
+function findCloseBrace(src: string, from: number): number {
+  return findCloseAt(src, from, "}");
+}
+
 function readArgsAt(src: string, from: number, argCount: number): ReadArgs {
   let i = from;
   const args: string[] = [];
@@ -106,14 +127,14 @@ function readArgsAt(src: string, from: number, argCount: number): ReadArgs {
     while (i < src.length && /\s/.test(src[i]!)) i++;
     if (src[i] === "[") {
       // オプション引数は読み飛ばす（\import には無いが \includefrom 系の派生に備える）。
-      const close = src.indexOf("]", i);
+      const close = findCloseAt(src, i, "]");
       if (close === -1) break;
       i = close + 1;
       n--;
       continue;
     }
     if (src[i] === "{") {
-      const close = src.indexOf("}", i);
+      const close = findCloseBrace(src, i);
       if (close === -1) break;
       const body = src.slice(i + 1, close);
       if (body.includes("\\")) dynamic = true;
@@ -146,9 +167,17 @@ function readPathHits(src: string, strict: boolean): string[] {
   const add = (name: string): void => {
     if (!hits.includes(name)) hits.push(name);
   };
+  let candidates = 0;
   for (const m of src.matchAll(/\\([a-zA-Z@]+)/g)) {
     const name = m[1]!;
     if (!READ_PATH.has(name)) continue;
+    if (++candidates > MAX_READ_CANDIDATES) {
+      throw new JpaperError(
+        2,
+        "too-large",
+        `読み込みコマンドが上限 ${MAX_READ_CANDIDATES} 件を超えています`,
+      );
+    }
     const argCount = MULTI_ARG_READ.has(name) ? 2 : 1;
     const { args, dynamic } = readArgsAt(src, m.index + m[0].length, argCount);
     // 引数を連結して判定する（\import{./}{../secret} は第 2 引数だけ見ると無害に見える）。
