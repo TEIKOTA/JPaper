@@ -1,11 +1,11 @@
 // 終了コードとエラー分類（契約付録 §6・§8）。
 
-export type FailureCode = 2 | 3 | 4 | 5;
+export type FailureCode = 2 | 3 | 4 | 5 | 6;
 
 // 失敗の分類。exitCode（§6）より細かく、呼び出し側が応答を出し分けるための軸。
 // input=入力が不正 / conflict=出力先が使用中 / too-large=サイズ上限超過 /
 // provider=LLM プロバイダ利用不能 / formal=形式検査不通過 / quality=品質未達 /
-// typeset=全文組版失敗 / internal=想定外。
+// typeset=全文組版失敗 / canceled=呼び出し側の中断 / internal=想定外。
 export type ErrorKind =
   | "input"
   | "conflict"
@@ -14,6 +14,7 @@ export type ErrorKind =
   | "formal"
   | "quality"
   | "typeset"
+  | "canceled"
   | "internal";
 
 export class JpaperError extends Error {
@@ -51,7 +52,7 @@ export function toRunError(e: unknown): RunError {
 
 // 優先順位は契約付録 §8。
 export function resolveExitCode(codes: readonly number[]): number {
-  const priority = [2, 3, 4, 5, 1];
+  const priority = [6, 2, 3, 4, 5, 1]; // 中断は他の失敗より優先して報告する
   for (const p of priority) {
     if (codes.includes(p)) return p;
   }

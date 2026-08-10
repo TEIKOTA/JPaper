@@ -3,6 +3,7 @@ import { spawn } from "node:child_process";
 import type { LlmClient, LlmRequest, TraceSink } from "../types/contract.js";
 import type { OllamaConfig } from "../config.js";
 import { JpaperError } from "../types/errors.js";
+import { canceledError, throwIfAborted } from "../runtime/cancellation.js";
 
 export interface OllamaDeps {
   fetchImpl?: typeof fetch;
@@ -63,8 +64,10 @@ export function makeOllamaClient(cfg: OllamaConfig, deps: OllamaDeps = {}): LlmC
   async function call(req: LlmRequest): Promise<string> {
     const model = req.model ?? cfg.model;
     const startedAt = now();
+    throwIfAborted(req.signal, "ollama 呼び出し前");
     const res = await fetchImpl(`http://127.0.0.1:${cfg.port}/api/chat`, {
       method: "POST",
+      signal: req.signal,
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         model,
@@ -118,6 +121,8 @@ export function makeOllamaClient(cfg: OllamaConfig, deps: OllamaDeps = {}): LlmC
       try {
         return await call(req);
       } catch (e) {
+        // fetch の中断は AbortError で来る。分類済みの中断へ写して retry 対象から外す。
+        if (req.signal?.aborted === true) throw canceledError("ollama 呼び出し中");
         if (!started && isConnRefused(e)) {
           started = true;
           await ensureDaemon();

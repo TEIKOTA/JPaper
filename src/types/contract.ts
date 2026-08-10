@@ -160,6 +160,7 @@ export const ErrorKind = z.enum([
   "formal",
   "quality",
   "typeset",
+  "canceled",
   "internal",
 ]);
 
@@ -197,6 +198,8 @@ export interface LlmRequest {
   // JSON 出力を期待する呼び出し。ネイティブ構造化出力を持つプロバイダ（Ollama）だけが強制に使う。
   // claude CLI は該当機能が無いので無視しプロンプト指定に委ねる。構造化出力 ADR。
   jsonMode?: boolean;
+  // 呼び出し側の中断（web でクライアントが切断した等）。プロバイダは進行中の I/O を中止する。
+  signal?: AbortSignal;
 }
 export interface LlmClient {
   complete(req: LlmRequest): Promise<string>;

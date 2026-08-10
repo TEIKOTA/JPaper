@@ -40,6 +40,7 @@ import { buildNotes } from "./notes.js";
 import { untranslatedHeadings } from "./quality-gate.js";
 import { checkpoint, hashContext } from "../durable/checkpoint.js";
 import { acquireRunLock, type RunLock } from "../durable/run-lock.js";
+import { throwIfAborted, withSignal } from "../runtime/cancellation.js";
 import { assembleWithMap, type Layout } from "../tools/assemble-latex.js";
 import { runBuildGate, type LatexRunner, type BuildGateResult } from "../tools/build-gate.js";
 import { injectFootnotes, renderBackmatter } from "../tools/render-notes.js";
@@ -66,6 +67,8 @@ export interface TranslateOptions {
   outDir?: string;
   ollama?: OllamaConfig;
   concurrency?: number;
+  // 呼び出し側の中断。LLM 呼び出し・組版・arXiv 取得へ伝播し、exitCode 6 で返る。
+  signal?: AbortSignal;
 }
 
 // subprocess プロバイダは無制限並列に耐えないため翻訳の同時実行数を制限する。
@@ -73,11 +76,14 @@ async function mapLimit<T, R>(
   items: T[],
   limit: number,
   fn: (item: T) => Promise<R>,
+  signal?: AbortSignal,
 ): Promise<R[]> {
   const results = new Array<R>(items.length);
   let next = 0;
   async function worker(): Promise<void> {
     for (let i = next++; i < items.length; i = next++) {
+      // 中断後は新しいセグメントを取りに行かない（進行中の 1 本は provider 側で落ちる）。
+      throwIfAborted(signal, "セグメント翻訳");
       results[i] = await fn(items[i]!);
     }
   }
@@ -233,6 +239,7 @@ async function typeset(
   opts: { outDir: string; sourceDir: string; mainDir: string; figures: string[] },
   runner: LatexRunner | undefined,
   surface: (m: string) => void,
+  signal?: AbortSignal,
 ): Promise<TypesetOutcome> {
   const buildDir = path.join(opts.outDir, "translation", "build");
   const run = (mode: Layout): Promise<BuildGateResult> => {
@@ -246,6 +253,7 @@ async function typeset(
         figures: opts.figures,
         sourceMap,
         originalTex: cleanLatex,
+        signal,
       },
       runner,
     );
@@ -283,12 +291,14 @@ export async function translatePaper(
   const runDir = path.join(outDir, ".run");
   // 注入 client（テスト）はそのまま尊重し、内部生成時のみトレースを配線する。LLM トレース ADR。
   const runId = `${paperId}-${Date.now()}`;
-  const client =
+  const client0 =
     deps.client ??
     makeLlmClient(opts.provider, {
       ollama: opts.ollama,
       trace: makeJsonlTrace(path.join(runDir, "llm-trace.jsonl"), runId),
     });
+  // 中断は境界 1 箇所（client ラッパ）で効かせる。各エージェントの引数は増やさない。
+  const client = withSignal(client0, opts.signal);
   let db: GlossaryDb | undefined;
   let lock: RunLock | undefined;
 
@@ -307,7 +317,11 @@ export async function translatePaper(
       runDir,
       "ingest",
       IngestCache,
-      () => ingest(input, path.join(runDir, "source"), deps.ingest),
+      () =>
+        ingest(input, path.join(runDir, "source"), {
+          ...deps.ingest,
+          arxiv: { ...deps.ingest?.arxiv, signal: opts.signal },
+        }),
       { invalidation: inputSignature(input), key: deps.cacheKey },
     );
 
@@ -346,7 +360,7 @@ export async function translatePaper(
         () => runSectionLoop(client, seg, slice, { brief: ctx.brief, style: ctx.style }),
         { invalidation, cacheable: (r) => r.passed, key: deps.cacheKey },
       );
-    });
+    }, opts.signal);
 
     // 見出し未訳の非ブロッキング lint。keep-original 確定語は除外して訳注へ流す（ビルドは壊さない）。
     const keepOriginal = ctx.resolved
@@ -403,6 +417,7 @@ export async function translatePaper(
         },
         deps.latexRunner,
         (m) => deps.onError?.(m),
+        opts.signal,
       );
       ({ layout, buildOk, pdfPath, exitCode } = outcome);
       typesetMessage = outcome.message;

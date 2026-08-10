@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, rmSync, writeFileSync, cpSync, readdirSync, read
 import path from "node:path";
 import { execFileSync, spawn } from "node:child_process";
 import { segmentAtLine, type SourceSpan } from "./assemble-latex.js";
+import { throwIfAborted } from "../runtime/cancellation.js";
 
 export interface FailedSegment {
   id: string;
@@ -27,7 +28,7 @@ export interface RunResult {
   code: number;
   log: string;
 }
-export type LatexRunner = (buildDir: string) => RunResult | Promise<RunResult>;
+export type LatexRunner = (buildDir: string, signal?: AbortSignal) => RunResult | Promise<RunResult>;
 
 export interface StageInput {
   sourceDir: string;
@@ -206,7 +207,7 @@ export const BUILD_TIMEOUT_MS = 300_000;
 
 // latexmk は子（lualatex）を起こす。detached でプロセスグループを作り、超過時はグループごと止める。
 // execFileSync の timeout は直接の子にしか届かず、孫が孤児として生き残るため。
-const defaultRunner: LatexRunner = (buildDir) =>
+const defaultRunner: LatexRunner = (buildDir, signal) =>
   new Promise<RunResult>((resolve) => {
     const child = spawn(
       "latexmk",
@@ -230,12 +231,20 @@ const defaultRunner: LatexRunner = (buildDir) =>
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
       resolve({ code, log: readLog(buildDir) });
     };
     const timer = setTimeout(() => {
       killGroup(child.pid);
       finish(1);
     }, BUILD_TIMEOUT_MS);
+    // 中断もタイムアウトと同じ扱い。孫（lualatex）ごと落とす。
+    const onAbort = (): void => {
+      killGroup(child.pid);
+      finish(1);
+    };
+    if (signal?.aborted === true) onAbort();
+    else signal?.addEventListener("abort", onAbort, { once: true });
     child.on("error", () => finish(1));
     child.on("close", (code) => finish(code ?? 1));
   });
@@ -262,15 +271,18 @@ export async function runBuildGate(
     figures: string[];
     sourceMap: SourceSpan[];
     originalTex?: string;
+    signal?: AbortSignal;
   },
   runner: LatexRunner = defaultRunner,
 ): Promise<BuildGateResult> {
+  throwIfAborted(input.signal, "組版前");
   const shadowedPackages = stageBuild(input.buildDir, input.mainTex, {
     sourceDir: input.sourceDir,
     mainDir: input.mainDir,
     figures: input.figures,
   });
-  const { code, log } = await runner(input.buildDir);
+  const { code, log } = await runner(input.buildDir, input.signal);
+  throwIfAborted(input.signal, "組版中");
   const cls = classifyLog(log, input.sourceMap, input.originalTex);
   const droppedFigures = checkFigures(input.mainTex, input.mainDir, input.figures);
   const pdf = path.join(input.buildDir, "main.pdf");

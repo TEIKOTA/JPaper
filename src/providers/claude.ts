@@ -2,9 +2,10 @@
 import { spawn } from "node:child_process";
 import type { LlmClient, LlmCallEvent, LlmCallMeta, TraceSink } from "../types/contract.js";
 import { JpaperError } from "../types/errors.js";
+import { canceledError } from "../runtime/cancellation.js";
 
 export interface ClaudeDeps {
-  run?: (args: string[]) => Promise<string>;
+  run?: (args: string[], signal?: AbortSignal) => Promise<string>;
   trace?: TraceSink; // LLM トレース ADR。成功呼び出しの usage/コストを emit する副作用チャネル。
   now?: () => number; // latency 計測（テスト用に注入可能）。
 }
@@ -37,16 +38,30 @@ function toEvent(raw: string, latencyMs: number, meta?: LlmCallMeta): LlmCallEve
   };
 }
 
-async function defaultRun(args: string[]): Promise<string> {
+async function defaultRun(args: string[], signal?: AbortSignal): Promise<string> {
+  if (signal?.aborted === true) throw canceledError("claude 起動前");
   return new Promise((resolve, reject) => {
     const child = spawn("claude", args, { stdio: ["pipe", "pipe", "pipe"] });
     let out = "";
     let err = "";
+    let canceled = false;
+    // 中断されたら子プロセスを落とす。放置すると web でクライアント切断後も課金が続く。
+    const onAbort = (): void => {
+      canceled = true;
+      child.kill("SIGKILL");
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+    const done = (): void => signal?.removeEventListener("abort", onAbort);
     child.stdout.on("data", (d) => (out += d));
     child.stderr.on("data", (d) => (err += d));
-    child.on("error", reject);
+    child.on("error", (e) => {
+      done();
+      reject(e);
+    });
     child.on("close", (code) => {
-      if (code === 0) resolve(out);
+      done();
+      if (canceled) reject(canceledError("claude 実行中"));
+      else if (code === 0) resolve(out);
       else {
         const detail = (err || out).slice(0, 800);
         reject(Object.assign(new Error(`claude exited ${code}: ${detail}`), { code }));
@@ -65,19 +80,23 @@ export function makeClaudeClient(deps: ClaudeDeps = {}): LlmClient {
       let stdout: string;
       const started = now();
       try {
-        stdout = await run([
-          "-p",
-          req.user,
-          "--output-format",
-          "json",
-          "--append-system-prompt",
-          req.system,
-          "--max-turns",
-          "1",
-          "--tools",
-          "none",
-        ]);
+        stdout = await run(
+          [
+            "-p",
+            req.user,
+            "--output-format",
+            "json",
+            "--append-system-prompt",
+            req.system,
+            "--max-turns",
+            "1",
+            "--tools",
+            "none",
+          ],
+          req.signal,
+        );
       } catch (e) {
+        if (e instanceof JpaperError && e.kind === "canceled") throw e;
         if ((e as { code?: unknown }).code === "ENOENT") {
           throw new JpaperError(2, "provider", "claude が見つかりません（未インストール/PATH 外）");
         }

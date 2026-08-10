@@ -153,3 +153,59 @@ describe("fetchArxivSource", () => {
     ).rejects.toMatchObject({ code: 2 });
   });
 });
+
+describe("待ち行列の上限と中断", () => {
+  const common = {
+    fetchImpl: (async () => okResponse("S")) as unknown as typeof fetch,
+    now: () => 0,
+    sleep: async () => {},
+    minIntervalMs: 3000,
+  };
+
+  it("待ち時間が上限を超えるなら待たずに失敗する（無言で数分待たない）", async () => {
+    const state = { lastRequestAt: 30_000 }; // 既に 30 秒先まで予約済み
+    await expect(
+      fetchArxivSource("2203.06060", { ...common, state, maxQueueWaitMs: 10_000 }),
+    ).rejects.toMatchObject({ code: 2, kind: "conflict" });
+    // 断ったぶんで待ち行列をさらに伸ばさない。
+    expect(state.lastRequestAt).toBe(30_000);
+  });
+
+  it("上限内なら従来どおり待って取得する", async () => {
+    const state = { lastRequestAt: 3000 };
+    const buf = await fetchArxivSource("2203.06060", {
+      ...common,
+      state,
+      maxQueueWaitMs: 10_000,
+    });
+    expect(buf.toString("utf8")).toBe("S");
+  });
+
+  it("待機中に abort されたら中断として抜ける", async () => {
+    const c = new AbortController();
+    const state = { lastRequestAt: 5000 };
+    const p = fetchArxivSource("2203.06060", {
+      ...common,
+      state,
+      sleep: () => new Promise<void>(() => {}), // 永久に待つ
+      signal: c.signal,
+    });
+    c.abort();
+    await expect(p).rejects.toMatchObject({ code: 6, kind: "canceled" });
+  });
+
+  it("abort 済みなら fetch を 1 度も呼ばない", async () => {
+    const c = new AbortController();
+    c.abort();
+    const fetchImpl = vi.fn(async () => okResponse("S"));
+    await expect(
+      fetchArxivSource("2203.06060", {
+        ...common,
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+        state: { lastRequestAt: 0 },
+        signal: c.signal,
+      }),
+    ).rejects.toMatchObject({ kind: "canceled" });
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+});

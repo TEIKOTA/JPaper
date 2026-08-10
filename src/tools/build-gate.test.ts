@@ -273,3 +273,58 @@ describe("kpsewhich はまとめて 1 回だけ問う", () => {
     expect(calls).toBe(1);
   });
 });
+
+describe("組版の中断", () => {
+  it("abort 済みならステージングも走らせずに中断で抜ける", async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "jpaper-gate-abort-"));
+    const src = path.join(dir, "src");
+    mkdirSync(src, { recursive: true });
+    const c = new AbortController();
+    c.abort();
+    let ran = false;
+    await expect(
+      runBuildGate(
+        {
+          buildDir: path.join(dir, "build"),
+          mainTex: "\\documentclass{article}\\begin{document}x\\end{document}",
+          sourceDir: src,
+          mainDir: src,
+          figures: [],
+          sourceMap: [],
+          signal: c.signal,
+        },
+        () => {
+          ran = true;
+          return { code: 0, log: "" };
+        },
+      ),
+    ).rejects.toMatchObject({ code: 6, kind: "canceled" });
+    expect(ran).toBe(false);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("runner に signal を渡す（実行中の中断を子プロセスへ届ける）", async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "jpaper-gate-sig-"));
+    const src = path.join(dir, "src");
+    mkdirSync(src, { recursive: true });
+    const c = new AbortController();
+    let seen: AbortSignal | undefined;
+    await runBuildGate(
+      {
+        buildDir: path.join(dir, "build"),
+        mainTex: "\\documentclass{article}\\begin{document}x\\end{document}",
+        sourceDir: src,
+        mainDir: src,
+        figures: [],
+        sourceMap: [],
+        signal: c.signal,
+      },
+      (_d, signal) => {
+        seen = signal;
+        return { code: 1, log: "" };
+      },
+    );
+    expect(seen).toBe(c.signal);
+    rmSync(dir, { recursive: true, force: true });
+  });
+});
