@@ -39,6 +39,31 @@ describe("injectFootnotes", () => {
     const out = injectFootnotes("Transformer と 注意 の話", "seg-0000", notes, forms);
     expect(out).toBe("Transformer\\footnote{訳注: T} と 注意\\footnote{訳注: A} の話");
   });
+  it("数式環境の中には入れない（\\begin{align} を壊さない）", () => {
+    // $ の個数しか見ていなかった頃は \begin{align\footnote{...}} を生成し、組版が
+    // 確実に落ちた。注入は品質ゲートの後なので、全節 pass した翻訳を後段で壊せた。
+    const f = new Map([["x", "align"]]);
+    const tex = "\\begin{align}a &= b\\end{align}";
+    expect(injectFootnotes(tex, "seg-0000", [note({ src: "x" })], f)).toBe(tex);
+  });
+
+  it("\\[..\\] の中にも入れない", () => {
+    const f = new Map([["x", "E = mc"]]);
+    const tex = "\\[E = mc^2\\]";
+    expect(injectFootnotes(tex, "seg-0000", [note({ src: "x" })], f)).toBe(tex);
+  });
+
+  it("語の途中の部分一致には付けない", () => {
+    const f = new Map([["x", "tion"]]);
+    const tex = "translation の話";
+    expect(injectFootnotes(tex, "seg-0000", [note({ src: "x" })], f)).toBe(tex);
+  });
+
+  it("制御綴りの綴りには付けず、地の文の出現に付ける", () => {
+    const f = new Map([["x", "section"]]);
+    const out = injectFootnotes("\\section{見出し} この section を説明", "seg-0000", [note({ src: "x" })], f);
+    expect(out).toBe("\\section{見出し} この section\\footnote{訳注: 説明} を説明");
+  });
 });
 
 describe("renderBackmatter", () => {
