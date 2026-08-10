@@ -1,5 +1,7 @@
 // 契約付録 §8。arXiv ソース tarball を取得（UA 明示・3秒間隔・429/5xx/瞬断は指数バックオフ再試行）。
 import { JpaperError, isTransient } from "../types/errors.js";
+import { DEFAULT_LIMITS, type IngestLimits } from "./limits.js";
+import { isArxivId } from "./detect-input.js";
 
 export interface ArxivDeps {
   fetchImpl?: typeof fetch;
@@ -9,6 +11,7 @@ export interface ArxivDeps {
   minIntervalMs?: number;
   endpoint?: string;
   retries?: number;
+  limits?: IngestLimits;
   state?: { lastRequestAt: number };
 }
 
@@ -23,6 +26,30 @@ function isTransientStatus(status: number): boolean {
   return status === 429 || (status >= 500 && status <= 599);
 }
 
+// Content-Length は自己申告なので、実際に読んだ累積バイト数でも上限を掛ける。
+async function readCapped(res: Response, maxBytes: number): Promise<Buffer> {
+  const declared = Number(res.headers?.get?.("content-length"));
+  if (Number.isFinite(declared) && declared > maxBytes) {
+    throw new JpaperError(2, "input", `arXiv 応答が上限 ${maxBytes} バイトを超えています`);
+  }
+  const body = res.body;
+  if (!body) return Buffer.from(await res.arrayBuffer());
+  const chunks: Buffer[] = [];
+  let total = 0;
+  const reader = body.getReader();
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > maxBytes) {
+      await reader.cancel();
+      throw new JpaperError(2, "input", `arXiv 応答が上限 ${maxBytes} バイトを超えています`);
+    }
+    chunks.push(Buffer.from(value));
+  }
+  return Buffer.concat(chunks);
+}
+
 export async function fetchArxivSource(
   id: string,
   deps: ArxivDeps = {},
@@ -34,7 +61,13 @@ export async function fetchArxivSource(
   const minInterval = deps.minIntervalMs ?? MIN_INTERVAL_MS;
   const endpoint = deps.endpoint ?? DEFAULT_ENDPOINT;
   const retries = deps.retries ?? MAX_RETRIES;
+  const limits = deps.limits ?? DEFAULT_LIMITS;
   const state = deps.state ?? globalState;
+
+  // 旧形式 ID は `/` を含み endpoint のパス構造の一部なので、エンコードではなく形式検査で守る。
+  if (!isArxivId(id)) {
+    throw new JpaperError(2, "input", `arXiv ID の形式が不正です: ${id}`);
+  }
 
   let lastErr: unknown;
   for (let attempt = 0; attempt <= retries; attempt++) {
@@ -50,7 +83,7 @@ export async function fetchArxivSource(
       const res = await fetchImpl(`${endpoint}${id}`, {
         headers: { "User-Agent": ua },
       });
-      if (res.ok) return Buffer.from(await res.arrayBuffer());
+      if (res.ok) return await readCapped(res, limits.maxArchiveBytes);
       if (isTransientStatus(res.status)) {
         lastErr = new Error(`HTTP ${res.status}`);
         continue;

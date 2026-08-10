@@ -3,6 +3,7 @@ import { gunzipSync, inflateRawSync } from "node:zlib";
 import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { JpaperError } from "../types/errors.js";
+import { DEFAULT_LIMITS, type IngestLimits } from "./limits.js";
 
 export type FileMap = Map<string, Buffer>;
 
@@ -53,7 +54,30 @@ function paxPath(data: Buffer): string | null {
   return m ? (m[1] ?? null) : null;
 }
 
-export function parseTar(buf: Buffer): FileMap {
+function tooLarge(what: string, limit: number): JpaperError {
+  return new JpaperError(2, "input", `${what}が上限 ${limit} バイトを超えています`);
+}
+
+// 展開量の累積を 1 箇所で監視する（tar/zip/gzip のどの経路でも同じ上限を効かせる）。
+class Budget {
+  private total = 0;
+  private entries = 0;
+  constructor(private readonly limits: IngestLimits) {}
+  admit(size: number): void {
+    if (++this.entries > this.limits.maxEntries) {
+      throw new JpaperError(2, "input", `アーカイブのエントリ数が上限 ${this.limits.maxEntries} を超えています`);
+    }
+    if (size > this.limits.maxEntryBytes) throw tooLarge("アーカイブ内の単一ファイル", this.limits.maxEntryBytes);
+    this.total += size;
+    if (this.total > this.limits.maxTotalBytes) throw tooLarge("展開後の合計サイズ", this.limits.maxTotalBytes);
+  }
+  get remaining(): number {
+    return Math.max(0, this.limits.maxTotalBytes - this.total);
+  }
+}
+
+export function parseTar(buf: Buffer, limits: IngestLimits = DEFAULT_LIMITS): FileMap {
+  const budget = new Budget(limits);
   const files: FileMap = new Map();
   let off = 0;
   let override: string | null = null;
@@ -80,6 +104,7 @@ export function parseTar(buf: Buffer): FileMap {
       // PAX global ('g') は無視
     } else {
       if (type === 0x30 || type === 0) {
+        budget.admit(size);
         const prefix = readStr(buf, off + 345, 155);
         const ustar = prefix ? `${prefix}/${name}` : name;
         files.set(normalizePath(override ?? ustar), data);
@@ -107,7 +132,8 @@ function findEOCD(buf: Buffer): number {
   return -1;
 }
 
-export function parseZip(buf: Buffer): FileMap {
+export function parseZip(buf: Buffer, limits: IngestLimits = DEFAULT_LIMITS): FileMap {
+  const budget = new Budget(limits);
   const files: FileMap = new Map();
   const eocd = findEOCD(buf);
   if (eocd < 0) throw new JpaperError(2, "input", "zip: EOCD が見つかりません");
@@ -133,11 +159,14 @@ export function parseZip(buf: Buffer): FileMap {
     const comp = buf.subarray(dataStart, dataStart + compSize);
     if (!name.endsWith("/")) {
       let content: Buffer;
+      // 展開後サイズは圧縮ヘッダを信用できないため、zlib 側の出力上限で止める。
+      const cap = Math.min(limits.maxEntryBytes, budget.remaining) + 1;
       if (method === 0) content = Buffer.from(comp);
-      else if (method === 8) content = inflateRawSync(comp);
+      else if (method === 8) content = inflateRawSync(comp, { maxOutputLength: cap });
       else {
         throw new JpaperError(2, "input", `zip: 未対応の圧縮方式 ${method}`);
       }
+      budget.admit(content.length);
       files.set(normalizePath(name), content);
     }
     cd += 46 + nameLen + extraLen + commentLen;
@@ -149,18 +178,23 @@ export function isArchive(b: Buffer): boolean {
   return isZip(b) || isGzip(b) || isTar(b);
 }
 
-export function extractArchive(bytes: Buffer): FileMap {
+export function extractArchive(bytes: Buffer, limits: IngestLimits = DEFAULT_LIMITS): FileMap {
+  if (bytes.length > limits.maxArchiveBytes) throw tooLarge("アーカイブ", limits.maxArchiveBytes);
   try {
-    if (isZip(bytes)) return parseZip(bytes);
+    if (isZip(bytes)) return parseZip(bytes, limits);
     if (isGzip(bytes)) {
-      const inner = gunzipSync(bytes);
-      if (isTar(inner)) return parseTar(inner);
+      const inner = gunzipSync(bytes, { maxOutputLength: limits.maxTotalBytes + 1 });
+      if (isTar(inner)) return parseTar(inner, limits);
       return new Map([["main.tex", inner]]);
     }
-    if (isTar(bytes)) return parseTar(bytes);
+    if (isTar(bytes)) return parseTar(bytes, limits);
     return new Map([["main.tex", bytes]]);
   } catch (e) {
     if (e instanceof JpaperError) throw e;
+    // zlib の出力上限超過は Buffer 系エラーで来る。上限違反として扱う。
+    if ((e as { code?: string })?.code === "ERR_BUFFER_TOO_LARGE") {
+      throw tooLarge("展開後の合計サイズ", limits.maxTotalBytes);
+    }
     throw new JpaperError(
       2,
       "input",

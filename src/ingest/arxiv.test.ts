@@ -28,7 +28,7 @@ describe("fetchArxivSource", () => {
   it("直近リクエストから3秒未満なら待機する", async () => {
     const sleep = vi.fn(async () => {});
     const state = { lastRequestAt: 1000 };
-    await fetchArxivSource("x", {
+    await fetchArxivSource("2203.06060", {
       fetchImpl: (async () => okResponse("S")) as unknown as typeof fetch,
       now: () => 2000,
       sleep,
@@ -42,7 +42,7 @@ describe("fetchArxivSource", () => {
   it("発火が遅延したら lastRequestAt を実時刻に補正する", async () => {
     let t = 0;
     const state = { lastRequestAt: 0 };
-    await fetchArxivSource("x", {
+    await fetchArxivSource("2203.06060", {
       fetchImpl: (async () => okResponse("S")) as unknown as typeof fetch,
       now: () => t,
       sleep: async () => {
@@ -68,8 +68,8 @@ describe("fetchArxivSource", () => {
       state,
     };
     await Promise.all([
-      fetchArxivSource("a", common),
-      fetchArxivSource("b", common),
+      fetchArxivSource("2203.06060", common),
+      fetchArxivSource("2203.06060", common),
     ]);
     expect(state.lastRequestAt).toBe(6000);
     expect(waits).toEqual([3000, 6000]);
@@ -77,7 +77,7 @@ describe("fetchArxivSource", () => {
 
   it("間隔が空いていれば待機しない", async () => {
     const sleep = vi.fn(async () => {});
-    await fetchArxivSource("x", {
+    await fetchArxivSource("2203.06060", {
       fetchImpl: (async () => okResponse("S")) as unknown as typeof fetch,
       now: () => 99999,
       sleep,
@@ -93,7 +93,7 @@ describe("fetchArxivSource", () => {
       const s = statuses.shift()!;
       return s === 200 ? okResponse("SRC") : ({ ok: false, status: s } as Response);
     });
-    const buf = await fetchArxivSource("x", {
+    const buf = await fetchArxivSource("2203.06060", {
       fetchImpl: fetchImpl as unknown as typeof fetch,
       sleep: async () => {},
       now: () => 1e9,
@@ -106,7 +106,7 @@ describe("fetchArxivSource", () => {
   it("リトライ上限超過（429 継続）は exit 2", async () => {
     const fetchImpl = vi.fn(async () => ({ ok: false, status: 429 }) as Response);
     await expect(
-      fetchArxivSource("x", {
+      fetchArxivSource("2203.06060", {
         fetchImpl: fetchImpl as unknown as typeof fetch,
         sleep: async () => {},
         now: () => 1e9,
@@ -120,7 +120,7 @@ describe("fetchArxivSource", () => {
   it("恒久エラー（404）は再試行せず exit 2", async () => {
     const fetchImpl = vi.fn(async () => ({ ok: false, status: 404 }) as Response);
     await expect(
-      fetchArxivSource("x", {
+      fetchArxivSource("2203.06060", {
         fetchImpl: fetchImpl as unknown as typeof fetch,
         sleep: async () => {},
         now: () => 1e9,
@@ -132,7 +132,7 @@ describe("fetchArxivSource", () => {
 
   it("HTTP エラー・ネットワーク例外は exit 2", async () => {
     await expect(
-      fetchArxivSource("x", {
+      fetchArxivSource("2203.06060", {
         fetchImpl: (async () =>
           ({ ok: false, status: 404 }) as Response) as unknown as typeof fetch,
         state: { lastRequestAt: 0 },
@@ -142,7 +142,7 @@ describe("fetchArxivSource", () => {
     ).rejects.toMatchObject({ code: 2 });
 
     await expect(
-      fetchArxivSource("x", {
+      fetchArxivSource("2203.06060", {
         fetchImpl: (async () => {
           throw new Error("network down");
         }) as unknown as typeof fetch,
