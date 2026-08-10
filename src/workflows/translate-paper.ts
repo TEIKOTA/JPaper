@@ -88,6 +88,9 @@ async function mapLimit<T, R>(
 
 export interface TranslateDeps {
   client?: LlmClient;
+  // checkpoint 署名鍵。web ハンドラのように 1 プロセスで複数テナントを捌く場合、
+  // env 経由（JPAPER_HOME）は await を跨いで混ざるため呼び出し側から渡す。
+  cacheKey?: Buffer;
   db?: GlossaryDb;
   dbPath?: string;
   ingest?: IngestDeps;
@@ -110,13 +113,14 @@ async function loadOrBuildContext(
   db: GlossaryDb,
   paperId: string,
   cleanLatex: string,
+  cacheKey?: Buffer,
 ): Promise<PaperContext> {
   const built = await checkpoint(
     runDir,
     "glossary",
     GlossaryBuilderOut,
     () => buildPaperGlossary(client, db, paperId, cleanLatex),
-    { invalidation: hashContext(cleanLatex) },
+    { invalidation: hashContext(cleanLatex), key: cacheKey },
   );
   const proposedAdded = writeBackResolved(db, built, paperId);
   mkdirSync(outDir, { recursive: true });
@@ -275,7 +279,7 @@ export async function translatePaper(
       "ingest",
       IngestCache,
       () => ingest(input, path.join(runDir, "source"), deps.ingest),
-      { invalidation: inputSignature(input) },
+      { invalidation: inputSignature(input), key: deps.cacheKey },
     );
 
     // 用語バリア: 並列翻訳の前に resolved/brief/style を確定する。
@@ -286,6 +290,7 @@ export async function translatePaper(
       db,
       ingested.paperId,
       ingested.cleanLatex,
+      deps.cacheKey,
     );
     const budget = segmentBudgetFor(contextWindowFor(opts.provider, opts.ollama));
     const segments = segment(ingested.cleanLatex, budget);
@@ -310,7 +315,7 @@ export async function translatePaper(
         seg.id,
         SectionLoopCache,
         () => runSectionLoop(client, seg, slice, { brief: ctx.brief, style: ctx.style }),
-        { invalidation, cacheable: (r) => r.passed },
+        { invalidation, cacheable: (r) => r.passed, key: deps.cacheKey },
       );
     });
 
