@@ -41,9 +41,26 @@ const UNSAFE_COMMANDS = [
   "makeatletter",
 ];
 
+// TeX の ^^ 記法を実文字へ戻す。^^41→"A"、^^64→"d"、^^M→制御文字（コード XOR 64）。
+// これを戻さずに制御綴りを抽出すると \^^64irectlua が \directlua として発火するのに検知できない。
+export function decodeCarets(tex: string): string {
+  let prev = "";
+  let cur = tex;
+  // ^^ が入れ子で書かれても収束するまで戻す。長さは単調減少なので停止する。
+  while (cur !== prev) {
+    prev = cur;
+    cur = cur
+      .replace(/\^\^([0-9a-f]{2})/g, (_, hex: string) => String.fromCharCode(parseInt(hex, 16)))
+      .replace(/\^\^([\u0040-\u007e])/g, (_, c: string) =>
+        String.fromCharCode(c.charCodeAt(0) ^ 64),
+      );
+  }
+  return cur;
+}
+
 function usedCommands(tex: string): Set<string> {
   const found = new Set<string>();
-  for (const m of tex.matchAll(/\\([a-zA-Z]+)/g)) found.add(m[1]!);
+  for (const m of decodeCarets(tex).matchAll(/\\([a-zA-Z]+)/g)) found.add(m[1]!);
   return found;
 }
 
@@ -68,6 +85,10 @@ function proseOf(tex: string): string {
 // 3 文字以上のラテン語の語数。数式記号や略号を「地の文」と数えないための近似。
 function proseWordCount(tex: string): number {
   return (proseOf(tex).match(/[A-Za-z]{3,}/g) ?? []).length;
+}
+
+function japaneseCharCount(tex: string): number {
+  return (proseOf(tex).match(/[ぁ-ゖァ-ヺー㐀-鿿ｦ-ﾝ]/g) ?? []).length;
 }
 
 const HEADING_CMDS = ["part", "chapter", "section", "subsection", "subsubsection", "paragraph", "subparagraph"];
@@ -205,8 +226,9 @@ export function formalCheck(
   }
 
   // 地の文が十分ある節でのみ判定する（数式・図だけの節は原文と一致しても正常）。
+  // 「日本語がゼロか」ではなく割合で見る。1 文字だけ混ぜて検査を通す回避を塞ぐため。
   const words = proseWordCount(ja);
-  if (words >= MIN_PROSE_WORDS && !JAPANESE.test(ja)) {
+  if (words >= MIN_PROSE_WORDS && japaneseCharCount(ja) < words) {
     const identical = normalizeForCompare(srcLatex) === normalizeForCompare(ja);
     issues.push({
       kind: "untranslated",

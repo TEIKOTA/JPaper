@@ -38,16 +38,21 @@ function jaPart(form: string): string {
   return form.replace(/\s*[（(].*$/, "").trim();
 }
 
+// 用語ブロックに載る文字列は全て 1 行化を通す。ここを素通しにすると
+// form の改行で見出しを偽装して user prompt の構造を乗っ取れる。
+
 function instructionFor(t: ResolvedTerm): string {
+  const src = term(t.src);
+  const form = term(t.form);
   switch (t.rendering) {
     case "keep-original":
-      return `原表記「${t.src}」のまま残す（訳さない）`;
+      return `原表記「${src}」のまま残す（訳さない）`;
     case "bilingual":
       return t.firstOccurrence
-        ? `初出なので併記「${t.form}」を使う`
-        : `2回目以降なので「${jaPart(t.form)}」（日本語のみ・併記しない）を使う`;
+        ? `初出なので併記「${form}」を使う`
+        : `2回目以降なので「${term(jaPart(t.form))}」（日本語のみ・併記しない）を使う`;
     default:
-      return `訳語「${t.form}」を使う`;
+      return `訳語「${form}」を使う`;
   }
 }
 

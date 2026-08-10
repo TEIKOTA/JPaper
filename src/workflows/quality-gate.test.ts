@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { formalCheck, untranslatedHeadings, introducedUnsafeCommands } from "./quality-gate.js";
+import {
+  formalCheck,
+  untranslatedHeadings,
+  introducedUnsafeCommands,
+  decodeCarets,
+} from "./quality-gate.js";
 import type { ResolvedTerm } from "../types/contract.js";
 
 const kinds = (src: string, ja: string, terms: ResolvedTerm[] = []) =>
@@ -287,5 +292,37 @@ describe("formalCheck: 危険コマンドの持ち込み", () => {
       "write",
       "openout",
     ]);
+  });
+});
+
+describe("回避の再検査（ラウンド2）", () => {
+  const EN =
+    "The Transformer architecture uses attention mechanisms to process sequences " +
+    "of tokens in parallel across layers.";
+
+  it("かな1文字を足しただけの英文は未翻訳として落とす", () => {
+    const issues = formalCheck(EN, `${EN} の`, []);
+    expect(issues.map((i) => i.kind)).toContain("untranslated");
+  });
+
+  it("日本語が地の文の語数に見合っていれば通す", () => {
+    const ja =
+      "Transformer アーキテクチャは、注意機構を用いて系列中のトークンを層をまたいで並列に処理する。";
+    expect(formalCheck(EN, ja, []).filter((i) => i.kind === "untranslated")).toEqual([]);
+  });
+
+  it("^^ 記法で綴った危険コマンドを検知する", () => {
+    const ja = "訳文である。\\^^64irectlua{tex.print(\"x\")}";
+    expect(introducedUnsafeCommands(EN, ja)).toContain("directlua");
+  });
+
+  it("^^ の1文字記法（XOR 64）も戻して検知する", () => {
+    // ^^W は 0x57 ^ 0x40 = 0x17 ではなく、w(0x77)^0x40=0x37。ここは r を ^^2 では表せないので
+    // 実在の形として \write を ^^77rite（w=0x77）で綴る。
+    expect(introducedUnsafeCommands(EN, "\\^^77rite18{x}")).toContain("write");
+  });
+
+  it("decodeCarets は通常の文字列を変えない", () => {
+    expect(decodeCarets("\\section{Intro} x^2")).toBe("\\section{Intro} x^2");
   });
 });
