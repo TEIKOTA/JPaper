@@ -1,6 +1,7 @@
 // 設計メモ §3・契約付録 §3/§5/§8。source-first 取り込みの配線。
 import { readFileSync, statSync, rmSync, mkdirSync } from "node:fs";
 import path from "node:path";
+import { createHash } from "node:crypto";
 import type { JpaperInput } from "../types/contract.js";
 import { JpaperError } from "../types/errors.js";
 import { fetchArxivSource, type ArxivDeps } from "./arxiv.js";
@@ -32,7 +33,14 @@ export function derivePaperId(input: JpaperInput): string {
   }
   const base = input.path.replace(/[/\\]+$/, "");
   const name = base.slice(base.replace(/\\/g, "/").lastIndexOf("/") + 1);
-  return name.replace(PATH_STRIP, "").replace(/[^A-Za-z0-9._-]/g, "_") || "paper";
+  const stem = name.replace(PATH_STRIP, "");
+  const safe = stem.replace(/[^A-Za-z0-9._-]/g, "_");
+  // 正規化で名前が変わったら元名のダイジェストを付けて単射に戻す。潰したままだと
+  // "a b.tex" / "a+b.tex" / "a:b.tex" が同じ出力先・同じ .run/steps・同じ run.lock を共有し、
+  // 「別の論文なら既存 md を採用しない」印（.paper-id）も paperId が一致するため発動しない。
+  if (safe === stem && safe !== "") return safe;
+  const digest = createHash("sha256").update(stem).digest("hex").slice(0, 8);
+  return `${safe === "" ? "paper" : safe}-${digest}`;
 }
 
 interface Materialized {

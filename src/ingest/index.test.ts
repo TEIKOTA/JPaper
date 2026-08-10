@@ -35,6 +35,21 @@ describe("derivePaperId", () => {
     expect(derivePaperId({ kind: "path", path: "/a/b/attention.tar.gz" })).toBe("attention");
     expect(derivePaperId({ kind: "path", path: "/a/mypaper/" })).toBe("mypaper");
   });
+
+  it("正規化で潰れる名前は衝突しない", () => {
+    // 非英数を _ に潰すだけだった頃は 4 つとも paperId "a_b" になり、outDir・
+    // .run/steps・run.lock を共有した。「別の論文なら既存 md を採用しない」印は
+    // paperId の一致で判定するので、衝突すると防御そのものが発動しない。
+    const ids = ["a b.tex", "a+b.tex", "a:b.tex", "a%b.tex"].map((n) =>
+      derivePaperId({ kind: "path", path: `/up/${n}` }),
+    );
+    expect(new Set(ids).size).toBe(4);
+    for (const id of ids) expect(id).toMatch(/^a_b-[0-9a-f]{8}$/);
+  });
+
+  it("安全な文字だけの名前はそのまま（既存の出力先を壊さない）", () => {
+    expect(derivePaperId({ kind: "path", path: "/a/my-paper_v2.tex" })).toBe("my-paper_v2");
+  });
 });
 
 describe("ingest", () => {
