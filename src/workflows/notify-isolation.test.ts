@@ -163,3 +163,27 @@ describe("素の .tex 入力の上限", () => {
     expect(existsSync(steps) ? readdirSync(steps) : []).toEqual([]);
   });
 });
+
+describe("既定の取り込み上限", () => {
+  it("巨大な素の .tex は limits を渡さなくても checkpoint 前に落ちる", async () => {
+    const { translatePaper } = await import("./translate-paper.js");
+    const { GlossaryDb } = await import("../terminology/db.js");
+    const work = tmp();
+    const tex = path.join(work, "main.tex");
+    // 既定の maxLatexBytes（8MB）を超える本文。limits は注入しない。
+    writeFileSync(
+      tex,
+      `\\documentclass{a}\\begin{document}\\section{I}${"Alpha beta gamma. ".repeat(600_000)}\\end{document}`,
+    );
+    const outDir = path.join(work, "out");
+    const r = await translatePaper({ kind: "path", path: tex }, { provider: "ollama", outDir }, {
+      client: await fakeClient(),
+      db: new GlossaryDb(),
+    });
+    expect(r.status).toBe("failed");
+    expect(r.error?.kind).toBe("too-large");
+    expect(r.summary.llmCalls).toBe(0);
+    const steps = path.join(outDir, ".run", "steps");
+    expect(existsSync(steps) ? readdirSync(steps) : []).toEqual([]);
+  });
+});

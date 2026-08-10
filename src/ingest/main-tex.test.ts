@@ -173,3 +173,42 @@ describe("main.tex 検出の上限", () => {
     expect(() => detectMainTex(d, 3)).toThrowError(/上限/);
   });
 });
+
+describe("展開の予算", () => {
+  it("指数展開の入力を即座に too-large で落とす", () => {
+    // 各ファイルが次を 2 回読むダイヤモンド型。stack.includes は循環しか止めないので
+    // 予算が無いと指数的に膨らみ、実測で 508 バイトの入力がループを 205 秒占有した。
+    const files: Record<string, string> = {
+      "main.tex": "\\documentclass{a}\\begin{document}\\input{l0}\\end{document}",
+    };
+    for (let i = 0; i < 26; i++) {
+      files[`l${String(i)}.tex`] =
+        i === 25 ? "終端" : `\\input{l${String(i + 1)}}\\input{l${String(i + 1)}}`;
+    }
+    const d = tmp(files);
+    const started = Date.now();
+    expect(() => expandInputs(d, "main.tex", { maxBytes: 8 * 1024 * 1024 })).toThrowError(/上限/);
+    expect(Date.now() - started).toBeLessThan(3000);
+  });
+
+  it("入れ子の深さにも上限がある", () => {
+    const files: Record<string, string> = {
+      "main.tex": "\\documentclass{a}\\begin{document}\\input{l0}\\end{document}",
+    };
+    for (let i = 0; i < 40; i++) files[`l${String(i)}.tex`] = `\\input{l${String(i + 1)}}`;
+    files["l40.tex"] = "終端";
+    const d = tmp(files);
+    expect(() => expandInputs(d, "main.tex", { maxBytes: 8 * 1024 * 1024 })).toThrowError(/段/);
+  });
+
+  it("正規の入れ子は通す", () => {
+    const d = tmp({
+      "main.tex": "\\documentclass{a}\\begin{document}\\input{sec/intro}\\end{document}",
+      "sec/intro.tex": "序論\\input{sec/body}",
+      "sec/body.tex": "本体",
+    });
+    const out = expandInputs(d, "main.tex", { maxBytes: 8 * 1024 * 1024 });
+    expect(out).toContain("序論");
+    expect(out).toContain("本体");
+  });
+});

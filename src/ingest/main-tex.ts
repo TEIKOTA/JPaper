@@ -77,13 +77,55 @@ function resolveTexPath(dir: string, fromRel: string, target: string): string | 
   return null;
 }
 
-export function expandInputs(dir: string, mainRel: string): string {
+// 展開の深さ上限。実在の論文は数段（main→章→節）で足りる。
+const MAX_INPUT_DEPTH = 32;
+
+export interface ExpandBudget {
+  // 展開後の累積バイト数。超えた時点で打ち切る（展開が終わってから測っても手遅れ）。
+  maxBytes: number;
+  // 展開の回数。バイト数だけでは仕事量を抑えられない（小さいファイルを指数回読む
+  // 入力があり、実測で 8MB に達するまで 27 秒かかった）。
+  maxExpansions?: number;
+}
+
+export function expandInputs(
+  dir: string,
+  mainRel: string,
+  budget: ExpandBudget = { maxBytes: Number.POSITIVE_INFINITY },
+): string {
   const stack: string[] = [];
+  const maxExpansions = budget.maxExpansions ?? 5_000;
+  let produced = 0;
+  let expansions = 0;
+  // stack.includes は直接の循環しか止めない。各ファイルが次を 2 回読むダイヤモンド型は
+  // 指数的に膨らみ、実測で 508 バイトの入力がイベントループを 205 秒占有した。
+  const spend = (n: number): void => {
+    produced += n;
+    if (produced > budget.maxBytes) {
+      throw new JpaperError(
+        2,
+        "too-large",
+        `\\input 展開後の本文が上限 ${budget.maxBytes} バイトを超えています`,
+      );
+    }
+  };
   function load(rel: string): string {
     if (stack.includes(rel)) return "";
+    if (stack.length >= MAX_INPUT_DEPTH) {
+      throw new JpaperError(2, "too-large", `\\input の入れ子が上限 ${MAX_INPUT_DEPTH} 段を超えています`);
+    }
     if (!isInsideDirReal(dir, path.join(dir, rel))) return "";
+    expansions++;
+    if (expansions > maxExpansions) {
+      throw new JpaperError(
+        2,
+        "too-large",
+        `\\input の展開回数が上限 ${maxExpansions} を超えています`,
+      );
+    }
     stack.push(rel);
     const raw = stripComments(readFileSync(path.join(dir, rel), "utf8"));
+    spend(raw.length);
     const out = raw.replace(
       /\\(?:input|include|@@input)\s*\{([^}]+)\}|\\(?:input|@@input)\s+([^\s{}\\%]+)/g,
       (_m, braced: string | undefined, unbraced: string | undefined) => {

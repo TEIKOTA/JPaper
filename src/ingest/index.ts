@@ -95,14 +95,14 @@ export async function ingest(
   const limits = deps.limits ?? DEFAULT_LIMITS;
   const { sourceDir, mainRel, limited } = await materialize(input, workDir, deps);
   const main = mainRel ?? detectMainTex(sourceDir, limits.maxEntries);
-  const cleanLatex = expandInputs(sourceDir, main);
+  const cleanLatex = expandInputs(sourceDir, main, { maxBytes: limits.maxLatexBytes });
   // 展開経路（アーカイブ）は Budget が累積を見ているが、素の .tex とディレクトリは
   // ここが唯一の関門。checkpoint へ書く前に判定する（拒否した入力にディスクを使わない）。
-  if (limited === true && Buffer.byteLength(cleanLatex) > limits.maxTotalBytes) {
+  if (Buffer.byteLength(cleanLatex) > limits.maxLatexBytes) {
     throw new JpaperError(
       2,
       "too-large",
-      `取り込んだ本文が上限 ${limits.maxTotalBytes} バイトを超えています`,
+      `取り込んだ本文が上限 ${limits.maxLatexBytes} バイトを超えています`,
     );
   }
   const mainDir = path.join(sourceDir, path.dirname(main));

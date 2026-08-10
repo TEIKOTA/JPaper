@@ -8,6 +8,9 @@ export interface IngestLimits {
   maxEntryBytes: number;
   // エントリ数（数の爆発を止める）。
   maxEntries: number;
+  // 取り込み後の LaTeX 本文（\input 展開込み）のバイト数。図（バイナリ）とは桁が違うので
+  // 別に持つ。ここを図と同じ上限で見ていたため、40MB の .tex が既定で通っていた。
+  maxLatexBytes: number;
 }
 
 export const DEFAULT_LIMITS: IngestLimits = {
@@ -15,4 +18,5 @@ export const DEFAULT_LIMITS: IngestLimits = {
   maxTotalBytes: 512 * 1024 * 1024,
   maxEntryBytes: 128 * 1024 * 1024,
   maxEntries: 10_000,
+  maxLatexBytes: 8 * 1024 * 1024,
 };
