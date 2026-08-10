@@ -68,6 +68,15 @@ describe("expandInputs", () => {
     expect(out).toContain("50\\% 完了");
   });
 
+  it("\\@@input も畳む（scanner だけに頼らない多層防御）", () => {
+    const d = tmp({
+      "main.tex":
+        "\\documentclass{a}\\begin{document}\\makeatletter\\@@input\n/etc/hostname\n\\end{document}",
+    });
+    // build ツリー外は解決できないので削除される（残ると latexmk が実際に読む）。
+    expect(expandInputs(d, "main.tex")).not.toContain("@@input");
+  });
+
   it("\\input はルート優先で解決する（TeX 準拠）", () => {
     const d = tmp({
       "main.tex": "\\documentclass{a}\\begin{document}\\input{sub/chapter}\\end{document}",

@@ -101,7 +101,9 @@ function readArgsAt(src: string, from: number, argCount: number): ReadArgs {
   const args: string[] = [];
   let dynamic = false;
   for (let n = 0; n < argCount; n++) {
-    while (i < src.length && (src[i] === " " || src[i] === "\t")) i++;
+    // TeX のファイル名スキャナは改行・CR・FF も読み飛ばす。空白とタブだけを飛ばすと、
+    // 改行を 1 つ挟むだけで引数が空に見え、パスの検査が一度も走らない。
+    while (i < src.length && /\s/.test(src[i]!)) i++;
     if (src[i] === "[") {
       // オプション引数は読み飛ばす（\import には無いが \includefrom 系の派生に備える）。
       const close = src.indexOf("]", i);

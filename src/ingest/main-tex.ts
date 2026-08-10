@@ -65,7 +65,7 @@ export function expandInputs(dir: string, mainRel: string): string {
     stack.push(rel);
     const raw = stripComments(readFileSync(path.join(dir, rel), "utf8"));
     const out = raw.replace(
-      /\\(?:input|include)\s*\{([^}]+)\}|\\input\s+([^\s{}\\%]+)/g,
+      /\\(?:input|include|@@input)\s*\{([^}]+)\}|\\(?:input|@@input)\s+([^\s{}\\%]+)/g,
       (_m, braced: string | undefined, unbraced: string | undefined) => {
         const child = resolveTexPath(dir, rel, (braced ?? unbraced ?? "").trim());
         return child ? load(child) : "";

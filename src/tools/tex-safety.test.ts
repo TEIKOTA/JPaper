@@ -161,3 +161,20 @@ describe("読み込みコマンドの引数（多引数・マクロ）", () => {
     expect(findUnsafeSupportCommands(String.raw`\import{./}{../secret}`)).toContain("import");
   });
 });
+
+describe("TeX の空白（改行・CR）を挟む回避", () => {
+  const nl = "\n";
+
+  it("コマンドと引数の間の改行・CR を読み飛ばして判定する", () => {
+    // TeX のファイル名スキャナは改行も読み飛ばすので、空白だけ飛ばすと引数が空に見える。
+    expect(findUnsafeTexCommands(`\\input${nl}/etc/hostname`)).toContain("input");
+    expect(findUnsafeTexCommands("\\input\r/etc/hostname")).toContain("input");
+    expect(findUnsafeTexCommands(`\\@@input${nl}../../../etc/hostname`)).toContain("@@input");
+  });
+
+  it("改行を挟んだ正規の読み込みは通す", () => {
+    expect(
+      findUnsafeTexCommands(`\\input{chapters/intro.tex}${nl}\\include{sec2}${nl}`),
+    ).toEqual([]);
+  });
+});
