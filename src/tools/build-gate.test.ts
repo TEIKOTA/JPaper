@@ -41,6 +41,43 @@ describe("classifyLog", () => {
     expect(c.failedSegments).toEqual([]);
     expect(c.structuralErrors).toEqual(["nips_2017.sty:42: Undefined control sequence."]);
   });
+  it("原文にも存在する未定義環境は構造起因にする（本文行でも再訳に回さない）", () => {
+    const log = "./main.tex:12: LaTeX Error: Environment frontmatter undefined.";
+    const original = "\\documentclass{elsarticle}\n\\begin{document}\n\\begin{frontmatter}\\end{frontmatter}";
+    const c = classifyLog(log, MAP, original);
+    expect(c.failedSegments).toEqual([]);
+    expect(c.structuralErrors).toEqual([
+      "main.tex:12: LaTeX Error: Environment frontmatter undefined.",
+    ]);
+  });
+  it("原文にも存在する未定義制御綴りは文脈行から名前を取り構造起因にする", () => {
+    const log = ["./main.tex:15: Undefined control sequence.", "l.15 keyword \\sep", "more"].join("\n");
+    const c = classifyLog(log, MAP, "\\begin{keyword}a \\sep b\\end{keyword}");
+    expect(c.failedSegments).toEqual([]);
+    expect(c.structuralErrors).toHaveLength(1);
+  });
+  it("訳文だけに現れるマクロ由来の未定義は翻訳起因に残す", () => {
+    const log = ["./main.tex:15: Undefined control sequence.", "l.15 X \\hallucinated", ""].join("\n");
+    const c = classifyLog(log, MAP, "\\begin{document}X\\end{document}");
+    expect(c.failedSegments).toEqual([
+      { id: "seg-0000", line: 15, message: "Undefined control sequence." },
+    ]);
+    expect(c.structuralErrors).toEqual([]);
+  });
+  it("原文の前方一致する別マクロを同名扱いしない", () => {
+    const log = ["./main.tex:15: Undefined control sequence.", "l.15 X \\sep", ""].join("\n");
+    const c = classifyLog(log, MAP, "\\separate{x}");
+    expect(c.failedSegments).toHaveLength(1);
+  });
+  it("Fatal error の追随行は直前の診断の分類を引き継ぐ", () => {
+    const log = [
+      "./main.tex:12: LaTeX Error: Environment frontmatter undefined.",
+      "./main.tex:12: ==> Fatal error occurred, no output PDF file produced!",
+    ].join("\n");
+    const c = classifyLog(log, MAP, "\\begin{frontmatter}\\end{frontmatter}");
+    expect(c.failedSegments).toEqual([]);
+    expect(c.structuralErrors).toHaveLength(2);
+  });
   it("欠図と未解決参照/引用を抽出する", () => {
     const log = [
       "LaTeX Warning: File `Figures/x.png' not found.",

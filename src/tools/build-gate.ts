@@ -38,17 +38,51 @@ const MISSING_FIG = /(?:File `([^']+)' not found|Unable to load picture or PDF f
 const UNRESOLVED = /(?:Reference|Citation) `([^']+)' (?:on page \d+ )?undefined/g;
 const SUPPORT_EXT = /\.(sty|cls|bst|bib|bbl)$/i;
 
-export function classifyLog(log: string, sourceMap: SourceSpan[]): Classification {
+const FATAL_TRAILER = /^==> Fatal error occurred/;
+const UNDEFINED_ENV = /LaTeX Error: Environment ([A-Za-z@*]+) undefined/;
+const UNDEFINED_CS = /^Undefined control sequence/;
+// エラー直後の `l.<行> <文脈>` 行の末尾に、未定義だった制御綴りが出る。
+const CONTEXT_LINE = /^l\.\d+ .*?\\([a-zA-Z@]+)\s*$/m;
+
+// 未定義エラーの原因となった名前（環境名・制御綴り）。取れなければ undefined。
+function offendingName(message: string, rest: string): string | undefined {
+  const env = UNDEFINED_ENV.exec(message);
+  if (env) return env[1];
+  if (!UNDEFINED_CS.test(message)) return undefined;
+  return CONTEXT_LINE.exec(rest.slice(0, 400))?.[1];
+}
+
+// 原文にも同名があるなら translator は関与していない＝構造・テンプレ起因（2層化 ADR 決定4）。
+function comesFromSource(name: string, originalTex: string): boolean {
+  return (
+    originalTex.includes(`\\begin{${name}}`) ||
+    new RegExp(`\\\\${name}(?![a-zA-Z])`).test(originalTex)
+  );
+}
+
+export function classifyLog(
+  log: string,
+  sourceMap: SourceSpan[],
+  originalTex = "",
+): Classification {
   const failedSegments: FailedSegment[] = [];
   const structuralErrors: string[] = [];
   const missingFigures = new Set<string>();
   const unresolvedRefs = new Set<string>();
+  let lastWasStructural = false;
 
   for (let m = ERROR_LINE.exec(log); m; m = ERROR_LINE.exec(log)) {
     const file = m[1]!;
     const line = Number(m[2]);
     const message = m[3]!.trim();
-    const id = path.basename(file) === "main.tex" ? segmentAtLine(sourceMap, line) : undefined;
+    const inSegment = path.basename(file) === "main.tex" ? segmentAtLine(sourceMap, line) : undefined;
+    const name = offendingName(message, log.slice(m.index + m[0].length));
+    // 直前の診断の追随行。独立したエラーではないので分類を引き継ぐ。
+    const structural: boolean = FATAL_TRAILER.test(message)
+      ? lastWasStructural
+      : name !== undefined && comesFromSource(name, originalTex);
+    lastWasStructural = structural || inSegment === undefined;
+    const id = structural ? undefined : inSegment;
     if (id) failedSegments.push({ id, line, message });
     else structuralErrors.push(`${file}:${line}: ${message}`);
   }
@@ -134,6 +168,7 @@ export function runBuildGate(
     mainDir: string;
     figures: string[];
     sourceMap: SourceSpan[];
+    originalTex?: string;
   },
   runner: LatexRunner = defaultRunner,
 ): BuildGateResult {
@@ -143,7 +178,7 @@ export function runBuildGate(
     figures: input.figures,
   });
   const { code, log } = runner(input.buildDir);
-  const cls = classifyLog(log, input.sourceMap);
+  const cls = classifyLog(log, input.sourceMap, input.originalTex);
   const droppedFigures = checkFigures(input.mainTex, input.mainDir, input.figures);
   const pdf = path.join(input.buildDir, "main.pdf");
   const pdfPath = existsSync(pdf) ? pdf : undefined;
