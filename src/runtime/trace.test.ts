@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { makeJsonlTrace, nullTrace } from "./trace.js";
@@ -42,5 +42,24 @@ describe("makeJsonlTrace", () => {
 describe("nullTrace", () => {
   it("何もしない（例外を投げない）", () => {
     expect(() => nullTrace(ev())).not.toThrow();
+  });
+});
+
+describe("トレースのローテーション", () => {
+  it("上限を超えたら 1 世代退避して切り替える（.run が増え続けない）", () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "jpaper-trace-"));
+    try {
+      const file = path.join(dir, "llm-trace.jsonl");
+      const sink = makeJsonlTrace(file, "run-1", 300);
+      for (let i = 0; i < 50; i++) {
+        sink({ ts: new Date().toISOString(), provider: "ollama", latencyMs: i });
+      }
+      const files = readdirSync(dir).sort();
+      expect(files).toEqual(["llm-trace.jsonl", "llm-trace.jsonl.1"]);
+      const total = files.reduce((a, f) => a + statSync(path.join(dir, f)).size, 0);
+      expect(total).toBeLessThanOrEqual(600);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

@@ -2,23 +2,38 @@
 import type { LlmClient } from "../types/contract.js";
 import { JpaperError } from "../types/errors.js";
 
+// 期限超過の目印。abort の reason に載せて、切断（499）と期限超過（504）を区別する。
+interface DeadlineReason {
+  jpaperDeadlineMs: number;
+}
+function deadlineMsOf(signal?: AbortSignal): number | undefined {
+  const r = signal?.reason as DeadlineReason | undefined;
+  return typeof r?.jpaperDeadlineMs === "number" ? r.jpaperDeadlineMs : undefined;
+}
+
 // 中断は終了コード 6。retry の対象にしない（transient を付けない）。
-export function canceledError(where: string): JpaperError {
+// 期限超過だけ kind を分ける。web が 504 と 499 を出し分けられないと、過負荷で
+// テナントが飢えた結果の期限超過が「利用者が切った」と同じに見えてしまう。
+export function canceledError(where: string, signal?: AbortSignal): JpaperError {
+  const ms = deadlineMsOf(signal);
+  if (ms !== undefined) {
+    return new JpaperError(6, "timeout", `実行が期限 ${ms}ms を超えました（${where}）`);
+  }
   return new JpaperError(6, "canceled", `実行が中断されました（${where}）`);
 }
 
 export function throwIfAborted(signal: AbortSignal | undefined, where: string): void {
-  if (signal?.aborted === true) throw canceledError(where);
+  if (signal?.aborted === true) throw canceledError(where, signal);
 }
 
 // abort を待つ Promise。fetch のように signal を直接扱えない待ち（sleep 等）と race させる。
 export function abortPromise(signal: AbortSignal, where: string): Promise<never> {
   return new Promise((_, reject) => {
     if (signal.aborted) {
-      reject(canceledError(where));
+      reject(canceledError(where, signal));
       return;
     }
-    signal.addEventListener("abort", () => reject(canceledError(where)), { once: true });
+    signal.addEventListener("abort", () => reject(canceledError(where, signal)), { once: true });
   });
 }
 
@@ -29,12 +44,12 @@ export function abortPromise(signal: AbortSignal, where: string): Promise<never>
 export function raceAbort<T>(p: Promise<T>, signal: AbortSignal, where: string): Promise<T> {
   if (signal.aborted) {
     void p.catch(() => undefined);
-    return Promise.reject(canceledError(where));
+    return Promise.reject(canceledError(where, signal));
   }
   return new Promise<T>((resolve, reject) => {
     const onAbort = (): void => {
       void p.catch(() => undefined);
-      reject(canceledError(where));
+      reject(canceledError(where, signal));
     };
     signal.addEventListener("abort", onAbort, { once: true });
     // listener を必ず外す（run が長い間、呼び出しごとに溜まると leak になる）。
@@ -75,8 +90,8 @@ export function withDeadline(signal: AbortSignal | undefined, timeoutMs?: number
   const ctl = new AbortController();
   // unref しない。ref された handle が無い実行形（キュー worker 等）で期限が黙って
   // 無効になるため。dispose で必ず clearTimeout するので run の寿命は伸びない。
-  const timer = setTimeout(() => ctl.abort(new Error(`deadline ${ms}ms`)), ms);
-  const onParent = (): void => ctl.abort();
+  const timer = setTimeout(() => ctl.abort({ jpaperDeadlineMs: ms } as DeadlineReason), ms);
+  const onParent = (): void => ctl.abort(signal?.reason);
   signal?.addEventListener("abort", onParent, { once: true });
   return {
     signal: ctl.signal,

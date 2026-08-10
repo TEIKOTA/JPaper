@@ -112,7 +112,9 @@ describe("translatePaper の期限", () => {
       { client: deaf, db: new GlossaryDb() },
     );
     expect(r.exitCode).toBe(6);
-    expect(r.error?.kind).toBe("canceled");
+    // 期限超過は切断と区別する（web が 504 と 499 を出し分けられるように）。
+    expect(r.error?.kind).toBe("timeout");
+    expect(r.error?.message).toContain("期限");
   });
 });
 
@@ -156,5 +158,40 @@ describe("枠を握った run が中断されない場合", () => {
     await first;
     expect(gate.active()).toBe(0);
     expect(gate.waiting()).toBe(0);
+  });
+});
+
+describe("期限超過と切断の区別", () => {
+  it("呼び出し側の abort は canceled、期限超過は timeout", async () => {
+    const { withDeadline, throwIfAborted } = await import("../runtime/cancellation.js");
+    const c = new AbortController();
+    c.abort();
+    expect(() => throwIfAborted(c.signal, "x")).toThrowError(/中断/);
+
+    const d = withDeadline(undefined, 5);
+    await new Promise((r) => setTimeout(r, 30));
+    let err: unknown;
+    try {
+      throwIfAborted(d.signal, "x");
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toMatchObject({ kind: "timeout", code: 6 });
+    d.dispose();
+  });
+
+  it("親の中断は期限超過に化けない", async () => {
+    const { withDeadline, throwIfAborted } = await import("../runtime/cancellation.js");
+    const c = new AbortController();
+    const d = withDeadline(c.signal, 10_000);
+    c.abort();
+    let err: unknown;
+    try {
+      throwIfAborted(d.signal, "x");
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toMatchObject({ kind: "canceled" });
+    d.dispose();
   });
 });

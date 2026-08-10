@@ -53,15 +53,19 @@ export function makeGate(limit: number, maxQueue = resolveMaxLlmQueue()): Gate {
     async run<T>(fn: () => Promise<T>, signal?: AbortSignal): Promise<T> {
       // 起床後に必ず再検査する。release の running-- と待機者の再開（microtask）の間に
       // 新規呼び出しが枠を横取りすると、再検査しなければ待機者が上乗せして上限を破る。
+      let entered = false;
       while (running >= max) {
         throwIfAborted(signal, "LLM 同時実行の待機");
-        if (queue.length >= queueCap) {
+        // 上限は新規入場にだけ掛ける。既に並んでいた待機者が起床時の再検査で busy に
+        // なると、待たされた挙げ句に拒否されることになる。
+        if (!entered && queue.length >= queueCap) {
           throw new JpaperError(
             2,
             "busy",
             `LLM 呼び出しの待ち行列が上限 ${queueCap} に達しています。時間をおいて再試行してください`,
           );
         }
+        entered = true;
         await new Promise<void>((resolve, reject) => {
           const waiter: Waiter = { wake: () => { cleanup(); resolve(); }, canceled: false };
           // 待機中も中断が効く。効かないと、枠を握った run が期限を持たない場合に
@@ -73,7 +77,7 @@ export function makeGate(limit: number, maxQueue = resolveMaxLlmQueue()): Gate {
             const at = queue.indexOf(waiter);
             if (at !== -1) queue.splice(at, 1);
             cleanup();
-            reject(canceledError("LLM 同時実行の待機"));
+            reject(canceledError("LLM 同時実行の待機", signal));
             // 自分の順番が回ってきていたぶんを次へ譲る。
             if (running < max) wakeNext();
           };

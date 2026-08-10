@@ -165,6 +165,7 @@ export const ErrorKind = z.enum([
   "quality",
   "typeset",
   "canceled",
+  "timeout",
   "busy",
   "upstream",
   "infra",

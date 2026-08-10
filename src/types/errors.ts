@@ -16,6 +16,7 @@ export type ErrorKind =
   | "quality"
   | "typeset"
   | "canceled"
+  | "timeout"
   | "busy"
   | "upstream"
   | "infra"

@@ -181,3 +181,23 @@ describe("中断済み待機者の掃除", () => {
     void next;
   });
 });
+
+describe("待ち行列の再入場", () => {
+  it("既に並んでいた待機者は起床時の再検査で busy にならない", async () => {
+    const gate = makeGate(1, 1);
+    const held = gate.run(() => new Promise<void>(() => undefined));
+    await Promise.resolve();
+
+    // 1 本目の待機者（定員 1 なのでこれで満杯）。
+    const waiting = gate.run(async () => "ok");
+    await Promise.resolve();
+    expect(gate.waiting()).toBe(1);
+
+    // 新規入場は busy。待っている側は待ち続ける（拒否されない）。
+    await expect(gate.run(async () => "new")).rejects.toMatchObject({ kind: "busy" });
+    await Promise.resolve();
+    expect(gate.waiting()).toBe(1);
+    void held;
+    void waiting;
+  });
+});
