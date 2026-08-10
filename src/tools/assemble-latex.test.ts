@@ -6,7 +6,8 @@ import {
   extractPreamble,
   neutralizePreamble,
   injectShared,
-  extractCommand,
+  prependLuatexCompat,
+  stripDocumentClass,
   sanitizeMath,
 } from "./assemble-latex.js";
 
@@ -57,19 +58,6 @@ describe("injectShared", () => {
     expect(injectShared("\\documentclass{article}")).toContain("\\usepackage{graphicx}");
     const withGx = injectShared("\\documentclass{article}\n\\usepackage{graphicx}");
     expect(withGx.match(/\\usepackage\{graphicx\}/g)!.length).toBe(1);
-  });
-});
-
-describe("extractCommand", () => {
-  it("入れ子の波括弧を含む \\author を丸ごと取り出す", () => {
-    const pre = extractPreamble(CLEAN);
-    expect(extractCommand(pre, "author")).toBe(
-      "\\author{Ashish Vaswani\\thanks{x} \\And Noam Shazeer}",
-    );
-    expect(extractCommand(pre, "title")).toBe("\\title{Attention Is All You Need}");
-  });
-  it("無ければ undefined", () => {
-    expect(extractCommand("\\documentclass{article}", "title")).toBeUndefined();
   });
 });
 
@@ -155,5 +143,65 @@ describe("assembleLatex: template フォールバック", () => {
     expect(r.mainTex).toContain("\\title{Attention Is All You Need}");
     expect(r.mainTex).toContain("\\author{Ashish Vaswani");
     expect(r.mainTex).toContain("\\maketitle X");
+  });
+});
+
+describe("prependLuatexCompat", () => {
+  it("luatex85 を \\documentclass より前に置く", () => {
+    const out = prependLuatexCompat("\\documentclass{elsarticle}\n\\pdfoutput=1\n");
+    expect(out.indexOf("luatex85")).toBeLessThan(out.indexOf("\\documentclass"));
+  });
+  it("既に luatex85 があれば二重に入れない", () => {
+    const src = "\\RequirePackage{luatex85}\n\\documentclass{article}";
+    expect(prependLuatexCompat(src)).toBe(src);
+  });
+});
+
+describe("stripDocumentClass", () => {
+  it("オプション付き \\documentclass だけを落とし他は残す", () => {
+    const out = stripDocumentClass("\\documentclass[3p]{elsarticle}\n\\usepackage{threeparttable}\n");
+    expect(out).not.toContain("documentclass");
+    expect(out).toContain("\\usepackage{threeparttable}");
+  });
+});
+
+describe("assembleLatex: original モードの LuaTeX 互換", () => {
+  it("pdfTeX プリミティブを含む前文には luatex85 を先頭に足す", () => {
+    const src = "\\documentclass[3p]{elsarticle}\n\\pdfoutput=1\n\\begin{document}\nX\n\\end{document}";
+    const r = assembleLatex({ cleanLatex: src, chapters: ["X"] });
+    expect(r.layout).toBe("original");
+    expect(r.mainTex.indexOf("\\RequirePackage{luatex85}")).toBe(0);
+    expect(r.mainTex).toContain("\\pdfoutput=1");
+  });
+});
+
+describe("assembleLatex: template は原前文を吸収する", () => {
+  const ELS = [
+    "\\documentclass[3p]{elsarticle}",
+    "\\usepackage{threeparttable}",
+    "\\newcommand{\\rood}{ROOD-MRI}",
+    "\\begin{document}",
+    "\\begin{frontmatter}\\title{T}\\end{frontmatter}",
+    "\\end{document}",
+  ].join("\n");
+
+  it("原 class は article へ差し替え、パッケージとユーザー定義マクロは引き継ぐ", () => {
+    const r = assembleLatex({ cleanLatex: ELS, chapters: ["X"], mode: "template" });
+    expect(r.mainTex).toContain("\\documentclass[a4paper]{article}");
+    expect(r.mainTex).not.toContain("{elsarticle}");
+    expect(r.mainTex).toContain("\\usepackage{threeparttable}");
+    expect(r.mainTex).toContain("\\newcommand{\\rood}{ROOD-MRI}");
+  });
+
+  it("class 固有マークアップ（frontmatter/keyword/\\sep/\\biboptions）の shim を持つ", () => {
+    const r = assembleLatex({ cleanLatex: ELS, chapters: ["X"], mode: "template" });
+    for (const shim of ["frontmatter", "keyword", "\\sep", "\\biboptions", "IEEEkeywords", "CCSXML"]) {
+      expect(r.mainTex).toContain(shim);
+    }
+  });
+
+  it("shim は原前文より前に置き、原前文中の class 固有コマンド呼び出しを成立させる", () => {
+    const r = assembleLatex({ cleanLatex: ELS, chapters: ["X"], mode: "template" });
+    expect(r.mainTex.indexOf("jpaper@env")).toBeLessThan(r.mainTex.indexOf("threeparttable"));
   });
 });
