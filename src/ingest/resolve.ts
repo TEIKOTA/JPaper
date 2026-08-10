@@ -53,13 +53,31 @@ const MAX_FIGURE_LOOKUPS = 200_000;
 
 // 重複を落とし、実在するディレクトリだけに絞る。同じ綴りを並べるだけの入力を畳み、
 // 存在しないディレクトリへの探索（1 参照あたり拡張子ぶん）を最初に消す。
-function usableBases(baseDir: string, bases: string[]): string[] {
+function usableBases(
+  baseDir: string,
+  bases: string[],
+  budget: { lookups: number },
+): string[] {
   const seen = new Set<string>();
   const out: string[] = [];
   for (const base of bases) {
     if (seen.has(base)) continue;
     seen.add(base);
-    if (base === "" || existsSync(path.resolve(baseDir, base))) out.push(base);
+    if (base === "") {
+      out.push("");
+      continue;
+    }
+    // ここも予算に計上する。ディレクトリ数は 64 で抑えたが、宣言そのものは
+    // maxLatexBytes まで並べられるので、計上しないと 8MiB の入力で existsSync が
+    // 92 万回走る（実測 1,081ms、10ms タイマーの発火 0）。
+    if (--budget.lookups < 0) {
+      throw new JpaperError(
+        2,
+        "too-large",
+        `図の解決が上限 ${MAX_FIGURE_LOOKUPS} 回を超えています`,
+      );
+    }
+    if (existsSync(path.resolve(baseDir, base))) out.push(base);
   }
   if (out.length > MAX_GRAPHICS_PATHS) {
     throw new JpaperError(
@@ -120,6 +138,7 @@ export function collectFigures(
       bases = usableBases(
         baseDir,
         ["", ...[...m[1].matchAll(/\{([^}]*)\}/g)].map((g) => g[1] ?? "")],
+        budget,
       );
       continue;
     }

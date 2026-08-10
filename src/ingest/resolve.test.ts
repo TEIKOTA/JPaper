@@ -127,6 +127,16 @@ describe("図の解決コストの上限", () => {
     expect(Date.now() - started).toBeLessThan(1000);
   });
 
+  it("\\graphicspath の宣言数も予算に計上する", () => {
+    // ディレクトリ数は 64 で抑えたが、宣言そのものは maxLatexBytes まで並べられる。
+    // 計上していなかった頃は 8MiB の入力で existsSync が 92 万回走り 1,081ms 止まった。
+    const d = tmp(["fig.png"]);
+    const decl = `\\graphicspath{${Array.from({ length: 63 }, (_, i) => `{gdir${String(i)}/}`).join("")}}`;
+    const started = Date.now();
+    expect(() => collectFigures(decl.repeat(5000), d)).toThrowError(/上限/);
+    expect(Date.now() - started).toBeLessThan(2000);
+  });
+
   it("実在するディレクトリが多すぎたら too-large", () => {
     const dirs = Array.from({ length: 70 }, (_, i) => `d${String(i)}/keep.png`);
     const d = tmp(dirs);
