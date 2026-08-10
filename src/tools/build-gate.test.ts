@@ -2,7 +2,14 @@ import { describe, it, expect, afterEach } from "vitest";
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync, existsSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { classifyLog, stageBuild, runBuildGate, checkFigures } from "./build-gate.js";
+import {
+  classifyLog,
+  stageBuild,
+  runBuildGate,
+  checkFigures,
+  sandboxEnv,
+  SRC_PKG_DIR,
+} from "./build-gate.js";
 import type { SourceSpan } from "./assemble-latex.js";
 
 const MAP: SourceSpan[] = [
@@ -101,7 +108,7 @@ describe("checkFigures", () => {
 });
 
 describe("stageBuild", () => {
-  it("main.tex・支援ファイル(.sty/.bib はフラット・再帰)・図(main 相対)を複製する", () => {
+  it("main.tex・支援ファイル(.sty/.bib は srcpkg/ へ再帰収集)・図(main 相対)を複製する", () => {
     const src = mkTemp();
     writeFileSync(path.join(src, "nips.sty"), "% sty");
     writeFileSync(path.join(src, "refs.bib"), "@x{}");
@@ -111,17 +118,58 @@ describe("stageBuild", () => {
     mkdirSync(path.join(src, "Figures"));
     writeFileSync(path.join(src, "Figures", "a.png"), "PNG");
     const build = path.join(mkTemp(), "b");
-    stageBuild(build, "MAIN", {
-      sourceDir: src,
-      mainDir: src,
-      figures: [path.join(src, "Figures", "a.png")],
-    });
+    stageBuild(
+      build,
+      "MAIN",
+      { sourceDir: src, mainDir: src, figures: [path.join(src, "Figures", "a.png")] },
+      () => false,
+    );
+    const pkg = path.join(build, SRC_PKG_DIR);
     expect(existsSync(path.join(build, "main.tex"))).toBe(true);
-    expect(existsSync(path.join(build, "nips.sty"))).toBe(true);
-    expect(existsSync(path.join(build, "refs.bib"))).toBe(true);
-    expect(existsSync(path.join(build, "extra.cls"))).toBe(true); // 再帰・フラット
+    expect(existsSync(path.join(pkg, "nips.sty"))).toBe(true);
+    expect(existsSync(path.join(pkg, "refs.bib"))).toBe(true);
+    expect(existsSync(path.join(pkg, "extra.cls"))).toBe(true); // 再帰
     expect(existsSync(path.join(build, "Figures", "a.png"))).toBe(true);
-    expect(readdirSync(build)).not.toContain("notes.txt");
+    expect(readdirSync(pkg)).not.toContain("notes.txt");
+  });
+  it("同梱パッケージは build 直下に置かない（cwd 優先で配布版を上書きさせない）", () => {
+    const src = mkTemp();
+    writeFileSync(path.join(src, "graphicx.sty"), "% EVIL");
+    const build = path.join(mkTemp(), "b");
+    stageBuild(build, "MAIN", { sourceDir: src, mainDir: src, figures: [] }, () => false);
+    expect(existsSync(path.join(build, "graphicx.sty"))).toBe(false);
+    expect(existsSync(path.join(build, SRC_PKG_DIR, "graphicx.sty"))).toBe(true);
+  });
+  it("配布パッケージと同名の同梱ファイルを shadowed として返す", () => {
+    const src = mkTemp();
+    writeFileSync(path.join(src, "graphicx.sty"), "% EVIL");
+    writeFileSync(path.join(src, "mypaper.sty"), "% own");
+    const build = path.join(mkTemp(), "b");
+    const shadowed = stageBuild(
+      build,
+      "MAIN",
+      { sourceDir: src, mainDir: src, figures: [] },
+      (name) => name === "graphicx.sty",
+    );
+    expect(shadowed).toEqual(["graphicx.sty"]);
+  });
+});
+
+describe("sandboxEnv", () => {
+  it("探索パスは既定を先頭に置き、同梱 srcpkg を後ろへ回す", () => {
+    const env = sandboxEnv({}, "/b");
+    for (const key of ["TEXINPUTS", "BIBINPUTS", "BSTINPUTS"] as const) {
+      expect(env[key]).toBe(`:${path.join("/b", SRC_PKG_DIR)}//`);
+      expect(env[key]!.startsWith(":")).toBe(true); // 先頭の空要素＝既定パス
+    }
+  });
+  it("shell escape と build ツリー外への書き出しを禁止する", () => {
+    const env = sandboxEnv({}, "/b");
+    expect(env.shell_escape).toBe("f");
+    expect(env.openout_any).toBe("p");
+  });
+  it("既存の環境変数は保つ", () => {
+    expect(sandboxEnv({ PATH: "/usr/bin" }, "/b").PATH).toBe("/usr/bin");
   });
   it("入れ子 main の図は main 相対で配置する（sourceDir 相対にしない）", () => {
     const src = mkTemp();

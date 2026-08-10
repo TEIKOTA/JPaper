@@ -193,6 +193,8 @@ function summarizeGateFailure(g: BuildGateResult): string {
   if (g.missingFigures.length) parts.push(`欠図: ${g.missingFigures.join(", ")}`);
   if (g.droppedFigures.length) parts.push(`図欠落: ${g.droppedFigures.join(", ")}`);
   if (g.unresolvedRefs.length) parts.push(`未解決参照: ${g.unresolvedRefs.slice(0, 5).join(", ")}`);
+  if (g.shadowedPackages.length)
+    parts.push(`同梱パッケージを無効化: ${g.shadowedPackages.join(", ")}`);
   return parts.join(" | ") || "不明なビルド失敗";
 }
 
@@ -220,8 +222,14 @@ function typeset(
       runner,
     );
   };
+  // 成否に関わらず、無効化した同梱パッケージは体裁差の原因になるので surface する。
+  const noteShadowed = (g: BuildGateResult): void => {
+    if (g.shadowedPackages.length)
+      surface(`配布版を優先し同梱パッケージを無効化: ${g.shadowedPackages.join(", ")}`);
+  };
   // pdfPath は buildOk のときだけ返す（ゲート棄却済みの成果物を成功として渡さない）。
   const orig = run("original");
+  noteShadowed(orig);
   if (orig.buildOk) return { layout: "original", buildOk: true, pdfPath: orig.pdfPath, exitCode: 0 };
   if (orig.failedSegments.length > 0) {
     // 翻訳起因のビルド失敗。再訳ループ(WP10)未実装のため明示的失敗として surface する。

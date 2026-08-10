@@ -19,6 +19,8 @@ export interface BuildGateResult extends Classification {
   buildOk: boolean;
   pdfPath?: string;
   droppedFigures: string[];
+  // 配布パッケージと同名の同梱ファイル。探索順で無効化済みだが、体裁が変わり得るので surface する。
+  shadowedPackages: string[];
 }
 
 export interface RunResult {
@@ -121,13 +123,42 @@ function collectSupportFiles(dir: string, acc: string[] = []): string[] {
   return acc;
 }
 
-// build dir に main.tex＋支援ファイル(.sty/.cls/.bst/.bib/.bbl は基底名でフラット)＋図(main 相対で配置)を置く。
-export function stageBuild(buildDir: string, mainTex: string, opts: StageInput): void {
+// 論文同梱の支援ファイルは配布パッケージより後に探索させる。cwd 直下に置くと同名で配布版を上書きできる。
+export const SRC_PKG_DIR = "srcpkg";
+
+// 配布パッケージと同名かは kpsewhich に問う。解決できない環境では検出なし（防御は探索順で既に効いている）。
+export type PackageResolver = (name: string) => boolean;
+
+const defaultResolver: PackageResolver = (name) => {
+  try {
+    const out = execFileSync("kpsewhich", [name], {
+      encoding: "utf8",
+      timeout: 10_000,
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    return out.trim() !== "";
+  } catch {
+    return false;
+  }
+};
+
+// build dir に main.tex＋支援ファイル(.sty/.cls/.bst/.bib/.bbl は srcpkg/ へ基底名で)＋図(main 相対で配置)を置く。
+export function stageBuild(
+  buildDir: string,
+  mainTex: string,
+  opts: StageInput,
+  resolver: PackageResolver = defaultResolver,
+): string[] {
   rmSync(buildDir, { recursive: true, force: true });
   mkdirSync(buildDir, { recursive: true });
   writeFileSync(path.join(buildDir, "main.tex"), mainTex);
+  const pkgDir = path.join(buildDir, SRC_PKG_DIR);
+  mkdirSync(pkgDir, { recursive: true });
+  const shadowed: string[] = [];
   for (const sty of collectSupportFiles(opts.sourceDir)) {
-    cpSync(sty, path.join(buildDir, path.basename(sty)));
+    const base = path.basename(sty);
+    cpSync(sty, path.join(pkgDir, base));
+    if (resolver(base)) shadowed.push(base);
   }
   for (const fig of opts.figures) {
     const abs = path.isAbsolute(fig) ? fig : path.join(opts.mainDir, fig);
@@ -138,6 +169,21 @@ export function stageBuild(buildDir: string, mainTex: string, opts: StageInput):
     mkdirSync(path.dirname(dest), { recursive: true });
     cpSync(abs, dest);
   }
+  return shadowed;
+}
+
+// kpathsea 変数は環境変数で上書きできる。texmf.cnf の緩い設定に依存せず build ツリーへ閉じ込める。
+export function sandboxEnv(base: NodeJS.ProcessEnv, buildDir: string): NodeJS.ProcessEnv {
+  const pkg = `${path.join(buildDir, SRC_PKG_DIR)}//`;
+  return {
+    ...base,
+    // 先頭の空要素で既定パスを前に置く＝同名なら配布パッケージが勝つ。
+    TEXINPUTS: `:${pkg}`,
+    BIBINPUTS: `:${pkg}`,
+    BSTINPUTS: `:${pkg}`,
+    openout_any: "p",
+    shell_escape: "f",
+  };
 }
 
 function readLog(buildDir: string): string {
@@ -151,8 +197,21 @@ const defaultRunner: LatexRunner = (buildDir) => {
   try {
     execFileSync(
       "latexmk",
-      ["-lualatex", "-interaction=nonstopmode", "-halt-on-error", "-file-line-error", "main.tex"],
-      { cwd: buildDir, encoding: "utf8", timeout: 300_000, stdio: ["ignore", "pipe", "pipe"] },
+      [
+        "-lualatex",
+        "-no-shell-escape",
+        "-interaction=nonstopmode",
+        "-halt-on-error",
+        "-file-line-error",
+        "main.tex",
+      ],
+      {
+        cwd: buildDir,
+        encoding: "utf8",
+        timeout: 300_000,
+        stdio: ["ignore", "pipe", "pipe"],
+        env: sandboxEnv(process.env, buildDir),
+      },
     );
     return { code: 0, log: readLog(buildDir) };
   } catch (e) {
@@ -172,7 +231,7 @@ export function runBuildGate(
   },
   runner: LatexRunner = defaultRunner,
 ): BuildGateResult {
-  stageBuild(input.buildDir, input.mainTex, {
+  const shadowedPackages = stageBuild(input.buildDir, input.mainTex, {
     sourceDir: input.sourceDir,
     mainDir: input.mainDir,
     figures: input.figures,
@@ -189,5 +248,5 @@ export function runBuildGate(
     cls.unresolvedRefs.length === 0 &&
     cls.missingFigures.length === 0 &&
     droppedFigures.length === 0;
-  return { buildOk, pdfPath, droppedFigures, ...cls };
+  return { buildOk, pdfPath, droppedFigures, shadowedPackages, ...cls };
 }
