@@ -44,7 +44,12 @@ import { acquireRunLock, type RunLock } from "../durable/run-lock.js";
 import { throwIfAborted, withSignal } from "../runtime/cancellation.js";
 import { llmGate, withGate, type Gate } from "../runtime/concurrency.js";
 import { assembleWithMap, type Layout } from "../tools/assemble-latex.js";
-import { runBuildGate, type LatexRunner, type BuildGateResult } from "../tools/build-gate.js";
+import {
+  runBuildGate,
+  unsafeSupportFiles,
+  type LatexRunner,
+  type BuildGateResult,
+} from "../tools/build-gate.js";
 import { injectFootnotes, renderBackmatter } from "../tools/render-notes.js";
 import { findUnsafeTexCommands } from "../tools/tex-safety.js";
 
@@ -398,11 +403,18 @@ export async function translatePaper(
     // プリアンブルは翻訳対象ではなく verbatim に持ち越されるため、節ループの品質ゲートでは
     // 検査されない。LLM を呼ぶ前にここで弾く（悪意ある論文にコストを払わない）。組版安全 ADR。
     const unsafe = findUnsafeTexCommands(ingested.cleanLatex);
-    if (unsafe.length > 0) {
+    // 同梱の .sty/.cls は \usepackage 経由で読み込まれ、cleanLatex には現れない。
+    // 配布版に無い名前は shadow されずそのまま実行されるので、ここで別に検査する。
+    const unsafeSupport = unsafeSupportFiles(ingested.sourceDir);
+    if (unsafe.length > 0 || unsafeSupport.length > 0) {
+      const detail = [
+        ...unsafe.map((c) => `main.tex: \\${c}`),
+        ...unsafeSupport.map((u) => `${u.file}: ${u.commands.map((c) => `\\${c}`).join(", ")}`),
+      ];
       throw new JpaperError(
         2,
         "input",
-        `論文が組版時にファイル読み書き・Lua 実行を行うコマンドを含んでいます: ${unsafe.map((c) => `\\${c}`).join(", ")}`,
+        `論文が組版時にファイル読み書き・Lua 実行を行うコマンドを含んでいます: ${detail.join(" / ")}`,
       );
     }
 

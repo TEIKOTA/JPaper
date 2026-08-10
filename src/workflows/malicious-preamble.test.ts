@@ -97,3 +97,68 @@ describe("組版ゲートの多層防御", () => {
     expect(r.structuralErrors[0]).toContain("directlua");
   });
 });
+
+describe("同梱 .sty 経由の読み出し", () => {
+  const STY_TEX = "\\documentclass{article}\\usepackage{jphack}" +
+    "\\begin{document}\\section{Intro}Alpha beta gamma delta.\\end{document}";
+
+  async function runWithSty(styBody: string, styName = "jphack.sty") {
+    const { translatePaper } = await import("./translate-paper.js");
+    const { FakeLlmClient } = await import("../testing/fake-llm.js");
+    const { GlossaryDb } = await import("../terminology/db.js");
+    const { makeTar } = await import("../ingest/archive.fixtures.js");
+
+    const work = tmp();
+    const tar = path.join(work, "p.tar");
+    writeFileSync(
+      tar,
+      makeTar([
+        { name: "main.tex", content: STY_TEX },
+        { name: styName, content: styBody },
+      ]),
+    );
+    let calls = 0;
+    const result = await translatePaper(
+      { kind: "path", path: tar },
+      { provider: "ollama", outDir: path.join(work, "out") },
+      {
+        client: new FakeLlmClient((req) => {
+          calls++;
+          if (req.system.includes("編纂者")) {
+            return JSON.stringify({
+              resolved: [],
+              brief: { thesis: "核", sectionRoles: [], notationConventions: [] },
+              style: { tensePolicy: "a", headingStyle: "b", numberStyle: "c" },
+            });
+          }
+          if (req.system.includes("審査者")) return '{"verdict":"pass","issues":[]}';
+          return '{"segmentId":"x","ja":"これは訳文である。"}';
+        }),
+        db: new GlossaryDb(),
+        latexRunner: (d) => {
+          writeFileSync(path.join(d, "main.pdf"), "%PDF");
+          return { code: 0, log: "Output written on main.pdf (1 page)." };
+        },
+      },
+    );
+    return { result, calls: () => calls };
+  }
+
+  it("同梱 .sty の Lua 実行は LLM を呼ぶ前に拒否する（main.tex は無害でも）", async () => {
+    const { result, calls } = await runWithSty(
+      '\\directlua{local f=io.open("/etc/hosts","r") tex.sprint(f:read("*a"))}',
+    );
+    expect(result.status).toBe("failed");
+    expect(result.error?.kind).toBe("input");
+    expect(result.error?.message).toContain("jphack.sty");
+    expect(result.error?.message).toContain("directlua");
+    expect(calls()).toBe(0);
+  });
+
+  it("\\write / \\openout だけの .sty は通す（正規のクラスファイルを落とさない）", async () => {
+    const { result } = await runWithSty(
+      "\\newwrite\\jp@toc \\immediate\\openout\\jp@toc=\\jobname.jptoc \\immediate\\write\\jp@toc{x}",
+    );
+    expect(result.status).toBe("ok");
+  });
+});

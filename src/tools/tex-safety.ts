@@ -43,21 +43,54 @@ export const READ_EXEC_COMMANDS = [
   "pdfshellescape",
 ] as const;
 
+// 論文が同梱する .sty/.cls 向けの狭い denylist。任意読み出しと Lua 実行だけを見る。
+// \write / \openout は正規のクラスファイル（elsarticle・IEEEtran・llncs 等）が日常的に使い、
+// 書き込み先は openout_any=p で build ツリーに閉じ込め済みなので含めない。
+export const SUPPORT_READ_EXEC_COMMANDS = [
+  "directlua",
+  "latelua",
+  "luadirect",
+  "luaexec",
+  "luaescapestring",
+  "openin",
+  "read",
+  "readline",
+] as const;
+
 const DENY = new Set<string>(READ_EXEC_COMMANDS);
+const SUPPORT_DENY = new Set<string>(SUPPORT_READ_EXEC_COMMANDS);
 
 // \csname openin\endcsname のように綴りを組み立てる回避も拾う。
-function csnameBodies(tex: string): string[] {
-  return [...tex.matchAll(/\\csname([^\\]*?)\\endcsname/g)].map((m) => m[1]!.trim());
+// TeX の \lowercase は文字トークンだけを畳むので、\lowercase{\csname OPENIN\endcsname} は
+// 実行時に \openin になる。本文は大小文字を畳んで照合する（実証済みの回避経路）。
+function csnameNames(tex: string): string[] {
+  const names: string[] = [];
+  for (const m of tex.matchAll(/\\csname([^\\]*?)\\endcsname/g)) {
+    const body = m[1]!.toLowerCase();
+    names.push(body.replace(/\s+/g, ""));
+    for (const token of body.split(/[^a-z@]+/)) if (token !== "") names.push(token);
+  }
+  return names;
+}
+
+function scan(tex: string, deny: ReadonlySet<string>): string[] {
+  const src = stripTexComments(decodeCarets(tex));
+  const hits: string[] = [];
+  const add = (name: string): void => {
+    if (deny.has(name) && !hits.includes(name)) hits.push(name);
+  };
+  // 制御綴りは大小文字を区別する（\OPENIN は \openin ではない）ので、そのまま照合する。
+  for (const m of src.matchAll(/\\([a-zA-Z]+)/g)) add(m[1]!);
+  for (const name of csnameNames(src)) add(name);
+  return hits;
 }
 
 // 検出したコマンド名（重複なし・入力順）。空配列なら検査通過。
 export function findUnsafeTexCommands(tex: string): string[] {
-  const src = stripTexComments(decodeCarets(tex));
-  const hits: string[] = [];
-  const add = (name: string): void => {
-    if (DENY.has(name) && !hits.includes(name)) hits.push(name);
-  };
-  for (const m of src.matchAll(/\\([a-zA-Z]+)/g)) add(m[1]!);
-  for (const body of csnameBodies(src)) add(body);
-  return hits;
+  return scan(tex, DENY);
+}
+
+// 同梱支援ファイル用。誤検知で正規の論文を落とさないよう対象を絞る。
+export function findUnsafeSupportCommands(tex: string): string[] {
+  return scan(tex, SUPPORT_DENY);
 }

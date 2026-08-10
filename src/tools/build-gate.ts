@@ -4,7 +4,7 @@ import path from "node:path";
 import { execFileSync, spawn } from "node:child_process";
 import { segmentAtLine, type SourceSpan } from "./assemble-latex.js";
 import { throwIfAborted } from "../runtime/cancellation.js";
-import { findUnsafeTexCommands } from "./tex-safety.js";
+import { findUnsafeTexCommands, findUnsafeSupportCommands } from "./tex-safety.js";
 
 export interface FailedSegment {
   id: string;
@@ -151,6 +151,29 @@ const defaultResolver: PackageResolver = (names) => {
   }
 };
 
+export interface UnsafeSupportFile {
+  file: string;
+  commands: string[];
+}
+
+// 同梱の .sty/.cls 等のうち「実際に読み込まれるもの」を検査する。
+// 配布版と同名のものは探索順で無効化されるので対象外（そちらを検査すると、論文が
+// elsarticle.cls などを同梱しているだけで落ちる）。
+export function unsafeSupportFiles(
+  sourceDir: string,
+  resolver: PackageResolver = defaultResolver,
+): UnsafeSupportFile[] {
+  const files = collectSupportFiles(sourceDir);
+  const distributed = resolver(files.map((f) => path.basename(f)));
+  const bad: UnsafeSupportFile[] = [];
+  for (const f of files) {
+    if (distributed.has(path.basename(f))) continue;
+    const commands = findUnsafeSupportCommands(readFileSync(f, "utf8"));
+    if (commands.length > 0) bad.push({ file: path.relative(sourceDir, f), commands });
+  }
+  return bad;
+}
+
 // build dir に main.tex＋支援ファイル(.sty/.cls/.bst/.bib/.bbl は srcpkg/ へ基底名で)＋図(main 相対で配置)を置く。
 export function stageBuild(
   buildDir: string,
@@ -273,21 +296,27 @@ export async function runBuildGate(
     sourceMap: SourceSpan[];
     originalTex?: string;
     signal?: AbortSignal;
+    resolver?: PackageResolver;
   },
   runner: LatexRunner = defaultRunner,
 ): Promise<BuildGateResult> {
   throwIfAborted(input.signal, "組版前");
   // 多層防御。ingest 段で弾いているが、組立後の main.tex も latexmk へ渡す前に検査する。
   // kpathsea の openin_any=p は luaotfload のフォント読み込みごと壊すため使えない（実測）。
+  const unsafeSupport = unsafeSupportFiles(input.sourceDir, input.resolver);
   const unsafe = findUnsafeTexCommands(input.mainTex);
-  if (unsafe.length > 0) {
+  if (unsafe.length > 0 || unsafeSupport.length > 0) {
+    const detail = [
+      ...unsafe.map((c) => `main.tex: \\${c}`),
+      ...unsafeSupport.map((u) => `${u.file}: ${u.commands.map((c) => `\\${c}`).join(", ")}`),
+    ];
     return {
       buildOk: false,
       droppedFigures: [],
       shadowedPackages: [],
       failedSegments: [],
       structuralErrors: [
-        `組版時にファイル読み書き・Lua 実行を行うコマンドを含むため実行しません: ${unsafe.map((c) => `\\${c}`).join(", ")}`,
+        `組版時にファイル読み書き・Lua 実行を行うコマンドを含むため実行しません: ${detail.join(" / ")}`,
       ],
       missingFigures: [],
       unresolvedRefs: [],
