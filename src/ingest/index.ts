@@ -38,6 +38,8 @@ export function derivePaperId(input: JpaperInput): string {
 interface Materialized {
   sourceDir: string;
   mainRel?: string;
+  // 展開経路（Budget が累積を見る）以外は、ingest 側で本文サイズを判定する必要がある。
+  limited?: boolean;
 }
 
 function extractInto(bytes: Buffer, workDir: string, limits: IngestLimits): string {
@@ -56,7 +58,17 @@ async function materialize(
   if (input.kind === "path") {
     let bytes: Buffer;
     try {
-      if (statSync(input.path).isDirectory()) return { sourceDir: input.path };
+      const st = statSync(input.path);
+      if (st.isDirectory()) return { sourceDir: input.path, limited: true };
+      // アーカイブ以外の入力にも上限を掛ける。web で最も普通の形（アップロード済み
+      // ファイルのパス）が無検査だと、プラン別に締めても素通りする。
+      if (st.size > limits.maxArchiveBytes) {
+        throw new JpaperError(
+          2,
+          "too-large",
+          `入力が上限 ${limits.maxArchiveBytes} バイトを超えています`,
+        );
+      }
       bytes = readFileSync(input.path);
     } catch (e) {
       if (e instanceof JpaperError) throw e;
@@ -67,7 +79,7 @@ async function materialize(
         throw new JpaperError(2, "input", `未対応の入力形態です: ${input.path}`);
       }
       const abs = path.resolve(input.path);
-      return { sourceDir: path.dirname(abs), mainRel: path.basename(abs) };
+      return { sourceDir: path.dirname(abs), mainRel: path.basename(abs), limited: true };
     }
     return { sourceDir: extractInto(bytes, workDir, limits) };
   }
@@ -80,9 +92,19 @@ export async function ingest(
   workDir: string,
   deps: IngestDeps = {},
 ): Promise<Ingested> {
-  const { sourceDir, mainRel } = await materialize(input, workDir, deps);
+  const limits = deps.limits ?? DEFAULT_LIMITS;
+  const { sourceDir, mainRel, limited } = await materialize(input, workDir, deps);
   const main = mainRel ?? detectMainTex(sourceDir);
   const cleanLatex = expandInputs(sourceDir, main);
+  // 展開経路（アーカイブ）は Budget が累積を見ているが、素の .tex とディレクトリは
+  // ここが唯一の関門。checkpoint へ書く前に判定する（拒否した入力にディスクを使わない）。
+  if (limited === true && Buffer.byteLength(cleanLatex) > limits.maxTotalBytes) {
+    throw new JpaperError(
+      2,
+      "too-large",
+      `取り込んだ本文が上限 ${limits.maxTotalBytes} バイトを超えています`,
+    );
+  }
   const mainDir = path.join(sourceDir, path.dirname(main));
   const figures = collectFigures(cleanLatex, mainDir, sourceDir);
   return { cleanLatex, figures, paperId: derivePaperId(input), sourceDir, mainDir };

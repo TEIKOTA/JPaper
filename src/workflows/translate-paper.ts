@@ -271,6 +271,7 @@ function failResult(
   error: RunError,
   sharedDefaults: SharedDefault[] = [],
   llmCalls = 0,
+  segments = { total: 0, passed: 0, failed: 0 },
 ): Result {
   const exitCode = error.code;
   return {
@@ -280,7 +281,7 @@ function failResult(
     summary: RunSummary.parse({
       paperId,
       outDir,
-      segments: { total: 0, passed: 0, failed: 0 },
+      segments,
       revisions: { max: 0, used: 0 },
       glossary: { proposedAdded: 0 },
       notes: { total: 0, byTrigger: {} },
@@ -431,9 +432,14 @@ export async function translatePaper(
     return failResult("unknown", opts.outDir ?? "", toRunError(e));
   }
   if (sharedDefaults.length > 0) {
-    deps.onError?.(
-      `単一ユーザ既定を使用: ${sharedDefaults.join(", ")}（マルチテナントでは dbPath / cacheKey / outDir を明示的に渡すこと）`,
-    );
+    // ここはまだ notify を組み立てる前。通知の失敗で run を落とさない。
+    try {
+      deps.onError?.(
+        `単一ユーザ既定を使用: ${sharedDefaults.join(", ")}（マルチテナントでは dbPath / cacheKey / outDir を明示的に渡すこと）`,
+      );
+    } catch {
+      // 通知の失敗は run を壊さない。
+    }
   }
   // 注入 client（テスト）はそのまま尊重し、内部生成時のみトレースを配線する。LLM トレース ADR。
   const runId = `${paperId}-${Date.now()}`;
@@ -452,6 +458,24 @@ export async function translatePaper(
   let lock: RunLock | undefined;
   let deadline: Deadline = { signal: opts.signal, dispose: () => undefined };
   let llmCalls: () => number = () => 0;
+  // 失敗・中断でも「どこまで進んだか」を返す（0/0/0 だと課金と突き合わせられない）。
+  let reached = { total: 0, passed: 0, failed: 0 };
+  // 通知は副作用チャネル。web の SSE 切断などで投げても run の結果を変えない。
+  // 併せて外向き検疫を通す（message だけ検疫しても onError から生の文字列が出ていた）。
+  const notify = (m: string): void => {
+    try {
+      deps.onError?.(outwardMessage(m));
+    } catch {
+      // 通知の失敗は run を壊さない。
+    }
+  };
+  const progress = (e: RunProgress): void => {
+    try {
+      deps.onProgress?.(e);
+    } catch {
+      // 同上。
+    }
+  };
 
   try {
     // 期限は呼び出し側の signal と合流させる。以降は signal（合流後）だけを見る。
@@ -513,7 +537,8 @@ export async function translatePaper(
     }
 
     // 用語バリア: 並列翻訳の前に resolved/brief/style を確定する。
-    deps.onProgress?.({ phase: "context", done: 0, total: 1 });
+    progress({ phase: "ingest", done: 1, total: 1 });
+    progress({ phase: "context", done: 0, total: 1 });
     const ctx = await loadOrBuildContext(
       runDir,
       outDir,
@@ -522,7 +547,7 @@ export async function translatePaper(
       ingested.paperId,
       ingested.cleanLatex,
       deps.cacheKey,
-      (m) => deps.onError?.(m),
+      (m) => notify(m),
     );
     const budget = segmentBudgetFor(contextWindowFor(opts.provider, opts.ollama));
     const segments = segment(ingested.cleanLatex, budget);
@@ -540,7 +565,8 @@ export async function translatePaper(
     );
 
     let doneSegments = 0;
-    deps.onProgress?.({ phase: "translate", done: 0, total: segments.length });
+    progress({ phase: "context", done: 1, total: 1 });
+    progress({ phase: "translate", done: 0, total: segments.length });
     const results = await mapLimit(segments, opts.concurrency ?? 4, (seg) => {
       const slice = ctx.resolved
         .filter((t) => seg.latex.includes(t.src))
@@ -560,7 +586,8 @@ export async function translatePaper(
         { invalidation, cacheable: (r) => r.passed, key: deps.cacheKey },
       ).then((r) => {
         doneSegments++;
-        deps.onProgress?.({
+        reached = { total: segments.length, passed: doneSegments, failed: 0 };
+        progress({
           phase: "translate",
           segmentId: seg.id,
           done: doneSegments,
@@ -601,6 +628,7 @@ export async function translatePaper(
 
     const passed = results.filter((r) => r.passed).length;
     const failed = results.length - passed;
+    reached = { total: results.length, passed, failed };
 
     // 全節通過時のみ組版する（翻訳失敗の 3/4 は組版前に確定）。
     let layout: Layout | null = null;
@@ -617,6 +645,7 @@ export async function translatePaper(
       }));
       const backmatter = renderBackmatter(notes, formBySrc);
       if (backmatter) rendered.push({ id: "backmatter", tex: backmatter });
+      progress({ phase: "typeset", done: 0, total: 1 });
       const outcome = await typeset(
         ingested.cleanLatex,
         rendered,
@@ -627,11 +656,12 @@ export async function translatePaper(
           figures: ingested.figures,
         },
         deps.latexRunner,
-        (m) => deps.onError?.(m),
+        (m) => notify(m),
         signal,
       );
       ({ layout, buildOk, pdfPath, exitCode } = outcome);
       typesetMessage = outcome.message;
+      progress({ phase: "typeset", done: 1, total: 1 });
     }
 
     const summary = RunSummary.parse({
@@ -654,8 +684,8 @@ export async function translatePaper(
     return { status: "failed", exitCode, pdfPath, error: gateError(exitCode, results, typesetMessage), summary };
   } catch (e) {
     const error = toRunError(e);
-    deps.onError?.(error.message);
-    return failResult(paperId, outDir, error, sharedDefaults, llmCalls());
+    notify(error.message);
+    return failResult(paperId, outDir, error, sharedDefaults, llmCalls(), reached);
   } finally {
     deadline.dispose();
     if (!deps.db) db?.close();
