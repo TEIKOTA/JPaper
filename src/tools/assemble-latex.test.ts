@@ -205,3 +205,20 @@ describe("assembleLatex: template は原前文を吸収する", () => {
     expect(r.mainTex.indexOf("jpaper@env")).toBeLessThan(r.mainTex.indexOf("threeparttable"));
   });
 });
+
+describe("sanitizeMath のコスト", () => {
+  it("閉じない数式環境が並んでも二次にならない", () => {
+    // 環境ごとに \begin{env}[\s\S]*?\end{env} を掛けていた頃は、開始位置ごとに
+    // 末尾まで走査して二次になった（実測 7MB で 11,023ms）。
+    const tex = "\\begin{align}x\n\n y".repeat(350_000);
+    const started = Date.now();
+    expect(sanitizeMath(tex)).toBe(tex);
+    expect(Date.now() - started).toBeLessThan(1000);
+  });
+
+  it("閉じた環境の空行は従来どおり潰す", () => {
+    expect(sanitizeMath("\\begin{align}a\n\nb\\end{align}")).toBe("\\begin{align}a\nb\\end{align}");
+    expect(sanitizeMath("\\begin{align*}a\n\nb\\end{align*}")).toBe("\\begin{align*}a\nb\\end{align*}");
+  });
+});
+
