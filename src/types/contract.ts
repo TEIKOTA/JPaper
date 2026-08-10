@@ -1,6 +1,14 @@
 // 契約付録 §1-8 の写経（値の正本＝docs/design/contract-appendix.md）。
 import { z } from "zod";
-import { MAX_ISSUE_CHARS, MAX_ISSUES, MAX_NOTE_CHARS, MAX_TERM_CHARS, MAX_TERMS } from "../runtime/untrusted.js";
+import {
+  MAX_BRIEF_CHARS,
+  MAX_BRIEF_ITEMS,
+  MAX_ISSUE_CHARS,
+  MAX_ISSUES,
+  MAX_NOTE_CHARS,
+  MAX_TERM_CHARS,
+  MAX_TERMS,
+} from "../runtime/untrusted.js";
 
 // ── §1 用語 ───────────────────────────────────────────────
 export const TermClass = z.enum([
@@ -26,20 +34,23 @@ export const ResolvedTerm = z.object({
 export type ResolvedTerm = z.infer<typeof ResolvedTerm>;
 
 // ── §1 文書ブリーフ / 文体契約 ──
+// 上限の理由は resolved と同じ。brief は全セグメントのプロンプトに載る。
 export const DocumentBrief = z.object({
-  thesis: z.string(),
-  sectionRoles: z.array(z.object({ id: z.string(), role: z.string() })),
-  notationConventions: z.array(z.string()),
-  claimStrengthNotes: z.array(z.string()).default([]),
+  thesis: z.string().max(MAX_BRIEF_CHARS),
+  sectionRoles: z
+    .array(z.object({ id: z.string().max(MAX_TERM_CHARS), role: z.string().max(MAX_BRIEF_CHARS) }))
+    .max(MAX_BRIEF_ITEMS),
+  notationConventions: z.array(z.string().max(MAX_BRIEF_CHARS)).max(MAX_BRIEF_ITEMS),
+  claimStrengthNotes: z.array(z.string().max(MAX_BRIEF_CHARS)).max(MAX_BRIEF_ITEMS).default([]),
 });
 export type DocumentBrief = z.infer<typeof DocumentBrief>;
 
 export const StyleContract = z.object({
   register: z.enum(["plain", "polite"]).default("plain"),
-  tensePolicy: z.string(),
-  headingStyle: z.string(),
-  numberStyle: z.string(),
-  notes: z.array(z.string()).default([]),
+  tensePolicy: z.string().max(MAX_BRIEF_CHARS),
+  headingStyle: z.string().max(MAX_BRIEF_CHARS),
+  numberStyle: z.string().max(MAX_BRIEF_CHARS),
+  notes: z.array(z.string().max(MAX_BRIEF_CHARS)).max(MAX_BRIEF_ITEMS).default([]),
 });
 export type StyleContract = z.infer<typeof StyleContract>;
 

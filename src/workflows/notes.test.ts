@@ -14,8 +14,10 @@ describe("buildNotes", () => {
   it("preserve / low-confidence / evaluator-warn を採り、確定語は採らない", () => {
     const resolved = [
       term({ src: "Val", form: "値(Value)", class: "paper-defined", rendering: "bilingual" }),
-      term({ src: "attn", class: "established", rendering: "translate" }),
-      term({ src: "safe", class: "established", rendering: "translate" }),
+      // 契約 §8② は「preserve に倒した語」に限る。translate に倒した確信のある語は対象外。
+      term({ src: "attn", class: "established", rendering: "keep-original" }),
+      term({ src: "safe", class: "established", rendering: "keep-original" }),
+      term({ src: "plain", class: "established", rendering: "translate" }),
     ];
     const notes = buildNotes({
       resolved,
@@ -23,6 +25,7 @@ describe("buildNotes", () => {
         ["Val", "seg-0"],
         ["attn", "seg-0"],
         ["safe", "seg-1"],
+        ["plain", "seg-1"],
       ]),
       hasConfirmed: (src) => src === "safe",
       segmentWarns: [{ segmentId: "seg-1", warnIssues: [{ severity: "warn", message: "hedging" }] }],
@@ -32,6 +35,8 @@ describe("buildNotes", () => {
     expect(triggers).toContain("low-confidence");
     expect(triggers).toContain("evaluator-warn");
     expect(notes.find((n) => n.src === "safe")).toBeUndefined();
+    // translate に倒した語は確定訳が無くても訳注を出さない（契約より広く出していた）。
+    expect(notes.find((n) => n.src === "plain")).toBeUndefined();
     expect(notes.find((n) => n.src === "Val")?.segmentId).toBe("seg-0");
   });
 

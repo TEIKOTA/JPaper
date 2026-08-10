@@ -14,6 +14,9 @@ export const MAX_ISSUES = 20;
 // 1 論文の用語集の件数上限。用語スライスは src の部分一致で選ぶので、短い綴りを
 // 大量に返されると全セグメントのプロンプトに全件乗る（実測 2 万件で 1 run 560 万文字）。
 export const MAX_TERMS = 500;
+// brief / style は全セグメントの translator プロンプトに載るので、用語集と同じ増幅経路。
+export const MAX_BRIEF_CHARS = 2_000;
+export const MAX_BRIEF_ITEMS = 100;
 
 // 改行・制御文字を落として 1 行に畳み、長さで切る。切ったことは省略記号で残す。
 export function oneLine(s: string, max: number): string {

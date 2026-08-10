@@ -160,3 +160,41 @@ describe("用語集の上限", () => {
   });
 });
 
+describe("brief / style の上限", () => {
+  const wrap = (brief: unknown, style?: unknown) => ({
+    resolved: [],
+    brief,
+    style: style ?? { tensePolicy: "a", headingStyle: "b", numberStyle: "c" },
+  });
+  const brief = (over: Record<string, unknown> = {}) => ({
+    thesis: "t",
+    sectionRoles: [],
+    notationConventions: [],
+    ...over,
+  });
+
+  it("brief は全セグメントのプロンプトに載るので件数・長さを縛る", () => {
+    expect(() =>
+      GlossaryBuilderOut.parse(wrap(brief({ thesis: "x".repeat(2001) }))),
+    ).toThrow();
+    expect(() =>
+      GlossaryBuilderOut.parse(
+        wrap(brief({ notationConventions: Array.from({ length: 101 }, () => "x") })),
+      ),
+    ).toThrow();
+    expect(() =>
+      GlossaryBuilderOut.parse(
+        wrap(brief({ sectionRoles: Array.from({ length: 101 }, () => ({ id: "a", role: "b" })) })),
+      ),
+    ).toThrow();
+  });
+
+  it("style も同じ上限で縛る", () => {
+    expect(() =>
+      GlossaryBuilderOut.parse(
+        wrap(brief(), { tensePolicy: "x".repeat(2001), headingStyle: "b", numberStyle: "c" }),
+      ),
+    ).toThrow();
+  });
+});
+
