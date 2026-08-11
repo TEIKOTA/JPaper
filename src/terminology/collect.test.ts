@@ -33,3 +33,17 @@ describe("collectCandidates", () => {
     expect(cands.map((c) => c.src)).toEqual(["alpha", "beta"]);
   });
 });
+
+describe("候補収集のコスト", () => {
+  it.each([
+    ["\\emph{", "\\emph{"],
+    ["we refer to", "we refer to x "],
+  ])("閉じない %s の羅列でも本文全体に対して線形", (_label, unit) => {
+    // 終端の無い [^}]+ / .+? は開始位置ごとに末尾まで走査し、二次になっていた
+    // （実測 512KiB で 35,510ms、上限 8MiB へ外挿で約 2.5 時間。gzip 14KB の入力で成立）。
+    const tex = unit.repeat(Math.floor((4 * 1024 * 1024) / unit.length));
+    const started = Date.now();
+    collectCandidates(tex);
+    expect(Date.now() - started).toBeLessThan(3000);
+  });
+});
