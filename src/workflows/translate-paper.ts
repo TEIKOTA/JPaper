@@ -117,6 +117,9 @@ export interface TranslateOptions {
 }
 
 // subprocess プロバイダは無制限並列に耐えないため翻訳の同時実行数を制限する。
+// 契約付録 §8。1 本の失敗で即座に投げず、**全 worker の決着を待ってから**投げる。
+// Promise.all のまま投げると translatePaper が返り、finally が run lock を解放した後も
+// 残りの worker が checkpoint を書き続ける（亡霊）。⚠ landmines.md
 async function mapLimit<T, R>(
   items: T[],
   limit: number,
@@ -125,17 +128,25 @@ async function mapLimit<T, R>(
 ): Promise<R[]> {
   const results = new Array<R>(items.length);
   let next = 0;
+  let failure: { err: unknown } | undefined;
   async function worker(): Promise<void> {
     for (let i = next++; i < items.length; i = next++) {
-      // 中断後は新しいセグメントを取りに行かない（進行中の 1 本は provider 側で落ちる）。
-      throwIfAborted(signal, "セグメント翻訳");
-      results[i] = await fn(items[i]!);
+      // 失敗後・中断後は新しいセグメントを取りに行かない（進行中の 1 本は provider 側で落ちる）。
+      if (failure !== undefined) return;
+      try {
+        throwIfAborted(signal, "セグメント翻訳");
+        results[i] = await fn(items[i]!);
+      } catch (err) {
+        failure ??= { err };
+        return;
+      }
     }
   }
   await Promise.all(
     // limit が壊れていても 1 本は回す（0 本だと結果配列が穴だらけのまま返る）。
     Array.from({ length: Math.max(1, Math.min(Math.floor(limit) || 1, items.length)) }, worker),
   );
+  if (failure !== undefined) throw failure.err;
   return results;
 }
 
