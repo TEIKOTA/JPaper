@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from "vitest";
-import { mkdtempSync, rmSync, readdirSync, readFileSync } from "node:fs";
+import { mkdtempSync, rmSync, readdirSync, readFileSync, existsSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { checkpoint } from "../durable/checkpoint.js";
@@ -265,11 +265,13 @@ describe("単一ユーザ既定の可視化", () => {
     expect(r.summary.sharedDefaults).toContain("limits");
     expect(r.summary.sharedDefaults).toContain("work");
     expect(warns.some((w) => w.includes("単一ユーザ既定"))).toBe(true);
+    // 既定の出力先は cwd 直下の <paperId>-ja＝作業用 tmp ではない、が「分離できていない」証拠。
+    expect(existsSync(path.join(process.cwd(), `${r.summary.paperId}-ja`))).toBe(true);
+    expect(existsSync(path.join(work, `${r.summary.paperId}-ja`))).toBe(false);
     rmSync(path.join(process.cwd(), `${r.summary.paperId}-ja`), {
       recursive: true,
       force: true,
     });
-    expect(work).toBeTruthy();
   });
 
   it("失敗して抜けた run でも sharedDefaults を返す", async () => {

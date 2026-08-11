@@ -77,6 +77,8 @@ describe("失敗した run の亡霊セグメント", () => {
     expect(result.status).toBe("failed");
 
     const atReturn = steps(outDir);
+    // 0 件どうしの比較では「書かれていない」ことを示せない（[] === [] で pass する）。
+    expect(atReturn.length).toBeGreaterThan(0);
     // ロックは返却時点で解放済み＝以後どの書き手も保護されていない。
     expect(existsSync(path.join(outDir, ".run", "run.lock"))).toBe(false);
 
@@ -132,6 +134,5 @@ describe("失敗した run の亡霊セグメント", () => {
     returned = true;
     await new Promise((r) => setTimeout(r, 600));
     expect(late).toEqual([]);
-    expect(outDir).toBeTruthy();
   });
 });

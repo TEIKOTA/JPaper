@@ -39,6 +39,10 @@ describe("formalCheck: 図(\\includegraphics)", () => {
   it("オプション無し・\\includegraphics* も数える", () => {
     expect(formalCheck("\\includegraphics{a}", "訳 \\includegraphics{a}", [])).toEqual([]);
     expect(formalCheck("\\includegraphics*[p]{a}", "訳 \\includegraphics*[p]{a}", [])).toEqual([]);
+    // 数えている証拠は「落としたら捕まる」こと。同一文字列の比較だけでは何も示せない。
+    expect(kinds("\\includegraphics{a}", "訳のみ")).toContain("graphics");
+    expect(kinds("\\includegraphics*[p]{a}", "訳のみ")).toContain("graphics");
+    expect(kinds("\\includegraphics*[p]{a}", "訳 \\includegraphics*[p]{b}")).toContain("graphics");
   });
   it("図の水増し（幻覚で増やす）も検出（src=1 ja=2）", () => {
     expect(kinds("\\includegraphics{a}", "\\includegraphics{a}\\includegraphics{b}")).toContain("graphics");
@@ -65,10 +69,14 @@ describe("formalCheck: 図(\\includegraphics)", () => {
   });
   it("エスケープした \\% はコメント扱いしない", () => {
     expect(formalCheck("50\\% と \\includegraphics{a}", "50\\% と \\includegraphics{a}", [])).toEqual([]);
+    // \% 以降をコメントとして捨てていれば、図を落としても気づけない。
+    expect(kinds("50\\% と \\includegraphics{a}", "50\\% と 訳のみ")).toContain("graphics");
   });
   it("\\includegraphicsbox 等の別コマンドは誤検知しない", () => {
-    // 直後に {path} を要求＝別マクロを図と誤認しない。
+    // 直後に {path} を要求＝別マクロを図と誤認しない。図として数えていないことの証拠は
+    // 「訳文から消えても graphics にならない」こと（同一文字列の比較では示せない）。
     expect(formalCheck("\\includegraphicsbox{x} は図ではない", "\\includegraphicsbox{x} は図ではない", [])).toEqual([]);
+    expect(kinds("\\includegraphicsbox{x} は図ではない", "これは図ではない")).not.toContain("graphics");
   });
   it("未閉じ { が多数でも O(n) で打ち切る（壊れた入力の CPU 消費を防ぐ）", () => {
     const malformed = "\\includegraphics{".repeat(20000); // 未閉じ 2万個

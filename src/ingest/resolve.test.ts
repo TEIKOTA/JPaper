@@ -146,6 +146,8 @@ describe("図の解決コストの上限", () => {
     const decl = `\\graphicspath{${Array.from({ length: 63 }, (_, i) => `{gdir${String(i)}/}`).join("")}}`;
     const started = Date.now();
     expect(() => collectFigures(decl.repeat(5000), d)).toThrowError(/上限/);
+    // 単体実行 230ms・全スイート併走 974ms（修正前 1,081ms）。併走時のばらつきが
+    // 修正前後の差より大きいので、この閾値が捕まえるのは桁違いの回帰だけ。
     expect(Date.now() - started).toBeLessThan(2000);
   });
 

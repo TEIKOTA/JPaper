@@ -204,7 +204,9 @@ describe("展開の予算", () => {
     const d = tmp(files);
     const started = Date.now();
     expect(() => expandInputs(d, "main.tex", { maxBytes: 8 * 1024 * 1024 })).toThrowError(/上限/);
-    expect(Date.now() - started).toBeLessThan(3000);
+    // 単体実行 80ms・全スイート併走 758ms（修正前 1,096ms）。併走時のばらつきが
+    // 修正前後の差より大きいので、この閾値が捕まえるのは桁違いの回帰だけ。
+    expect(Date.now() - started).toBeLessThan(2000);
   });
 
   it("解決だけで終わる \\input の羅列も上限で止まる", () => {
