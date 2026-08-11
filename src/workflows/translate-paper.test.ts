@@ -398,3 +398,60 @@ describe("translatePaper（検収①）", () => {
     db.close();
   });
 });
+
+describe("本文が空になる入力", () => {
+  it("セグメント 0 件は成功にせず exit 2 で落とす", async () => {
+    // failed === 0 は results.length === 0 でも真なので、ここで落とさないと
+    // 空の PDF が exit 0 の成功として返り、glossary 1 回ぶんだけ課金される。
+    const p = path.join(tmp(), "p.tar");
+    writeFileSync(
+      p,
+      makeTar([
+        {
+          name: "main.tex",
+          content:
+            "\\documentclass{a}\\begin{document}\\input{sections/intro}\\include{sections/method}\\end{document}",
+        },
+      ]),
+    );
+    const out = tmp();
+    const r = await tp(
+      { kind: "path", path: p },
+      { provider: "ollama", outDir: out },
+      { client: docClient(), db: new GlossaryDb(":memory:"), cacheKey: Buffer.alloc(32, 3) },
+    );
+    expect(r.status).toBe("failed");
+    expect(r.exitCode).toBe(2);
+    expect(r.error?.kind).toBe("input");
+    expect(r.error?.message).toContain("本文が空");
+    expect(r.error?.message).toContain("2 件");
+    expect(r.summary.buildOk).not.toBe(true);
+  });
+
+  it("本文が残っていても未解決の \\input は警告として観測できる", async () => {
+    const p = path.join(tmp(), "p.tar");
+    writeFileSync(
+      p,
+      makeTar([
+        {
+          name: "main.tex",
+          content:
+            "\\documentclass{a}\\begin{document}\\section{Intro}Alpha text.\\input{sections/missing}\\end{document}",
+        },
+      ]),
+    );
+    const warnings: string[] = [];
+    const r = await tp(
+      { kind: "path", path: p },
+      { provider: "ollama", outDir: tmp() },
+      {
+        client: docClient(),
+        db: new GlossaryDb(":memory:"),
+        cacheKey: Buffer.alloc(32, 4),
+        onError: (m) => warnings.push(m),
+      },
+    );
+    expect(r.status).toBe("ok");
+    expect(warnings.some((w) => w.includes("解決できない"))).toBe(true);
+  });
+});

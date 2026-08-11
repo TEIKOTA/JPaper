@@ -6,7 +6,7 @@ import type { JpaperInput } from "../types/contract.js";
 import { JpaperError } from "../types/errors.js";
 import { fetchArxivSource, type ArxivDeps } from "./arxiv.js";
 import { extractArchive, writeFileMap, isArchive } from "./extract.js";
-import { detectMainTex, expandInputs } from "./main-tex.js";
+import { detectMainTex, expandInputs, type ExpandBudget } from "./main-tex.js";
 import { collectFigures } from "./resolve.js";
 import { DEFAULT_LIMITS, type IngestLimits } from "./limits.js";
 
@@ -16,6 +16,8 @@ export interface Ingested {
   paperId: string;
   sourceDir: string;
   mainDir: string;
+  // 解決できなかった \input / \include の件数。0 でなければ本文の一部が欠けている。
+  unresolvedInputs: number;
 }
 
 export interface IngestDeps {
@@ -103,7 +105,8 @@ export async function ingest(
   const limits = deps.limits ?? DEFAULT_LIMITS;
   const { sourceDir, mainRel, limited } = await materialize(input, workDir, deps);
   const main = mainRel ?? detectMainTex(sourceDir, limits.maxEntries);
-  const cleanLatex = expandInputs(sourceDir, main, { maxBytes: limits.maxLatexBytes });
+  const expand: ExpandBudget = { maxBytes: limits.maxLatexBytes };
+  const cleanLatex = expandInputs(sourceDir, main, expand);
   // 展開経路（アーカイブ）は Budget が累積を見ているが、素の .tex とディレクトリは
   // ここが唯一の関門。checkpoint へ書く前に判定する（拒否した入力にディスクを使わない）。
   if (Buffer.byteLength(cleanLatex) > limits.maxLatexBytes) {
@@ -115,5 +118,12 @@ export async function ingest(
   }
   const mainDir = path.join(sourceDir, path.dirname(main));
   const figures = collectFigures(cleanLatex, mainDir, sourceDir, limits.maxFigureRefs);
-  return { cleanLatex, figures, paperId: derivePaperId(input), sourceDir, mainDir };
+  return {
+    cleanLatex,
+    figures,
+    paperId: derivePaperId(input),
+    sourceDir,
+    mainDir,
+    unresolvedInputs: expand.unresolved ?? 0,
+  };
 }

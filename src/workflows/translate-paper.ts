@@ -91,6 +91,8 @@ const IngestCache = z.object({
   paperId: z.string(),
   sourceDir: z.string(),
   mainDir: z.string(), // 旧キャッシュは mainDir 欠落で無効化され再取り込みされる（入れ子 main の図配置に必須）
+  // 旧キャッシュには無いので既定 0（未解決件数を知らない＝警告を出さない側へ倒す）。
+  unresolvedInputs: z.number().int().default(0),
 });
 const SectionLoopCache = z.object({
   segmentId: z.string(),
@@ -601,12 +603,32 @@ export async function translatePaper(
       );
     }
 
+    // 解決できない \input は黙って空文字列になる。本文が残っていても一部は欠けているので、
+    // 成功として返す前に必ず観測可能にする（本文消失の直接の原因がこの沈黙だった）。
+    if (ingested.unresolvedInputs > 0) {
+      notify(
+        `解決できない \\input / \\include が ${String(ingested.unresolvedInputs)} 件あります（本文の一部が欠けている可能性）`,
+      );
+    }
+
     progress({ phase: "ingest", done: 1, total: 1 });
     const budget = segmentBudgetFor(contextWindowFor(opts.provider, opts.ollama));
     const segments = segment(ingested.cleanLatex, budget);
     // LLM を 1 回も呼ぶ前に判定する（超過が確定した入力に課金しない。契約付録 §8）。
     // glossary は run 中で最大コンテキストの呼び出しなので、この順序が逆だと
     // 落ちると分かっている入力に一番高い 1 回を払うことになる。
+    // 本文が 1 節も無い＝成果物が空。failed === 0 は results.length === 0 でも真なので、
+    // ここで落とさないと「空の PDF が exit 0 の成功」として返り課金だけ残る（実測: 本文を
+    // \input{sections/intro} だけで書いた論文の同梱漏れで segments 0 / llmCalls 1 / exit 0）。
+    if (segments.length === 0) {
+      throw new JpaperError(
+        2,
+        "input",
+        ingested.unresolvedInputs > 0
+          ? `翻訳対象の本文が空です（解決できない \\input / \\include が ${String(ingested.unresolvedInputs)} 件あります）`
+          : "翻訳対象の本文が空です",
+      );
+    }
     if (segments.length > work.maxSegments) {
       throw new JpaperError(
         2,

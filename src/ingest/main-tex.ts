@@ -89,6 +89,9 @@ export interface ExpandBudget {
   // 展開の回数。バイト数だけでは仕事量を抑えられない（小さいファイルを指数回読む
   // 入力があり、実測で 8MB に達するまで 27 秒かかった）。
   maxExpansions?: number;
+  // 解決できなかった \input / \include の件数（呼び出し側へ返す）。黙って空文字列に
+  // 置換すると、本文を別ファイルに持つ論文で同梱漏れがあっても「本文が空の成功」になる。
+  unresolved?: number;
 }
 
 export function expandInputs(
@@ -144,7 +147,11 @@ export function expandInputs(
           );
         }
         const child = resolveTexPath(dir, rel, (braced ?? unbraced ?? "").trim());
-        return child ? load(child) : "";
+        if (child === null) {
+          budget.unresolved = (budget.unresolved ?? 0) + 1;
+          return "";
+        }
+        return load(child);
       },
     );
     stack.pop();
