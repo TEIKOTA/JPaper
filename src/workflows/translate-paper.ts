@@ -1,5 +1,17 @@
 // 契約付録 §7.5・§8。core API（取り込み→用語バリア→並列翻訳→訳注→出力→RunSummary）。
-import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import {
+  closeSync,
+  existsSync,
+  mkdirSync,
+  openSync,
+  readdirSync,
+  readFileSync,
+  readSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
+import { createHash, type Hash } from "node:crypto";
 import path from "node:path";
 import { z } from "zod";
 import type {
@@ -236,13 +248,56 @@ function promoteContext(outDir: string, paperId: string, pending: PaperContext["
 }
 
 // ingest キャッシュの無効化キー: 入力が変わったら再取り込み（path 上書き・arXiv v1/v2 は paperId 共有）。
-function inputSignature(input: JpaperInput): string {
-  if (input.kind === "arxiv") return hashContext("arxiv", input.id);
+// 内容ダイジェストの走査上限。超える入力は取り込み側が too-large で落とすので、
+// 部分ハッシュのまま先へ進めてよい（成功する run では必ず全体を覆う）。
+const MAX_SIGNATURE_BYTES = 512 * 1024 * 1024;
+const MAX_SIGNATURE_ENTRIES = 10_000;
+
+function digestFile(h: Hash, file: string, budget: { bytes: number }): void {
+  const fd = openSync(file, "r");
   try {
-    const st = statSync(input.path);
-    return hashContext("path", path.resolve(input.path), String(st.mtimeMs), String(st.size));
+    const buf = Buffer.allocUnsafe(1 << 20);
+    for (;;) {
+      const n = readSync(fd, buf, 0, Math.min(buf.length, budget.bytes), null);
+      if (n <= 0) break;
+      h.update(buf.subarray(0, n));
+      budget.bytes -= n;
+      if (budget.bytes <= 0) break;
+    }
+  } finally {
+    closeSync(fd);
+  }
+}
+
+function digestTree(h: Hash, dir: string, rel: string, budget: { bytes: number; entries: number }): void {
+  for (const e of readdirSync(dir, { withFileTypes: true }).sort((a, b) => (a.name < b.name ? -1 : 1))) {
+    if (--budget.entries <= 0 || budget.bytes <= 0) return;
+    const abs = path.join(dir, e.name);
+    const key = rel === "" ? e.name : `${rel}/${e.name}`;
+    h.update(`\u0000${key}\u0000`);
+    if (e.isDirectory()) digestTree(h, abs, key, budget);
+    else if (e.isFile()) digestFile(h, abs, budget);
+  }
+}
+
+// checkpoint の無効化キーは入力の**内容**を代表しなければならない。(path, mtime, size) で
+// 代表させていた頃は、同一パス・同一サイズ・秒単位で同じ mtime（tar/cp -p が復元する形）の
+// 別論文が同じ入力とみなされ、論文 B を投げた利用者に論文 A の訳文が exit 0 で返った
+// （LLM 呼び出し 0 回）。署名の破綻ではなく、署名対象が内容を代表していない設計の穴。
+export function inputSignature(input: JpaperInput): string {
+  if (input.kind === "arxiv") return hashContext("arxiv", input.id);
+  const abs = path.resolve(input.path);
+  try {
+    const h = createHash("sha256");
+    const st = statSync(abs);
+    if (st.isDirectory()) {
+      digestTree(h, abs, "", { bytes: MAX_SIGNATURE_BYTES, entries: MAX_SIGNATURE_ENTRIES });
+    } else {
+      digestFile(h, abs, { bytes: MAX_SIGNATURE_BYTES });
+    }
+    return hashContext("path", abs, h.digest("hex"));
   } catch {
-    return hashContext("path", path.resolve(input.path));
+    return hashContext("path", abs);
   }
 }
 
