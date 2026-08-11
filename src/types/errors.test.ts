@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { resolveExitCode, isTransient, JpaperError, redactPaths } from "./errors.js";
+import { resolveExitCode, isTransient, JpaperError, redactPaths, toRunError } from "./errors.js";
 
 describe("resolveExitCode", () => {
   it("失敗が無ければ 0", () => {
@@ -99,5 +99,22 @@ describe("redactPaths", () => {
     );
     expect(redactPaths("入力/出力 の設定")).toBe("入力/出力 の設定");
     expect(redactPaths("進捗 3/5 セグメント")).toBe("進捗 3/5 セグメント");
+  });
+});
+
+describe("sqlite の競合は internal ではなく busy", () => {
+  it("database is locked は kind=busy / exit 2", () => {
+    const e = Object.assign(new Error("database is locked"), { code: "ERR_SQLITE_ERROR" });
+    const r = toRunError(e);
+    expect(r.kind).toBe("busy");
+    expect(r.code).toBe(2);
+    expect(r.message).not.toContain("locked");
+  });
+
+  it("sqlite の文法エラーは internal のまま（本当のバグ）", () => {
+    const e = Object.assign(new Error('near "SELCT": syntax error'), {
+      code: "ERR_SQLITE_ERROR",
+    });
+    expect(toRunError(e).kind).toBe("internal");
   });
 });

@@ -85,6 +85,15 @@ export function isInfraError(e: unknown): boolean {
   return INFRA_SYSCODES.has(syscodeOf(e));
 }
 
+// sqlite の競合。busy timeout を使い切ってなお他プロセスが書いている状態であって、
+// JPaper のバグ（internal＝exit 1）ではない。再試行できるので busy に写す。
+const SQLITE_BUSY = /database is (?:locked|busy)/i;
+function isSqliteBusy(e: unknown): boolean {
+  if (syscodeOf(e) !== "ERR_SQLITE_ERROR") return false;
+  const msg = (e as Error | undefined)?.message ?? "";
+  return SQLITE_BUSY.test(msg);
+}
+
 // 外向きメッセージから制御文字を落とす。論文由来の文字列や外部プロセスの出力が
 // そのまま端末・HTTP 応答へ流れるため（表示の偽装を防ぐ）。長さも抑える。
 const MAX_MESSAGE_CHARS = 500;
@@ -127,6 +136,14 @@ export function toRunError(e: unknown): RunError {
       kind: "upstream",
       code: 2,
       message: `外部サービスに到達できません（${syscodeOf(e)}）`,
+      detail: err?.stack ?? String(err?.message ?? e),
+    };
+  }
+  if (isSqliteBusy(e)) {
+    return {
+      kind: "busy",
+      code: 2,
+      message: "用語 DB が他の実行で使用中です。しばらく待って再試行してください",
       detail: err?.stack ?? String(err?.message ?? e),
     };
   }

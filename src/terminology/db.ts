@@ -20,6 +20,9 @@ CREATE TABLE IF NOT EXISTS term (
 CREATE INDEX IF NOT EXISTS idx_term_src ON term(src);
 `;
 
+// 他プロセスの書き込みを待つ上限。run 全体の期限（timeoutMs）より十分短く取る。
+const BUSY_TIMEOUT_MS = 5_000;
+
 export interface TermEntry {
   src: string;
   ja: string | null;
@@ -72,8 +75,23 @@ function toEntry(r: Row): TermEntry {
 export class GlossaryDb {
   private readonly db: DatabaseSyncInstance;
 
+  // 契約付録 §2。busy timeout を置かないと、他プロセスが書いている間は DDL の
+  // 書き込みトランザクションが即 SQLITE_BUSY になる。既定の dbPath は単一ユーザ共有
+  // なので、web を複数 worker で動かした瞬間に全 run が落ちる。⚠ landmines.md
   constructor(location = ":memory:") {
-    this.db = new sqlite.DatabaseSync(location);
+    this.db = new sqlite.DatabaseSync(location, { timeout: BUSY_TIMEOUT_MS });
+    // WAL は読み手と書き手を並行させる（既定の rollback journal では読みも排他される）。
+    // journal_mode の変更は排他ロックを要求し、busy handler を経由せず即 SQLITE_BUSY を
+    // 返しうる。WAL は DB ファイルに永続するので、他プロセスが先に設定していれば
+    // それを引き継ぐだけでよい。ここで落ちる理由が無い。
+    if (location !== ":memory:") {
+      try {
+        this.db.exec("PRAGMA journal_mode=WAL");
+      } catch {
+        /* 他プロセスが設定中。既存の journal_mode のまま続ける。 */
+      }
+    }
+    this.db.exec(`PRAGMA busy_timeout=${String(BUSY_TIMEOUT_MS)}`);
     this.db.exec(DDL);
   }
 
@@ -95,21 +113,31 @@ export class GlossaryDb {
       "INSERT INTO term (src,ja,class,rendering,domain,description,aliases,status,source) VALUES (?,?,?,?,?,?,?,'proposed',?)",
     );
     let added = 0;
-    for (const e of entries) {
-      const ja = e.ja ?? null;
-      const domain = e.domain ?? null;
-      if (this.exists(e.src, ja, domain)) continue;
-      insert.run(
-        e.src,
-        ja,
-        e.class,
-        e.rendering,
-        domain,
-        e.description ?? null,
-        e.aliases ? JSON.stringify(e.aliases) : null,
-        e.source ?? null,
-      );
-      added++;
+    // UNIQUE 制約が無いので dedup（exists→insert）はアプリ層。プロセスを跨いで
+    // 直列化しないと同じ (src,ja,domain) が二重に入る。BEGIN IMMEDIATE で書き込み
+    // ロックを先に取る（busy timeout の範囲で待つ）。
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      for (const e of entries) {
+        const ja = e.ja ?? null;
+        const domain = e.domain ?? null;
+        if (this.exists(e.src, ja, domain)) continue;
+        insert.run(
+          e.src,
+          ja,
+          e.class,
+          e.rendering,
+          domain,
+          e.description ?? null,
+          e.aliases ? JSON.stringify(e.aliases) : null,
+          e.source ?? null,
+        );
+        added++;
+      }
+      this.db.exec("COMMIT");
+    } catch (err) {
+      this.db.exec("ROLLBACK");
+      throw err;
     }
     return added;
   }
