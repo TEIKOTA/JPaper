@@ -80,3 +80,17 @@ describe("renderBackmatter", () => {
     expect(renderBackmatter([], forms)).toBe("");
   });
 });
+
+describe("保護領域の走査コスト", () => {
+  it("閉じない \\[ の羅列でも線形", () => {
+    // 遅延正規表現で区間を拾っていた頃は開始位置ごとに末尾まで走査して二次だった
+    // （実測 128KiB で 1,079ms）。入力は訳文なので上限は MAX_RESPONSE_CHARS。
+    const tex = "\\[".repeat(Math.floor((8 * 1024 * 1024) / 2));
+    const notes = [
+      { segmentId: "s", src: "x", text: "t", trigger: "evaluator-warn", firstOccurrence: true },
+    ] as never;
+    const started = Date.now();
+    injectFootnotes(tex, "s", notes, new Map([["x", "x"]]));
+    expect(Date.now() - started).toBeLessThan(3000);
+  });
+});

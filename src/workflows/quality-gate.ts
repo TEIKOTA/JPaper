@@ -24,6 +24,7 @@ const MIN_JA_CHARS_PER_WORD = 0.5;
 // ^^ 記法の展開は組版側の検査と同一実装を使う（正本は tools/tex-safety.ts）。
 export { decodeCarets } from "../tools/tex-safety.js";
 import { decodeCarets as decode } from "../tools/tex-safety.js";
+import { blankSpans, dollarSpans, spansOf } from "../tools/tex-spans.js";
 
 // 実行・入出力に触れる制御綴り。訳文が原文に無いこれらを持ち込むのは翻訳ではない。
 const UNSAFE_COMMANDS = [
@@ -141,11 +142,14 @@ const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 // 見出し引数から可視テキストを取り出す（数式・参照系・制御綴り・波括弧を除去）。
 // $p$ や \textsc/\emph の綴り、\ref{...} の不可視引数を「未訳の地の文」と誤認しないため。
 function visibleText(s: string): string {
-  return s
-    .replace(/\$\$[\s\S]*?\$\$/g, " ") // $$...$$
-    .replace(/\$[^$]*\$/g, " ") // $...$
-    .replace(/\\\([\s\S]*?\\\)/g, " ") // \(...\)
-    .replace(/\\\[[\s\S]*?\\\]/g, " ") // \[...\]
+  // 数式区間は線形走査で潰す。遅延正規表現だと閉じない \[ を詰めた見出しで二次になった
+  // （実測 250KiB で 4,157ms）。入力は訳文なので上限は MAX_RESPONSE_CHARS。
+  const noMath = blankSpans(s, [
+    ...dollarSpans(s),
+    ...spansOf(s, "\\(", "\\)"),
+    ...spansOf(s, "\\[", "\\]"),
+  ]);
+  return noMath
     .replace(/\\includegraphics\*?\s*(?:\[[^\]]*\])?\s*\{[^}]*\}/g, " ") // 図: オプション込みで引数ごと除去
     .replace(/\\(?:eqref|autoref|pageref|cref|Cref|ref|label|cite[a-zA-Z]*|url|nolinkurl|path|href|input|include)\s*\{[^}]*\}/g, " ") // 参照系・URL・パス系は不可視引数ごと除去
     .replace(/\\[a-zA-Z]+\*?/g, " ") // 残る制御綴り名（\textsc 等）は名前だけ除去し可視な引数は残す

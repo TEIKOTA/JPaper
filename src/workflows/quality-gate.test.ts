@@ -404,3 +404,13 @@ describe("文書構造を終わらせる綴りの持ち込み", () => {
     ).toEqual([]);
   });
 });
+
+describe("見出し走査のコスト", () => {
+  it("見出し引数に閉じない \\[ を詰めても線形", () => {
+    // 実測 250KiB で 4,157ms（倍化ごとに 4 倍）だった経路。
+    const ja = `\\section{${"\\[".repeat(Math.floor((4 * 1024 * 1024) / 2))}}`;
+    const started = Date.now();
+    untranslatedHeadings(ja, []);
+    expect(Date.now() - started).toBeLessThan(3000);
+  });
+});
