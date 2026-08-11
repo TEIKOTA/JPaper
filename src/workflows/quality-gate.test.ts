@@ -354,3 +354,27 @@ describe("untranslated の誤検知", () => {
   });
 });
 
+describe("untranslated 検査そのものを無効化する回避（ラウンド15）", () => {
+  const BODY =
+    "Deep neural networks have achieved remarkable performance on a wide range of " +
+    "benchmark tasks, and we study them here in detail across many different settings.";
+  const src = `\\section{Introduction}\n${BODY}`;
+
+  it("% でコメントアウトした非散文環境で英語を囲む訳文を落とす", () => {
+    // LaTeX 上はコメント行なので囲まれた英語は PDF に出るのに、生テキストで環境を探していた
+    // 頃は地の文が 0 語になり、判定ごとスキップされて全編未訳が exit 0 で通った。
+    const ja = `\\section{はじめに}\n%\\begin{verbatim}\n${BODY}\n%\\end{verbatim}`;
+    expect(formalCheck(src, ja, []).map((i) => i.kind)).toContain("untranslated");
+  });
+
+  it("訳文を 1 文字に切り詰めた「翻訳」を落とす", () => {
+    // 訳文側の語数を判定の入口にしていた頃は、日本語 1 文字で全 8 検査が [] になった。
+    expect(formalCheck(src, "あ", []).map((i) => i.kind)).toContain("untranslated");
+  });
+
+  it("素の非散文環境で英語本文を隠す訳文も落とす", () => {
+    const ja = `\\section{はじめに}\n\\begin{verbatim}\n${BODY}\n\\end{verbatim}`;
+    expect(formalCheck(src, ja, []).map((i) => i.kind)).toContain("untranslated");
+  });
+});
+

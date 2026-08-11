@@ -16,6 +16,9 @@ export interface FormalIssue {
 
 // 未翻訳と断ずるのに必要な地の文の語数。数式・図だけの節を誤検知しないための下限。
 const MIN_PROSE_WORDS = 12;
+// 原文 1 語あたり最低限期待する訳文の日本語文字数。実訳は 1 語 ≒ 1.5〜2.5 文字なので、
+// 「訳したのに落ちる」を避けるため下限は大きく余裕を取る（目標値ではなく床）。
+const MIN_JA_CHARS_PER_WORD = 0.5;
 
 // ^^ 記法の展開は組版側の検査と同一実装を使う（正本は tools/tex-safety.ts）。
 export { decodeCarets } from "../tools/tex-safety.js";
@@ -90,8 +93,11 @@ function stripNonProseEnvs(tex: string): string {
 }
 
 // 制御綴りと記号を線形時間で落として地の文だけを残す（壊れた入力でも O(n)）。
+// 行コメントを先に落とす。生テキストのまま環境を探すと、% でコメントアウトした
+// \begin{verbatim} にも反応し、囲まれた英語（LaTeX 上はコメントではないので PDF に出る）が
+// 地の文から消える。実測で全編未訳の訳文が 8 種すべて [] を返し exit 0 で通った。
 function proseOf(tex: string): string {
-  return stripNonProseEnvs(tex)
+  return stripNonProseEnvs(stripLineComments(tex))
     .replace(/\\[a-zA-Z@]+\*?/g, " ")
     .replace(/[{}[\]$&%#_^~\\]/g, " ");
 }
@@ -240,16 +246,26 @@ export function formalCheck(
   }
 
   // 地の文が十分ある節でのみ判定する（数式・図だけの節は原文と一致しても正常）。
-  // 「日本語がゼロか」ではなく割合で見る。1 文字だけ混ぜて検査を通す回避を塞ぐため。
-  const words = proseWordCount(ja);
-  if (words >= MIN_PROSE_WORDS && japaneseCharCount(ja) < words) {
+  // 判定の入口は**原文側**の地の文の量にする。訳文側の語数を入口にすると、訳文で地の文を
+  // 消すだけで検査ごと無効化できた（実測: 訳文「あ」1 文字、% でコメントアウトした
+  // \begin{verbatim} で英語を囲む綴り。どちらも 8 種すべて [] で exit 0）。
+  const srcWords = proseWordCount(srcLatex);
+  const jaChars = japaneseCharCount(ja);
+  if (srcWords >= MIN_PROSE_WORDS) {
     const identical = normalizeForCompare(srcLatex) === normalizeForCompare(ja);
-    issues.push({
-      kind: "untranslated",
-      message: identical
-        ? "訳文が原文と同一（未翻訳）"
-        : `地の文に日本語が無い（未翻訳の疑い・ラテン語 ${words} 語）`,
-    });
+    if (jaChars < srcWords * MIN_JA_CHARS_PER_WORD) {
+      issues.push({
+        kind: "untranslated",
+        message: identical
+          ? "訳文が原文と同一（未翻訳）"
+          : `訳文の日本語が原文の地の文に見合わない（未翻訳・欠落の疑い・原文 ${srcWords} 語 / 訳文 ${jaChars} 文字）`,
+      });
+    } else if (proseWordCount(ja) > jaChars) {
+      issues.push({
+        kind: "untranslated",
+        message: `地の文がラテン語優位（未翻訳の疑い・ラテン語 ${proseWordCount(ja)} 語 / 日本語 ${jaChars} 文字）`,
+      });
+    }
   }
 
   const srcMath = countMath(srcLatex);
