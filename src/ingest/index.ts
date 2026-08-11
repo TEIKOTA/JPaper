@@ -30,6 +30,8 @@ export interface IngestDeps {
 const PATH_STRIP =
   /\.(?:tar\.gz|tex\.gz|tgz|tar|zip|gz|tex)$/i;
 
+const DIGEST_SUFFIX = /-[0-9a-f]{8}$/;
+
 export function derivePaperId(input: JpaperInput): string {
   // 形式検査は fetchArxivSource の中＝出力先の決定と run lock の mkdir より後にしかなかった。
   // 呼び出し側は JpaperInput を自前で組めるので（id は z.string()）、検証前に任意名の
@@ -52,7 +54,11 @@ export function derivePaperId(input: JpaperInput): string {
   // 正規化で名前が変わったら元名のダイジェストを付けて単射に戻す。潰したままだと
   // "a b.tex" / "a+b.tex" / "a:b.tex" が同じ出力先・同じ .run/steps・同じ run.lock を共有し、
   // 「別の論文なら既存 md を採用しない」印（.paper-id）も paperId が一致するため発動しない。
-  if (safe === stem && safe !== "") return safe;
+  // ダイジェストを条件付きで付ける規則は、**ダイジェスト付きの形が不動点**になる。
+  // 攻撃者はその名前を直接付けられるので、"a b.tex"→"a_b-c8687a08" と
+  // "a_b-c8687a08.tex" が衝突した（arXiv 分岐を跨いだ衝突も実測）。
+  // 既にダイジェストの形をしている名前は、変換不要でも通さない。⚠ landmines.md
+  if (safe === stem && safe !== "" && !DIGEST_SUFFIX.test(safe)) return safe;
   const digest = createHash("sha256").update(stem).digest("hex").slice(0, 8);
   return `${safe === "" ? "paper" : safe}-${digest}`;
 }

@@ -103,11 +103,17 @@ const UNSAFE_CHARS = /[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028\u2029\u202a
 // ホストの絶対パスは運用者にしか意味がなく、外へ出すと配置が漏れる。detail 側にだけ残す。
 // 語中の / は対象にしない（URL の "https://…" や日付 "2026/08/11" まで伏せると、
 // 外向きメッセージが唯一の診断情報になる web で何が起きたか分からなくなる）。
-// 先頭の / の直後にパス構成要素を 1 文字以上要求する。要求しないと、区切りとして書いた
-// 単独の / まで伏せてしまう（実測: 「glossary.md / brief.md」→「glossary.md <path> brief.md」、
-// 「入力/出力 の設定」→「入力<path> の設定」）。
-const ABSOLUTE_PATH =
-  /(?<![\w:~./])(?:~\/|\/)[A-Za-z0-9._~-][^\s'"`,;)\]]*|(?<![\w])[A-Za-z]:[\\/][^\s'"`,;)\]]*|\\\\[^\s'"`,;)\]]+/g;
+// 判定は「パスの先頭に立ちうる位置か」で行う＝直前が行頭・空白・引用符・開き括弧のときだけ。
+// 直後にも 1 文字以上を要求する（区切りとして書いた単独の / を伏せないため。
+// 実測: 「glossary.md / brief.md」→「glossary.md <path> brief.md」）。
+// 先頭要素の綴りを ASCII に限ってはならない。限ると機微な前半だけが素通りする
+// （実測: 「/ユーザ/機密/論文/main.tex」→「/ユーザ/機密/論文<path>」）。⚠ landmines.md
+const PATH_HEAD = "(?<![^\\s'\"`(\\[])";
+const PATH_TAIL = "[^\\s'\"`,;)\\]]";
+const ABSOLUTE_PATH = new RegExp(
+  `${PATH_HEAD}(?:~\\/|\\/)${PATH_TAIL}+|(?<![\\w])[A-Za-z]:[\\\\/]${PATH_TAIL}*|\\\\\\\\${PATH_TAIL}+`,
+  "g",
+);
 export function redactPaths(s: string): string {
   return s.replace(ABSOLUTE_PATH, "<path>");
 }

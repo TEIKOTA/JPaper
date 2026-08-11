@@ -118,3 +118,24 @@ describe("sqlite の競合は internal ではなく busy", () => {
     expect(toRunError(e).kind).toBe("internal");
   });
 });
+
+describe("redactPaths は非 ASCII の絶対パスも伏せる", () => {
+  it("日本語ディレクトリ名で始まるパスを丸ごと伏せる", () => {
+    expect(redactPaths("/ユーザ/機密/論文/main.tex")).toBe("<path>");
+    expect(redactPaths("~/ドキュメント/paper.tex")).toBe("<path>");
+    expect(redactPaths("/@tenant42/secret/paper.tex")).toBe("<path>");
+  });
+
+  it("区切りの / ・URL・日付は伏せない", () => {
+    expect(redactPaths("glossary.md / brief.md")).toBe("glossary.md / brief.md");
+    expect(redactPaths("入力/出力 の設定")).toBe("入力/出力 の設定");
+    expect(redactPaths("https://example.com/a/b")).toBe("https://example.com/a/b");
+    expect(redactPaths("2026/08/11 の実行")).toBe("2026/08/11 の実行");
+    expect(redactPaths("and/or の判断")).toBe("and/or の判断");
+  });
+
+  it("文中・括弧内のパスも伏せる", () => {
+    expect(redactPaths("見つかりません: /tmp/x/y")).toBe("見つかりません: <path>");
+    expect(redactPaths("(/tmp/x) を確認")).toBe("(<path>) を確認");
+  });
+});

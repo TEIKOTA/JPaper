@@ -197,3 +197,22 @@ describe("ingest", () => {
     expect(out.sourceDir).toBe(d);
   });
 });
+
+describe("derivePaperId の不動点", () => {
+  it("ダイジェスト付きの名前を直接付けても衝突しない", () => {
+    const a = derivePaperId({ kind: "path", path: "/x/a b.tex" });
+    const b = derivePaperId({ kind: "path", path: `/x/${a}.tex` });
+    expect(a).toBe("a_b-c8687a08");
+    expect(b).not.toBe(a);
+  });
+
+  it("arXiv 分岐を跨いだ衝突も起きない", () => {
+    const a = derivePaperId({ kind: "arxiv", id: "hep-th/9901001" });
+    const b = derivePaperId({ kind: "path", path: `/x/${a}.tar.gz` });
+    expect(b).not.toBe(a);
+  });
+
+  it("変換不要な通常の名前には余計な接尾辞を付けない", () => {
+    expect(derivePaperId({ kind: "arxiv", id: "2203.06060" })).toBe("2203.06060");
+  });
+});
