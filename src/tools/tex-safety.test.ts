@@ -249,6 +249,31 @@ describe("走査コストの上限", () => {
     expect(Date.now() - started).toBeLessThan(3000);
   });
 
+  it("閉じない \\csname の羅列で二次にならない", () => {
+    // \endcsname を正規表現で探していた頃はマッチ位置ごとに末尾まで走査して O(n²) になり、
+    // 1MiB で 144,204ms（上限の 8MiB なら数時間）同期でイベントループを止めた。
+    const tex = "\\csname ".repeat(Math.floor((8 * 1024 * 1024) / 8));
+    const started = Date.now();
+    expect(() => findUnsafeTexCommands(tex)).toThrowError(/上限/);
+    expect(Date.now() - started).toBeLessThan(3000);
+  });
+
+  it("\\csname 直後の空白詰めで名前照合を外せない", () => {
+    // 制御綴り直後の空白は TeX が読み飛ばすので、生の位置から本体長を数えると
+    // 空白 1024 文字で本体を窓の外へ押し出せてしまう。
+    const pad = " ".repeat(1_100);
+    expect(findUnsafeTexCommands(`\\csname${pad}directlua\\endcsname`)).toContain("directlua");
+    expect(findUnsafeSupportCommands(`\\csname${pad}directlua\\endcsname`)).toContain("directlua");
+  });
+
+  it("上限を超える \\csname 本体は名前照合から外すが制御綴り入りは落とす", () => {
+    const long = "a".repeat(2_000);
+    // 綴りが 1024 文字を超える＝denylist のどれとも一致しない。
+    expect(findUnsafeSupportCommands(`\\csname ${long}\\endcsname`)).toEqual([]);
+    // 展開結果が短い綴りになりうるので、制御綴りを含むなら main.tex では落とす。
+    expect(findUnsafeTexCommands(`\\csname \\x${long}`)).toContain("csname");
+  });
+
   it("実在の論文規模の \\input 件数は通す", () => {
     const tex = Array.from({ length: 500 }, (_, i) => `\\input{sec/s${String(i)}}`).join("\n");
     expect(findUnsafeTexCommands(tex)).toEqual([]);

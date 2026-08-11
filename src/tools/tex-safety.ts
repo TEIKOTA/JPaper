@@ -206,10 +206,61 @@ function readPathHits(src: string, strict: boolean): string[] {
   return hits;
 }
 
-function csnameNames(tex: string): string[] {
+// \csname の本体は 1 回だけ集める。正規表現で \endcsname を探すと、閉じない \csname を
+// 並べた入力でマッチ位置ごとに末尾まで走査して O(n²) になった（実測 1MiB で 144,204ms、
+// 上限の 8MiB なら数時間の同期停止）。本体長・件数の両方に上限を掛けて線形に抑える。
+const MAX_CSNAME_BODY_CHARS = 1_024;
+const MAX_CSNAME_CANDIDATES = 20_000;
+const CSNAME = "\\csname";
+const ENDCSNAME = "\\endcsname";
+
+interface CsnameBody {
+  body: string;
+  // 上限内で \endcsname が見つからない＝綴りが 1024 文字を超える。制御綴りを含まなければ
+  // 実際に生える綴りも同じだけ長く、denylist のどれとも一致しないので名前照合から外す。
+  unbounded: boolean;
+}
+
+function csnameBodies(src: string): CsnameBody[] {
+  const out: CsnameBody[] = [];
+  for (let i = src.indexOf(CSNAME); i !== -1; i = src.indexOf(CSNAME, i + CSNAME.length)) {
+    if (out.length >= MAX_CSNAME_CANDIDATES) {
+      throw new JpaperError(
+        2,
+        "too-large",
+        `\\csname が上限 ${MAX_CSNAME_CANDIDATES} 件を超えています`,
+      );
+    }
+    // 制御綴り直後の空白は TeX のトークナイザが読み飛ばすので、窓の起点も同じ位置に置く。
+    // 生の位置から数えると、空白を 1024 文字詰めるだけで本体を窓の外へ押し出せる。
+    let from = i + CSNAME.length;
+    while (from < src.length && /\s/.test(src[from]!)) from++;
+    const limit = Math.min(src.length, from + MAX_CSNAME_BODY_CHARS) - ENDCSNAME.length;
+    let end = -1;
+    for (let j = from; j <= limit; j++) {
+      if (src.charCodeAt(j) === 0x5c && src.startsWith(ENDCSNAME, j)) {
+        end = j;
+        break;
+      }
+    }
+    out.push({
+      body: src.slice(from, end === -1 ? limit + ENDCSNAME.length : end),
+      unbounded: end === -1,
+    });
+  }
+  return out;
+}
+
+// 本体に制御綴りを含むものは名前照合の対象外（綴りが静的に決まらない）。
+function staticBodies(bodies: readonly CsnameBody[]): string[] {
+  return bodies
+    .filter((b) => !b.unbounded && !b.body.includes("\\"))
+    .map((b) => b.body.toLowerCase());
+}
+
+function csnameNames(bodies: readonly CsnameBody[]): string[] {
   const names: string[] = [];
-  for (const m of tex.matchAll(/\\csname([^\\]*?)\\endcsname/g)) {
-    const body = m[1]!.toLowerCase();
+  for (const body of staticBodies(bodies)) {
     names.push(body.replace(/\s+/g, ""));
     for (const token of body.split(/[^a-z@]+/)) if (token !== "") names.push(token);
   }
@@ -218,10 +269,10 @@ function csnameNames(tex: string): string[] {
 
 // \csname で組み立てた読み込みコマンド。綴りを分解する正規の理由が無いため、
 // 引数の形に関わらず落とす（トークン分割ではなく本体全体で照合し、誤検知を避ける）。
-function obfuscatedReadHits(tex: string): string[] {
+function obfuscatedReadHits(bodies: readonly CsnameBody[]): string[] {
   const hits: string[] = [];
-  for (const m of tex.matchAll(/\\csname([^\\]*?)\\endcsname/g)) {
-    const body = m[1]!.toLowerCase().replace(/\s+/g, "");
+  for (const raw of staticBodies(bodies)) {
+    const body = raw.replace(/\s+/g, "");
     for (const name of READ_PATH) {
       if (body === name.toLowerCase() && !hits.includes(name)) hits.push(name);
     }
@@ -233,13 +284,10 @@ function obfuscatedReadHits(tex: string): string[] {
 // 実行時に綴りが決まるので、静的には何が発火するか分からない（実機で \directlua による
 // 任意ファイル読み出しと PDF への流出を確認した）。著者のプリアンブルで綴りを
 // マクロ越しに組み立てる正規の理由は無いので、main.tex では一律拒否する。
-const CSNAME_BODY = /\\csname((?:(?!\\endcsname)[\s\S])*)\\endcsname/g;
-
-function hasDynamicCsname(tex: string): boolean {
-  for (const m of tex.matchAll(CSNAME_BODY)) {
-    if (/\\[a-zA-Z@]/.test(m[1]!)) return true;
-  }
-  return false;
+// 上限内で閉じない本体も、制御綴りを含むなら「実行時に決まる」側として扱う。展開結果が
+// 短い綴りになる余地があり、静的には何が発火するか分からない点は閉じている場合と同じ。
+function hasDynamicCsname(bodies: readonly CsnameBody[]): boolean {
+  return bodies.some((b) => /\\[a-zA-Z@]/.test(b.body));
 }
 
 function scan(tex: string, deny: ReadonlySet<string>, strictReadArgs: boolean): string[] {
@@ -250,11 +298,12 @@ function scan(tex: string, deny: ReadonlySet<string>, strictReadArgs: boolean): 
   };
   // 制御綴りは大小文字を区別する（\OPENIN は \openin ではない）ので、そのまま照合する。
   for (const m of src.matchAll(/\\([a-zA-Z]+)/g)) add(m[1]!);
-  for (const name of csnameNames(src)) add(name);
+  const bodies = csnameBodies(src);
+  for (const name of csnameNames(bodies)) add(name);
   // 綴りが実行時に決まる \csname は、何が発火するか静的に分からない＝安全と示せない。
-  if (strictReadArgs && hasDynamicCsname(src)) hits.push("csname");
+  if (strictReadArgs && hasDynamicCsname(bodies)) hits.push("csname");
   // 読み込みコマンドは名前では落とせないので、引数の形と難読化で判定する。
-  for (const name of [...readPathHits(src, strictReadArgs), ...obfuscatedReadHits(src)]) {
+  for (const name of [...readPathHits(src, strictReadArgs), ...obfuscatedReadHits(bodies)]) {
     if (!hits.includes(name)) hits.push(name);
   }
   return hits;
