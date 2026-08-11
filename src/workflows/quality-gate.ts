@@ -20,6 +20,9 @@ const MIN_PROSE_WORDS = 12;
 // 原文 1 語あたり最低限期待する訳文の日本語文字数。実訳は 1 語 ≒ 1.5〜2.5 文字なので、
 // 「訳したのに落ちる」を避けるため下限は大きく余裕を取る（目標値ではなく床）。
 const MIN_JA_CHARS_PER_WORD = 0.5;
+// 原文のラテン語がこの割合以上そのまま残っていれば未翻訳とみなす。忠実な訳でも
+// keep-original の術語は残るので、余裕を持って 9 割に置く。
+const MAX_RESIDUAL_LATIN = 0.9;
 
 // ^^ 記法の展開は組版側の検査と同一実装を使う（正本は tools/tex-safety.ts）。
 export { decodeCarets } from "../tools/tex-safety.js";
@@ -89,7 +92,34 @@ function normalizeForCompare(s: string): string {
 // 訳さないのが正しい環境。参考文献の著者名・論題やコードリストを「地の文」と数えると、
 // 忠実な訳ほど日本語比率が下がって untranslated が必ず発火する（実測: 30 件の
 // thebibliography でラテン語 422 語と判定され、revision を使い切って exit 3）。
-const NON_PROSE_ENVS = ["thebibliography", "verbatim", "lstlisting", "minted", "alltt"];
+// 表・アルゴリズム・図の中身も同じ理由で除く。手法名・データセット名・指標名を
+// 日本語化するのはむしろ誤訳なので、「地の文」と数えると忠実な訳ほど落ちる
+// （実測: 見出し・キャプション・地の文をすべて正しく訳した節が、表の行数 20 で
+// 「ラテン語優位」、40 で「日本語が見合わない」。表単独の節はキャプションだけが
+// 訳対象なので 3 行でも発火した。翻訳者には直しようがなく exit 3）。
+const NON_PROSE_ENVS = [
+  "thebibliography",
+  "verbatim",
+  "Verbatim",
+  "lstlisting",
+  "minted",
+  "alltt",
+  "tabular",
+  "tabularx",
+  "tabulary",
+  "longtable",
+  "array",
+  "algorithmic",
+  "algorithm",
+  "tikzpicture",
+];
+
+// 引数が PDF に描画されないコマンド。中身を「地の文」と数えると、\index{ひらがな}
+// を足すだけで未翻訳検査を無効化できた（実測: 全文が英語原文のままの訳文に
+// \index{あ×52} を足すと formalCheck が [] を返した。\printindex が無ければ
+// 1 文字も描画されない）。⚠ landmines.md
+const INVISIBLE_ARG_CMDS =
+  /\\(?:index|label|(?:eq|auto|page|c|C)?ref|cite[a-zA-Z]*|url|nolinkurl|path|input|include|hypersetup|(?:re|provide)?newcommand|def|pdfbookmark|pdfstringdef|typeout|message|special|write|selectlanguage|usepackage|documentclass|bibliography|bibliographystyle)\*?\s*(?:\[[^\]]*\])?\s*\{[^{}]*\}(?:\s*\{[^{}]*\})?/g;
 
 // 環境ごとに左から 1 回だけ走査する（閉じが無ければ以降のどの開始位置でも見つからない）。
 // 正規表現の遅延一致だと閉じない \begin が並ぶ入力で二次になる。
@@ -119,6 +149,7 @@ function stripNonProseEnvs(tex: string): string {
 // 地の文から消える。実測で全編未訳の訳文が 8 種すべて [] を返し exit 0 で通った。
 function proseOf(tex: string): string {
   return stripNonProseEnvs(stripLineComments(tex))
+    .replace(INVISIBLE_ARG_CMDS, " ")
     .replace(/\\[a-zA-Z@]+\*?/g, " ")
     .replace(/[{}[\]$&%#_^~\\]/g, " ");
 }
@@ -302,6 +333,7 @@ export function formalCheck(
   const jaChars = japaneseCharCount(ja);
   if (srcWords >= MIN_PROSE_WORDS) {
     const identical = normalizeForCompare(srcLatex) === normalizeForCompare(ja);
+    const jaWords = proseWordCount(ja);
     if (jaChars < srcWords * MIN_JA_CHARS_PER_WORD) {
       issues.push({
         kind: "untranslated",
@@ -309,10 +341,18 @@ export function formalCheck(
           ? "訳文が原文と同一（未翻訳）"
           : `訳文の日本語が原文の地の文に見合わない（未翻訳・欠落の疑い・原文 ${srcWords} 語 / 訳文 ${jaChars} 文字）`,
       });
-    } else if (proseWordCount(ja) > jaChars) {
+    } else if (jaWords > jaChars) {
       issues.push({
         kind: "untranslated",
-        message: `地の文がラテン語優位（未翻訳の疑い・ラテン語 ${proseWordCount(ja)} 語 / 日本語 ${jaChars} 文字）`,
+        message: `地の文がラテン語優位（未翻訳の疑い・ラテン語 ${jaWords} 語 / 日本語 ${jaChars} 文字）`,
+      });
+    } else if (jaWords >= srcWords * MAX_RESIDUAL_LATIN) {
+      // 上の 2 本はどちらも「訳文の日本語がどれだけ増えたか」しか見ないので、
+      // 英語を 1 語も消さずに日本語を足すだけで通せた。原文のラテン語が
+      // ほぼそのまま残っていること自体を未翻訳の証拠として扱う。
+      issues.push({
+        kind: "untranslated",
+        message: `原文のラテン語がほぼそのまま残っている（未翻訳の疑い・原文 ${srcWords} 語 / 訳文 ${jaWords} 語）`,
       });
     }
   }

@@ -467,3 +467,41 @@ describe("数式区間の切り出しが正規の論文を落とさない", () =
     expect(kinds(src, "有意差は $\\alpha > 0.95$ である。")).toContain("math");
   });
 });
+
+describe("untranslated は不可視引数で無効化できない・表で誤発火しない", () => {
+  const untr = (s: string, j: string) =>
+    formalCheck(s, j, []).filter((i) => i.kind === "untranslated").length;
+
+  const english = Array.from(
+    { length: 12 },
+    (_, i) => `The proposed method improves accuracy over prior baselines in section ${String(i)}.`,
+  ).join(" ");
+
+  it("\\index{ひらがな} で日本語を水増ししても未訳のまま検出する", () => {
+    for (const pad of [40, 52, 80, 200]) {
+      expect(untr(english, `${english}\\index{${"あ".repeat(pad)}}`)).toBeGreaterThan(0);
+    }
+  });
+
+  it("\\newcommand / \\hypersetup の中身も地の文と数えない", () => {
+    expect(untr(english, `${english}\\newcommand{\\zz}{${"あ".repeat(200)}}`)).toBeGreaterThan(0);
+    expect(
+      untr(english, `${english}\\hypersetup{pdfkeywords={${"あ".repeat(200)}}}`),
+    ).toBeGreaterThan(0);
+  });
+
+  it("表が主体の節を落とさない（表の中身は訳さないのが正しい）", () => {
+    const table = (rows: number) =>
+      [
+        "\\begin{table}\\caption{CAP}\\begin{tabular}{lll}",
+        "Method & Dataset & Accuracy \\\\",
+        ...Array.from({ length: rows }, (_, i) => `BERT-base ${String(i)} & SQuAD & 88.5 \\\\`),
+        "\\end{tabular}\\end{table}",
+      ].join("\n");
+    for (const rows of [3, 8, 20, 40]) {
+      const s = `\\section{Results}\nWe compare the proposed method against strong baselines on standard benchmarks and report accuracy.\n${table(rows)}`;
+      const j = `\\section{結果}\n提案手法を標準的なベンチマーク上で強力なベースラインと比較し、精度を報告する。\n${table(rows).replace("CAP", "キャプション")}`;
+      expect(untr(s, j)).toBe(0);
+    }
+  });
+});
