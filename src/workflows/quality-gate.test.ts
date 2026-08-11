@@ -414,3 +414,34 @@ describe("見出し走査のコスト", () => {
     expect(Date.now() - started).toBeLessThan(3000);
   });
 });
+
+describe("数式の中身の照合", () => {
+  const SRC = "有意差は $\\alpha < 0.05$ である。損失は \\[ L = \\sum_i (y_i)^2 \\] とする。";
+
+  it.each([
+    ["不等号の反転", "有意差は $\\alpha > 0.95$ である。損失は \\[ L = \\sum_i (y_i)^2 \\] とする。"],
+    ["演算子の置換", "有意差は $\\alpha < 0.05$ である。損失は \\[ L = \\prod_i (y_i)^2 \\] とする。"],
+    ["指数の改竄", "有意差は $\\alpha < 0.05$ である。損失は \\[ L = \\sum_i (y_i)^{99} \\] とする。"],
+  ])("%s を検出する", (_label, ja) => {
+    // 個数だけを数えていた頃はどれも [] だった。学術論文の翻訳では数式は原文の
+    // まま持ち越すのが正しいので、決定的に照合できる情報を捨てていた。
+    expect(formalCheck(SRC, ja, []).map((i) => i.kind)).toContain("math");
+  });
+
+  it("数式をそのまま持ち越した訳は通す", () => {
+    expect(formalCheck(SRC, SRC, []).filter((i) => i.kind === "math")).toEqual([]);
+  });
+
+  it("空白・間隔マクロの差だけなら通す", () => {
+    const ja = "有意差は $\\alpha< 0.05$ である。損失は \\[L = \\sum_i (y_i)^2\\] とする。";
+    expect(formalCheck(SRC, ja, []).filter((i) => i.kind === "math")).toEqual([]);
+  });
+
+  it("数式内の地の文（\\text）は訳してよい", () => {
+    expect(
+      formalCheck("$x \\text{ if } y$ です", "$x \\text{ もし } y$ である", []).filter(
+        (i) => i.kind === "math",
+      ),
+    ).toEqual([]);
+  });
+});

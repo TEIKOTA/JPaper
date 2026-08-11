@@ -24,7 +24,7 @@ const MIN_JA_CHARS_PER_WORD = 0.5;
 // ^^ 記法の展開は組版側の検査と同一実装を使う（正本は tools/tex-safety.ts）。
 export { decodeCarets } from "../tools/tex-safety.js";
 import { decodeCarets as decode } from "../tools/tex-safety.js";
-import { blankSpans, dollarSpans, spansOf } from "../tools/tex-spans.js";
+import { blankSpans, dollarSpans, envSpans, spansOf } from "../tools/tex-spans.js";
 
 // 実行・入出力に触れる制御綴り。訳文が原文に無いこれらを持ち込むのは翻訳ではない。
 const UNSAFE_COMMANDS = [
@@ -187,6 +187,31 @@ const MATH_ENVS = [
   "displaymath",
 ];
 
+// 数式の本体（区切りを除いた中身）。個数だけを数えていた頃は、不等号の反転も
+// 表示数式の空洞化も無検査だった（実測: $\alpha < 0.05$ → $\alpha > 0.95$ が [] を返す）。
+// 学術論文の翻訳では数式は原文のまま持ち越すのが正しいので、決定的に照合できる。
+function mathBodies(text: string): string[] {
+  const src = stripLineComments(text);
+  const spans = [
+    ...dollarSpans(src),
+    ...spansOf(src, "\\[", "\\]"),
+    ...spansOf(src, "\\(", "\\)"),
+    ...MATH_ENVS.flatMap((env) => envSpans(src, env)),
+  ];
+  return spans.map(([s, e]) => normalizeMath(src.slice(s, e))).filter((b) => b !== "");
+}
+
+// 訳文が変えてよい差だけを潰す: 区切り・空白・間隔マクロと、数式内の地の文（\text 等）。
+function normalizeMath(span: string): string {
+  return span
+    .replace(/^\$\$|\$\$$|^\$|\$$/g, "")
+    .replace(/^\\[[(]|\\[\])]$/g, "")
+    .replace(/^\\begin\{[^}]*\}|\\end\{[^}]*\}$/g, "")
+    .replace(/\\(?:text|mbox|textrm|textnormal)\s*\{[^{}]*\}/g, "\\text{}")
+    .replace(/\\(?:,|;|!|:|quad|qquad|thinspace|;)/g, "")
+    .replace(/\s+/g, "");
+}
+
 function countMath(text: string): number {
   const dollars = (text.match(/(?<!\\)\$/g) ?? []).length;
   const open = (text.match(/(?<!\\)\\\[/g) ?? []).length;
@@ -304,6 +329,17 @@ export function formalCheck(
   const jaMath = countMath(ja);
   if (srcMath !== jaMath) {
     issues.push({ kind: "math", message: `数式個数不一致: src=${srcMath} ja=${jaMath}` });
+  } else {
+    // 個数が合っていても中身は自由に変えられる（不等号の反転・空洞化）。数式は原文の
+    // まま持ち越すのが正しいので、正規化した本体を multiset で照合する。
+    const srcBodies = mathBodies(srcLatex);
+    const jaBodies = mathBodies(ja);
+    if (multisetMismatch(srcBodies, jaBodies)) {
+      issues.push({
+        kind: "math",
+        message: `数式の内容が原文と一致しません（${String(srcBodies.length)} 件中の差異）`,
+      });
+    }
   }
 
   // 図はパスの multiset で照合する（個数一致だけでは {a},{b}→{a},{a} の置換=b脱落を見逃すため）。
