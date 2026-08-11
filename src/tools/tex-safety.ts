@@ -65,6 +65,7 @@ export const SUPPORT_READ_EXEC_COMMANDS = [
 export const READ_PATH_COMMANDS = [
   "input",
   "include",
+  "@input",
   "@@input",
   "InputIfFileExists",
   "IfFileExists",
@@ -72,6 +73,18 @@ export const READ_PATH_COMMANDS = [
   "subimport",
   "includefrom",
   "subincludefrom",
+  "subfile",
+  "subfileinclude",
+  "lstinputlisting",
+  "verbatiminput",
+  "VerbatimInput",
+  "inputminted",
+  "CatchFileDef",
+  "CatchFileEdef",
+  "includegraphics",
+  "includepdf",
+  "addbibresource",
+  "bibliography",
 ] as const;
 
 const READ_PATH = new Set<string>(READ_PATH_COMMANDS);
@@ -90,7 +103,15 @@ function escapesBuildTree(arg: string): boolean {
 // 括弧を書かない TeX 形式（\input path）も、マクロ引数（\input\p）も同じ関門を通す。
 // \import{dir}{file} は 2 引数、その他は 1 引数。多く読もうとすると、直後に続く別の
 // コマンド（\input{a}\include{b}）を引数と誤認して落としてしまう。
-const MULTI_ARG_READ = new Set(["import", "subimport", "includefrom", "subincludefrom"]);
+const MULTI_ARG_READ = new Map<string, number>([
+  ["import", 2],
+  ["subimport", 2],
+  ["includefrom", 2],
+  ["subincludefrom", 2],
+  ["inputminted", 2],
+  ["CatchFileDef", 2],
+  ["CatchFileEdef", 2],
+]);
 
 interface ReadArgs {
   args: string[];
@@ -170,6 +191,11 @@ function readArgsAt(src: string, from: number, argCount: number): ReadArgs {
   return { args, dynamic, unbounded };
 }
 
+// 図・文献のリソース指定はマクロ引数が正規の書き方（`\includegraphics{\figpath}`、
+// `\addbibresource{\jobname.bib}`）。ここまで strict にすると、TeX Live 配布 6,570 件で
+// main モードの誤検知が 119 + 26 件増えた。絶対パス・親参照の判定は残す。
+const DYNAMIC_ARG_OK = new Set(["includegraphics", "includepdf", "addbibresource", "bibliography"]);
+
 // strict=false（同梱 .sty/.cls 向け）ではマクロ引数を許す。配布クラス由来のファイルは
 // \InputIfFileExists{\@filef@und} のような動的引数を日常的に使うため（実測 18 件中 10 件）。
 // 著者が書くプリアンブルには動的引数を使う理由が無いので、main.tex 側だけ strict にする。
@@ -189,14 +215,15 @@ function readPathHits(src: string, strict: boolean): string[] {
         `読み込みコマンドが上限 ${MAX_READ_CANDIDATES} 件を超えています`,
       );
     }
-    const argCount = MULTI_ARG_READ.has(name) ? 2 : 1;
+    const argCount = MULTI_ARG_READ.get(name) ?? 1;
     const { args, dynamic, unbounded } = readArgsAt(src, m.index + m[0].length, argCount);
+    const strictHere = strict && !DYNAMIC_ARG_OK.has(name);
     // 引数を連結して判定する（\import{./}{../secret} は第 2 引数だけ見ると無害に見える）。
     // unbounded は strict に関わらず落とす。これは正規の書き方ではなく検査の回避手口で、
     // 支援ファイルだけ許す理由が無い。
     if (
       unbounded ||
-      (strict && dynamic) ||
+      (strictHere && dynamic) ||
       args.some(escapesBuildTree) ||
       escapesBuildTree(args.join(""))
     ) {
@@ -219,6 +246,90 @@ interface CsnameBody {
   // 上限内で \endcsname が見つからない＝綴りが 1024 文字を超える。制御綴りを含まなければ
   // 実際に生える綴りも同じだけ長く、denylist のどれとも一致しないので名前照合から外す。
   unbounded: boolean;
+}
+
+// 綴りの列挙は穴の再生産源になる（実測: \lstinputlisting / \@input / \includegraphics 等の
+// 実在コマンド 10 種が素通りし、ホストのファイル内容が PDF に出た）。名前ではなく引数の形で
+// 落とす一般規則を置き、論文が本文で絶対パスを見せる表示系だけを allowlist にする。
+const PATH_TEXT_COMMANDS = new Set([
+  "texttt", "verb", "url", "nolinkurl", "path", "href", "lstinline", "mintinline",
+  "textsf", "textit", "textbf", "textrm", "emph", "text", "mbox", "caption", "footnote",
+  "item", "title", "section", "subsection", "subsubsection", "paragraph", "chapter", "part",
+  "textsc", "texorpdfstring", "hbox", "detokenize", "string", "meta", "code", "filename",
+]);
+
+// ビルドツリー外を指す引数の始まりだけを拾う前置フィルタ。通常の論文では 0 件なので、
+// ここに引っかからない限り引数を読みに行かない（全コマンドの引数を読むと線形で済まない）。
+// **先頭が素の `/` だけの引数は対象外**にする。pgf/tikz の key path（`\pgfkeysvalueof{/tikz/…}`）
+// が同じ形をしており、TeX Live 配布 6,570 件のうち 660 件（10%）が誤検知になった。親参照と
+// `~/` は key path には現れないので、こちらは名前によらず落とす。素の絶対パスは列挙した
+// 読み込みコマンド側で見る（残存リスクは ADR に明記）。
+const SUSPICIOUS_ARG = /\{\s*(?:~\/|\.\.[\\/]|[a-zA-Z]:[\\/])|\/\.\.(?=[\\/}])/g;
+
+// 走査量の上限。件数で数えると、正規の文章に並ぶ \texttt{/usr/...} だけで上限に達して
+// 正しい論文を too-large で落としてしまう（実測: 2MiB の地の文で 2 万件超）。実際に読んだ
+// 文字数で数えれば、正規の文章は安く、`{/{/{/…` のような回避専用の入力だけが高くつく。
+const MAX_PATH_SCAN_STEPS = 20_000_000;
+
+// 指定位置から後ろ向きに 1 文字ずつ探す（`lastIndexOf` は上限を超えて走るので使わない）。
+function findBack(src: string, from: number, floor: number, ch: string): number {
+  for (let i = from; i >= floor; i--) if (src[i] === ch) return i;
+  return -1;
+}
+
+// 引数の開き波括弧の直前にある制御綴り名を返す（オプション引数と空白は遡って飛ばす）。
+function commandBefore(src: string, brace: number, charge: (n: number) => void): string | null {
+  const floor = Math.max(0, brace - MAX_ARG_CHARS);
+  let i = brace - 1;
+  for (;;) {
+    while (i >= floor && /\s/.test(src[i]!)) i--;
+    const open = i >= floor && (src[i] === "]" || src[i] === "}")
+      ? findBack(src, i - 1, floor, src[i] === "]" ? "[" : "{")
+      : -2;
+    if (open === -2) break;
+    charge(i - Math.max(open, floor));
+    if (open === -1) return null;
+    i = open - 1;
+  }
+  charge(brace - i);
+  const end = i + 1;
+  while (i >= floor && /[a-zA-Z@]/.test(src[i]!)) i--;
+  if (i < 0 || src[i] !== "\\" || end === i + 1) return null;
+  return src.slice(i + 1, end);
+}
+
+// コマンド名によらず、制御綴りの引数がビルドツリーの外を指していれば落とす。
+function pathArgHits(src: string): string[] {
+  const hits: string[] = [];
+  let steps = 0;
+  const charge = (n: number): void => {
+    steps += n;
+    if (steps > MAX_PATH_SCAN_STEPS) {
+      throw new JpaperError(
+        2,
+        "too-large",
+        `パス引数の走査量が上限 ${MAX_PATH_SCAN_STEPS} を超えています`,
+      );
+    }
+  };
+  SUSPICIOUS_ARG.lastIndex = 0;
+  for (const m of src.matchAll(SUSPICIOUS_ARG)) {
+    // "/.." で当たった場合は引数の途中なので、開き波括弧まで遡る。
+    const brace =
+      src[m.index] === "{"
+        ? m.index
+        : findBack(src, m.index, Math.max(0, m.index - MAX_ARG_CHARS), "{");
+    if (brace === -1) continue;
+    charge(m.index - brace + 1);
+    const close = findCloseBrace(src, brace);
+    charge(close === -1 ? MAX_ARG_CHARS : close - brace);
+    if (close === -1) continue;
+    if (!escapesBuildTree(src.slice(brace + 1, close))) continue;
+    const name = commandBefore(src, brace, charge);
+    if (name === null || PATH_TEXT_COMMANDS.has(name)) continue;
+    if (!hits.includes(name)) hits.push(name);
+  }
+  return hits;
 }
 
 function csnameBodies(src: string): CsnameBody[] {
@@ -303,7 +414,11 @@ function scan(tex: string, deny: ReadonlySet<string>, strictReadArgs: boolean): 
   // 綴りが実行時に決まる \csname は、何が発火するか静的に分からない＝安全と示せない。
   if (strictReadArgs && hasDynamicCsname(bodies)) hits.push("csname");
   // 読み込みコマンドは名前では落とせないので、引数の形と難読化で判定する。
-  for (const name of [...readPathHits(src, strictReadArgs), ...obfuscatedReadHits(bodies)]) {
+  for (const name of [
+    ...readPathHits(src, strictReadArgs),
+    ...obfuscatedReadHits(bodies),
+    ...pathArgHits(src),
+  ]) {
     if (!hits.includes(name)) hits.push(name);
   }
   return hits;

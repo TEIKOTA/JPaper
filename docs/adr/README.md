@@ -63,3 +63,4 @@
 | 2026-08-11 | [読み込みコマンドの引数は静的に検証できなければ拒否する（main.tex のみ）](./20260811-read-arguments-must-be-statically-verifiable.md) | accepted |
 | 2026-08-11 | [綴りが実行時に決まる \csname は main.tex では拒否する](./20260811-dynamic-csname-is-unsafe-in-main-tex.md) | accepted |
 | 2026-08-11 | [出力先を決める paperId は単射でなければならない](./20260811-paper-id-must-be-injective.md) | accepted |
+| 2026-08-11 | [パス引数はコマンド名によらず危険として扱う](./20260811-path-arguments-are-unsafe-regardless-of-command-name.md) | accepted |

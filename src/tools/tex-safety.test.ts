@@ -210,6 +210,60 @@ describe("\\csname の本体にマクロを挟む回避", () => {
   });
 });
 
+describe("読み込みコマンドの列挙（ラウンド15 の流出経路）", () => {
+  // 実機の latexmk で \lstinputlisting / \@input のプリアンブル注入がホストのファイルを
+  // 読み、内容が PDF に出た（status=ok / exitCode=0 / buildOk=true のまま）。
+  const cases: [string, string][] = [
+    ["lstinputlisting", String.raw`\lstinputlisting{/etc/passwd}`],
+    ["@input", String.raw`\@input{/etc/passwd}`],
+    ["verbatiminput", String.raw`\verbatiminput{/etc/passwd}`],
+    ["VerbatimInput", String.raw`\VerbatimInput{/etc/passwd}`],
+    ["inputminted", String.raw`\inputminted{text}{/etc/passwd}`],
+    ["CatchFileDef", String.raw`\CatchFileDef{\x}{/etc/passwd}{}`],
+    ["includegraphics", String.raw`\includegraphics{/tmp/secret.png}`],
+    ["includegraphics", String.raw`\includegraphics[width=\textwidth]{/tmp/other/main.pdf}`],
+    ["addbibresource", String.raw`\addbibresource{/etc/passwd}`],
+    ["bibliography", String.raw`\bibliography{/etc/passwd}`],
+  ];
+  it.each(cases)("%s の絶対パス引数を main / support とも落とす", (name, tex) => {
+    expect(findUnsafeTexCommands(tex)).toContain(name);
+    expect(findUnsafeSupportCommands(tex)).toContain(name);
+  });
+
+  it("図・文献のマクロ引数は正規の書き方なので落とさない", () => {
+    // ここまで strict にすると TeX Live 配布で main の誤検知が 145 件増えた。
+    expect(findUnsafeTexCommands(String.raw`\includegraphics{\figpath}`)).toEqual([]);
+    expect(findUnsafeTexCommands(String.raw`\addbibresource{\jobname.bib}`)).toEqual([]);
+  });
+});
+
+describe("コマンド名によらない親参照の検査", () => {
+  it("列挙していないコマンドでもビルドツリー外への親参照を落とす", () => {
+    expect(findUnsafeTexCommands(String.raw`\somepkgread{figs/../../../etc/passwd}`)).toContain(
+      "somepkgread",
+    );
+    expect(findUnsafeSupportCommands(String.raw`\somepkgread{../../etc/passwd}`)).toContain(
+      "somepkgread",
+    );
+    expect(findUnsafeTexCommands(String.raw`\somepkgread{~/.ssh/id_rsa}`)).toContain("somepkgread");
+  });
+
+  it("パスを見せる表示系と地の文は落とさない", () => {
+    expect(findUnsafeTexCommands(String.raw`\texttt{../../etc/passwd} と \path{~/.ssh/id_rsa}`)).toEqual([]);
+    expect(findUnsafeTexCommands("本文で ../../etc/passwd に触れる。")).toEqual([]);
+  });
+
+  it("pgf/tikz の key path を絶対パスと誤認しない", () => {
+    // 素の `/` 始まりまで対象にすると、TeX Live 配布 6,570 件のうち 660 件が誤検知になった。
+    expect(findUnsafeSupportCommands(String.raw`\pgfkeysvalueof{/tikz/unit ext}`)).toEqual([]);
+    expect(findUnsafeSupportCommands(String.raw`\pgfkeys{/GRAPH35/KEY, #1}`)).toEqual([]);
+  });
+
+  it("チルダの結合（~ の直後が制御綴り）を home 参照と誤認しない", () => {
+    expect(findUnsafeSupportCommands(String.raw`\def\x{~\ref{TotPages}}`)).toEqual([]);
+  });
+});
+
 describe("上限内で閉じない引数（空白詰めによる回避）", () => {
   const pad = " ".repeat(1_100);
 
