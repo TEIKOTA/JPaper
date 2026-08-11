@@ -7,14 +7,29 @@
 
 export type Span = [start: number, end: number];
 
+function escapedAt(tex: string, at: number): boolean {
+  let n = 0;
+  for (let i = at - 1; i >= 0 && tex[i] === "\\"; i--) n++;
+  return n % 2 === 1;
+}
+
+// エスケープされていない次の出現。\\[2pt]（行送りの間隔指定）の \[ を表示数式の開始と
+// 読むと、後続の本物の \[..\] と対になって間の地の文まで数式に入る。⚠ landmines.md
+function nextUnescaped(tex: string, needle: string, from: number): number {
+  for (let i = tex.indexOf(needle, from); i !== -1; i = tex.indexOf(needle, i + 1)) {
+    if (!escapedAt(tex, i)) return i;
+  }
+  return -1;
+}
+
 // 開始・終了が別綴りの区間。閉じが見つからなければ以降のどの開始位置でも見つからないので
 // 打ち切る（左から 1 回だけの走査＝線形）。
 export function spansOf(tex: string, open: string, close: string): Span[] {
   const out: Span[] = [];
   for (let i = 0; ; ) {
-    const s = tex.indexOf(open, i);
+    const s = nextUnescaped(tex, open, i);
     if (s === -1) return out;
-    const e = tex.indexOf(close, s + open.length);
+    const e = nextUnescaped(tex, close, s + open.length);
     if (e === -1) return out;
     out.push([s, e + close.length]);
     i = e + close.length;
@@ -29,13 +44,10 @@ export function envSpans(tex: string, name: string): Span[] {
   ];
 }
 
-function escapedAt(tex: string, at: number): boolean {
-  let n = 0;
-  for (let i = at - 1; i >= 0 && tex[i] === "\\"; i--) n++;
-  return n % 2 === 1;
-}
-
 // $…$ と $$…$$。同じ綴りが開始と終了を兼ねるので専用に走る。\$ はエスケープ＝区切りでない。
+// 閉じない $ は「以降にも無い」が成り立たない（同じ綴りが開閉を兼ねるため、
+// ペアリングが 1 個ずれただけでも最後に余る）ので、打ち切らず**末尾までを数式とみなす**
+// ＝ fail-closed。以降を素通しすると保護漏れになる。⚠ landmines.md
 export function dollarSpans(tex: string): Span[] {
   const out: Span[] = [];
   for (let i = 0; i < tex.length; i++) {
@@ -49,11 +61,79 @@ export function dollarSpans(tex: string): Span[] {
         break;
       }
     }
-    if (e === -1) return out;
+    if (e === -1) {
+      out.push([i, tex.length]);
+      return out;
+    }
     out.push([i, e + delim.length]);
     i = e + delim.length - 1;
   }
   return out;
+}
+
+// 中身が TeX として解釈されない領域。ここの生の $ を数式の区切りと読むと、
+// $ のペアリングが 1 個ずれて以降の保護が全部ずれる（実測: lstlisting 内の
+// `echo $HOME` があるだけで、後続の $\mathrm{attention}(Q,K,V)$ の**内側**へ
+// \footnote が入り組版が落ちた）。
+const VERBATIM_ENVS = [
+  "verbatim",
+  "Verbatim",
+  "lstlisting",
+  "minted",
+  "alltt",
+  "comment",
+  "semiverbatim",
+  "filecontents",
+];
+
+// \verb<c>…<c> 系。区切り文字は直後の 1 文字（{ なら対応する } まで）。
+const VERB_CMDS = /\\(?:verb|lstinline|mintinline)\*?/g;
+
+export function verbatimSpans(tex: string): Span[] {
+  const out: Span[] = [];
+  for (const env of VERBATIM_ENVS) out.push(...envSpans(tex, env));
+  VERB_CMDS.lastIndex = 0;
+  for (const m of tex.matchAll(VERB_CMDS)) {
+    let p = m.index + m[0].length;
+    // \mintinline[opts]{lang}|code| のオプション引数・言語指定を読み飛ばす。
+    for (;;) {
+      while (p < tex.length && /\s/.test(tex[p]!)) p++;
+      if (tex[p] === "[") {
+        const close = tex.indexOf("]", p);
+        if (close === -1) break;
+        p = close + 1;
+        continue;
+      }
+      break;
+    }
+    if (p >= tex.length) continue;
+    const open = tex[p]!;
+    // { を区切りに使うのは lstinline/mintinline の {code} 形式。
+    const close = open === "{" ? "}" : open;
+    const e = tex.indexOf(close, p + 1);
+    out.push([m.index, e === -1 ? tex.length : e + 1]);
+  }
+  return out;
+}
+
+// 区間を同じ長さの空白へ置き換える（添字は元文字列のまま使える）。
+export function maskChars(tex: string, spans: Span[]): string {
+  if (spans.length === 0) return tex;
+  const buf = [...tex];
+  for (const [s, e] of spans) for (let i = s; i < Math.min(e, buf.length); i++) buf[i] = " ";
+  return buf.join("");
+}
+
+// 数式区間。verbatim を先に潰してから走るので、コード片の中の $ や \[ に釣られない。
+// 返す添字は元の tex に対して有効。
+export function mathSpans(tex: string, envs: readonly string[] = []): Span[] {
+  const masked = maskChars(tex, verbatimSpans(tex));
+  return [
+    ...dollarSpans(masked),
+    ...spansOf(masked, "\\[", "\\]"),
+    ...spansOf(masked, "\\(", "\\)"),
+    ...envs.flatMap((env) => envSpans(masked, env)),
+  ];
 }
 
 // 区間を空白へ潰す（長さは保たない）。地の文の抽出用。

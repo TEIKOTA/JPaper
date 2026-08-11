@@ -1,6 +1,6 @@
 // 契約付録 §7・§8／翻訳一貫性 ADR(20260710) 決定3。訳注の PDF 描画（初出脚注＋巻末一覧）。
 import type { TranslatorNote } from "../types/contract.js";
-import { dollarSpans, envSpans, spansOf, type Span } from "./tex-spans.js";
+import { mathSpans, verbatimSpans, type Span } from "./tex-spans.js";
 
 const ESC: Record<string, string> = {
   "\\": "\\textbackslash{}",
@@ -23,7 +23,7 @@ export function latexEscape(s: string): string {
 // 制御綴りそのもの、\begin{...}/\end{...} の環境名。$ の個数だけを見ていた頃は
 // \begin{align} の中が「数式でない」と判定され、\begin{align\footnote{...}} を生成して
 // 組版が確実に落ちた（品質ゲートの後なので、全節 pass した翻訳を後段で壊せた）。
-const PROTECTED_ENVS = [
+const PROTECTED_MATH_ENVS = [
   "equation",
   "align",
   "gather",
@@ -31,10 +31,6 @@ const PROTECTED_ENVS = [
   "eqnarray",
   "displaymath",
   "math",
-  "verbatim",
-  "lstlisting",
-  "alltt",
-  "minted",
 ];
 
 // 綴りだけで決まる保護（環境名・制御綴り）。区間を持たないので正規表現のままでよい。
@@ -56,10 +52,9 @@ function protectedMask(tex: string): Uint8Array {
   };
   // 区間は線形走査で拾う。遅延正規表現だと閉じない \[ の羅列で二次になった
   // （実測 128KiB で 1,079ms。入力は訳文なので上限は MAX_RESPONSE_CHARS）。
-  cover(dollarSpans(tex));
-  cover(spansOf(tex, "\\[", "\\]"));
-  cover(spansOf(tex, "\\(", "\\)"));
-  for (const env of PROTECTED_ENVS) cover(envSpans(tex, env));
+  // verbatim 系を先に確定し、その中の $ / \[ に釣られないようにする。
+  cover(verbatimSpans(tex));
+  cover(mathSpans(tex, PROTECTED_MATH_ENVS));
   for (const re of PROTECTED_TOKENS) {
     re.lastIndex = 0;
     for (const m of tex.matchAll(re)) mask.fill(1, m.index, m.index + m[0].length);

@@ -445,3 +445,25 @@ describe("数式の中身の照合", () => {
     ).toEqual([]);
   });
 });
+
+describe("数式区間の切り出しが正規の論文を落とさない", () => {
+  const kinds = (src: string, ja: string) => formalCheck(src, ja, []).map((i) => i.kind);
+
+  it("\\\\[2pt]（行送りの間隔指定）を表示数式と誤読しない", () => {
+    const body = (br: string) =>
+      `\\begin{tabular}{ll} a & b ${br} c & d \\end{tabular}\nLOCALE 損失は \\[ L = \\sum_i x_i \\] とする。`;
+    expect(kinds(body("\\\\[2pt]"), body("\\\\[2pt]"))).toEqual([]);
+  });
+
+  it("コード片の生の $ で数式のペアリングがずれない", () => {
+    const lst = "\\begin{lstlisting}\nexport PYTHONPATH=$HOME/repo\n\\end{lstlisting}\n";
+    const src = `${lst}We evaluate the model. 精度は $p$ である。`;
+    const ja = `${lst}モデルを評価する。精度は $p$ である。`;
+    expect(kinds(src, ja)).toEqual([]);
+  });
+
+  it("数式の改竄は引き続き捕まえる", () => {
+    const src = "有意差は $\\alpha < 0.05$ である。";
+    expect(kinds(src, "有意差は $\\alpha > 0.95$ である。")).toContain("math");
+  });
+});

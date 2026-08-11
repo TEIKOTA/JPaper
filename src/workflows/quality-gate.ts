@@ -24,7 +24,7 @@ const MIN_JA_CHARS_PER_WORD = 0.5;
 // ^^ 記法の展開は組版側の検査と同一実装を使う（正本は tools/tex-safety.ts）。
 export { decodeCarets } from "../tools/tex-safety.js";
 import { decodeCarets as decode } from "../tools/tex-safety.js";
-import { blankSpans, dollarSpans, envSpans, spansOf } from "../tools/tex-spans.js";
+import { blankSpans, mathSpans } from "../tools/tex-spans.js";
 
 // 実行・入出力に触れる制御綴り。訳文が原文に無いこれらを持ち込むのは翻訳ではない。
 const UNSAFE_COMMANDS = [
@@ -144,11 +144,7 @@ const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 function visibleText(s: string): string {
   // 数式区間は線形走査で潰す。遅延正規表現だと閉じない \[ を詰めた見出しで二次になった
   // （実測 250KiB で 4,157ms）。入力は訳文なので上限は MAX_RESPONSE_CHARS。
-  const noMath = blankSpans(s, [
-    ...dollarSpans(s),
-    ...spansOf(s, "\\(", "\\)"),
-    ...spansOf(s, "\\[", "\\]"),
-  ]);
+  const noMath = blankSpans(s, mathSpans(s));
   return noMath
     .replace(/\\includegraphics\*?\s*(?:\[[^\]]*\])?\s*\{[^}]*\}/g, " ") // 図: オプション込みで引数ごと除去
     .replace(/\\(?:eqref|autoref|pageref|cref|Cref|ref|label|cite[a-zA-Z]*|url|nolinkurl|path|href|input|include)\s*\{[^}]*\}/g, " ") // 参照系・URL・パス系は不可視引数ごと除去
@@ -192,13 +188,9 @@ const MATH_ENVS = [
 // 学術論文の翻訳では数式は原文のまま持ち越すのが正しいので、決定的に照合できる。
 function mathBodies(text: string): string[] {
   const src = stripLineComments(text);
-  const spans = [
-    ...dollarSpans(src),
-    ...spansOf(src, "\\[", "\\]"),
-    ...spansOf(src, "\\(", "\\)"),
-    ...MATH_ENVS.flatMap((env) => envSpans(src, env)),
-  ];
-  return spans.map(([s, e]) => normalizeMath(src.slice(s, e))).filter((b) => b !== "");
+  return mathSpans(src, MATH_ENVS)
+    .map(([s, e]) => normalizeMath(src.slice(s, e)))
+    .filter((b) => b !== "");
 }
 
 // 訳文が変えてよい差だけを潰す: 区切り・空白・間隔マクロと、数式内の地の文（\text 等）。

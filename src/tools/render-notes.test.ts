@@ -129,3 +129,25 @@ describe("参照・パス系の引数を壊さない", () => {
     expect(out).toContain("Transformer\\footnote{訳注: 説明}");
   });
 });
+
+describe("verbatim・行送りに釣られた保護のずれ", () => {
+  const notes = [note({ src: "attention", text: "注意機構" })];
+  const forms = new Map([["attention", "attention"]]);
+
+  it("コード片の生の $ で数式の内側へ脚注を入れない", () => {
+    const tex =
+      "\\begin{lstlisting}\necho $HOME\n\\end{lstlisting}\n" +
+      "The attention mechanism. 数式は $\\mathrm{attention}(Q,K,V)$ で与えられる。";
+    const out = injectFootnotes(tex, "seg-0000", notes, forms);
+    expect(out).toContain("The attention\\footnote{訳注: 注意機構} mechanism.");
+    expect(out).toContain("$\\mathrm{attention}(Q,K,V)$");
+  });
+
+  it("\\\\[3pt] があっても脚注が入る（保護域の暴走）", () => {
+    const tex =
+      "\\begin{tabular}{ll} a & b \\\\[3pt] c & d \\end{tabular}\n" +
+      "The attention mechanism. 損失は \\[ L = x \\] とする。";
+    const out = injectFootnotes(tex, "seg-0000", notes, forms);
+    expect(out).toContain("attention\\footnote{訳注: 注意機構}");
+  });
+});
