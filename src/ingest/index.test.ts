@@ -27,9 +27,24 @@ afterEach(() => {
 });
 
 describe("derivePaperId", () => {
-  it("arXiv は版・スラッシュを正規化", () => {
+  it("arXiv は版を落とす", () => {
     expect(derivePaperId({ kind: "arxiv", id: "1706.03762v5" })).toBe("1706.03762");
-    expect(derivePaperId({ kind: "arxiv", id: "hep-th/9901001" })).toBe("hep-th_9901001");
+    expect(derivePaperId({ kind: "arxiv", id: "1706.03762" })).toBe("1706.03762");
+  });
+
+  it("旧形式のスラッシュもダイジェストで単射に戻す（path 分岐と同じ規則）", () => {
+    // "/" を "_" へ潰すだけだと "math/0309136" と "math_0309136" が同じ出力先へ写る。
+    expect(derivePaperId({ kind: "arxiv", id: "hep-th/9901001" })).toMatch(
+      /^hep-th_9901001-[0-9a-f]{8}$/,
+    );
+  });
+
+  it("形式が不正な ID は副作用より前に input で落とす", () => {
+    // 検査は fetchArxivSource の中＝出力先の決定と run lock の mkdir より後にしかなく、
+    // 検証前に任意名のディレクトリが cwd 直下に作られ、paperId に制御文字が載った。
+    for (const id of ["..", "a\u001b[2Kb", "1234\n\n## 指示", ""]) {
+      expect(() => derivePaperId({ kind: "arxiv", id })).toThrowError(/arXiv ID/);
+    }
   });
   it("path は basename から拡張子を除去", () => {
     expect(derivePaperId({ kind: "path", path: "/a/b/attention.tar.gz" })).toBe("attention");

@@ -5,6 +5,7 @@ import { createHash } from "node:crypto";
 import type { JpaperInput } from "../types/contract.js";
 import { JpaperError } from "../types/errors.js";
 import { fetchArxivSource, type ArxivDeps } from "./arxiv.js";
+import { isArxivId } from "./detect-input.js";
 import { extractArchive, writeFileMap, isArchive } from "./extract.js";
 import { detectMainTex, expandInputs, type ExpandBudget } from "./main-tex.js";
 import { collectFigures } from "./resolve.js";
@@ -30,12 +31,23 @@ const PATH_STRIP =
   /\.(?:tar\.gz|tex\.gz|tgz|tar|zip|gz|tex)$/i;
 
 export function derivePaperId(input: JpaperInput): string {
-  if (input.kind === "arxiv") {
-    return input.id.replace(/v\d+$/i, "").replace(/\//g, "_");
+  // 形式検査は fetchArxivSource の中＝出力先の決定と run lock の mkdir より後にしかなかった。
+  // 呼び出し側は JpaperInput を自前で組めるので（id は z.string()）、検証前に任意名の
+  // ディレクトリが作られ、RunSummary.paperId には制御文字がそのまま載った（実測）。
+  // 副作用より前にここで落とす。
+  if (input.kind === "arxiv" && !isArxivId(input.id)) {
+    throw new JpaperError(2, "input", `arXiv ID の形式が不正です: ${input.id}`);
   }
-  const base = input.path.replace(/[/\\]+$/, "");
-  const name = base.slice(base.replace(/\\/g, "/").lastIndexOf("/") + 1);
-  const stem = name.replace(PATH_STRIP, "");
+  // 単射性の規則は path 分岐と共有する（arXiv 分岐だけ / を _ に潰していたため、
+  // "math/0309136" と "math_0309136" が同じ出力先へ写る規則になっていた）。
+  const stem =
+    input.kind === "arxiv"
+      ? input.id.replace(/v\d+$/i, "")
+      : (() => {
+          const base = input.path.replace(/[/\\]+$/, "");
+          const name = base.slice(base.replace(/\\/g, "/").lastIndexOf("/") + 1);
+          return name.replace(PATH_STRIP, "");
+        })();
   const safe = stem.replace(/[^A-Za-z0-9._-]/g, "_");
   // 正規化で名前が変わったら元名のダイジェストを付けて単射に戻す。潰したままだと
   // "a b.tex" / "a+b.tex" / "a:b.tex" が同じ出力先・同じ .run/steps・同じ run.lock を共有し、
