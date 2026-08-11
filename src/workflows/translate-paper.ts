@@ -99,6 +99,7 @@ const SectionLoopCache = z.object({
   ja: z.string(),
   passed: z.boolean(),
   failCode: z.union([z.literal(3), z.literal(4)]).optional(),
+  failedKinds: z.array(z.string()).default([]),
   usedRevisions: z.number().int(),
   maxRevisions: z.number().int(),
   warnIssues: z.array(EvalIssue),
@@ -365,14 +366,39 @@ interface TypesetOutcome {
 }
 
 // 節ループ・組版ゲートの失敗は例外ではなく戻り値で来るので、ここで構造化エラーに写す。
+// 汚染の兆候として即失敗させる形式エラー。品質の失敗と同じ見た目で返すと、
+// 運用者はプロンプトインジェクション／モデル汚染が起きたことに気づけない。
+const CONTAMINATION_KINDS = new Set(["unsafe-command", "structure"]);
+
+export function contaminatedSegments(
+  results: readonly { segmentId: string; passed: boolean; failedKinds?: readonly string[] }[],
+): string[] {
+  return results
+    .filter((r) => !r.passed && (r.failedKinds ?? []).some((k) => CONTAMINATION_KINDS.has(k)))
+    .map((r) => r.segmentId);
+}
+
 function gateError(
   exitCode: number,
-  results: readonly { segmentId: string; passed: boolean; failCode?: number }[],
+  results: readonly {
+    segmentId: string;
+    passed: boolean;
+    failCode?: number;
+    failedKinds?: readonly string[];
+  }[],
   typesetMessage?: string,
 ): RunError {
   const bad = results.filter((r) => !r.passed);
   const ids = bad.map((r) => r.segmentId).slice(0, 10).join(", ");
   if (exitCode === 3) {
+    const tainted = contaminatedSegments(results);
+    if (tainted.length > 0) {
+      return {
+        kind: "formal",
+        code: 3,
+        message: `訳文が危険コマンド・文書構造の破壊を持ち込みました（汚染の疑い）: ${tainted.slice(0, 10).join(", ")}`,
+      };
+    }
     return { kind: "formal", code: 3, message: `形式検査を通過しないセグメントがあります: ${ids}` };
   }
   if (exitCode === 4) {
@@ -711,7 +737,9 @@ export async function translatePaper(
     const chaptersDir = path.join(outDir, "translation", "chapters");
     rmSync(chaptersDir, { recursive: true, force: true }); // 縮小時の古い chapter を残さない
     mkdirSync(chaptersDir, { recursive: true });
-    for (const r of results) {
+    // 落ちたセグメントの訳文は書き出さない。汚染で落ちた run でも成果物ディレクトリに
+    // \write18{...} 入りの .tex が残り、利用者が手で組版すれば発火した。
+    for (const r of results.filter((x) => x.passed)) {
       writeFileSync(path.join(chaptersDir, `${r.segmentId}.tex`), r.ja);
     }
     writeFileSync(path.join(outDir, "notes.json"), JSON.stringify(notes, null, 2));
@@ -719,6 +747,15 @@ export async function translatePaper(
     const passed = results.filter((r) => r.passed).length;
     const failed = results.length - passed;
     reached = { total: results.length, passed, failed };
+
+    // 汚染は品質の失敗に埋もれさせない。exit code は他の失敗に持っていかれうるので、
+    // 種別そのものを警告として必ず観測可能にする。
+    const tainted = contaminatedSegments(results);
+    if (tainted.length > 0) {
+      notify(
+        `訳文が危険コマンド・文書構造の破壊を持ち込みました（汚染の疑い）: ${tainted.slice(0, 10).join(", ")}`,
+      );
+    }
 
     // 全節通過時のみ組版する（翻訳失敗の 3/4 は組版前に確定）。
     let layout: Layout | null = null;
