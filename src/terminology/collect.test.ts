@@ -47,3 +47,24 @@ describe("候補収集のコスト", () => {
     expect(Date.now() - started).toBeLessThan(3000);
   });
 });
+
+describe("定義句パターンのコスト", () => {
+  it("we refer to + 空白の反復で上限サイズでも秒オーダーに収まる", () => {
+    const body = "we refer to".concat(" ".repeat(21)).repeat(30_000);
+    const t = Date.now();
+    collectCandidates(body, []);
+    const ms = Date.now() - t;
+    // 修正前は 1MiB で 2,539ms（8MiB で 20,354ms）。中間を同一文に限り、
+    // as の前の \s の曖昧さを畳んで 13 倍以上速くした。
+    expect(ms).toBeLessThan(1_500);
+  });
+
+  it("正規の言い回しは引き続き拾う", () => {
+    const got = (s: string) => collectCandidates(s, []).map((c) => c.src);
+    expect(got("We refer to this mechanism as the attention head.")).toContain("attention head");
+    expect(got("we refer to  the resulting model  as  a sparse transformer.")).toContain(
+      "sparse transformer",
+    );
+    expect(got("We refer to it as self-attention.")).toContain("self-attention");
+  });
+});

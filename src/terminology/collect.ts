@@ -22,7 +22,11 @@ const PATTERNS: { re: RegExp; def: boolean }[] = [
     def: true,
   },
   {
-    re: /\bwe\s{1,20}refer\s{1,20}to\s{1,20}.{1,200}?\s{1,20}as\s{1,20}(?:the\s|an?\s)?([A-Za-z][\w\- ]{0,200}?)(?=[.,;:()]|$)/gi,
+    // 中間は「同じ文の中」に限る（[^.\n]）。任意 1 文字（.）にすると、失敗位置ごとに
+    // 200 文字ぶんの後戻りが起きる。実測: "we refer to"＋空白 21 の反復 8MiB で 20,354ms
+    // の完全同期停止（AbortSignal も timeoutMs も配送されない）。定義句が文や行を
+    // 跨ぐことは無いので、範囲を狭めても取りこぼさない。⚠ landmines.md
+    re: /\bwe\s{1,20}refer\s{1,20}to\s{1,20}[^.\n]{1,200}?\sas\s{1,20}(?:the\s|an?\s)?([A-Za-z][\w\- ]{0,200}?)(?=[.,;:()]|$)/gi,
     def: true,
   },
   {
