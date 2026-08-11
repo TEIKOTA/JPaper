@@ -7,6 +7,7 @@ import {
   readdirSync,
   readFileSync,
   readSync,
+  renameSync,
   rmSync,
   statSync,
   writeFileSync,
@@ -254,6 +255,19 @@ async function loadOrBuildContext(
   return { resolved, brief, style, proposedAdded, pending };
 }
 
+// 出力先が別の論文のものだったら、この run の成果物を書く前に前の論文の正本を落とす。
+// 落とさないと、組版で失敗した run が「.paper-id と glossary.md は論文 A・chapters は
+// 論文 B」という世代混在のディレクトリを残す（実測）。手で latexmk すれば A の
+// プリアンブル系 md と B の本文が混ざる。出力先は 1 つの論文のものと決める。
+function clearForeignContext(outDir: string, paperId: string): void {
+  const stamped = stampedPaperId(outDir);
+  if (stamped === undefined || stamped === paperId) return;
+  for (const f of ["glossary.md", "brief.md", "style.md", PAPER_STAMP]) {
+    rmSync(path.join(outDir, f), { force: true });
+  }
+  rmSync(path.join(outDir, "translation", "build"), { recursive: true, force: true });
+}
+
 // run が最後まで到達したときだけ md を確定する。
 function promoteContext(outDir: string, paperId: string, pending: PaperContext["pending"]): void {
   mkdirSync(outDir, { recursive: true });
@@ -452,7 +466,22 @@ async function typeset(
   surface: (m: string) => void,
   signal?: AbortSignal,
 ): Promise<TypesetOutcome> {
-  const buildDir = path.join(opts.outDir, "translation", "build");
+  // 組版は隣の staging へ行い、成功したときだけ正規の build を置き換える。
+  // 直接 build を使うと stageBuild の rmSync が先に走り、**失敗した run が前回の
+  // 成功 PDF を破壊する**（実測: 論文 A を成功させた outDir で論文 B を組版失敗
+  // させると、A の build/main.pdf が消えた）。⚠ landmines.md
+  const finalDir = path.join(opts.outDir, "translation", "build");
+  const buildDir = `${finalDir}.next`;
+  const publish = (pdfPath?: string): string | undefined => {
+    rmSync(finalDir, { recursive: true, force: true });
+    renameSync(buildDir, finalDir);
+    return pdfPath === undefined
+      ? undefined
+      : path.join(finalDir, path.relative(buildDir, pdfPath));
+  };
+  const discard = (): void => {
+    rmSync(buildDir, { recursive: true, force: true });
+  };
   const run = (mode: Layout): Promise<BuildGateResult> => {
     const { mainTex, sourceMap } = assembleWithMap({ cleanLatex, segments, mode });
     return runBuildGate(
@@ -477,18 +506,24 @@ async function typeset(
   // pdfPath は buildOk のときだけ返す（ゲート棄却済みの成果物を成功として渡さない）。
   const orig = await run("original");
   noteShadowed(orig);
-  if (orig.buildOk) return { layout: "original", buildOk: true, pdfPath: orig.pdfPath, exitCode: 0 };
+  if (orig.buildOk) {
+    return { layout: "original", buildOk: true, pdfPath: publish(orig.pdfPath), exitCode: 0 };
+  }
   if (orig.failedSegments.length > 0) {
     // 翻訳起因のビルド失敗。再訳ループ(WP10)未実装のため明示的失敗として surface する。
     const m = `組版失敗(翻訳起因・要再訳): ${summarizeGateFailure(orig)}`;
     surface(m);
+    discard();
     return { layout: "original", buildOk: false, exitCode: 5, message: m };
   }
   surface(`原プリアンブルで組めず共通テンプレへフォールバック: ${summarizeGateFailure(orig)}`);
   const tmpl = await run("template");
-  if (tmpl.buildOk) return { layout: "template", buildOk: true, pdfPath: tmpl.pdfPath, exitCode: 0 };
+  if (tmpl.buildOk) {
+    return { layout: "template", buildOk: true, pdfPath: publish(tmpl.pdfPath), exitCode: 0 };
+  }
   const m = `組版失敗(テンプレでも不可): ${summarizeGateFailure(tmpl)}`;
   surface(m);
+  discard();
   return { layout: "template", buildOk: false, exitCode: 5, message: m };
 }
 
@@ -751,6 +786,7 @@ export async function translatePaper(
       })),
     });
 
+    clearForeignContext(outDir, ingested.paperId);
     const chaptersDir = path.join(outDir, "translation", "chapters");
     rmSync(chaptersDir, { recursive: true, force: true }); // 縮小時の古い chapter を残さない
     mkdirSync(chaptersDir, { recursive: true });

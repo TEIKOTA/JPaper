@@ -197,3 +197,40 @@ describe("人間の編集は尊重し続ける", () => {
     expect(prompts.join("\n")).toContain("人が直したテーゼ");
   });
 });
+
+describe("出力先は 1 つの論文のものに保つ", () => {
+  const fail = () => ({ code: 1, log: "! LaTeX Error: broke." });
+  const run = async (name: string, thesis: string, outDir: string, runner: typeof ok) => {
+    const { translatePaper } = await import("./translate-paper.js");
+    const { GlossaryDb } = await import("../terminology/db.js");
+    const { tar } = await fixture(name, thesis);
+    return translatePaper(
+      { kind: "path", path: tar },
+      { provider: "ollama", outDir },
+      { client: await client(thesis), db: new GlossaryDb(), latexRunner: runner },
+    );
+  };
+
+  it("同じ論文の再試行で組版が失敗しても前回の PDF を壊さない", async () => {
+    const outDir = path.join(tmp(), "out");
+    const pdf = path.join(outDir, "translation", "build", "main.pdf");
+    expect((await run("a", "核A", outDir, ok)).status).toBe("ok");
+    expect(existsSync(pdf)).toBe(true);
+    expect((await run("a", "核A", outDir, fail)).status).toBe("failed");
+    expect(existsSync(pdf)).toBe(true);
+  });
+
+  it("別の論文が組版で失敗しても、前の論文の正本を名乗ったままにしない", async () => {
+    const outDir = path.join(tmp(), "out");
+    expect((await run("a", "核A", outDir, ok)).status).toBe("ok");
+    expect(readFileSync(path.join(outDir, ".paper-id"), "utf8").trim()).toBe("a");
+
+    expect((await run("b", "核B", outDir, fail)).exitCode).toBe(5);
+    // .paper-id / md が A のまま残ると、A の md と B の本文が混ざったディレクトリになる。
+    for (const f of ["brief.md", "style.md", "glossary.md", ".paper-id"]) {
+      expect(existsSync(path.join(outDir, f))).toBe(false);
+    }
+    expect(existsSync(path.join(outDir, "translation", "chapters", "seg-0000.tex"))).toBe(true);
+    expect(existsSync(path.join(outDir, "translation", "build", "main.pdf"))).toBe(false);
+  });
+});
