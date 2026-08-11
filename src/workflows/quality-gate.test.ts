@@ -378,3 +378,29 @@ describe("untranslated 検査そのものを無効化する回避（ラウンド
   });
 });
 
+describe("文書構造を終わらせる綴りの持ち込み", () => {
+  const SRC = "\\section{Method}\nWe propose a new estimator that addresses this gap directly and we evaluate it on several benchmarks.";
+  const JA = "\\section{提案手法}\n本節では、この隔たりに直接取り組む新しい推定量を提案し、複数のベンチマークで評価する。";
+
+  it.each(["\\end{document}", "\\begin{document}", "\\endinput", "\\iffalse"])(
+    "%s を持ち込んだ訳文を落とす",
+    (tok) => {
+      // LaTeX は \\end{document} 以降を無視するのでビルドは正常終了する。実測で
+      // exit 0 / buildOk true のまま PDF に最初の節しか出なかった。
+      const issues = formalCheck(SRC, JA + tok, []);
+      expect(issues.map((i) => i.kind)).toContain("structure");
+    },
+  );
+
+  it("原文にもとからある構造コマンドは翻訳者の持ち込みではない", () => {
+    expect(
+      formalCheck(`${SRC}\\iffalse`, `${JA}\\iffalse`, []).filter((i) => i.kind === "structure"),
+    ).toEqual([]);
+  });
+
+  it("コメント内の綴りは持ち込みとみなさない", () => {
+    expect(
+      formalCheck(SRC, `${JA}\n% \\end{document} と書いた行`, []).filter((i) => i.kind === "structure"),
+    ).toEqual([]);
+  });
+});

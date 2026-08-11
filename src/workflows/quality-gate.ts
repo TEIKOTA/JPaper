@@ -10,7 +10,8 @@ export interface FormalIssue {
     | "keep-original"
     | "bilingual"
     | "untranslated"
-    | "unsafe-command";
+    | "unsafe-command"
+    | "structure";
   message: string;
 }
 
@@ -47,6 +48,25 @@ const UNSAFE_COMMANDS = [
   "documentclass",
   "makeatletter",
 ];
+
+// 文書をそこで終わらせる／以降を不可視にする綴り。LaTeX は \end{document} 以降を無視するので
+// **ビルドは正常終了する**（実測: seg-0000 の訳末尾に 1 つ足すだけで exit 0 / buildOk true の
+// まま PDF に最初の節しか出ない）。\iffalse を先頭・\fi を末尾に置けば中間を丸ごと消せる。
+// 訳文が原文に無いこれらを持ち込むのは翻訳ではないので、再訳ではなく失敗に倒す。
+const STRUCTURE_BREAKS = [
+  "\\end{document}",
+  "\\begin{document}",
+  "\\endinput",
+  "\\iffalse",
+] as const;
+
+export function introducedStructureBreaks(srcLatex: string, ja: string): string[] {
+  const src = stripLineComments(decode(srcLatex));
+  const out = stripLineComments(decode(ja));
+  return STRUCTURE_BREAKS.filter(
+    (tok) => countOccurrences(out, tok) > countOccurrences(src, tok),
+  );
+}
 
 function usedCommands(tex: string): Set<string> {
   const found = new Set<string>();
@@ -242,6 +262,14 @@ export function formalCheck(
     issues.push({
       kind: "unsafe-command",
       message: `訳文が原文に無い危険コマンドを持ち込んだ: ${unsafe.map((c) => `\\${c}`).join(", ")}`,
+    });
+  }
+
+  const breaks = introducedStructureBreaks(srcLatex, ja);
+  if (breaks.length > 0) {
+    issues.push({
+      kind: "structure",
+      message: `訳文が原文に無い文書構造コマンドを持ち込んだ: ${breaks.join(", ")}`,
     });
   }
 
