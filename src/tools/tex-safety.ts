@@ -283,6 +283,13 @@ function commandBefore(src: string, brace: number, charge: (n: number) => void):
   let i = brace - 1;
   for (;;) {
     while (i >= floor && /\s/.test(src[i]!)) i--;
+    // 一段外側の群の中にいるなら外へ出て続ける。諦めて null を返すと、
+    // \graphicspath{{../../}}（graphicx の必須構文）が黙って素通りする。⚠ landmines.md
+    if (i >= floor && src[i] === "{") {
+      charge(1);
+      i--;
+      continue;
+    }
     const open = i >= floor && (src[i] === "]" || src[i] === "}")
       ? findBack(src, i - 1, floor, src[i] === "]" ? "[" : "{")
       : -2;

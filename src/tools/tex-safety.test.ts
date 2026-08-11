@@ -334,3 +334,21 @@ describe("走査コストの上限", () => {
   });
 });
 
+
+describe("入れ子の波括弧の中のパス引数", () => {
+  it("\\graphicspath{{../../}}（graphicx の必須構文）を落とす", () => {
+    expect(findUnsafeTexCommands("\\graphicspath{{../../}}")).toEqual(["graphicspath"]);
+    expect(findUnsafeTexCommands("\\graphicspath{{~/Documents/}}")).toEqual(["graphicspath"]);
+    expect(findUnsafeTexCommands("\\graphicspath{{figures/}{../../}}")).toEqual(["graphicspath"]);
+  });
+
+  it("ビルドツリー内の graphicspath は通す", () => {
+    expect(findUnsafeTexCommands("\\graphicspath{{figures/}{images/}}")).toEqual([]);
+  });
+
+  it("列挙済みの読み込みコマンドは二重波括弧でも従来どおり落ちる", () => {
+    expect(findUnsafeTexCommands("\\lstinputlisting{{../../etc/passwd}}")).toEqual([
+      "lstinputlisting",
+    ]);
+  });
+});
