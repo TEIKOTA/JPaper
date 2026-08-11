@@ -46,6 +46,21 @@ describe("verbatimSpans", () => {
     const tex = "\\verb|$x$| と \\lstinline{$y$}";
     expect(verbatimSpans(tex).map(slice(tex))).toEqual(["\\verb|$x$|", "\\lstinline{$y$}"]);
   });
+
+  it("\\mintinline は言語引数を区切り文字と取り違えない", () => {
+    for (const tex of [
+      "A \\mintinline{sh}{echo $HOME} B",
+      "A \\mintinline{sh}|echo $HOME| B",
+      "A \\mintinline[fontsize=\\small]{sh}{echo $HOME} B",
+    ]) {
+      const [span] = verbatimSpans(tex).map(slice(tex));
+      expect(span).toContain("echo $HOME");
+    }
+  });
+
+  it("\\verbatiminput を \\verb の接頭辞として拾わない", () => {
+    expect(verbatimSpans("A \\verbatiminput{data.txt} B")).toEqual([]);
+  });
 });
 
 describe("mathSpans は verbatim の中の $ に釣られない", () => {

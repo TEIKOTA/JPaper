@@ -146,7 +146,7 @@ describe("別論文が同じ outDir を使う場合", () => {
       { client: await client("社外秘の研究テーマ"), db: new GlossaryDb(), latexRunner: ok },
     );
     expect(r1.status).toBe("ok");
-    expect(readFileSync(path.join(outDir, ".paper-id"), "utf8")).toBe("paperA");
+    expect(readFileSync(path.join(outDir, ".paper-id"), "utf8").split("\n")[0]).toBe("paperA");
 
     const prompts: string[] = [];
     const warns: string[] = [];
@@ -165,7 +165,7 @@ describe("別論文が同じ outDir を使う場合", () => {
     expect(joined).toContain("公開してよい主張");
     expect(joined).not.toContain("社外秘の研究テーマ");
     expect(warns.some((w) => w.includes("別の論文"))).toBe(true);
-    expect(readFileSync(path.join(outDir, ".paper-id"), "utf8")).toBe("paperB");
+    expect(readFileSync(path.join(outDir, ".paper-id"), "utf8").split("\n")[0]).toBe("paperB");
   });
 });
 
@@ -223,7 +223,7 @@ describe("出力先は 1 つの論文のものに保つ", () => {
   it("別の論文が組版で失敗しても、前の論文の正本を名乗ったままにしない", async () => {
     const outDir = path.join(tmp(), "out");
     expect((await run("a", "核A", outDir, ok)).status).toBe("ok");
-    expect(readFileSync(path.join(outDir, ".paper-id"), "utf8").trim()).toBe("a");
+    expect(readFileSync(path.join(outDir, ".paper-id"), "utf8").split("\n")[0]).toBe("a");
 
     expect((await run("b", "核B", outDir, fail)).exitCode).toBe(5);
     // .paper-id / md が A のまま残ると、A の md と B の本文が混ざったディレクトリになる。
@@ -232,5 +232,55 @@ describe("出力先は 1 つの論文のものに保つ", () => {
     }
     expect(existsSync(path.join(outDir, "translation", "chapters", "seg-0000.tex"))).toBe(true);
     expect(existsSync(path.join(outDir, "translation", "build", "main.pdf"))).toBe(false);
+  });
+});
+
+describe("同じ名前で内容の違う論文", () => {
+  it("main.tex 同士でも前の論文の brief がプロンプトに載らない", async () => {
+    const { translatePaper } = await import("./translate-paper.js");
+    const { GlossaryDb } = await import("../terminology/db.js");
+    const outDir = path.join(tmp(), "out");
+    const seen: string[] = [];
+    const warns: string[] = [];
+
+    const run = async (body: string, thesis: string) => {
+      const { tar } = await fixture("main", thesis, body);
+      return translatePaper(
+        { kind: "path", path: tar },
+        { provider: "ollama", outDir },
+        {
+          client: await client(thesis, (u) => seen.push(u)),
+          db: new GlossaryDb(),
+          onError: (m) => warns.push(m),
+          latexRunner: ok,
+        },
+      );
+    };
+
+    expect((await run("Alpha beta gamma delta.", "秘密A")).status).toBe("ok");
+    // どちらも fixture 名 "main" ＝ paperId が一致する（arXiv ソースで最も普通の名前）。
+    seen.length = 0;
+    expect((await run("Bravo zeta eta theta.", "核B")).status).toBe("ok");
+    expect(seen.length).toBeGreaterThan(0);
+    expect(seen.filter((u) => u.includes("秘密A"))).toEqual([]);
+    expect(warns.some((w) => w.includes("内容の違う論文"))).toBe(true);
+  });
+
+  it("同じ論文の再実行では既存 md を採用し続ける", async () => {
+    const { translatePaper } = await import("./translate-paper.js");
+    const { GlossaryDb } = await import("../terminology/db.js");
+    const outDir = path.join(tmp(), "out");
+    const run = async (thesis: string) => {
+      const { tar } = await fixture("main", thesis, "Alpha beta gamma delta.");
+      return translatePaper(
+        { kind: "path", path: tar },
+        { provider: "ollama", outDir },
+        { client: await client(thesis), db: new GlossaryDb(), latexRunner: ok },
+      );
+    };
+    expect((await run("最初の核")).status).toBe("ok");
+    expect((await run("あとから来た核")).status).toBe("ok");
+    // 2 回目は既存 md を正本として採用する＝作り直して上書きしない。
+    expect(readFileSync(path.join(outDir, "brief.md"), "utf8")).toContain("最初の核");
   });
 });

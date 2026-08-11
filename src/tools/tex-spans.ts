@@ -87,7 +87,16 @@ const VERBATIM_ENVS = [
 ];
 
 // \verb<c>…<c> 系。区切り文字は直後の 1 文字（{ なら対応する } まで）。
-const VERB_CMDS = /\\(?:verb|lstinline|mintinline)\*?/g;
+// 綴りの直後に制御綴り文字が続くものは別コマンド。(?![a-zA-Z@]) を落とすと
+// \verbatiminput{data.txt} の \verb 接頭辞に一致し、区切り文字 "a" で
+// 偽の verbatim 区間 "\verbatiminput{da" を作る（\verbatiminput は実在の綴り）。
+const VERB_CMDS = /\\(verb|lstinline|mintinline)\*?(?![a-zA-Z@])/g;
+
+// \mintinline は言語を必須の第 1 引数に取る（\mintinline{python}{code}）。
+// 言語を読み飛ばさないと {python} を code とみなし、**本当の code が無保護**になる。
+// 実測: \mintinline{sh}{echo $HOME} で $ のペアリングが 1 個ずれ、数式をそのまま
+// 持ち越した忠実な訳が math 不一致で落ちた（翻訳者に直しようがなく exit 3）。
+const LANG_ARG_VERB = new Set(["mintinline"]);
 
 export function verbatimSpans(tex: string): Span[] {
   const out: Span[] = [];
@@ -95,16 +104,23 @@ export function verbatimSpans(tex: string): Span[] {
   VERB_CMDS.lastIndex = 0;
   for (const m of tex.matchAll(VERB_CMDS)) {
     let p = m.index + m[0].length;
-    // \mintinline[opts]{lang}|code| のオプション引数・言語指定を読み飛ばす。
-    for (;;) {
+    const skipSpace = (): void => {
       while (p < tex.length && /\s/.test(tex[p]!)) p++;
-      if (tex[p] === "[") {
-        const close = tex.indexOf("]", p);
-        if (close === -1) break;
-        p = close + 1;
-        continue;
-      }
-      break;
+    };
+    // オプション引数 [opts] を読み飛ばす。
+    skipSpace();
+    if (tex[p] === "[") {
+      const close = tex.indexOf("]", p);
+      if (close === -1) continue;
+      p = close + 1;
+      skipSpace();
+    }
+    // 言語引数 {lang} を読み飛ばす（区切り文字ではない）。
+    if (LANG_ARG_VERB.has(m[1]!) && tex[p] === "{") {
+      const close = tex.indexOf("}", p);
+      if (close === -1) continue;
+      p = close + 1;
+      skipSpace();
     }
     if (p >= tex.length) continue;
     const open = tex[p]!;

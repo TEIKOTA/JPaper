@@ -505,3 +505,11 @@ describe("untranslated は不可視引数で無効化できない・表で誤発
     }
   });
 });
+
+describe("インラインのコード片で数式のペアリングがずれない", () => {
+  it("\\mintinline{lang}{code} の中の $ を数式の区切りと読まない", () => {
+    const src = "Text \\mintinline{sh}{echo $HOME} and $\\alpha$ and $\\beta$ end.";
+    const ja = "本文 \\mintinline{sh}{echo $HOME} と $\\alpha$ と $\\beta$ 終わり。";
+    expect(formalCheck(src, ja, []).map((i) => i.kind)).toEqual([]);
+  });
+});

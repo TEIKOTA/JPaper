@@ -190,14 +190,37 @@ interface PaperContext {
 }
 
 // 出力先がどの論文のものかを示す印。同じ outDir に別の論文が来たら既存 md を採用しない。
+// 1 行目が paperId、2 行目が本文のダイジェスト（旧版の印は 1 行だけ）。
 const PAPER_STAMP = ".paper-id";
 
-function stampedPaperId(outDir: string): string | undefined {
+interface PaperStamp {
+  paperId: string;
+  // 旧版の印には無い。undefined のときは paperId だけで判定する（既存の出力先を壊さない）。
+  sourceDigest?: string;
+}
+
+function readStamp(outDir: string): PaperStamp | undefined {
   try {
-    return readFileSync(path.join(outDir, PAPER_STAMP), "utf8").trim();
+    const [id, digest] = readFileSync(path.join(outDir, PAPER_STAMP), "utf8").split("\n");
+    if (id === undefined || id.trim() === "") return undefined;
+    const d = digest?.trim();
+    return { paperId: id.trim(), sourceDigest: d === "" ? undefined : d };
   } catch {
     return undefined;
   }
+}
+
+function stampedPaperId(outDir: string): string | undefined {
+  return readStamp(outDir)?.paperId;
+}
+
+// paperId はファイル名の stem から作るので、別内容の 2 論文がどちらも main.tex
+// （arXiv ソースで最も普通の名前）だと一致する。paperId だけを印にすると
+// 「別論文なら既存 md を採用しない」ガードが発動せず、A の brief が B の全
+// セグメントのプロンプトに載ったまま両方 exit 0 で返る（実測）。本文の
+// ダイジェストを併せて印にする。⚠ landmines.md
+function sourceDigestOf(cleanLatex: string): string {
+  return createHash("sha256").update(cleanLatex).digest("hex").slice(0, 16);
 }
 
 // glossary.md が有れば編集を正本として読み戻す（無ければ builder 実行）。既存 md は上書きしない。
@@ -226,11 +249,21 @@ async function loadOrBuildContext(
   const styleMd = path.join(outDir, "style.md");
 
   // 印が無い出力先は旧版が作ったもの＝これまでどおり採用する（人間の編集を捨てない）。
-  const stamped = stampedPaperId(outDir);
-  const foreign = stamped !== undefined && stamped !== paperId;
-  if (foreign) {
+  const stamp = readStamp(outDir);
+  const digest = sourceDigestOf(cleanLatex);
+  const otherPaper = stamp !== undefined && stamp.paperId !== paperId;
+  // paperId が同じでも本文が違えば別論文（同名ファイルの衝突）。ダイジェストを持たない
+  // 旧版の印では判定できないので、その場合は従来どおり paperId だけで見る。
+  const otherSource =
+    stamp?.sourceDigest !== undefined && stamp.sourceDigest !== digest;
+  const foreign = otherPaper || otherSource;
+  if (otherPaper) {
     warn?.(
-      `出力先は別の論文（${stamped}）のものなので既存の glossary.md / brief.md / style.md は使いません`,
+      `出力先は別の論文（${stamp?.paperId ?? "不明"}）のものなので既存の glossary.md / brief.md / style.md は使いません`,
+    );
+  } else if (otherSource) {
+    warn?.(
+      `出力先には同じ名前（${paperId}）で内容の違う論文があるので既存の glossary.md / brief.md / style.md は使いません`,
     );
   }
   const adopt = (file: string): boolean => !foreign && existsSync(file);
@@ -269,10 +302,15 @@ function clearForeignContext(outDir: string, paperId: string): void {
 }
 
 // run が最後まで到達したときだけ md を確定する。
-function promoteContext(outDir: string, paperId: string, pending: PaperContext["pending"]): void {
+function promoteContext(
+  outDir: string,
+  paperId: string,
+  sourceDigest: string,
+  pending: PaperContext["pending"],
+): void {
   mkdirSync(outDir, { recursive: true });
   for (const [file, body] of Object.entries(pending)) writeFileSync(file, body);
-  writeFileSync(path.join(outDir, PAPER_STAMP), paperId);
+  writeFileSync(path.join(outDir, PAPER_STAMP), `${paperId}\n${sourceDigest}\n`);
 }
 
 // ingest キャッシュの無効化キー: 入力が変わったら再取り込み（path 上書き・arXiv v1/v2 は paperId 共有）。
@@ -854,7 +892,7 @@ export async function translatePaper(
       // 今回使わなかった step の checkpoint を掃除する（節が減った再実行の孤児が
       // 残ると、前の論文の訳文がそのまま出力先に居座る）。
       pruneSteps(runDir, new Set(["ingest", "glossary", ...segments.map((s) => s.id)]));
-      promoteContext(outDir, ingested.paperId, ctx.pending);
+      promoteContext(outDir, ingested.paperId, sourceDigestOf(ingested.cleanLatex), ctx.pending);
     }
 
     const summary = RunSummary.parse({
