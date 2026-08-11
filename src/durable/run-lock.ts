@@ -12,6 +12,16 @@ import {
 import path from "node:path";
 import { JpaperError, isInfraError } from "../types/errors.js";
 
+// ロックの削除も「生の fs エラーを外へ出さない」（契約付録 §8）の対象。
+function removeOrInfra(file: string): void {
+  try {
+    rmSync(file, { force: true });
+  } catch (e) {
+    if (isInfraError(e)) throw infraError(e, path.dirname(file));
+    throw e;
+  }
+}
+
 function infraError(e: unknown, runDir: string): JpaperError {
   const code = (e as NodeJS.ErrnoException).code ?? "";
   return new JpaperError(
@@ -42,8 +52,14 @@ export interface RunLock {
 function readLock(file: string): LockInfo | null {
   try {
     const raw = JSON.parse(readFileSync(file, "utf8")) as Partial<LockInfo>;
-    if (typeof raw.pid !== "number" || typeof raw.startedAt !== "number") return null;
-    return { pid: raw.pid, startedAt: raw.startedAt, beatAt: raw.beatAt ?? raw.startedAt };
+    if (!Number.isFinite(raw.pid) || !Number.isFinite(raw.startedAt)) return null;
+    // beatAt を無検査で受けると now - beatAt が NaN になり、NaN > staleMs は常に false
+    // ＝決して失効しない。生きた pid と組み合わせれば恒久ロックになる（実測: pid 1 と
+    // 壊れた beatAt で 100 年後も conflict/2）。未来の値も同じ理由で失効扱いにする
+    // （NTP の巻き戻し・共有 FS のクロックずれ）。⚠ landmines.md
+    const beatAt = Number.isFinite(raw.beatAt) ? (raw.beatAt as number) : raw.startedAt!;
+    if (beatAt > Date.now() + LOCK_STALE_MS) return null;
+    return { pid: raw.pid!, startedAt: raw.startedAt!, beatAt };
   } catch {
     return null;
   }
@@ -112,7 +128,9 @@ function dropStaleUnderMutex(file: string, stealFile: string, now: () => number)
     // 補助ロックを取れた＝いま実ロックを消せるのは自分だけ。消してよいか読み直して確認する。
     const current = readLock(file);
     if (current !== null && holderAlive(current, now(), LOCK_STALE_MS)) return;
-    rmSync(file, { force: true });
+    // ロックの位置がディレクトリだと EISDIR が生のまま外へ出る（実測: exit 1 internal で
+    // 「Path is a directory: rm returned EISDIR」）。実体は実行環境の障害なので infra に写す。
+    removeOrInfra(file);
   } finally {
     rmSync(stealFile, { force: true });
   }
@@ -159,6 +177,23 @@ export function acquireRunLock(runDir: string, now: () => number = Date.now): Ru
   const file = path.join(runDir, "run.lock");
   const stealFile = `${file}.steal`;
 
+  try {
+    return acquireLoop(runDir, file, stealFile, now);
+  } catch (e) {
+    // ロックの位置がファイルでない等、fs 由来の失敗はここで infra に写す（exit 1 internal で
+    // 生の errno を外へ出さない）。分類済みの JpaperError はそのまま通す。
+    if (e instanceof JpaperError) throw e;
+    if (isInfraError(e)) throw infraError(e, runDir);
+    throw e;
+  }
+}
+
+function acquireLoop(
+  runDir: string,
+  file: string,
+  stealFile: string,
+  now: () => number,
+): RunLock {
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
     if (createExclusive(file, now)) {
       // 取得は原子的だが、念のため自分の pid が入っていることを確認してから保持者を名乗る。
@@ -170,7 +205,13 @@ export function acquireRunLock(runDir: string, now: () => number = Date.now): Ru
           stop();
           // 奪われた後の release で他人のロックを消さない。
           const info = readLock(file);
-          if (info === null || info.pid === process.pid) rmSync(file, { force: true });
+          if (info !== null && info.pid !== process.pid) return;
+          // release は run の結果を上書きしてはならないので、消せなくても投げない。
+          try {
+            rmSync(file, { force: true });
+          } catch {
+            /* 消せない出力先の報告は run 本体のエラーに任せる */
+          }
         },
       };
     }

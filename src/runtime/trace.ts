@@ -66,17 +66,24 @@ export function withTrace(
         failed = true;
         throw e;
       } finally {
-        // 失敗した呼び出しも課金されるので記録する（RunSummary.llmCalls と行数を揃える）。
-        trace({
-          ts: new Date().toISOString(),
-          provider,
-          role: req.meta?.role,
-          phase: req.meta?.phase,
-          segmentId: req.meta?.segmentId,
-          pass: req.meta?.pass,
-          latencyMs: now() - started,
-          ...(failed ? { failed: true } : {}),
-        });
+        // 観測チャネルの故障は run を壊さない（onError / onProgress と同じ扱い。契約付録 §5）。
+        // 保護しないと、注入 TraceSink が投げた瞬間に LLM 呼び出しそのものが失敗し、
+        // しかも kind="provider" と報告される（実測: llmCalls=1 で exit 2、運用者は
+        // LLM ベンダを疑う）。⚠ landmines.md
+        try {
+          trace({
+            ts: new Date().toISOString(),
+            provider,
+            role: req.meta?.role,
+            phase: req.meta?.phase,
+            segmentId: req.meta?.segmentId,
+            pass: req.meta?.pass,
+            latencyMs: now() - started,
+            ...(failed ? { failed: true } : {}),
+          });
+        } catch {
+          /* 宛先の故障（ディスクフル・SSE 切断）で run を落とさない */
+        }
       }
     },
   };

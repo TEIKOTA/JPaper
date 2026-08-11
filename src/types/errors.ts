@@ -59,6 +59,9 @@ const INFRA_SYSCODES = new Set([
   "ENAMETOOLONG",
   "ELOOP",
   "EXDEV",
+  // node:fs が errno ではなく独自コードで投げる形（rmSync がディレクトリに当たる等）。
+  // 素通しすると exit 1 / internal＝「JPaper のバグ」として生の errno が外へ出る。
+  "ERR_FS_EISDIR",
 ]);
 
 // 外部サービス側の障害。JPaper のバグ（internal）でも実行環境の障害（infra）でもない。

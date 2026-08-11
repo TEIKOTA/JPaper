@@ -80,3 +80,33 @@ describe("ローテーションはファイル単位", () => {
     }
   });
 });
+
+describe("観測チャネルの故障は run を壊さない", () => {
+  it("TraceSink が投げても LLM 呼び出しは成功する", async () => {
+    const { withTrace } = await import("./trace.js");
+    const { FakeLlmClient } = await import("../testing/fake-llm.js");
+    const client = withTrace(
+      new FakeLlmClient(async () => "ok"),
+      () => {
+        throw new Error("SSE stream already closed");
+      },
+      "ollama",
+    );
+    await expect(client.complete({ system: "s", user: "u" })).resolves.toBe("ok");
+  });
+
+  it("失敗した呼び出しでも TraceSink の例外を握り潰す（元の例外を保つ）", async () => {
+    const { withTrace } = await import("./trace.js");
+    const { FakeLlmClient } = await import("../testing/fake-llm.js");
+    const client = withTrace(
+      new FakeLlmClient(async () => {
+        throw new Error("provider down");
+      }),
+      () => {
+        throw new Error("trace sink down");
+      },
+      "ollama",
+    );
+    await expect(client.complete({ system: "s", user: "u" })).rejects.toThrow("provider down");
+  });
+});

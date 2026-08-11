@@ -97,3 +97,50 @@ describe("同一 outDir の並行実行", () => {
     expect(existsSync(path.join(outDir, ".run", "run.lock"))).toBe(false);
   });
 });
+
+describe("プロセスゲートを deps.gate に渡しても自己デッドロックしない", () => {
+  it("limit 1 のプロセスゲートを渡した run が期限切れにならない", async () => {
+    const { setLlmGate, llmGate, makeGate } = await import("../runtime/concurrency.js");
+    setLlmGate(makeGate(1));
+    try {
+      const outDir = path.join(tmp(), "out");
+      const { translatePaper } = await import("./translate-paper.js");
+      const { FakeLlmClient } = await import("../testing/fake-llm.js");
+      const { GlossaryDb } = await import("../terminology/db.js");
+      const { makeTar } = await import("../ingest/archive.fixtures.js");
+
+      const work = tmp();
+      const tar = path.join(work, "p.tar");
+      writeFileSync(tar, makeTar([{ name: "main.tex", content: TEX }]));
+
+      const client = new FakeLlmClient(async (req) => {
+        if (req.system.includes("編纂者")) {
+          return JSON.stringify({
+            resolved: [],
+            brief: { thesis: "核", sectionRoles: [], notationConventions: [] },
+            style: { tensePolicy: "a", headingStyle: "b", numberStyle: "c" },
+          });
+        }
+        if (req.system.includes("審査者")) return '{"verdict":"pass","issues":[]}';
+        return JSON.stringify({ segmentId: "x", ja: "これは訳文である。" });
+      });
+
+      const r = await translatePaper(
+        { kind: "path", path: tar },
+        { provider: "ollama", outDir, timeoutMs: 10_000 },
+        {
+          client,
+          db: new GlossaryDb(),
+          gate: llmGate(),
+          latexRunner: (dir) => {
+            writeFileSync(path.join(dir, "main.pdf"), "%PDF");
+            return { code: 0, log: "Output written on main.pdf (1 page)." };
+          },
+        },
+      );
+      expect(r.status).toBe("ok");
+    } finally {
+      setLlmGate(undefined);
+    }
+  });
+});

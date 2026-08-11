@@ -596,7 +596,13 @@ export async function translatePaper(
     // プロセスゲートを内側に置く。外側で先に取ると、内側で待つ間もプロセス枠を占有して
     // 無関係なテナントを待たせる（実測: 実行中 1 本でプロセス枠を 2 消費）。
     const gated = withGate(callBudget.client, llmGate(), signal);
-    const client = deps.gate === undefined ? gated : withGate(gated, deps.gate, signal);
+    // 同じゲートを二重に掛けると、外側で取った枠を内側で待って自己デッドロックする
+    // （ゲートは非再入。実測: limit 1 のプロセスゲートを deps.gate に渡すと全 run が
+    // 「LLM 同時実行の待機」で期限切れ。timeoutMs 未指定なら永久ハング）。⚠ landmines.md
+    const client =
+      deps.gate === undefined || deps.gate === llmGate()
+        ? gated
+        : withGate(gated, deps.gate, signal);
     // チェックポイントは runDir 単位なので、同一 outDir の並行実行は訳文を混ぜる。契約付録 §8。
     lock = acquireRunLock(runDir);
     if (deps.db) {

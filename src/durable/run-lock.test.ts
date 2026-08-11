@@ -142,3 +142,36 @@ describe("失効ロックの奪取", () => {
     lock.release();
   });
 });
+
+describe("細工されたロックで恒久ブロックできない", () => {
+  const write = (beatAt: unknown, startedAt: number): void => {
+    writeFileSync(path.join(dir, "run.lock"), JSON.stringify({ pid: 1, startedAt, beatAt }));
+  };
+
+  it("beatAt が数値でなければ startedAt にフォールバックし、古ければ失効する", () => {
+    const old = Date.now() - 10 * LOCK_STALE_MS;
+    for (const bad of [{}, "zzz", null, Number.NaN]) {
+      write(bad, old);
+      expect(() => acquireRunLock(dir).release()).not.toThrow();
+    }
+  });
+
+  it("beatAt が未来でも失効扱いにする（クロックずれ・細工）", () => {
+    write(Date.now() + 100 * LOCK_STALE_MS, Date.now() - 10 * LOCK_STALE_MS);
+    expect(() => acquireRunLock(dir).release()).not.toThrow();
+  });
+
+  it("run.lock がディレクトリなら infra（exit 1）で、生の errno を外へ出さない", async () => {
+    const { mkdirSync } = await import("node:fs");
+    const { toRunError } = await import("../types/errors.js");
+    mkdirSync(path.join(dir, "run.lock"), { recursive: true });
+    try {
+      acquireRunLock(dir).release();
+      expect.unreachable("取得できてはいけない");
+    } catch (e) {
+      const r = toRunError(e);
+      expect(r.kind).toBe("infra");
+      expect(r.message).not.toContain("rm returned"); // 生のメッセージを素通しにしない
+    }
+  });
+});
