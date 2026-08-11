@@ -38,7 +38,16 @@ const PROTECTED_ENVS = [
 ];
 
 // 綴りだけで決まる保護（環境名・制御綴り）。区間を持たないので正規表現のままでよい。
-const PROTECTED_TOKENS = [/\\(?:begin|end)\s*\{[^{}]*\}/g, /\\[a-zA-Z@]+\*?/g];
+// 参照・パス系は**引数の中身ごと**保護する。制御綴りそのものしか守らないと、
+// keep-original の英語語がラベル名と一致したときに引数の内側へ脚注が入り、
+// \label{fig:overview\footnote{…}} のような綴りを作って組版が落ちる（実測）。
+// 品質ゲートの multiset 検査を通過した後の破壊なので、ゲートでは捕まえられない。
+const PROTECTED_TOKENS = [
+  /\\includegraphics\*?\s*(?:\[[^\]]*\])?\s*\{[^}]*\}/g,
+  /\\(?:eqref|autoref|pageref|cref|Cref|ref|label|cite[a-zA-Z]*|url|nolinkurl|path|href|input|include)\s*\{[^}]*\}/g,
+  /\\(?:begin|end)\s*\{[^{}]*\}/g,
+  /\\[a-zA-Z@]+\*?/g,
+];
 
 function protectedMask(tex: string): Uint8Array {
   const mask = new Uint8Array(tex.length);

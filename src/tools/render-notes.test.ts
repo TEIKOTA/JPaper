@@ -94,3 +94,38 @@ describe("保護領域の走査コスト", () => {
     expect(Date.now() - started).toBeLessThan(3000);
   });
 });
+
+describe("参照・パス系の引数を壊さない", () => {
+  const note = (src: string) =>
+    [
+      {
+        segmentId: "s",
+        src,
+        text: "説明",
+        trigger: "evaluator-warn" as const,
+        firstOccurrence: true,
+      },
+    ] as never;
+
+  it.each([
+    ["overview", "図を \\label{fig:overview} で参照する。"],
+    ["fig:overview", "図を \\label{fig:overview} で参照する。"],
+    ["fig1.png", "\\includegraphics{fig1.png} を参照。"],
+    ["sec:method", "詳細は \\ref{sec:method} を見よ。"],
+  ])("form=%s がラベル名・図パスと一致しても引数の中へ脚注を入れない", (form, tex) => {
+    // 制御綴りそのものしか保護していなかった頃は \label{fig:overview\footnote{…}} を
+    // 生成して組版が落ちた。品質ゲートの multiset 検査を通過した後の破壊なので、
+    // ゲートでは捕まえられない。
+    expect(injectFootnotes(tex, "s", note(form), new Map([[form, form]]))).toBe(tex);
+  });
+
+  it("地の文の語には従来どおり脚注が入る", () => {
+    const out = injectFootnotes(
+      "Transformer を用いる。",
+      "s",
+      note("Transformer"),
+      new Map([["Transformer", "Transformer"]]),
+    );
+    expect(out).toContain("Transformer\\footnote{訳注: 説明}");
+  });
+});
