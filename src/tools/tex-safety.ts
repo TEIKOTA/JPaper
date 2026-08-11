@@ -96,6 +96,10 @@ interface ReadArgs {
   args: string[];
   // 引数が制御綴りを含む＝実行時に決まるので静的に検証できない。
   dynamic: boolean;
+  // 引数が上限内で閉じない＝中身を読めていない。読めていない引数を「無害」と扱うと、
+  // 空白で詰めるだけで検査を外せる（実機で \InputIfFileExists{<空白1100>/abs/path} が
+  // ファイルを読み、内容が PDF に出た）。静的に検証できない以上、危険側へ倒す。
+  unbounded: boolean;
 }
 
 // 引数として妥当な長さの上限。TeX のファイル名はこれより遥かに短い。閉じ波括弧を
@@ -121,6 +125,7 @@ function readArgsAt(src: string, from: number, argCount: number): ReadArgs {
   let i = from;
   const args: string[] = [];
   let dynamic = false;
+  let unbounded = false;
   for (let n = 0; n < argCount; n++) {
     // TeX のファイル名スキャナは改行・CR・FF も読み飛ばす。空白とタブだけを飛ばすと、
     // 改行を 1 つ挟むだけで引数が空に見え、パスの検査が一度も走らない。
@@ -128,14 +133,20 @@ function readArgsAt(src: string, from: number, argCount: number): ReadArgs {
     if (src[i] === "[") {
       // オプション引数は読み飛ばす（\import には無いが \includefrom 系の派生に備える）。
       const close = findCloseAt(src, i, "]");
-      if (close === -1) break;
+      if (close === -1) {
+        unbounded = true;
+        break;
+      }
       i = close + 1;
       n--;
       continue;
     }
     if (src[i] === "{") {
       const close = findCloseBrace(src, i);
-      if (close === -1) break;
+      if (close === -1) {
+        unbounded = true;
+        break;
+      }
       const body = src.slice(i + 1, close);
       if (body.includes("\\")) dynamic = true;
       args.push(body);
@@ -156,7 +167,7 @@ function readArgsAt(src: string, from: number, argCount: number): ReadArgs {
     }
     break;
   }
-  return { args, dynamic };
+  return { args, dynamic, unbounded };
 }
 
 // strict=false（同梱 .sty/.cls 向け）ではマクロ引数を許す。配布クラス由来のファイルは
@@ -179,9 +190,16 @@ function readPathHits(src: string, strict: boolean): string[] {
       );
     }
     const argCount = MULTI_ARG_READ.has(name) ? 2 : 1;
-    const { args, dynamic } = readArgsAt(src, m.index + m[0].length, argCount);
+    const { args, dynamic, unbounded } = readArgsAt(src, m.index + m[0].length, argCount);
     // 引数を連結して判定する（\import{./}{../secret} は第 2 引数だけ見ると無害に見える）。
-    if ((strict && dynamic) || args.some(escapesBuildTree) || escapesBuildTree(args.join(""))) {
+    // unbounded は strict に関わらず落とす。これは正規の書き方ではなく検査の回避手口で、
+    // 支援ファイルだけ許す理由が無い。
+    if (
+      unbounded ||
+      (strict && dynamic) ||
+      args.some(escapesBuildTree) ||
+      escapesBuildTree(args.join(""))
+    ) {
       add(name);
     }
   }

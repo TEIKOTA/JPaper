@@ -210,6 +210,34 @@ describe("\\csname の本体にマクロを挟む回避", () => {
   });
 });
 
+describe("上限内で閉じない引数（空白詰めによる回避）", () => {
+  const pad = " ".repeat(1_100);
+
+  it("引数が上限内で閉じなければ危険側に倒す（main.tex）", () => {
+    // 上限打ち切りで無害扱いに落ちていた頃は、空白で詰めるだけで検査を外せた。
+    // 実機で \InputIfFileExists{<空白1100>/etc/passwd} がファイルを読み PDF に出た。
+    expect(findUnsafeTexCommands(`\\InputIfFileExists{${pad}/etc/passwd}{}{}`)).toContain(
+      "InputIfFileExists",
+    );
+    expect(findUnsafeTexCommands(`\\import{${pad}/etc/}{passwd}`)).toContain("import");
+    expect(findUnsafeTexCommands(`\\subimport{${pad}../../../etc/}{passwd}`)).toContain(
+      "subimport",
+    );
+  });
+
+  it("同梱 .sty/.cls でも落とす（マクロ引数の緩和とは別軸）", () => {
+    expect(findUnsafeSupportCommands(`\\InputIfFileExists{${pad}/etc/passwd}{}{}`)).toContain(
+      "InputIfFileExists",
+    );
+  });
+
+  it("上限内で閉じる長い引数は従来どおり通す", () => {
+    const name = "a".repeat(900);
+    expect(findUnsafeTexCommands(`\\input{sections/${name}.tex}`)).toEqual([]);
+    expect(findUnsafeSupportCommands(`\\input{sections/${name}.tex}`)).toEqual([]);
+  });
+});
+
 describe("走査コストの上限", () => {
   it("閉じない \\input{ の羅列で二次にならない", () => {
     // 引数の閉じ波括弧を末尾まで探していた頃は マッチ数 × 末尾走査 = O(n²) で、
