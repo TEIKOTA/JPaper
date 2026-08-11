@@ -116,6 +116,18 @@ describe("図の解決コストの上限", () => {
     expect(Date.now() - started).toBeLessThan(500);
   });
 
+  it("\\graphicspath の綴りが長くても memo キーの生成でコストが膨らまない", () => {
+    // 参照ごとに JSON.stringify([bases, ref]) でキーを作っていた頃は、base 1 本の長さに
+    // 上限が無いため二次になった（実測 8MiB で 94,071ms、中断もタイマーも配送されない）。
+    // "./" の繰り返しは baseDir へ解決するので existsSync を通り、文字列としては相異なる。
+    const d = tmp(["a.pdf"]);
+    const inner = Array.from({ length: 63 }, (_, i) => `{${"./".repeat(16_000 - i)}}`).join("");
+    const latex = `\\graphicspath{${inner}}${"\\includegraphics{a}".repeat(20_000)}`;
+    const started = Date.now();
+    expect(collectFigures(latex, d)).toEqual([path.join(d, "a.pdf")]);
+    expect(Date.now() - started).toBeLessThan(3000);
+  });
+
   it("\\graphicspath のディレクトリ数でコストが膨らまない", () => {
     // maxFigureRefs は参照件数しか縛らない。1 参照あたりのコストが bases に比例するので、
     // 同じ綴りを数千個並べるだけで実測 39KiB の入力が 36,769ms 同期ブロックした。

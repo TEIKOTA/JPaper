@@ -123,6 +123,10 @@ export function collectFigures(
   maxRefs = 5_000,
 ): string[] {
   let bases = [""]; // \graphicspath 宣言を参照順に追う（後宣言で置換）
+  // bases が変わるのは \graphicspath に当たったときだけ。世代番号で表せば memo キーは
+  // O(1) で作れる。参照ごとに bases 全体を直列化していた頃は、base 1 本の長さに上限が
+  // 無いため二次になった（実測 8MiB で 94,071ms、中断もタイマーも配送されない）。
+  let basesGen = 0;
   const budget = { lookups: MAX_FIGURE_LOOKUPS };
   const found = new Set<string>();
   const re =
@@ -131,7 +135,7 @@ export function collectFigures(
   // 索引は最初に basename 回収へ落ちたときだけ作る（図が全て素直に解決する論文では作らない）。
   let index: Map<string, string[]> | null = null;
   // 同じ (base 列, 参照) の解決結果を使い回す。同一参照を並べるだけで existsSync が
-  // 参照数ぶん走るのを止める。base は \graphicspath で変わるのでキーに含める。
+  // 参照数ぶん走るのを止める。base 列は世代番号で代表する。
   const memo = new Map<string, string | null>();
   while ((m = re.exec(latex)) !== null) {
     if (m[1] !== undefined) {
@@ -140,10 +144,11 @@ export function collectFigures(
         ["", ...[...m[1].matchAll(/\{([^}]*)\}/g)].map((g) => g[1] ?? "")],
         budget,
       );
+      basesGen++;
       continue;
     }
     const ref = (m[2] ?? "").trim();
-    const key = JSON.stringify([bases, ref]);
+    const key = `${String(basesGen)}\u0000${ref}`;
     let resolved = memo.get(key);
     if (resolved === undefined) {
       if (memo.size >= maxRefs) {
