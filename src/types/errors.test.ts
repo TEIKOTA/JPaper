@@ -90,4 +90,14 @@ describe("redactPaths", () => {
     expect(redactPaths("期限 2026/08/11 を超過しました")).toBe("期限 2026/08/11 を超過しました");
     expect(redactPaths("図 fig/x.png が見つかりません")).toBe("図 fig/x.png が見つかりません");
   });
+
+  it("区切りとして書いた単独の / を伏せない", () => {
+    // 先頭の / の直後にパス構成要素を要求していなかった頃は、区切りの / まで伏せて
+    // 外向きメッセージの意味が壊れた（実測: .paper-id 不一致の警告文で発生）。
+    expect(redactPaths("既存の glossary.md / brief.md / style.md は使いません")).toBe(
+      "既存の glossary.md / brief.md / style.md は使いません",
+    );
+    expect(redactPaths("入力/出力 の設定")).toBe("入力/出力 の設定");
+    expect(redactPaths("進捗 3/5 セグメント")).toBe("進捗 3/5 セグメント");
+  });
 });
