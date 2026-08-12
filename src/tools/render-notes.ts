@@ -39,9 +39,9 @@ const PROTECTED_MATH_ENVS = [
 // \label{fig:overview\footnote{…}} のような綴りを作って組版が落ちる（実測）。
 // 品質ゲートの multiset 検査を通過した後の破壊なので、ゲートでは捕まえられない。
 const PROTECTED_TOKENS = [
-  /\\includegraphics\*?\s*(?:\[[^\]]*\])?\s*\{[^}]*\}/g,
-  /\\(?:eqref|autoref|pageref|cref|Cref|ref|label|cite[a-zA-Z]*|url|nolinkurl|path|href|input|include)\s*\{[^}]*\}/g,
-  /\\(?:begin|end)\s*\{[^{}]*\}/g,
+  /\\includegraphics\*?\s*(?:\[[^\]]{0,200}\])?\s*\{[^}]{0,200}\}/g,
+  /\\(?:eqref|autoref|pageref|cref|Cref|ref|label|cite[a-zA-Z]*|url|nolinkurl|path|href|input|include)\s*\{[^}]{0,200}\}/g,
+  /\\(?:begin|end)\s*\{[^{}]{0,200}\}/g,
   /\\[a-zA-Z@]+\*?/g,
 ];
 

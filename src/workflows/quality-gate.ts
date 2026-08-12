@@ -23,6 +23,11 @@ const MIN_JA_CHARS_PER_WORD = 0.5;
 // 原文のラテン語がこの割合以上そのまま残っていれば未翻訳とみなす。忠実な訳でも
 // keep-original の術語は残るので、余裕を持って 9 割に置く。
 const MAX_RESIDUAL_LATIN = 0.9;
+// 正規表現で読む「1 引数」の長さの上限。上限を書かないと、閉じない \includegraphics[ や
+// \ref{ の羅列で開始位置ごとに末尾まで走査して二次になる（実測: 512KB で formalCheck
+// 6,406ms・injectFootnotes 20,731ms、2.2MB で 99 秒）。ラベル・パス・オプションは
+// これより遥かに短い。⚠ landmines.md
+const MAX_INLINE_ARG = 200;
 
 // ^^ 記法の展開は組版側の検査と同一実装を使う（正本は tools/tex-safety.ts）。
 export { decodeCarets } from "../tools/tex-safety.js";
@@ -119,7 +124,7 @@ const NON_PROSE_ENVS = [
 // \index{あ×52} を足すと formalCheck が [] を返した。\printindex が無ければ
 // 1 文字も描画されない）。⚠ landmines.md
 const INVISIBLE_ARG_CMDS =
-  /\\(?:index|label|(?:eq|auto|page|c|C)?ref|cite[a-zA-Z]*|url|nolinkurl|path|input|include|hypersetup|(?:re|provide)?newcommand|def|pdfbookmark|pdfstringdef|typeout|message|special|write|selectlanguage|usepackage|documentclass|bibliography|bibliographystyle)\*?\s*(?:\[[^\]]*\])?\s*\{[^{}]*\}(?:\s*\{[^{}]*\})?/g;
+  /\\(?:index|label|(?:eq|auto|page|c|C)?ref|cite[a-zA-Z]*|url|nolinkurl|path|input|include|hypersetup|(?:re|provide)?newcommand|def|pdfbookmark|pdfstringdef|typeout|message|special|write|selectlanguage|usepackage|documentclass|bibliography|bibliographystyle)\*?\s*(?:\[[^\]]{0,200}\])?\s*\{[^{}]{0,200}\}(?:\s*\{[^{}]{0,200}\})?/g;
 
 // 環境ごとに左から 1 回だけ走査する（閉じが無ければ以降のどの開始位置でも見つからない）。
 // 正規表現の遅延一致だと閉じない \begin が並ぶ入力で二次になる。
@@ -177,8 +182,8 @@ function visibleText(s: string): string {
   // （実測 250KiB で 4,157ms）。入力は訳文なので上限は MAX_RESPONSE_CHARS。
   const noMath = blankSpans(s, mathSpans(s));
   return noMath
-    .replace(/\\includegraphics\*?\s*(?:\[[^\]]*\])?\s*\{[^}]*\}/g, " ") // 図: オプション込みで引数ごと除去
-    .replace(/\\(?:eqref|autoref|pageref|cref|Cref|ref|label|cite[a-zA-Z]*|url|nolinkurl|path|href|input|include)\s*\{[^}]*\}/g, " ") // 参照系・URL・パス系は不可視引数ごと除去
+    .replace(/\\includegraphics\*?\s*(?:\[[^\]]{0,200}\])?\s*\{[^}]{0,200}\}/g, " ") // 図: オプション込みで引数ごと除去
+    .replace(/\\(?:eqref|autoref|pageref|cref|Cref|ref|label|cite[a-zA-Z]*|url|nolinkurl|path|href|input|include)\s*\{[^}]{0,200}\}/g, " ") // 参照系・URL・パス系は不可視引数ごと除去
     .replace(/\\[a-zA-Z]+\*?/g, " ") // 残る制御綴り名（\textsc 等）は名前だけ除去し可視な引数は残す
     .replace(/[{}]/g, " "); // 波括弧
 }
@@ -229,8 +234,8 @@ function normalizeMath(span: string): string {
   return span
     .replace(/^\$\$|\$\$$|^\$|\$$/g, "")
     .replace(/^\\[[(]|\\[\])]$/g, "")
-    .replace(/^\\begin\{[^}]*\}|\\end\{[^}]*\}$/g, "")
-    .replace(/\\(?:text|mbox|textrm|textnormal)\s*\{[^{}]*\}/g, "\\text{}")
+    .replace(/^\\begin\{[^}]{0,200}\}|\\end\{[^}]{0,200}\}$/g, "")
+    .replace(/\\(?:text|mbox|textrm|textnormal)\s*\{[^{}]{0,200}\}/g, "\\text{}")
     .replace(/\\(?:,|;|!|:|quad|qquad|thinspace|;)/g, "")
     .replace(/\s+/g, "");
 }
@@ -254,7 +259,7 @@ function stripLineComments(text: string): string {
 // 指定コマンドの {引数} を出現順に抽出する（行コメント除去済み・前空白/オプション・入れ子波括弧に頑健）。
 // optArg=true で \cmd[opts]{arg} のオプションを飛ばす（\includegraphics 用）。直後に { を要求＝別コマンドを拾わない。
 function commandArgs(text: string, cmd: string, optArg: boolean): string[] {
-  const opt = optArg ? "(?:\\[[^\\]]*\\]\\s*)?" : "";
+  const opt = optArg ? `(?:\\[[^\\]]{0,${String(MAX_INLINE_ARG)}}\\]\\s*)?` : "";
   const head = new RegExp(`\\\\${cmd}\\*?\\s*${opt}\\{`, "g");
   const stripped = stripLineComments(text);
   const args: string[] = [];

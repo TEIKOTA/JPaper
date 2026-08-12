@@ -76,3 +76,36 @@ describe("mathSpans は verbatim の中の $ に釣られない", () => {
     ]);
   });
 });
+
+// このモジュールは「二次を 1 箇所に集約して潰す」ために作った。意味論だけを縛ると、
+// 集約したはずの二次が新しい実装で戻ってくる（実測: #196 で入れた \verb 系の区切り
+// 探索が閉じない \lstinline{ の羅列で二次になり、2.2MB で 99 秒・exit 0 を返した）。
+describe("走査コストは入力長に対して線形", () => {
+  const ms = (fn: () => void): number => {
+    const s = Date.now();
+    fn();
+    return Date.now() - s;
+  };
+  const rep = (unit: string, bytes: number): string => unit.repeat(Math.ceil(bytes / unit.length));
+
+  it.each([
+    ["未閉じ \\lstinline{", "\\lstinline{"],
+    ["未閉じ \\verb|", "\\verb|"],
+    ["未閉じ $", "$x "],
+    ["未閉じ \\[", "\\[x "],
+    ["未閉じ \\begin{verbatim}", "\\begin{verbatim}"],
+  ])("%s の羅列 1MiB を秒未満で走る", (_label, unit) => {
+    const body = rep(unit, 1024 * 1024);
+    expect(ms(() => void mathSpans(body, ["equation"]))).toBeLessThan(1_000);
+    expect(ms(() => void verbatimSpans(body))).toBeLessThan(1_000);
+  });
+
+  it("倍化しても 4 倍にならない（二次でない）", () => {
+    const small = rep("\\lstinline{", 512 * 1024);
+    const large = rep("\\lstinline{", 1024 * 1024);
+    // 二次なら 4 倍。線形なら 2 倍。閾値は測定ノイズを見込んで 3 倍に置く。
+    const t1 = Math.max(1, ms(() => void mathSpans(small)));
+    const t2 = ms(() => void mathSpans(large));
+    expect(t2).toBeLessThan(t1 * 3 + 50);
+  });
+});

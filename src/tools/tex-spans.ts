@@ -127,7 +127,16 @@ export function verbatimSpans(tex: string): Span[] {
     // { を区切りに使うのは lstinline/mintinline の {code} 形式。
     const close = open === "{" ? "}" : open;
     const e = tex.indexOf(close, p + 1);
-    out.push([m.index, e === -1 ? tex.length : e + 1]);
+    if (e === -1) {
+      // 閉じない＝ここから末尾まで verbatim（fail-closed）。**その場で打ち切る**。
+      // 続けると、閉じない \lstinline{ の羅列で候補ごとに末尾まで走査し（indexOf）、
+      // さらに末尾までの区間を候補数だけ積んで maskChars も候補数×長さになる＝二次。
+      // 実測（打ち切る前）: 512KB で mathSpans 5,545ms、2.2MB で 99 秒。
+      // 打ち切っても結果は同じ（後続の候補はこの区間の内側にある）。⚠ landmines.md
+      out.push([m.index, tex.length]);
+      return out;
+    }
+    out.push([m.index, e + 1]);
   }
   return out;
 }

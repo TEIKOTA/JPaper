@@ -521,3 +521,27 @@ describe("インラインのコード片で数式のペアリングがずれな�
     expect(formalCheck(src, ja, []).map((i) => i.kind)).toEqual([]);
   });
 });
+
+describe("壊れた入力の走査コスト", () => {
+  const ms = (fn: () => void): number => {
+    const s = Date.now();
+    fn();
+    return Date.now() - s;
+  };
+  const rep = (unit: string, bytes: number): string => unit.repeat(Math.ceil(bytes / unit.length));
+
+  it.each([
+    ["未閉じ \\includegraphics[", "\\includegraphics["],
+    ["未閉じ \\ref{", "\\ref{"],
+    ["未閉じ $", "$x "],
+    ["未閉じ \\lstinline{", "\\lstinline{"],
+  ])("原文側 %s の羅列 1MiB でも秒未満（timeoutMs が効かない同期区間）", (_label, unit) => {
+    const body = rep(unit, 1024 * 1024);
+    expect(ms(() => void formalCheck(body, "訳", []))).toBeLessThan(1_500);
+  });
+
+  it("見出しに詰めた未閉じオプション引数 1MiB でも秒未満", () => {
+    const body = rep("\\includegraphics[", 1024 * 1024);
+    expect(ms(() => void untranslatedHeadings(`\\section{${body}}`, []))).toBeLessThan(1_500);
+  });
+});

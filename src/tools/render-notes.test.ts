@@ -151,3 +151,15 @@ describe("verbatim・行送りに釣られた保護のずれ", () => {
     expect(out).toContain("attention\\footnote{訳注: 注意機構}");
   });
 });
+
+describe("壊れた訳文の走査コスト", () => {
+  it.each([["\\ref{"], ["\\label{"], ["\\lstinline{"], ["\\includegraphics["]])(
+    "未閉じ %s の羅列 1MiB でも秒未満",
+    (unit: string) => {
+      const body = unit.repeat(Math.ceil((1024 * 1024) / unit.length));
+      const s = Date.now();
+      injectFootnotes(body, "seg-0000", [], new Map());
+      expect(Date.now() - s).toBeLessThan(1_500);
+    },
+  );
+});
