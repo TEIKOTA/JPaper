@@ -103,6 +103,27 @@ describe("fetchArxivSource", () => {
     expect(fetchImpl).toHaveBeenCalledTimes(3);
   });
 
+  it("本体受信中の切断（undici の terminated）も再試行する", async () => {
+    // 実測: 1 回目の実行が `arXiv 取得に失敗: terminated` で即死した。直後に curl で
+    // 同じ URL を 5.8 秒で取得できたので、再試行すれば通る種類の失敗だった。
+    let first = true;
+    const fetchImpl = vi.fn(async () => {
+      if (first) {
+        first = false;
+        throw new TypeError("terminated");
+      }
+      return okResponse("SRC");
+    });
+    const buf = await fetchArxivSource("2203.06060", {
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      sleep: async () => {},
+      now: () => 1e9,
+      state: { lastRequestAt: 0 },
+    });
+    expect(buf.toString("utf8")).toBe("SRC");
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+
   it("リトライ上限超過（429 継続）は exit 2", async () => {
     const fetchImpl = vi.fn(async () => ({ ok: false, status: 429 }) as Response);
     await expect(

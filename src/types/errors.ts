@@ -190,6 +190,12 @@ const TRANSIENT_SYSCODES = new Set([
   "ETIMEDOUT",
   "EAI_AGAIN",
   "EPIPE",
+  "ECONNABORTED",
+  // undici（Node の fetch 実装）。socket が本体受信中に切れると Error: terminated で来る。
+  "UND_ERR_SOCKET",
+  "UND_ERR_BODY_TIMEOUT",
+  "UND_ERR_HEADERS_TIMEOUT",
+  "UND_ERR_CONNECT_TIMEOUT",
 ]);
 
 export function isTransient(e: unknown, depth = 3): boolean {
@@ -213,7 +219,9 @@ export function isTransient(e: unknown, depth = 3): boolean {
 
   const msg = String(err.message ?? err).toLowerCase();
   if (
-    /(^|[^0-9])429([^0-9]|$)|timeout|timed out|socket hang up|econnreset|econnrefused|etimedout|eai_again|temporarily|rate limit/.test(
+    // `terminated` は undici が本体受信中の切断で投げる文言。中断（AbortError /
+    // "This operation was aborted"）とは語彙が分かれているので取り違えない。
+    /(^|[^0-9])429([^0-9]|$)|timeout|timed out|socket hang up|econnreset|econnrefused|etimedout|eai_again|temporarily|rate limit|\bterminated\b/.test(
       msg,
     )
   ) {

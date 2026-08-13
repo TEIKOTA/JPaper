@@ -35,6 +35,26 @@ describe("isTransient", () => {
     expect(isTransient(new Error("429 Too Many Requests"))).toBe(true);
   });
 
+  it("undici の切断（terminated / UND_ERR_*）を一時障害として扱う", () => {
+    // 実測: arXiv からの取り込みが `arXiv 取得に失敗: terminated` で 1 度も再試行されずに
+    // 落ちた。直後に同じ URL を curl すると 5.8 秒で取得できた＝一時的な切断だった。
+    expect(isTransient(new Error("terminated"))).toBe(true);
+    expect(isTransient({ code: "UND_ERR_SOCKET" })).toBe(true);
+    expect(isTransient({ code: "UND_ERR_BODY_TIMEOUT" })).toBe(true);
+    expect(isTransient({ code: "UND_ERR_HEADERS_TIMEOUT" })).toBe(true);
+    expect(isTransient({ code: "UND_ERR_CONNECT_TIMEOUT" })).toBe(true);
+    expect(
+      isTransient(Object.assign(new TypeError("fetch failed"), { cause: new Error("terminated") })),
+    ).toBe(true);
+  });
+
+  it("中断は一時障害にしない（利用者が切ったものを再試行しない）", () => {
+    expect(isTransient(new Error("This operation was aborted"))).toBe(false);
+    expect(isTransient(Object.assign(new Error("The user aborted a request."), {}))).toBe(false);
+    // 「terminated」を含まない語（terminate/termination）で誤判定しない。
+    expect(isTransient(new Error("process termination requested"))).toBe(false);
+  });
+
   it("transient マーカーを尊重する", () => {
     expect(isTransient({ transient: true })).toBe(true);
     expect(isTransient({ transient: false })).toBe(false);
