@@ -135,6 +135,7 @@ CREATE INDEX idx_term_src ON term(src);
 
 ## 5. プロバイダ・CLI 契約
 
+- **ollama は `/api/chat` を `stream: true` で受ける**。まとめ受けだと Node の `fetch`（undici）が持つ 300 秒の既定タイムアウトに掛かり、生成が長いだけで接続ごと落ちて `fetch failed` としか分からなくなる（実測: ollama 側に `500 | 5m0s | POST /api/chat`、run は `llmCalls: 7` で provider 失敗）。チャンクが流れ続ける限り無通信タイムアウトは発火せず、**期限は `withCallTimeout` だけが持つ**。NDJSON を行単位に組み立て、`message.content` を連結、統計（`prompt_eval_count` / `eval_count`）は最終チャンクから取る。`MAX_RESPONSE_CHARS` の打ち切りは連結後の本文と**未改行バッファの両方**に掛ける（行が来ないまま膨らむ応答を止められないため）。HTTP 200 で始まった後の `{"error": ...}` 行は provider エラーにする。
 - v1 実装 = **2つ**: `ollama`（local, オンデマンド daemon）/ `claude`（cloud, `claude -p --output-format json` の `result` を抽出）。codex/OpenRouter/API キーは将来。
 - `--provider {ollama|claude}` は **必須（既定なし）**。省略はエラー（終了コード §6）。**受理値の正本は `ollama|claude`**（[UI/配置 ADR](../adr/20260709-user-interface-file-layout-and-cli.md) の例示 `local|cloud` は概念軸。CLI 実値は本付録が正本）。
 - claude CLI は純変換器化して使う: `--append-system-prompt` で役割注入、`--max-turns 1`、内蔵ツール無効化（`--tools none`。`--allowedTools ""` はツールを無効化できずモデルが tool_use を試みて `error_max_turns` になるため不可。SHOW 検収で判明）。対応 CLI バージョンはレンジ指定し、出力 JSON 形式は統合テストで回帰検知。

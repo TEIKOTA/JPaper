@@ -72,6 +72,73 @@ async function readCappedJson(res: Response): Promise<unknown> {
   return JSON.parse(text);
 }
 
+interface ChatResult {
+  content: string;
+  inputTokens?: number;
+  outputTokens?: number;
+}
+
+// /api/chat を stream で受ける。まとめ受け（stream:false）だと、生成が Node の fetch
+// （undici）の既定タイムアウト 300 秒を超えた時点で接続ごと落ち、`fetch failed` としか
+// 分からない（実測: ollama 側に `500 | 5m0s | POST /api/chat`）。逐次チャンクが流れて
+// いれば無通信タイムアウトに掛からず、期限は withCallTimeout だけが持つ。
+// body を持たない Response（テストの偽物）はまとめ受けへ落とす。
+async function readCappedChat(res: Response): Promise<ChatResult> {
+  type Chunk = {
+    message?: { content?: string };
+    prompt_eval_count?: number;
+    eval_count?: number;
+    error?: string;
+  };
+  const body = res.body;
+  if (!body) {
+    const d = (await res.json()) as Chunk;
+    if (typeof d.error === "string") throw new JpaperError(2, "provider", `ollama: ${d.error}`);
+    return {
+      content: d.message?.content ?? "",
+      inputTokens: d.prompt_eval_count,
+      outputTokens: d.eval_count,
+    };
+  }
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  const out: ChatResult = { content: "" };
+  let buf = "";
+  const consume = (line: string): void => {
+    if (line.trim() === "") return;
+    const d = JSON.parse(line) as Chunk;
+    // ストリーム途中のエラーは 200 で来る（ヘッダは既に返っている）。
+    if (typeof d.error === "string") throw new JpaperError(2, "provider", `ollama: ${d.error}`);
+    out.content += d.message?.content ?? "";
+    if (out.content.length > MAX_RESPONSE_CHARS) {
+      throw new Error(`ollama 応答が上限 ${MAX_RESPONSE_CHARS} 文字を超えています`);
+    }
+    if (d.prompt_eval_count !== undefined) out.inputTokens = d.prompt_eval_count;
+    if (d.eval_count !== undefined) out.outputTokens = d.eval_count;
+  };
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      for (let nl = buf.indexOf("\n"); nl >= 0; nl = buf.indexOf("\n")) {
+        const line = buf.slice(0, nl);
+        buf = buf.slice(nl + 1);
+        consume(line);
+      }
+      // 改行が来ないまま膨らむ応答も止める（行単位の上限が無いと打ち切りが効かない）。
+      if (buf.length > MAX_RESPONSE_CHARS) {
+        throw new Error(`ollama 応答が上限 ${MAX_RESPONSE_CHARS} 文字を超えています`);
+      }
+    }
+    consume(buf);
+  } catch (e) {
+    await reader.cancel().catch(() => undefined);
+    throw e;
+  }
+  return out;
+}
+
 export function makeOllamaClient(cfg: OllamaConfig, deps: OllamaDeps = {}): LlmClient {
   const fetchImpl = deps.fetchImpl ?? fetch;
   const sleep = deps.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
@@ -128,7 +195,7 @@ export function makeOllamaClient(cfg: OllamaConfig, deps: OllamaDeps = {}): LlmC
           { role: "system", content: req.system },
           { role: "user", content: req.user },
         ],
-        stream: false,
+        stream: true,
         keep_alive: cfg.keepAlive,
         options: { num_ctx: cfg.contextWindow },
         // 思考は message.thinking へ出て content には入らない＝生成しても捨てるだけ。
@@ -138,11 +205,7 @@ export function makeOllamaClient(cfg: OllamaConfig, deps: OllamaDeps = {}): LlmC
       }),
     });
     if (res.ok) {
-      const data = (await readCappedJson(res)) as {
-        message?: { content?: string };
-        prompt_eval_count?: number;
-        eval_count?: number;
-      };
+      const data = await readCappedChat(res);
       deps.trace?.({
         ts: new Date().toISOString(),
         provider: "ollama",
@@ -152,10 +215,10 @@ export function makeOllamaClient(cfg: OllamaConfig, deps: OllamaDeps = {}): LlmC
         pass: req.meta?.pass,
         model,
         latencyMs: now() - startedAt,
-        inputTokens: data.prompt_eval_count,
-        outputTokens: data.eval_count,
+        inputTokens: data.inputTokens,
+        outputTokens: data.outputTokens,
       });
-      return data.message?.content ?? "";
+      return data.content;
     }
     if (res.status === 429 || res.status >= 500) {
       // 一時障害。isTransient が status で拾えるようにして withRetry に委ねる。
