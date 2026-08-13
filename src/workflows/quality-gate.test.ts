@@ -436,6 +436,42 @@ describe("数式の中身の照合", () => {
     expect(formalCheck(SRC, ja, []).map((i) => i.kind)).toContain("math");
   });
 
+  describe("差し戻しに載る情報", () => {
+    const mathMsg = (src: string, ja: string) =>
+      formalCheck(src, ja, []).find((i) => i.kind === "math")?.message ?? "";
+
+    it("欠けた式を実際に列挙する（件数だけでは直しようがない）", () => {
+      const m = mathMsg("$x$ と $\\alpha < 0.05$ と $y$", "$x$ と $y$");
+      expect(m).toContain("訳文に無い数式");
+      expect(m).toContain("\\alpha<0.05");
+    });
+
+    it("原文に無い式が増えたときも列挙する", () => {
+      const m = mathMsg("$x$", "$x$ と $z^2$");
+      expect(m).toContain("原文に無い数式");
+      expect(m).toContain("z^2");
+    });
+
+    it("置き換えは欠落と追加の両方として出す", () => {
+      const m = mathMsg("$\\alpha < 0.05$", "$\\alpha > 0.95$");
+      expect(m).toContain("訳文に無い数式");
+      expect(m).toContain("原文に無い数式");
+    });
+
+    it("列挙は 3 件までで、残りは件数で示す（プロンプトを膨らませない）", () => {
+      const src = ["$a$", "$b$", "$c$", "$d$", "$e$"].join(" と ");
+      const m = mathMsg(src, "訳文のみ");
+      expect(m).toContain("ほか 2 件");
+    });
+
+    it("長い式は途中で切る", () => {
+      const long = `$${"x+".repeat(80)}1$`;
+      const m = mathMsg(long, "訳文のみ");
+      expect(m).toContain("…");
+      expect(m.length).toBeLessThan(300);
+    });
+  });
+
   it("数式をそのまま持ち越した訳は通す", () => {
     expect(formalCheck(SRC, SRC, []).filter((i) => i.kind === "math")).toEqual([]);
   });

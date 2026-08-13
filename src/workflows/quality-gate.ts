@@ -288,6 +288,49 @@ function multisetMismatch(src: string[], ja: string[]): boolean {
   return a.some((x, i) => x !== b[i]);
 }
 
+// 差し戻しに載せる式の数と 1 件の長さ。プロンプトを膨らませないための上限。
+const MAX_LISTED_MATH = 3;
+const MAX_MATH_CHARS = 60;
+
+function clip(s: string): string {
+  return s.length > MAX_MATH_CHARS ? `${s.slice(0, MAX_MATH_CHARS)}…` : s;
+}
+
+// multiset の差（src にしか無い / ja にしか無い）を実際の式として返す。
+// 「5 件中の差異」だけを返していた頃は、差し戻された側が全部を見直すしかなく、
+// 小さいモデルでは改稿が当てずっぽうになって上限まで回っていた。
+function multisetDiff(src: string[], ja: string[]): { missing: string[]; added: string[] } {
+  const counts = new Map<string, number>();
+  for (const s of src) counts.set(s, (counts.get(s) ?? 0) + 1);
+  const added: string[] = [];
+  for (const j of ja) {
+    const n = counts.get(j) ?? 0;
+    if (n > 0) counts.set(j, n - 1);
+    else added.push(j);
+  }
+  const missing: string[] = [];
+  for (const [body, n] of counts) {
+    for (let i = 0; i < n; i++) missing.push(body);
+  }
+  return { missing, added };
+}
+
+function describeMathDiff(src: string[], ja: string[]): string {
+  const { missing, added } = multisetDiff(src, ja);
+  const parts: string[] = [];
+  if (missing.length > 0) {
+    parts.push(
+      `訳文に無い数式: ${missing.slice(0, MAX_LISTED_MATH).map(clip).join(" / ")}${missing.length > MAX_LISTED_MATH ? ` ほか ${String(missing.length - MAX_LISTED_MATH)} 件` : ""}`,
+    );
+  }
+  if (added.length > 0) {
+    parts.push(
+      `原文に無い数式: ${added.slice(0, MAX_LISTED_MATH).map(clip).join(" / ")}${added.length > MAX_LISTED_MATH ? ` ほか ${String(added.length - MAX_LISTED_MATH)} 件` : ""}`,
+    );
+  }
+  return parts.join("。");
+}
+
 function countParagraphs(text: string): number {
   return text
     .split(/\n\s*\n/)
@@ -364,19 +407,24 @@ export function formalCheck(
 
   const srcMath = countMath(srcLatex);
   const jaMath = countMath(ja);
+  const srcBodies = mathBodies(srcLatex);
+  const jaBodies = mathBodies(ja);
+  // どの式が消えた・変わったのかを添える。件数だけを返すと、差し戻された側は全部を
+  // 見直すしかない（実測: ローカルの 12B は改稿 4 回を使い切っても直せなかった）。
+  const diff = describeMathDiff(srcBodies, jaBodies);
+  const detail = diff === "" ? "" : `。${diff}`;
   if (srcMath !== jaMath) {
-    issues.push({ kind: "math", message: `数式個数不一致: src=${srcMath} ja=${jaMath}` });
-  } else {
+    issues.push({
+      kind: "math",
+      message: `数式個数不一致: src=${srcMath} ja=${jaMath}${detail}`,
+    });
+  } else if (multisetMismatch(srcBodies, jaBodies)) {
     // 個数が合っていても中身は自由に変えられる（不等号の反転・空洞化）。数式は原文の
     // まま持ち越すのが正しいので、正規化した本体を multiset で照合する。
-    const srcBodies = mathBodies(srcLatex);
-    const jaBodies = mathBodies(ja);
-    if (multisetMismatch(srcBodies, jaBodies)) {
-      issues.push({
-        kind: "math",
-        message: `数式の内容が原文と一致しません（${String(srcBodies.length)} 件中の差異）`,
-      });
-    }
+    issues.push({
+      kind: "math",
+      message: `数式の内容が原文と一致しません（${String(srcBodies.length)} 件中の差異）${detail}`,
+    });
   }
 
   // 図はパスの multiset で照合する（個数一致だけでは {a},{b}→{a},{a} の置換=b脱落を見逃すため）。
