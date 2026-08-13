@@ -32,6 +32,101 @@ describe("makeOllamaClient", () => {
     expect(body.format).toBeUndefined();
   });
 
+  describe("stream 受信", () => {
+    // 能力問い合わせ（/api/show）を挟まない設定。ここで見たいのは /api/chat の受信だけ。
+    const noThinkCfg = { ...DEFAULT_OLLAMA, think: undefined };
+
+    // 実際のチャンク列（NDJSON）を返す Response。cancel されたかも見る。
+    const streamRes = (parts: (string | Uint8Array)[], canceled?: { done: boolean }) =>
+      ({
+        ok: true,
+        status: 200,
+        body: {
+          getReader() {
+            let i = 0;
+            return {
+              read: async () =>
+                i < parts.length
+                  ? {
+                      done: false,
+                      value:
+                        typeof parts[i] === "string"
+                          ? new TextEncoder().encode(parts[i++] as string)
+                          : (parts[i++] as Uint8Array),
+                    }
+                  : { done: true, value: undefined },
+              cancel: async () => {
+                if (canceled) canceled.done = true;
+              },
+            };
+          },
+        },
+      }) as unknown as Response;
+
+    const chunk = (content: string, done = false, extra: Record<string, unknown> = {}) =>
+      `${JSON.stringify({ message: { content }, done, ...extra })}\n`;
+
+    it("stream:true を送り、チャンクを連結して返す（統計は done チャンクから）", async () => {
+      let body: { stream?: unknown } = {};
+      let seen: { inputTokens?: number; outputTokens?: number } = {};
+      const fetchImpl = (async (_url: string, init: { body: string }) => {
+        body = JSON.parse(init.body);
+        return streamRes([
+          chunk("訳"),
+          chunk("文で"),
+          chunk("ある。"),
+          chunk("", true, { prompt_eval_count: 120, eval_count: 7 }),
+        ]);
+      }) as unknown as typeof fetch;
+      const c = makeOllamaClient(noThinkCfg, {
+        fetchImpl,
+        trace: (r) => (seen = { inputTokens: r.inputTokens, outputTokens: r.outputTokens }),
+      });
+      expect(await c.complete({ system: "s", user: "u" })).toBe("訳文である。");
+      expect(body.stream).toBe(true);
+      expect(seen).toEqual({ inputTokens: 120, outputTokens: 7 });
+    });
+
+    it("チャンク境界が改行や多バイト文字を跨いでも壊さない", async () => {
+      const line = chunk("日本語テキスト") + chunk("", true);
+      const bytes = new TextEncoder().encode(line);
+      // 「日」の途中でぶつ切りにする。
+      const cut = 22;
+      const fetchImpl = (async () =>
+        streamRes([bytes.slice(0, cut), bytes.slice(cut)])) as unknown as typeof fetch;
+      const c = makeOllamaClient(noThinkCfg, { fetchImpl });
+      expect(await c.complete({ system: "s", user: "u" })).toBe("日本語テキスト");
+    });
+
+    it("上限を超えたら受信を打ち切り、reader を cancel する", async () => {
+      const canceled = { done: false };
+      const big = "あ".repeat(600_000);
+      const fetchImpl = (async () =>
+        streamRes([chunk(big), chunk(big), chunk("", true)], canceled)) as unknown as typeof fetch;
+      const c = makeOllamaClient(noThinkCfg, { fetchImpl });
+      await expect(c.complete({ system: "s", user: "u" })).rejects.toThrow(/上限/);
+      expect(canceled.done).toBe(true);
+    });
+
+    it("改行が来ないまま膨らむ応答も打ち切る", async () => {
+      const canceled = { done: false };
+      const fetchImpl = (async () =>
+        streamRes(["x".repeat(600_000), "x".repeat(600_000)], canceled)) as unknown as typeof fetch;
+      const c = makeOllamaClient(noThinkCfg, { fetchImpl });
+      await expect(c.complete({ system: "s", user: "u" })).rejects.toThrow(/上限/);
+      expect(canceled.done).toBe(true);
+    });
+
+    it("ストリーム途中のエラー（HTTP は 200）を provider エラーにする", async () => {
+      const fetchImpl = (async () =>
+        streamRes([chunk("途中まで"), `${JSON.stringify({ error: "model runner has unexpectedly stopped" })}\n`])) as unknown as typeof fetch;
+      const c = makeOllamaClient(noThinkCfg, { fetchImpl });
+      const e = await c.complete({ system: "s", user: "u" }).catch((x: unknown) => x);
+      expect((e as { kind?: string }).kind).toBe("provider");
+      expect(String((e as Error).message)).toContain("model runner");
+    });
+  });
+
   describe("思考の制御", () => {
     const showing = (caps: unknown) =>
       ({ ok: true, status: 200, json: async () => ({ capabilities: caps }) }) as unknown as Response;
