@@ -101,7 +101,12 @@ export function withCallTimeout(client: LlmClient, timeoutMs: number | undefined
           "LLM 呼び出し",
         );
       } catch (e) {
-        if (fired && req.signal?.aborted !== true) {
+        if (req.signal?.aborted === true) {
+          // 期限超過（504）か切断（499）かの印は**親の signal** に付いている。派生 signal で
+          // 作った中断をそのまま返すと、run 全体の期限切れが「利用者が切った」に化ける。
+          throw canceledError("LLM 呼び出し", req.signal);
+        }
+        if (fired) {
           throw Object.assign(
             new JpaperError(2, "provider", `LLM 応答が ${String(ms)}ms 以内に返りませんでした`),
             { transient: true },

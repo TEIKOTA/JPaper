@@ -72,6 +72,19 @@ describe("withCallTimeout", () => {
     expect(isTransient(e)).toBe(false);
   });
 
+  it("run 全体の期限切れは timeout のまま返す（canceled に化けさせない）", async () => {
+    const { withDeadline } = await import("../runtime/cancellation.js");
+    // 派生 signal で作った中断をそのまま返すと、504 と 499 の出し分けが壊れる。
+    const d = withDeadline(undefined, 10);
+    const c = withCallTimeout(never, 10_000);
+    const e = await c
+      .complete({ system: "s", user: "u", signal: d.signal })
+      .catch((x: unknown) => x);
+    d.dispose();
+    expect((e as JpaperError).kind).toBe("timeout");
+    expect((e as JpaperError).code).toBe(6);
+  });
+
   it("期限は呼び出しごとに測る（1 本目の経過が 2 本目を切らない）", async () => {
     let n = 0;
     const slow: LlmClient = {
