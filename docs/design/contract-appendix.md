@@ -143,7 +143,7 @@ CREATE INDEX idx_term_src ON term(src);
 - **`--model` / `--context-window` は `--provider ollama` 専用**。claude と併用したら黙って捨てず入力エラー（終了コード 2）にする（「指定したのに効かない」を作らない）。片方だけ指定した場合、もう片方は `DEFAULT_OLLAMA` の値を使う。どちらも無指定なら `ollama` を渡さず既定に委ねる。
 - **`--context-window` の受理範囲は `MIN_CONTEXT_WINDOW`〜`MAX_CONTEXT_WINDOW`（1024〜1,000,000。正本は `src/config.ts`）**。セグメント予算が 0.3×CW なので、下限未満は本文を刻み切れず `maxSegments` 超過に化け、`0` は「本文が空」（§6 の別の失敗）に化ける。同じ検証を `translatePaper` の入口（`entryError`）にも置き、web からの直接呼び出しでも `kind="input"` で返す。
 - **未知のオプション（`--modell` 等の綴り違い）は `<input>` の位置引数に落とさず入力エラーにする**。落とすと「arXiv ID として解釈できない」という無関係な失敗に化ける。
-- **思考（`--think` / `--no-think`、`OllamaConfig.think`）**: thinking 対応モデルは既定で `message.thinking` に思考を出し、JPaper は `message.content` しか読まないので**生成時間を払って捨てる**（実測: gemma4:12b-it-qat / M4 24GB で 4,000 字のセグメント 1 本に 244.5 秒、うち思考 4,321 字・訳文 2,199 字）。`/api/show` の `capabilities` に `thinking` が無いモデルへ `think` を送るとエラーになりうるため、**能力を引いてから送る**（構造化出力 ADR と同じ「プロバイダ能力で分岐」）。能力の問い合わせはモデル単位で 1 回だけキャッシュし、**問い合わせに失敗したときは結果をキャッシュせず `think` も送らない**（一度の失敗で「思考なし」を焼き付けない）。`think` 無指定なら能力も引かずモデル既定に委ねる。
+- **思考（`--think` / `--no-think`、`OllamaConfig.think`）**: thinking 対応モデルは既定で `message.thinking` に思考を出し、JPaper は `message.content` しか読まないので**生成時間を払って捨てる**（実測: gemma4:12b-it-qat / M4 24GB で 4,000 字のセグメント 1 本に 244.5 秒、うち思考 4,321 字・訳文 2,199 字）。`/api/show` の `capabilities` に `thinking` が無いモデルへ `think` を送るとエラーになりうるため、**能力を引いてから送る**（構造化出力 ADR と同じ「プロバイダ能力で分岐」）。能力の問い合わせはモデル単位で 1 回だけキャッシュし、**問い合わせに失敗したときは結果をキャッシュせず `think` も送らない**（一度の失敗で「思考なし」を焼き付けない）。`think` 無指定なら能力も引かずモデル既定に委ねる。**既定は `think: false`**（同一セグメントの比較で 244.5 秒 → 99.2 秒、訳文 2,199 字 → 2,175 字、LaTeX コマンド 19 個の保持は両方とも完全で差が出なかったため。n=1 の計測なので、品質差が見つかれば `--think` で戻せる）。
 
 ## 6. CLI 終了コード
 

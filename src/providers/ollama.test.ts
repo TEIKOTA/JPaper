@@ -53,7 +53,7 @@ describe("makeOllamaClient", () => {
 
     it("think 未設定なら能力も引かず think も送らない", async () => {
       const s = spy(["thinking"]);
-      const c = makeOllamaClient(DEFAULT_OLLAMA, { fetchImpl: s.fetchImpl });
+      const c = makeOllamaClient({ ...DEFAULT_OLLAMA, think: undefined }, { fetchImpl: s.fetchImpl });
       await c.complete({ system: "s", user: "u" });
       expect(s.shown).toEqual([]);
       expect(s.bodies[0]?.think).toBeUndefined();
@@ -145,7 +145,8 @@ describe("makeOllamaClient", () => {
     });
     expect(await c.complete({ system: "s", user: "u" })).toBe("起動後");
     expect(ensured).toBe(true);
-    expect(calls).toBe(2);
+    // 能力問い合わせ(拒否) → 起動 → 能力問い合わせ → /api/chat。
+    expect(calls).toBe(3);
   });
 
   it("5xx は status を持つ一時エラー（withRetry で拾える）", async () => {
@@ -188,7 +189,8 @@ describe("makeOllamaClient", () => {
     let spawnOpts: { env?: Record<string, string> } = {};
     const fetchImpl = (async (url: string) => {
       calls++;
-      if (url.includes("/api/chat") && calls === 1) {
+      // 最初に触る API（能力問い合わせ）が拒否される＝daemon 未起動。
+      if (calls === 1) {
         throw Object.assign(new Error("fetch failed"), { cause: { code: "ECONNREFUSED" } });
       }
       if (url.includes("/api/tags")) return { ok: true } as Response;
