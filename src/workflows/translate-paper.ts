@@ -66,6 +66,7 @@ import {
   type ResolvedRow,
 } from "../terminology/glossary-io.js";
 import { buildFirstOccurrenceIndex } from "../terminology/first-occurrence.js";
+import { findKatakanaDrift, describeDrift } from "../terminology/consistency.js";
 import { segment, segmentBudgetFor } from "../segment/segmenter.js";
 import { runSectionLoop } from "./section-loop.js";
 import { buildNotes } from "./notes.js";
@@ -294,6 +295,10 @@ async function loadOrBuildContext(
   let style = built.style;
   if (adopt(styleMd)) style = parseStyleMd(readFileSync(styleMd, "utf8"));
   else pending[styleMd] = renderStyleMd(built.style);
+
+  // 用語集は全セグメントのプロンプトへ載るので、内部矛盾はそのまま訳文全体へ伝播する。
+  // 落とさず警告に留める（語形の違いも揺れではあるが、断定はしない）。契約付録 §3。
+  for (const d of findKatakanaDrift(resolved)) warn?.(describeDrift(d));
 
   return { resolved, brief, style, proposedAdded, pending };
 }
