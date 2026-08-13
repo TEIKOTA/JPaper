@@ -72,6 +72,50 @@ export function withSignal(client: LlmClient, signal: AbortSignal | undefined): 
   };
 }
 
+// 呼び出し 1 本の期限。run 全体の期限（withDeadline）は「全部で何分」なので、
+// 1 本が返らないまま黙って止まる形を拾えない（実測: ローカルモデルが生成もせず
+// 応答も返さない状態を観測。llama-server の CPU は 1.9%、run は無言で止まった）。
+// 超過は transient にして withRetry に載せる（1 回の沈黙で run を落とさない）。
+// 呼び出し側の中断で終わったときは、その分類（中断/期限超過）をそのまま通す。
+export function withCallTimeout(client: LlmClient, timeoutMs: number | undefined): LlmClient {
+  if (timeoutMs === undefined) return client;
+  if (typeof timeoutMs !== "number" || !Number.isFinite(timeoutMs) || timeoutMs < 1) {
+    throw new JpaperError(2, "input", `requestTimeoutMs が不正です: ${String(timeoutMs)}`);
+  }
+  const ms = Math.min(MAX_TIMEOUT_MS, Math.floor(timeoutMs));
+  return {
+    async complete(req) {
+      const ctl = new AbortController();
+      const onParent = (): void => ctl.abort();
+      req.signal?.addEventListener("abort", onParent, { once: true });
+      let fired = false;
+      const timer = setTimeout(() => {
+        fired = true;
+        ctl.abort();
+      }, ms);
+      try {
+        // 注入クライアントが signal を無視しても枠を返せるように race させる。
+        return await raceAbort(
+          client.complete({ ...req, signal: ctl.signal }),
+          ctl.signal,
+          "LLM 呼び出し",
+        );
+      } catch (e) {
+        if (fired && req.signal?.aborted !== true) {
+          throw Object.assign(
+            new JpaperError(2, "provider", `LLM 応答が ${String(ms)}ms 以内に返りませんでした`),
+            { transient: true },
+          );
+        }
+        throw e;
+      } finally {
+        clearTimeout(timer);
+        req.signal?.removeEventListener("abort", onParent);
+      }
+    },
+  };
+}
+
 export interface Deadline {
   signal: AbortSignal | undefined;
   dispose: () => void;

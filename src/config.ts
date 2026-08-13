@@ -26,6 +26,21 @@ export interface OllamaConfig {
   port: number;
   // 契約付録 §5。undefined はモデル既定に委ねる（think を送らない）。
   think?: boolean;
+  // 契約付録 §8。呼び出し 1 本の期限。
+  requestTimeoutMs?: number;
+}
+
+// 契約付録 §8。ローカルは 1 呼び出しが 100〜250 秒かかる（実測）ので、cloud と同じ物差しでは
+// 正常な生成を切ってしまう。逆に無期限だと、返らない 1 本で run が黙って止まる。
+export const DEFAULT_OLLAMA_REQUEST_TIMEOUT_MS = 600_000;
+export const DEFAULT_CLAUDE_REQUEST_TIMEOUT_MS = 300_000;
+
+export function requestTimeoutMsFor(
+  provider: "ollama" | "claude",
+  ollama: OllamaConfig = DEFAULT_OLLAMA,
+): number {
+  if (provider === "claude") return DEFAULT_CLAUDE_REQUEST_TIMEOUT_MS;
+  return ollama.requestTimeoutMs ?? DEFAULT_OLLAMA_REQUEST_TIMEOUT_MS;
 }
 
 export const DEFAULT_OLLAMA: OllamaConfig = {

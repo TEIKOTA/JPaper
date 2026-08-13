@@ -45,6 +45,7 @@ import {
   dbPath,
   contextWindowFor,
   defaultConcurrencyFor,
+  requestTimeoutMsFor,
   MAX_CONTEXT_WINDOW,
   MIN_CONTEXT_WINDOW,
   type OllamaConfig,
@@ -74,6 +75,7 @@ import { acquireRunLock, type RunLock } from "../durable/run-lock.js";
 import {
   throwIfAborted,
   withSignal,
+  withCallTimeout,
   withProviderErrors,
   withDeadline,
   type Deadline,
@@ -603,6 +605,10 @@ function entryError(input: JpaperInput, opts: TranslateOptions): string | undefi
     ) {
       return `ollama.contextWindow が不正です: ${outwardMessage(String(cw))}`;
     }
+    const rt = o.requestTimeoutMs;
+    if (rt !== undefined && (typeof rt !== "number" || !Number.isFinite(rt) || rt < 1)) {
+      return `ollama.requestTimeoutMs が不正です: ${outwardMessage(String(rt))}`;
+    }
   }
   return undefined;
 }
@@ -685,7 +691,10 @@ export async function translatePaper(
     // 注入ゲートはプロセス上限を置き換えず、内側の第 2 段として重ねる。
     // 置き換えにすると、web がリクエスト単位でゲートを作った瞬間にプロセス上限が消える。
     const callBudget = createCallBudget(
-      withProviderErrors(withSignal(client0, signal)),
+      // 期限はゲートの内側（枠待ちは「モデルが返らない」ではない）。
+      withProviderErrors(
+        withSignal(withCallTimeout(client0, requestTimeoutMsFor(opts.provider, opts.ollama)), signal),
+      ),
       work.maxLlmCalls,
     );
     llmCalls = callBudget.used;

@@ -2,7 +2,12 @@ import { describe, it, expect, afterEach } from "vitest";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { withSignal, throwIfAborted, canceledError } from "../runtime/cancellation.js";
+import {
+  withSignal,
+  withCallTimeout,
+  throwIfAborted,
+  canceledError,
+} from "../runtime/cancellation.js";
 import { JpaperError, isTransient } from "../types/errors.js";
 import type { LlmClient } from "../types/contract.js";
 
@@ -37,6 +42,59 @@ describe("中断の分類", () => {
     c.abort();
     expect(() => throwIfAborted(c.signal, "x")).toThrow(JpaperError);
     expect(() => throwIfAborted(undefined, "x")).not.toThrow();
+  });
+});
+
+describe("withCallTimeout", () => {
+  const never: LlmClient = { complete: () => new Promise<string>(() => undefined) };
+
+  it("期限内に返る呼び出しはそのまま通す", async () => {
+    const c = withCallTimeout({ complete: async () => "応答" }, 1000);
+    expect(await c.complete({ system: "s", user: "u" })).toBe("応答");
+  });
+
+  it("返らない呼び出しは transient な provider エラーになる（retry に載る）", async () => {
+    const c = withCallTimeout(never, 20);
+    const e = await c.complete({ system: "s", user: "u" }).catch((x: unknown) => x);
+    expect(e).toBeInstanceOf(JpaperError);
+    expect((e as JpaperError).kind).toBe("provider");
+    // 沈黙 1 回で run を落とさない。
+    expect(isTransient(e)).toBe(true);
+  });
+
+  it("親の中断は中断のまま返す（期限超過に化けさせない）", async () => {
+    const ctl = new AbortController();
+    const c = withCallTimeout(never, 10_000);
+    const p = c.complete({ system: "s", user: "u", signal: ctl.signal }).catch((x: unknown) => x);
+    ctl.abort();
+    const e = await p;
+    expect((e as JpaperError).kind).toBe("canceled");
+    expect(isTransient(e)).toBe(false);
+  });
+
+  it("期限は呼び出しごとに測る（1 本目の経過が 2 本目を切らない）", async () => {
+    let n = 0;
+    const slow: LlmClient = {
+      complete: async () => {
+        n++;
+        await new Promise((r) => setTimeout(r, 30));
+        return `応答${String(n)}`;
+      },
+    };
+    const c = withCallTimeout(slow, 200);
+    expect(await c.complete({ system: "s", user: "u" })).toBe("応答1");
+    expect(await c.complete({ system: "s", user: "u" })).toBe("応答2");
+  });
+
+  it("期限なしはラップしない", () => {
+    const base: LlmClient = { complete: async () => "x" };
+    expect(withCallTimeout(base, undefined)).toBe(base);
+  });
+
+  it("不正な期限は input エラー（黙って無期限にしない）", () => {
+    for (const bad of [0, -1, Number("x"), Infinity]) {
+      expect(() => withCallTimeout({ complete: async () => "x" }, bad)).toThrow(JpaperError);
+    }
   });
 });
 
