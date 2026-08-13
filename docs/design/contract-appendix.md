@@ -139,7 +139,10 @@ CREATE INDEX idx_term_src ON term(src);
 - `--provider {ollama|claude}` は **必須（既定なし）**。省略はエラー（終了コード §6）。**受理値の正本は `ollama|claude`**（[UI/配置 ADR](../adr/20260709-user-interface-file-layout-and-cli.md) の例示 `local|cloud` は概念軸。CLI 実値は本付録が正本）。
 - claude CLI は純変換器化して使う: `--append-system-prompt` で役割注入、`--max-turns 1`、内蔵ツール無効化（`--tools none`。`--allowedTools ""` はツールを無効化できずモデルが tool_use を試みて `error_max_turns` になるため不可。SHOW 検収で判明）。対応 CLI バージョンはレンジ指定し、出力 JSON 形式は統合テストで回帰検知。
 - モデル ID: claude(subprocess) は CLI のログインセッションのモデルを使うため JPaper から渡さない。ollama は設定でモデル ID 明示（例 `llama3.1:8b`、変更可）。
-- CLI: `jpaper <input> --provider {ollama|claude} [--out DIR]`。`<input>` は zip/tar.gz/gzip-tar/.tex.gz/.tex/ディレクトリ/arXiv ID を自動判定（判定不能は明示的失敗）。配布は `package.json` の `bin.jpaper = dist/cli.js`。
+- CLI: `jpaper <input> --provider {ollama|claude} [--out DIR] [--model ID] [--context-window N]`。`<input>` は zip/tar.gz/gzip-tar/.tex.gz/.tex/ディレクトリ/arXiv ID を自動判定（判定不能は明示的失敗）。配布は `package.json` の `bin.jpaper = dist/cli.js`。
+- **`--model` / `--context-window` は `--provider ollama` 専用**。claude と併用したら黙って捨てず入力エラー（終了コード 2）にする（「指定したのに効かない」を作らない）。片方だけ指定した場合、もう片方は `DEFAULT_OLLAMA` の値を使う。どちらも無指定なら `ollama` を渡さず既定に委ねる。
+- **`--context-window` の受理範囲は `MIN_CONTEXT_WINDOW`〜`MAX_CONTEXT_WINDOW`（1024〜1,000,000。正本は `src/config.ts`）**。セグメント予算が 0.3×CW なので、下限未満は本文を刻み切れず `maxSegments` 超過に化け、`0` は「本文が空」（§6 の別の失敗）に化ける。同じ検証を `translatePaper` の入口（`entryError`）にも置き、web からの直接呼び出しでも `kind="input"` で返す。
+- **未知のオプション（`--modell` 等の綴り違い）は `<input>` の位置引数に落とさず入力エラーにする**。落とすと「arXiv ID として解釈できない」という無関係な失敗に化ける。
 
 ## 6. CLI 終了コード
 

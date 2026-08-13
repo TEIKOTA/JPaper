@@ -40,7 +40,14 @@ import {
   outwardMessage,
   type RunError,
 } from "../types/errors.js";
-import { paperOutDir, dbPath, contextWindowFor, type OllamaConfig } from "../config.js";
+import {
+  paperOutDir,
+  dbPath,
+  contextWindowFor,
+  MAX_CONTEXT_WINDOW,
+  MIN_CONTEXT_WINDOW,
+  type OllamaConfig,
+} from "../config.js";
 import { makeLlmClient } from "../providers/index.js";
 import { makeJsonlTrace, withTrace } from "../runtime/trace.js";
 import { ingest, derivePaperId, type IngestDeps } from "../ingest/index.js";
@@ -580,6 +587,21 @@ function entryError(input: JpaperInput, opts: TranslateOptions): string | undefi
   const c = opts.concurrency;
   if (c !== undefined && (typeof c !== "number" || !Number.isFinite(c) || c < 1)) {
     return `concurrency が不正です: ${outwardMessage(String(c))}`;
+  }
+  const o = opts.ollama;
+  if (o !== undefined) {
+    if (typeof o.model !== "string" || o.model.trim() === "") {
+      return `ollama.model が不正です: ${outwardMessage(String(o?.model))}`;
+    }
+    const cw = o.contextWindow;
+    if (
+      typeof cw !== "number" ||
+      !Number.isSafeInteger(cw) ||
+      cw < MIN_CONTEXT_WINDOW ||
+      cw > MAX_CONTEXT_WINDOW
+    ) {
+      return `ollama.contextWindow が不正です: ${outwardMessage(String(cw))}`;
+    }
   }
   return undefined;
 }

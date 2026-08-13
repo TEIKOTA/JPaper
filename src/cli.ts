@@ -4,11 +4,55 @@ import { translatePaper } from "./workflows/translate-paper.js";
 import { Provider, type Result } from "./types/contract.js";
 import { JpaperError } from "./types/errors.js";
 import { forTerminal } from "./runtime/untrusted.js";
+import { DEFAULT_OLLAMA, MAX_CONTEXT_WINDOW, MIN_CONTEXT_WINDOW } from "./config.js";
+import type { OllamaConfig } from "./config.js";
 
 export interface CliDeps {
   translate?: typeof translatePaper;
   stdout?: (s: string) => void;
   stderr?: (s: string) => void;
+}
+
+const VALUE_FLAGS = ["--provider", "--out", "--model", "--context-window"];
+
+function parseContextWindow(raw: string): number {
+  if (!/^[0-9]+$/.test(raw)) {
+    throw new JpaperError(2, "input", `--context-window は正の整数で指定してください: ${raw}`);
+  }
+  const n = Number(raw);
+  if (!Number.isSafeInteger(n) || n < MIN_CONTEXT_WINDOW || n > MAX_CONTEXT_WINDOW) {
+    throw new JpaperError(
+      2,
+      "input",
+      `--context-window は ${String(MIN_CONTEXT_WINDOW)}〜${String(MAX_CONTEXT_WINDOW)} で指定してください: ${raw}`,
+    );
+  }
+  return n;
+}
+
+// 契約付録 §5。claude(subprocess) はログインセッションのモデルで動くため、モデル系の
+// 指定を受け取れない。黙って捨てると「指定したのに効かない」になるので入口で落とす。
+function ollamaConfigFrom(
+  provider: Provider,
+  model: string | undefined,
+  contextWindow: string | undefined,
+): OllamaConfig | undefined {
+  if (provider !== "ollama") {
+    const given = model !== undefined ? "--model" : contextWindow !== undefined ? "--context-window" : undefined;
+    if (given !== undefined) {
+      throw new JpaperError(2, "input", `${given} は --provider ollama のときだけ指定できます`);
+    }
+    return undefined;
+  }
+  if (model === undefined && contextWindow === undefined) return undefined;
+  const id = (model ?? DEFAULT_OLLAMA.model).trim();
+  if (id === "") throw new JpaperError(2, "input", "--model に値が必要です");
+  return {
+    ...DEFAULT_OLLAMA,
+    model: id,
+    contextWindow:
+      contextWindow === undefined ? DEFAULT_OLLAMA.contextWindow : parseContextWindow(contextWindow),
+  };
 }
 
 export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number> {
@@ -22,22 +66,26 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number
 
   try {
     const positional: string[] = [];
-    let providerArg: string | undefined;
-    let outArg: string | undefined;
+    const flags = new Map<string, string>();
     for (let i = 0; i < args.length; i++) {
       const a = args[i];
-      if (a === "--provider" || a === "--out") {
+      if (a === undefined) continue;
+      if (VALUE_FLAGS.includes(a)) {
         const v = args[i + 1];
         if (v === undefined || v.startsWith("--")) {
           throw new JpaperError(2, "input", `${a} に値が必要です`);
         }
-        if (a === "--provider") providerArg = v;
-        else outArg = v;
+        flags.set(a, v);
         i++;
-      } else if (a !== undefined) {
+      } else if (a.startsWith("--")) {
+        // 綴り違いを黙って <input> として扱うと、論文 ID の解釈に失敗した形で表面化する。
+        throw new JpaperError(2, "input", `不明なオプション: ${a}`);
+      } else {
         positional.push(a);
       }
     }
+    const providerArg = flags.get("--provider");
+    const outArg = flags.get("--out");
 
     const inputStr = positional[0];
     if (inputStr === undefined) {
@@ -47,10 +95,11 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number
       throw new JpaperError(2, "input", "--provider {ollama|claude} が必要です");
     }
     const provider = Provider.parse(providerArg);
+    const ollama = ollamaConfigFrom(provider, flags.get("--model"), flags.get("--context-window"));
     const input = detectInput(inputStr);
     const result: Result = await translate(
       input,
-      { provider, outDir: outArg },
+      { provider, outDir: outArg, ollama },
       { onError: (m) => stderr(`エラー: ${m}\n`) },
     );
     stdout(`${JSON.stringify(result.summary, null, 2)}\n`);

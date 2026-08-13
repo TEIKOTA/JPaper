@@ -33,6 +33,11 @@ export const DEFAULT_OLLAMA: OllamaConfig = {
   port: 11434,
 };
 
+// 契約付録 §5。セグメント予算は 0.3×CW なので、小さすぎる CW は本文を刻み切れず
+// maxSegments で落ちるだけになる。大きすぎる側は上限の意味を失う。
+export const MIN_CONTEXT_WINDOW = 1024;
+export const MAX_CONTEXT_WINDOW = 1_000_000;
+
 export function contextWindowFor(
   provider: "ollama" | "claude",
   ollama: OllamaConfig = DEFAULT_OLLAMA,

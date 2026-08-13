@@ -118,6 +118,35 @@ describe("concurrency の検証", () => {
   });
 });
 
+describe("ollama 設定の検証", () => {
+  it("空のモデル ID は input で返る（provider に届く前に落とす）", async () => {
+    const { translatePaper } = await import("./translate-paper.js");
+    const { DEFAULT_OLLAMA } = await import("../config.js");
+    for (const bad of ["", "   ", null, 42]) {
+      const r = await translatePaper({ kind: "path", path: "/tmp/x.tar" }, {
+        provider: "ollama",
+        ollama: { ...DEFAULT_OLLAMA, model: bad as unknown as string },
+      });
+      expect(r.error?.kind).toBe("input");
+      expect(r.error?.message).toContain("ollama.model");
+    }
+  });
+
+  it("範囲外の contextWindow は input で返る", async () => {
+    const { translatePaper } = await import("./translate-paper.js");
+    const { DEFAULT_OLLAMA } = await import("../config.js");
+    // 0 は segmentBudgetFor が 0 を返し「本文が空」に化けるため、ここで落とす必要がある。
+    for (const bad of [0, -1, 1023, 1_000_001, 1024.5, Number("x"), Infinity]) {
+      const r = await translatePaper({ kind: "path", path: "/tmp/x.tar" }, {
+        provider: "ollama",
+        ollama: { ...DEFAULT_OLLAMA, contextWindow: bad },
+      });
+      expect(r.error?.kind).toBe("input");
+      expect(r.error?.message).toContain("ollama.contextWindow");
+    }
+  });
+});
+
 describe("outDir の検証", () => {
   it("null / 空文字 / 数値は input で返る（JSON body の null が 500 にならない）", async () => {
     const { translatePaper } = await import("./translate-paper.js");
