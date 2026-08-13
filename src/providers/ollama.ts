@@ -82,10 +82,42 @@ export function makeOllamaClient(cfg: OllamaConfig, deps: OllamaDeps = {}): LlmC
 
   const now = deps.now ?? Date.now;
 
+  // 思考を持たないモデルに think を送るとプロバイダ側のエラーになるため、能力を見てから送る
+  // （構造化出力 ADR と同じ「プロバイダ能力で分岐」）。判定できた分だけ run 内でキャッシュする。
+  const thinkingCapable = new Map<string, boolean>();
+  async function capableOfThinking(
+    model: string,
+    signal?: AbortSignal,
+  ): Promise<boolean | undefined> {
+    const cached = thinkingCapable.get(model);
+    if (cached !== undefined) return cached;
+    let res: Response;
+    try {
+      res = await fetchImpl(`http://127.0.0.1:${cfg.port}/api/show`, {
+        method: "POST",
+        signal,
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ model }),
+      });
+    } catch (e) {
+      // 接続拒否は daemon 未起動。complete() の起動経路へ渡す。
+      if (isConnRefused(e) || signal?.aborted === true) throw e;
+      return undefined;
+    }
+    if (!res.ok) return undefined; // 判定できない相手には送らない（今日と同じ挙動へ倒す）
+    const data = (await readCappedJson(res)) as { capabilities?: unknown };
+    const caps = Array.isArray(data.capabilities) ? data.capabilities : [];
+    const ok = caps.includes("thinking");
+    thinkingCapable.set(model, ok);
+    return ok;
+  }
+
   async function call(req: LlmRequest): Promise<string> {
     const model = req.model ?? cfg.model;
     const startedAt = now();
     throwIfAborted(req.signal, "ollama 呼び出し前");
+    const think =
+      cfg.think === undefined ? undefined : ((await capableOfThinking(model, req.signal)) === true ? cfg.think : undefined);
     const res = await fetchImpl(`http://127.0.0.1:${cfg.port}/api/chat`, {
       method: "POST",
       signal: req.signal,
@@ -99,6 +131,8 @@ export function makeOllamaClient(cfg: OllamaConfig, deps: OllamaDeps = {}): LlmC
         stream: false,
         keep_alive: cfg.keepAlive,
         options: { num_ctx: cfg.contextWindow },
+        // 思考は message.thinking へ出て content には入らない＝生成しても捨てるだけ。
+        ...(think === undefined ? {} : { think }),
         // ネイティブ JSON モードで構文的に妥当な JSON を強制（parse 失敗を撲滅）。構造化出力 ADR。
         ...(req.jsonMode ? { format: "json" } : {}),
       }),

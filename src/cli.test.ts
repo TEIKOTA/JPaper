@@ -171,6 +171,39 @@ describe("runCli", () => {
     expect(code).toBe(2);
   });
 
+  it("--think / --no-think が ollama 設定の think になる", async () => {
+    for (const [flag, want] of [
+      ["--think", true],
+      ["--no-think", false],
+    ] as const) {
+      let got: { ollama?: { think?: boolean } } | undefined;
+      await runCli(["node", "jpaper", "1706.03762", "--provider", "ollama", flag], {
+        stdout: () => {},
+        translate: async (_input, opts) => {
+          got = opts;
+          return okResult;
+        },
+      });
+      expect(got?.ollama?.think).toBe(want);
+    }
+  });
+
+  it("--think と --no-think の同時指定は exit 2", async () => {
+    const code = await runCli(
+      ["node", "jpaper", "1706.03762", "--provider", "ollama", "--think", "--no-think"],
+      { stderr: () => {}, translate: async () => okResult },
+    );
+    expect(code).toBe(2);
+  });
+
+  it("--provider claude に --think を付けると exit 2", async () => {
+    const code = await runCli(["node", "jpaper", "1706.03762", "--provider", "claude", "--think"], {
+      stderr: () => {},
+      translate: async () => okResult,
+    });
+    expect(code).toBe(2);
+  });
+
   it("綴り違いのオプションは <input> に落とさず exit 2", async () => {
     let err = "";
     const code = await runCli(

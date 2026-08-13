@@ -24,6 +24,8 @@ export interface OllamaConfig {
   contextWindow: number;
   keepAlive: string;
   port: number;
+  // 契約付録 §5。undefined はモデル既定に委ねる（think を送らない）。
+  think?: boolean;
 }
 
 export const DEFAULT_OLLAMA: OllamaConfig = {

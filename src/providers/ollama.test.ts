@@ -32,6 +32,101 @@ describe("makeOllamaClient", () => {
     expect(body.format).toBeUndefined();
   });
 
+  describe("思考の制御", () => {
+    const showing = (caps: unknown) =>
+      ({ ok: true, status: 200, json: async () => ({ capabilities: caps }) }) as unknown as Response;
+
+    const spy = (caps: unknown) => {
+      const shown: string[] = [];
+      const bodies: { think?: unknown }[] = [];
+      const fetchImpl = (async (url: string, init: { body: string }) => {
+        const body = JSON.parse(init.body) as { model?: string; think?: unknown };
+        if (url.endsWith("/api/show")) {
+          shown.push(String(body.model));
+          return showing(caps);
+        }
+        bodies.push(body);
+        return okChat("応答");
+      }) as unknown as typeof fetch;
+      return { fetchImpl, shown, bodies };
+    };
+
+    it("think 未設定なら能力も引かず think も送らない", async () => {
+      const s = spy(["thinking"]);
+      const c = makeOllamaClient(DEFAULT_OLLAMA, { fetchImpl: s.fetchImpl });
+      await c.complete({ system: "s", user: "u" });
+      expect(s.shown).toEqual([]);
+      expect(s.bodies[0]?.think).toBeUndefined();
+    });
+
+    it("thinking 能力があるモデルには think を送る", async () => {
+      const s = spy(["completion", "thinking"]);
+      const c = makeOllamaClient({ ...DEFAULT_OLLAMA, think: false }, { fetchImpl: s.fetchImpl });
+      await c.complete({ system: "s", user: "u" });
+      expect(s.bodies[0]?.think).toBe(false);
+    });
+
+    it("thinking 能力が無いモデルには think を送らない（送るとエラーになる相手）", async () => {
+      const s = spy(["completion", "tools"]);
+      const c = makeOllamaClient({ ...DEFAULT_OLLAMA, think: true }, { fetchImpl: s.fetchImpl });
+      await c.complete({ system: "s", user: "u" });
+      expect(s.bodies[0]?.think).toBeUndefined();
+    });
+
+    it("能力の問い合わせはモデルごとに 1 回だけ", async () => {
+      const s = spy(["thinking"]);
+      const c = makeOllamaClient({ ...DEFAULT_OLLAMA, think: true }, { fetchImpl: s.fetchImpl });
+      await c.complete({ system: "s", user: "u" });
+      await c.complete({ system: "s", user: "u" });
+      await c.complete({ system: "s", user: "u", model: "other:1b" });
+      expect(s.shown).toEqual([DEFAULT_OLLAMA.model, "other:1b"]);
+    });
+
+    it("能力を判定できなければ think を送らず、判定結果をキャッシュしない", async () => {
+      let showCalls = 0;
+      const bodies: { think?: unknown }[] = [];
+      const fetchImpl = (async (url: string, init: { body: string }) => {
+        if (url.endsWith("/api/show")) {
+          showCalls++;
+          if (showCalls === 1) return { ok: false, status: 500 } as unknown as Response;
+          return showing(["thinking"]);
+        }
+        bodies.push(JSON.parse(init.body) as { think?: unknown });
+        return okChat("応答");
+      }) as unknown as typeof fetch;
+      const c = makeOllamaClient({ ...DEFAULT_OLLAMA, think: false }, { fetchImpl });
+      await c.complete({ system: "s", user: "u" });
+      expect(bodies[0]?.think).toBeUndefined();
+      // 一度の失敗で「思考なし」を焼き付けない。
+      await c.complete({ system: "s", user: "u" });
+      expect(bodies[1]?.think).toBe(false);
+    });
+
+    it("能力問い合わせの接続拒否は daemon 起動経路へ渡す", async () => {
+      let ensured = false;
+      let refused = true;
+      const fetchImpl = (async (url: string) => {
+        if (refused) {
+          refused = false;
+          throw Object.assign(new Error("fetch failed"), { cause: { code: "ECONNREFUSED" } });
+        }
+        if (url.endsWith("/api/show")) return showing(["thinking"]);
+        return okChat("起動後");
+      }) as unknown as typeof fetch;
+      const c = makeOllamaClient(
+        { ...DEFAULT_OLLAMA, think: false },
+        {
+          fetchImpl,
+          ensureDaemon: async () => {
+            ensured = true;
+          },
+        },
+      );
+      expect(await c.complete({ system: "s", user: "u" })).toBe("起動後");
+      expect(ensured).toBe(true);
+    });
+  });
+
   it("接続拒否時は daemon を起動して再試行", async () => {
     let calls = 0;
     const fetchImpl = (async () => {

@@ -14,6 +14,7 @@ export interface CliDeps {
 }
 
 const VALUE_FLAGS = ["--provider", "--out", "--model", "--context-window"];
+const BOOL_FLAGS = ["--think", "--no-think"];
 
 function parseContextWindow(raw: string): number {
   if (!/^[0-9]+$/.test(raw)) {
@@ -36,15 +37,25 @@ function ollamaConfigFrom(
   provider: Provider,
   model: string | undefined,
   contextWindow: string | undefined,
+  think: boolean | undefined,
 ): OllamaConfig | undefined {
   if (provider !== "ollama") {
-    const given = model !== undefined ? "--model" : contextWindow !== undefined ? "--context-window" : undefined;
+    const given =
+      model !== undefined
+        ? "--model"
+        : contextWindow !== undefined
+          ? "--context-window"
+          : think !== undefined
+            ? think
+              ? "--think"
+              : "--no-think"
+            : undefined;
     if (given !== undefined) {
       throw new JpaperError(2, "input", `${given} は --provider ollama のときだけ指定できます`);
     }
     return undefined;
   }
-  if (model === undefined && contextWindow === undefined) return undefined;
+  if (model === undefined && contextWindow === undefined && think === undefined) return undefined;
   const id = (model ?? DEFAULT_OLLAMA.model).trim();
   if (id === "") throw new JpaperError(2, "input", "--model に値が必要です");
   return {
@@ -52,6 +63,7 @@ function ollamaConfigFrom(
     model: id,
     contextWindow:
       contextWindow === undefined ? DEFAULT_OLLAMA.contextWindow : parseContextWindow(contextWindow),
+    ...(think === undefined ? {} : { think }),
   };
 }
 
@@ -77,6 +89,8 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number
         }
         flags.set(a, v);
         i++;
+      } else if (BOOL_FLAGS.includes(a)) {
+        flags.set(a, "");
       } else if (a.startsWith("--")) {
         // 綴り違いを黙って <input> として扱うと、論文 ID の解釈に失敗した形で表面化する。
         throw new JpaperError(2, "input", `不明なオプション: ${a}`);
@@ -95,7 +109,17 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number
       throw new JpaperError(2, "input", "--provider {ollama|claude} が必要です");
     }
     const provider = Provider.parse(providerArg);
-    const ollama = ollamaConfigFrom(provider, flags.get("--model"), flags.get("--context-window"));
+    const wantThink = flags.has("--think");
+    const wantNoThink = flags.has("--no-think");
+    if (wantThink && wantNoThink) {
+      throw new JpaperError(2, "input", "--think と --no-think は同時に指定できません");
+    }
+    const ollama = ollamaConfigFrom(
+      provider,
+      flags.get("--model"),
+      flags.get("--context-window"),
+      wantThink ? true : wantNoThink ? false : undefined,
+    );
     const input = detectInput(inputStr);
     const result: Result = await translate(
       input,
