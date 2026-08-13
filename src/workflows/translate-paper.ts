@@ -468,6 +468,15 @@ function gateError(
 ): RunError {
   const bad = results.filter((r) => !r.passed);
   const ids = bad.map((r) => r.segmentId).slice(0, 10).join(", ");
+  // 落ちた検査の種別は固定語彙なので外向きに出せる（論文由来の文字列は混ざらない）。
+  // ID だけだと、失敗した訳文が書き出されない設計と相まって手掛かりが 1 つも残らない。
+  const withKinds = bad
+    .slice(0, 10)
+    .map((r) => {
+      const kinds = [...new Set(r.failedKinds ?? [])].sort();
+      return kinds.length === 0 ? r.segmentId : `${r.segmentId}(${kinds.join(", ")})`;
+    })
+    .join(", ");
   if (exitCode === 3) {
     const tainted = contaminatedSegments(results);
     if (tainted.length > 0) {
@@ -477,7 +486,11 @@ function gateError(
         message: `訳文が危険コマンド・文書構造の破壊を持ち込みました（汚染の疑い）: ${tainted.slice(0, 10).join(", ")}`,
       };
     }
-    return { kind: "formal", code: 3, message: `形式検査を通過しないセグメントがあります: ${ids}` };
+    return {
+      kind: "formal",
+      code: 3,
+      message: `形式検査を通過しないセグメントがあります: ${withKinds}`,
+    };
   }
   if (exitCode === 4) {
     return { kind: "quality", code: 4, message: `品質基準に達しないセグメントがあります: ${ids}` };
