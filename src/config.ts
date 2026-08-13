@@ -42,6 +42,14 @@ export const DEFAULT_OLLAMA: OllamaConfig = {
 export const MIN_CONTEXT_WINDOW = 1024;
 export const MAX_CONTEXT_WINDOW = 1_000_000;
 
+// 契約付録 §8。claude は 1 呼び出し = 1 子プロセスで互いに独立だが、ollama は 1 プロセスの
+// GPU メモリ（KV キャッシュ）を共有するため、並列にすると窓の数だけ実効予算を食う。
+export const MAX_CONCURRENCY = 64;
+
+export function defaultConcurrencyFor(provider: "ollama" | "claude"): number {
+  return provider === "ollama" ? 1 : 4;
+}
+
 export function contextWindowFor(
   provider: "ollama" | "claude",
   ollama: OllamaConfig = DEFAULT_OLLAMA,

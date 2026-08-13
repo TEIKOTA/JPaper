@@ -4,7 +4,12 @@ import { translatePaper } from "./workflows/translate-paper.js";
 import { Provider, type Result } from "./types/contract.js";
 import { JpaperError } from "./types/errors.js";
 import { forTerminal } from "./runtime/untrusted.js";
-import { DEFAULT_OLLAMA, MAX_CONTEXT_WINDOW, MIN_CONTEXT_WINDOW } from "./config.js";
+import {
+  DEFAULT_OLLAMA,
+  MAX_CONCURRENCY,
+  MAX_CONTEXT_WINDOW,
+  MIN_CONTEXT_WINDOW,
+} from "./config.js";
 import type { OllamaConfig } from "./config.js";
 
 export interface CliDeps {
@@ -13,8 +18,23 @@ export interface CliDeps {
   stderr?: (s: string) => void;
 }
 
-const VALUE_FLAGS = ["--provider", "--out", "--model", "--context-window"];
+const VALUE_FLAGS = ["--provider", "--out", "--model", "--context-window", "--concurrency"];
 const BOOL_FLAGS = ["--think", "--no-think"];
+
+function parseConcurrency(raw: string): number {
+  if (!/^[0-9]+$/.test(raw)) {
+    throw new JpaperError(2, "input", `--concurrency は正の整数で指定してください: ${raw}`);
+  }
+  const n = Number(raw);
+  if (!Number.isSafeInteger(n) || n < 1 || n > MAX_CONCURRENCY) {
+    throw new JpaperError(
+      2,
+      "input",
+      `--concurrency は 1〜${String(MAX_CONCURRENCY)} で指定してください: ${raw}`,
+    );
+  }
+  return n;
+}
 
 function parseContextWindow(raw: string): number {
   if (!/^[0-9]+$/.test(raw)) {
@@ -120,10 +140,16 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number
       flags.get("--context-window"),
       wantThink ? true : wantNoThink ? false : undefined,
     );
+    const concurrencyArg = flags.get("--concurrency");
     const input = detectInput(inputStr);
     const result: Result = await translate(
       input,
-      { provider, outDir: outArg, ollama },
+      {
+        provider,
+        outDir: outArg,
+        ollama,
+        ...(concurrencyArg === undefined ? {} : { concurrency: parseConcurrency(concurrencyArg) }),
+      },
       { onError: (m) => stderr(`エラー: ${m}\n`) },
     );
     stdout(`${JSON.stringify(result.summary, null, 2)}\n`);

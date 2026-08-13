@@ -44,6 +44,7 @@ import {
   paperOutDir,
   dbPath,
   contextWindowFor,
+  defaultConcurrencyFor,
   MAX_CONTEXT_WINDOW,
   MIN_CONTEXT_WINDOW,
   type OllamaConfig,
@@ -796,7 +797,7 @@ export async function translatePaper(
     let doneFailed = 0;
     progress({ phase: "context", done: 1, total: 1 });
     progress({ phase: "translate", done: 0, total: segments.length });
-    const results = await mapLimit(segments, opts.concurrency ?? 4, (seg) => {
+    const results = await mapLimit(segments, opts.concurrency ?? defaultConcurrencyFor(opts.provider), (seg) => {
       const slice = ctx.resolved
         .filter((t) => seg.latex.includes(t.src))
         .map((t) => ({ ...t, firstOccurrence: firstOcc.get(t.src) === seg.id })) as ResolvedTerm[];

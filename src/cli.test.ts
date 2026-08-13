@@ -171,6 +171,44 @@ describe("runCli", () => {
     expect(code).toBe(2);
   });
 
+  it("--concurrency を opts へ渡す", async () => {
+    let got: { concurrency?: number } | undefined;
+    await runCli(["node", "jpaper", "1706.03762", "--provider", "ollama", "--concurrency", "2"], {
+      stdout: () => {},
+      translate: async (_input, opts) => {
+        got = opts;
+        return okResult;
+      },
+    });
+    expect(got?.concurrency).toBe(2);
+  });
+
+  it("--concurrency 無指定なら opts に載せず provider 別の既定へ委ねる", async () => {
+    let got: { concurrency?: number } | undefined;
+    await runCli(["node", "jpaper", "1706.03762", "--provider", "ollama"], {
+      stdout: () => {},
+      translate: async (_input, opts) => {
+        got = opts;
+        return okResult;
+      },
+    });
+    expect(got?.concurrency).toBeUndefined();
+  });
+
+  it.each([
+    ["0", "0"],
+    ["負数", "-2"],
+    ["非整数", "two"],
+    ["小数", "1.5"],
+    ["上限超過", "65"],
+  ])("--concurrency が%sなら exit 2", async (_n, raw) => {
+    const code = await runCli(
+      ["node", "jpaper", "1706.03762", "--provider", "ollama", "--concurrency", raw],
+      { stderr: () => {}, translate: async () => okResult },
+    );
+    expect(code).toBe(2);
+  });
+
   it("--think / --no-think が ollama 設定の think になる", async () => {
     for (const [flag, want] of [
       ["--think", true],
