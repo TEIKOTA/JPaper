@@ -53,7 +53,7 @@
 | 2026-07-21 | [見出し未訳検査は非ブロッキングの訳注に留める（第4の trigger 追加）](./20260721-heading-untranslated-nonblocking-note.md) | accepted |
 | 2026-07-22 | [LLM 呼び出しトレースは local-first JSONL・メタのみ（Langfuse は将来の opt-in exporter）](./20260722-llm-call-trace-local-jsonl.md) | accepted |
 | 2026-07-22 | [プロンプトキャッシュ再利用: system prompt を role ごとに安定化し用語スライスを user へ移す](./20260722-prompt-cache-reuse-stable-system-prompt.md) | accepted |
-| 2026-07-23 | [構造化出力をプロバイダ能力で分岐（Ollama ネイティブ JSON モード・claude プロンプト維持）](./20260723-provider-branched-structured-output.md) | accepted |
+| 2026-07-23 | [構造化出力をプロバイダ能力で分岐（Ollama ネイティブ JSON モード・claude プロンプト維持）](./20260723-provider-branched-structured-output.md) | superseded |
 | 2026-08-09 | [組版の堅牢化: LuaTeX 互換 shim の注入と共通テンプレによる原前文の吸収](./20260809-typesetting-shims-luatex-compat-and-class-absorption.md) | accepted |
 | 2026-08-11 | [組版サンドボックス: shell escape 明示禁止と同梱パッケージの探索順後置](./20260811-typesetting-sandbox-and-package-precedence.md) | accepted |
 | 2026-08-11 | [プロンプト注入対策: 論文・LLM 由来のテキストを指示面へ載せない](./20260811-untrusted-text-never-becomes-instructions.md) | accepted |
@@ -68,3 +68,4 @@
 | 2026-08-14 | [数式は翻訳前に保護区間へ差し替え、モデルに触らせない](./20260814-protect-math-spans-before-translation.md) | accepted |
 | 2026-08-15 | [エスケープした特殊文字も保護区間に含める](./20260815-protect-escaped-specials-too.md) | accepted |
 | 2026-08-15 | [改稿予算を形式検査と品質評価で分け、fail verdict にも再訳を与える](./20260815-split-revision-budget-by-checker.md) | accepted |
+| 2026-08-15 | [Ollama へ format:"json" を送らない（制約デコードが LaTeX の綴りを壊す）](./20260815-drop-ollama-json-mode.md) | accepted |

@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { extractJson } from "../runtime/llm-client.js";
 import { makeOllamaClient } from "./ollama.js";
 import { DEFAULT_OLLAMA } from "../config.js";
 import { isTransient } from "../types/errors.js";
@@ -19,7 +20,10 @@ describe("makeOllamaClient", () => {
     expect(body.messages?.[0]?.content).toBe("SYS");
   });
 
-  it("jsonMode でネイティブ JSON モード（format:json）を付与し、無指定では付けない", async () => {
+  it("jsonMode でも format を送らない（制約デコードが LaTeX の綴りを壊すため）", async () => {
+    // JSON の文字列中で \c は不正なエスケープなので、format:"json" の制約デコードは
+    // backslash の次に "\/bfnrtu しか出せない。モデルが \citep を書こうとすると \t / \n
+    // に化け、実測で訳文から引用が 1 つ残らず消えた。ADR 20260815-drop-ollama-json-mode。
     let body: { format?: unknown } = {};
     const fetchImpl = (async (_url: string, init: { body: string }) => {
       body = JSON.parse(init.body);
@@ -27,9 +31,17 @@ describe("makeOllamaClient", () => {
     }) as unknown as typeof fetch;
     const c = makeOllamaClient(DEFAULT_OLLAMA, { fetchImpl });
     await c.complete({ system: "s", user: "u", jsonMode: true });
-    expect(body.format).toBe("json");
+    expect(body.format).toBeUndefined();
     await c.complete({ system: "s", user: "u" });
     expect(body.format).toBeUndefined();
+  });
+
+  it("フェンス付きの応答でも JSON を取り出せる（format を外した経路の受け皿）", async () => {
+    const fetchImpl = (async () =>
+      okChat('```json\n{"ok":true}\n```')) as unknown as typeof fetch;
+    const c = makeOllamaClient(DEFAULT_OLLAMA, { fetchImpl });
+    const raw = await c.complete({ system: "s", user: "u", jsonMode: true });
+    expect(extractJson(raw)).toEqual({ ok: true });
   });
 
   describe("stream 受信", () => {

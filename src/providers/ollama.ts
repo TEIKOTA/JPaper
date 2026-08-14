@@ -200,8 +200,9 @@ export function makeOllamaClient(cfg: OllamaConfig, deps: OllamaDeps = {}): LlmC
         options: { num_ctx: cfg.contextWindow },
         // 思考は message.thinking へ出て content には入らない＝生成しても捨てるだけ。
         ...(think === undefined ? {} : { think }),
-        // ネイティブ JSON モードで構文的に妥当な JSON を強制（parse 失敗を撲滅）。構造化出力 ADR。
-        ...(req.jsonMode ? { format: "json" } : {}),
+        // format:"json" は送らない。制約デコードは JSON の文字列中で \c を出せないため、
+        // モデルが \citep を書こうとすると \t / \n に化ける。⚠ landmines.md
+        // ADR 20260815-drop-ollama-json-mode
       }),
     });
     if (res.ok) {
