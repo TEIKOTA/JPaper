@@ -78,8 +78,9 @@ export function repairJsonEscapes(text: string): string {
         i++;
         continue;
       }
-      out += "\\\\" + next; // 不正なエスケープ＝literal な backslash
-      i++;
+      // 不正なエスケープ＝literal な backslash。次の文字は消費せず、同じループで
+      // もう一度見る（`\` の直後が生の改行なら、その改行も綴りへ直す必要がある）。
+      out += "\\\\";
       continue;
     }
     // 文字列中の生の制御文字は JSON では不正。改行・タブは正しい綴りへ直す。

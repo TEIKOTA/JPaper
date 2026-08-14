@@ -174,6 +174,14 @@ describe("repairJsonEscapes", () => {
     expect(() => extractJson("これは散文です")).toThrow(/JSON が見つかりません/);
   });
 
+  it("backslash の直後の生の改行も綴りへ直す（実測 seg-0018 が落ちた形）", () => {
+    // モデルが `}\<生の改行>\\label{...}` を吐いた。backslash を二重化するだけでは
+    // 生の改行が残り、JSON としてまだ不正なまま。
+    const raw = '{"ja":"図の終わり}' + "\\\n" + '\\\\label{fig:a}"}';
+    const v = extractJson(raw) as { ja: string };
+    expect(v.ja).toBe("図の終わり}" + "\\\n" + "\\label{fig:a}");
+  });
+
   it("末尾が backslash で切れていても例外にしない", () => {
     expect(() => repairJsonEscapes('{"ja":"末尾 \\')).not.toThrow();
   });
