@@ -105,3 +105,62 @@ describe("describeMarkIssues", () => {
     expect(describeMarkIssues({ text: "", missing: [], duplicated: [], unknown: [] })).toEqual([]);
   });
 });
+
+// #260: エスケープした特殊文字も書き写させない。
+describe("protectMath: エスケープした特殊文字", () => {
+  it("\\% を伏せて復元する（backslash 落ちで本文がコメント化する事故を構造的に防ぐ）", () => {
+    const src = "253 patients (61\\% male) from CAIN.";
+    const g = protectMath(src);
+    expect(g.text).toBe("253 patients (61〔1〕 male) from CAIN.");
+    expect(restoreMath(g.text.replace("253 patients", "患者 253 名"), g.spans).text).toBe(
+      "患者 253 名 (61\\% male) from CAIN.",
+    );
+  });
+
+  it("\\& \\# \\$ \\_ \\{ \\} も対象にする", () => {
+    const g = protectMath("a \\& b \\# c \\$ d \\_ e \\{ f \\}");
+    expect(g.spans).toEqual(["\\&", "\\#", "\\$", "\\_", "\\{", "\\}"]);
+    expect(restoreMath(g.text, g.spans).text).toBe("a \\& b \\# c \\$ d \\_ e \\{ f \\}");
+  });
+
+  it("行終端 \\\\ は伏せない（位置が意味を持ち、セル本文は翻訳対象）", () => {
+    const g = protectMath("左 \\\\ 右 \\\\ 末尾");
+    expect(g.spans).toEqual([]);
+    expect(g.text).toBe("左 \\\\ 右 \\\\ 末尾");
+  });
+
+  it("\\\\ の直後の % を綴りと誤認しない（\\\\ は改行、% はコメント開始）", () => {
+    const g = protectMath("行末 \\\\% コメント");
+    expect(g.spans).toEqual([]);
+  });
+
+  it("数式の中の \\% は数式ごと伏せる（二重に伏せない）", () => {
+    const g = protectMath("$61\\%$ である");
+    expect(g.spans).toEqual(["$61\\%$"]);
+    expect(g.text).toBe("〔1〕 である");
+  });
+
+  it("verbatim の中は伏せない（ADR で保護対象外）", () => {
+    const src = "\\begin{verbatim}printf(\"100\\%\")\\end{verbatim} と 50\\%";
+    const g = protectMath(src);
+    expect(g.spans).toEqual(["\\%"]);
+    expect(restoreMath(g.text, g.spans).text).toBe(src);
+  });
+
+  it("数式と特殊文字が混ざっても、印の番号は原文の出現順になる", () => {
+    const g = protectMath("50\\% の $x$ と 60\\% の $y$");
+    expect(g.spans).toEqual(["\\%", "$x$", "\\%", "$y$"]);
+    expect(g.text).toBe("50〔1〕 の 〔2〕 と 60〔3〕 の 〔4〕");
+  });
+
+  it("印が落ちたら番号で名指しできる（個数不一致より具体的）", () => {
+    const g = protectMath("50\\% の患者");
+    const r = restoreMath("患者の 50 パーセント", g.spans);
+    expect(r.missing).toEqual([1]);
+  });
+
+  it("原文が印そのものを含むなら保護しない（復元で原文を上書きしない）", () => {
+    const src = "〔注〕 50\\% である";
+    expect(protectMath(src)).toEqual({ text: src, spans: [] });
+  });
+});

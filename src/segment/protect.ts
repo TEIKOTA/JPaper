@@ -1,7 +1,7 @@
 // 契約付録 §3。翻訳前に数式を不透明な印へ差し替え、訳文で復元する（保護区間）。
 // 「訳させて壊れたら差し戻す」より「壊せない形で渡す」ほうが安い。実測ではローカル
 // モデルの再訳 1 回が 320〜408 秒かかり、それでも数式の不一致が残った。
-import { mathSpans, MATH_ENVS } from "../tools/tex-spans.js";
+import { mathSpans, verbatimSpans, MATH_ENVS, type Span } from "../tools/tex-spans.js";
 
 // 印の形は実測で選んだ。gemma4:12b-it-qat で 4 形式を比べ、〔n〕 は 9/9 保持し、
 // 助詞も自然に付いた（「すべての実験において〔1〕を設定し、〔2〕を〔3〕とともに報告します」）。
@@ -22,17 +22,50 @@ export interface Protection {
   spans: string[];
 }
 
+// エスケープした特殊文字。訳す対象ではなく、原文のまま持ち越すのが正しいと分かって
+// いるので、数式と同じく書き写しの機会を与えない。\\（行終端）は含めない——位置が
+// 意味を持ち、セル本文は翻訳対象なので表ごと伏せると訳せなくなる。契約付録 §3
+const ESCAPED_SPECIALS = "%&#$_{}";
+
+// 数式・verbatim の外にあるエスケープ済み特殊文字を 2 文字の区間として拾う。
+function escapedSpecialSpans(latex: string, excluded: readonly Span[]): Span[] {
+  const spans: Span[] = [];
+  let k = 0;
+  for (let i = 0; i < latex.length - 1; i++) {
+    // 除外区間（数式・verbatim）は飛ばす。excluded は昇順・非重複。
+    while (k < excluded.length && excluded[k]![1] <= i) k++;
+    if (k < excluded.length && i >= excluded[k]![0]) {
+      i = excluded[k]![1] - 1;
+      continue;
+    }
+    if (latex[i] !== "\\") continue;
+    if (!ESCAPED_SPECIALS.includes(latex[i + 1]!)) {
+      // \\ は行終端。2 文字ぶん進めて、続く文字を綴りの開始と誤認しない。
+      if (latex[i + 1] === "\\") i++;
+      continue;
+    }
+    spans.push([i, i + 2]);
+    i++;
+  }
+  return spans;
+}
+
+function mergeSpans(a: readonly Span[], b: readonly Span[]): Span[] {
+  return [...a, ...b].sort((x, y) => x[0] - y[0]);
+}
+
 export function protectMath(latex: string): Protection {
   // 原文が印そのものを含むなら保護しない。復元時にどちらが印か区別できず、
   // 原文の一部を数式で上書きしてしまう（保護しなければ従来どおりの経路に戻るだけ）。
   if (latex.includes(MARK_OPEN)) return { text: latex, spans: [] };
-  const spans = mathSpans(latex, MATH_ENVS);
+  const math = mathSpans(latex, MATH_ENVS);
+  const spans = mergeSpans(math, escapedSpecialSpans(latex, mergeSpans(math, verbatimSpans(latex))));
   if (spans.length === 0) return { text: latex, spans: [] };
   const kept: string[] = [];
   let out = "";
   let prev = 0;
   for (const [start, end] of spans) {
-    // mathSpans は昇順・非重複を返す。前提が崩れたら保護をやめる（黙って壊さない）。
+    // 区間は昇順・非重複が前提。崩れたら保護をやめる（黙って壊さない）。
     if (start < prev) return { text: latex, spans: [] };
     out += latex.slice(prev, start) + `${MARK_OPEN}${String(kept.length + 1)}${MARK_CLOSE}`;
     kept.push(latex.slice(start, end));
