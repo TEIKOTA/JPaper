@@ -2,6 +2,7 @@
 import type { LlmClient, GlossaryBuilderOut } from "../types/contract.js";
 import type { GlossaryDb } from "./db.js";
 import { collectCandidates } from "./collect.js";
+import { paperDigest } from "./paper-digest.js";
 import { buildGlossary } from "../agents/glossary-builder.js";
 import { oneLine, MAX_TERM_CHARS } from "../runtime/untrusted.js";
 
@@ -57,7 +58,7 @@ export async function buildPaperGlossary(
         description: e.description ?? undefined,
       })),
   }));
-  return buildGlossary(client, { paperId, candidates });
+  return buildGlossary(client, { paperId, candidates, digest: paperDigest(cleanLatex) });
 }
 
 // proposed 書き戻しは毎回実行（dedup で再実行は 0 件）＝実行ごとの追加件数を正しく返す。

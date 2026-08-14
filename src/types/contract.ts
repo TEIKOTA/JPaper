@@ -92,6 +92,8 @@ export type EvaluatorOut = z.infer<typeof EvaluatorOut>;
 // ── §1 glossary-builder ──────────────────────────────────
 export const GlossaryBuilderIn = z.object({
   paperId: z.string(),
+  // ブリーフの根拠になる本文の抜粋（決定的に切り出す）。契約付録 §4
+  digest: z.string().optional(),
   candidates: z.array(
     z.object({
       src: z.string(),
