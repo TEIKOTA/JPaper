@@ -170,6 +170,16 @@ describe("repairJsonEscapes", () => {
     expect(v.ja).toBe("\\citep{a}");
   });
 
+  it("修復した全体を、断片の走査より先に採る（実測 evaluator が断片に化けた）", () => {
+    // 外側に不正なエスケープ（\mathrm）があると、外側は parse できないまま
+    // backslash を含まない内側の断片が先に見つかってしまう。
+    const raw =
+      '{"verdict":"revise","issues":[{"severity":"error","message":"$\mathrm{DSC}$ の扱い"},{"severity":"warn","message":"併記"}]}';
+    const v = extractJson(raw) as { verdict?: string; issues?: unknown[] };
+    expect(v.verdict).toBe("revise");
+    expect(v.issues).toHaveLength(2);
+  });
+
   it("修復しても JSON にならなければ従来どおり失敗させる", () => {
     expect(() => extractJson("これは散文です")).toThrow(/JSON が見つかりません/);
   });

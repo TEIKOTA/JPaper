@@ -108,30 +108,26 @@ export function extractJson(text: string): unknown {
   } catch {
     // フェンス内/前後に散文がある場合は最初に parse できる balanced 候補を走査する。
   }
-  const budget = { steps: MAX_SCAN_STEPS };
-  for (let i = 0; i < body.length; i++) {
-    const ch = body[i]!;
-    if (ch !== "{" && ch !== "[") continue;
-    const found = tryBalanced(body, i, budget);
-    if (found) return found.value;
-    if (budget.steps < 0) break;
-  }
-  // ここまで来たら、不正なエスケープを直してもう一度だけ試す（直接 parse できた
-  // 応答には触れない＝既存の挙動を変えない）。
+  // 修復した全体 parse は、断片の走査より**先**に試す。順序を逆にすると、不正な
+  // エスケープを含む外側が parse できないまま、backslash を含まない内側の断片
+  // （`{"severity":…}` など）が先に見つかって返ってしまう。実測: evaluator の応答が
+  // verdict も issues も持たないオブジェクトとして解釈され、zod で落ちて再試行になった。
   const repaired = repairJsonEscapes(body);
   if (repaired !== body) {
     try {
       return JSON.parse(repaired);
     } catch {
-      // 修復しても駄目なら諦める。
+      // 修復しても全体が parse できないときだけ走査へ落とす。
     }
-    const budget2 = { steps: MAX_SCAN_STEPS };
-    for (let i = 0; i < repaired.length; i++) {
-      const ch = repaired[i]!;
+  }
+  for (const text of repaired === body ? [body] : [body, repaired]) {
+    const budget = { steps: MAX_SCAN_STEPS };
+    for (let i = 0; i < text.length; i++) {
+      const ch = text[i]!;
       if (ch !== "{" && ch !== "[") continue;
-      const found = tryBalanced(repaired, i, budget2);
+      const found = tryBalanced(text, i, budget);
       if (found) return found.value;
-      if (budget2.steps < 0) break;
+      if (budget.steps < 0) break;
     }
   }
   throw new Error("JSON が見つかりません");
