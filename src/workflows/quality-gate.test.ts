@@ -94,7 +94,11 @@ describe("formalCheck: 図(\\includegraphics)", () => {
     // TeX 上 \\ は改行命令で続く % はコメント開始。ja で図を \\% でコメントアウト＝実質脱落なので flag する。
     expect(kinds("\\includegraphics{a}", "\\\\% \\includegraphics{a}")).toContain("graphics");
     // 奇数（\%）はエスケープ＝コメントではないので図は生きている（pass）。
-    expect(formalCheck("x \\includegraphics{a}", "x \\% \\includegraphics{a}", [])).toEqual([]);
+    expect(
+      formalCheck("x \\includegraphics{a}", "x \\% \\includegraphics{a}", []).filter(
+        (i) => i.kind === "graphics",
+      ),
+    ).toEqual([]);
   });
 });
 
@@ -582,7 +586,7 @@ describe("壊れた入力の走査コスト", () => {
   });
 });
 
-describe("formalCheck: 行終端", () => {
+describe("formalCheck: 記号だけの制御綴り", () => {
   const table = [
     "\\begin{tabular}{ll}",
     "A & 1 \\\\",
@@ -594,24 +598,24 @@ describe("formalCheck: 行終端", () => {
   it("\\\\ が \\ に縮んだ訳を落とす（実測: 表の全行が壊れて組版が Fatal error）", () => {
     const broken = table.replace(/\\\\/g, "\\");
     const issues = formalCheck(table, broken, []);
-    expect(issues.map((i) => i.kind)).toContain("linebreak");
-    expect(issues.find((i) => i.kind === "linebreak")?.message).toContain("src=2 ja=0");
+    expect(issues.map((i) => i.kind)).toContain("symbol-command");
+    expect(issues.find((i) => i.kind === "symbol-command")?.message).toContain("src=2 ja=0");
   });
 
   it("行終端を保った訳は通す", () => {
     const ja = table.replace("A & 1", "甲 & 1").replace("B & 2", "乙 & 2");
-    expect(formalCheck(table, ja, []).filter((i) => i.kind === "linebreak")).toEqual([]);
+    expect(formalCheck(table, ja, []).filter((i) => i.kind === "symbol-command")).toEqual([]);
   });
 
   it("行終端が増えた場合も落とす（行の水増し）", () => {
     const ja = `${table}\nC & 3 \\\\`;
-    expect(formalCheck(table, ja, []).map((i) => i.kind)).toContain("linebreak");
+    expect(formalCheck(table, ja, []).map((i) => i.kind)).toContain("symbol-command");
   });
 
   it("コメント内の \\\\ は数えない", () => {
     const src = "A & 1 \\\\\n% ここは \\\\ コメント\n";
     const ja = "甲 & 1 \\\\\n";
-    expect(formalCheck(src, ja, []).filter((i) => i.kind === "linebreak")).toEqual([]);
+    expect(formalCheck(src, ja, []).filter((i) => i.kind === "symbol-command")).toEqual([]);
   });
 
   it("再訳で直せる種別なので汚染扱いにしない", () => {
@@ -619,5 +623,62 @@ describe("formalCheck: 行終端", () => {
     const kinds = formalCheck(table, broken, []).map((i) => i.kind);
     expect(kinds).not.toContain("structure");
     expect(kinds).not.toContain("unsafe-command");
+  });
+});
+
+describe("formalCheck: 記号の制御綴り", () => {
+  it("閉じ括弧が \) に化けた訳を落とす（実測 seg-0007: Bad math environment delimiter で PDF が出なかった）", () => {
+    const src = "患者 253 名で構成される。";
+    const ja = "患者 253 名\\) で構成される。";
+    const i = formalCheck(src, ja, []).find((x) => x.kind === "symbol-command");
+    expect(i?.message).toContain("\\) src=0 ja=1");
+  });
+
+  it("\\% の backslash が落ちて生の % になった訳を落とす（行の残りが黙って消える）", () => {
+    // 実測: Opus 訳 seg-0014 が 50\% を 50% にし、段落の残り 400 字が PDF から消えていた。
+    const src = "前景ボクセルを 50\\% の場合に中心とし、残りは背景とした。";
+    const ja = "前景ボクセルを 50% の場合に中心とし、残りは背景とした。";
+    const i = formalCheck(src, ja, []).find((x) => x.kind === "symbol-command");
+    expect(i?.message).toContain("% src=0 ja=1");
+  });
+
+  it("生の # と $ が増えた訳も落とす", () => {
+    expect(formalCheck("番号 \\#3 の被験者", "番号 #3 の被験者", []).map((x) => x.kind)).toContain(
+      "symbol-command",
+    );
+    expect(formalCheck("価格 \\$5", "価格 $5", []).map((x) => x.kind)).toContain("symbol-command");
+  });
+
+  it("記号の綴りが訳で消えるだけなら落とさない（\\& を「・」に訳すのは正しい）", () => {
+    // 実測: 原文 "review \& editing" を「査読・編集」と訳した節が 13 個の \& を落とす。
+    // 個数一致を要求すると、この正しい訳に 1 回 300 秒超の再訳を課すことになる。
+    const src = "writing -- review \\& editing, formal analysis \\& validation";
+    expect(formalCheck(src, "執筆——査読・編集、形式解析・検証", []).filter((x) => x.kind === "symbol-command")).toEqual(
+      [],
+    );
+  });
+
+  it("\\_ や \\{ が訳で消えても落とさない（組版は壊れない）", () => {
+    const src = "変数 x\\_1 と集合 \\{a\\}";
+    expect(
+      formalCheck(src, "変数 x1 と集合 a", []).filter((x) => x.kind === "symbol-command"),
+    ).toEqual([]);
+  });
+
+  it("原文が持っている生の % は増えたと数えない（コメント行のある節を素通しする）", () => {
+    const src = "% 図の出典\n本文である。";
+    expect(formalCheck(src, "% 図の出典\n訳文である。", []).filter((x) => x.kind === "symbol-command")).toEqual([]);
+  });
+
+  it("エスケープされた backslash（\\\\%）は生の % として数える（TeX 上もコメント開始）", () => {
+    const src = "行末 \\\\ 次行";
+    const ja = "行末 \\\\% 次行";
+    expect(formalCheck(src, ja, []).map((x) => x.kind)).toContain("symbol-command");
+  });
+
+  it("差し戻し文に、どの記号が原文と訳文で何個かを載せる", () => {
+    const m =
+      formalCheck("A \\\\ B", "A B", []).find((x) => x.kind === "symbol-command")?.message ?? "";
+    expect(m).toContain("\\\\ src=1 ja=0");
   });
 });

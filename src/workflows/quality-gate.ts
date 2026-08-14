@@ -10,7 +10,7 @@ export interface FormalIssue {
     | "keep-original"
     | "bilingual"
     | "untranslated"
-    | "linebreak"
+    | "symbol-command"
     | "unsafe-command"
     | "structure";
   message: string;
@@ -320,12 +320,35 @@ function describeMathDiff(src: string[], ja: string[]): string {
   return parts.join("。");
 }
 
-// 行終端（\\）。usedCommands は \\[a-zA-Z]+ で綴りを拾うので、記号だけの \\ は
-// どの検査にも掛からなかった。訳文が \\ を \ に落とすと表の行構造が壊れ、形式検査は
-// 通るのに組版が Fatal error で落ちる（実測: seg-0004 で 15 個すべてが消え、
-// Misplaced \noalign で PDF が出なくなった）。
-function countRowBreaks(text: string): number {
-  return (stripLineComments(text).match(/(?<!\\)\\\\(?!\\)/g) ?? []).length;
+// 契約付録 §3
+const PAIRED_SYMBOLS = ["\\\\"];
+const INTRODUCED_SYMBOLS = ["\\(", "\\)", "\\[", "\\]"];
+const INTRODUCED_BARE = ["%", "#", "$"];
+
+// 直前の backslash の数で「エスケープされた綴り」と「綴りそのもの」を区別する。
+function countSymbolCommand(text: string, cmd: string): number {
+  const sym = cmd.slice(1);
+  let n = 0;
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] !== "\\") continue;
+    let back = 0;
+    for (let j = i - 1; j >= 0 && text[j] === "\\"; j--) back++;
+    if (back % 2 === 1) continue; // 自身がエスケープされている
+    if (text.startsWith(sym, i + 1)) n++;
+  }
+  return n;
+}
+
+// backslash が付いていない特殊文字。奇数個の backslash が前置されていればエスケープ済み。
+function countBareSpecial(text: string, ch: string): number {
+  let n = 0;
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] !== ch) continue;
+    let back = 0;
+    for (let j = i - 1; j >= 0 && text[j] === "\\"; j--) back++;
+    if (back % 2 === 0) n++;
+  }
+  return n;
 }
 
 function countParagraphs(text: string): number {
@@ -444,15 +467,37 @@ export function formalCheck(
     });
   }
 
-  // 行終端は表の行構造そのもの。1 つ落ちるだけで組版が Fatal error になるのに、
-  // 記号だけの \\ はどの検査にも掛かっていなかった。再訳で直せるので kind は独立させる。
-  const srcRows = countRowBreaks(srcLatex);
-  const jaRows = countRowBreaks(ja);
-  if (srcRows !== jaRows) {
-    issues.push({
-      kind: "linebreak",
-      message: `行終端 \\\\ の個数不一致: src=${String(srcRows)} ja=${String(jaRows)}。表の行区切りは原文のまま持ち越してください（\\\\ を \\ に縮めない）。`,
-    });
+  // 記号だけの制御綴りは usedCommands（\\[a-zA-Z]+）に掛からず、どの検査も見ていなかった。
+  // 契約付録 §3
+  {
+    const srcText = stripLineComments(srcLatex);
+    const jaText = stripLineComments(ja);
+    const diffs = [
+      ...PAIRED_SYMBOLS.map((cmd) => ({
+        cmd,
+        src: countSymbolCommand(srcText, cmd),
+        ja: countSymbolCommand(jaText, cmd),
+      })).filter((d) => d.src !== d.ja),
+      ...INTRODUCED_SYMBOLS.map((cmd) => ({
+        cmd,
+        src: countSymbolCommand(srcText, cmd),
+        ja: countSymbolCommand(jaText, cmd),
+      })).filter((d) => d.ja > d.src),
+      // 生の特殊文字はコメント除去前の本文で数える（% 自身が剥がされてしまうため）。
+      ...INTRODUCED_BARE.map((ch) => ({
+        cmd: ch,
+        src: countBareSpecial(srcLatex, ch),
+        ja: countBareSpecial(ja, ch),
+      })).filter((d) => d.ja > d.src),
+    ];
+    if (diffs.length > 0) {
+      issues.push({
+        kind: "symbol-command",
+        message: `記号の制御綴りの個数不一致: ${diffs
+          .map((d) => `${d.cmd} src=${String(d.src)} ja=${String(d.ja)}`)
+          .join(" / ")}。原文の書き方をそのまま持ち越してください（\\\\ を \\ に縮めない、) を \\) にしない、\\% の backslash を落として % にしない）。`,
+      });
+    }
   }
 
   const srcPar = countParagraphs(srcLatex);
