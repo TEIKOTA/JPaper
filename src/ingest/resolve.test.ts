@@ -1,4 +1,5 @@
 import { describe, it, expect, afterEach } from "vitest";
+import { fastestMs } from "../testing/timing.js";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -111,9 +112,7 @@ describe("図の解決コストの上限", () => {
       { length: 2000 },
       (_, i) => `\\includegraphics{nope${String(i)}}`,
     ).join("");
-    const started = Date.now();
-    expect(collectFigures(latex, d)).toEqual([]);
-    expect(Date.now() - started).toBeLessThan(500);
+    expect(fastestMs(3, () => expect(collectFigures(latex, d)).toEqual([]))).toBeLessThan(500);
   });
 
   it("\\graphicspath の綴りが長くても memo キーの生成でコストが膨らまない", () => {
@@ -123,9 +122,9 @@ describe("図の解決コストの上限", () => {
     const d = tmp(["a.pdf"]);
     const inner = Array.from({ length: 63 }, (_, i) => `{${"./".repeat(16_000 - i)}}`).join("");
     const latex = `\\graphicspath{${inner}}${"\\includegraphics{a}".repeat(20_000)}`;
-    const started = Date.now();
-    expect(collectFigures(latex, d)).toEqual([path.join(d, "a.pdf")]);
-    expect(Date.now() - started).toBeLessThan(3000);
+    expect(
+      fastestMs(2, () => expect(collectFigures(latex, d)).toEqual([path.join(d, "a.pdf")])),
+    ).toBeLessThan(3000);
   });
 
   it("\\graphicspath のディレクトリ数でコストが膨らまない", () => {
@@ -134,9 +133,7 @@ describe("図の解決コストの上限", () => {
     const d = tmp(["fig.png"]);
     const gp = `\\graphicspath{${"{nowhere/}".repeat(4000)}}`;
     const body = Array.from({ length: 1000 }, (_, i) => `\\includegraphics{nope${String(i)}}`).join("");
-    const started = Date.now();
-    expect(collectFigures(gp + body, d)).toEqual([]);
-    expect(Date.now() - started).toBeLessThan(1000);
+    expect(fastestMs(3, () => expect(collectFigures(gp + body, d)).toEqual([]))).toBeLessThan(1000);
   });
 
   it("\\graphicspath の宣言数も予算に計上する", () => {
@@ -144,11 +141,12 @@ describe("図の解決コストの上限", () => {
     // 計上していなかった頃は 8MiB の入力で existsSync が 92 万回走り 1,081ms 止まった。
     const d = tmp(["fig.png"]);
     const decl = `\\graphicspath{${Array.from({ length: 63 }, (_, i) => `{gdir${String(i)}/}`).join("")}}`;
-    const started = Date.now();
-    expect(() => collectFigures(decl.repeat(5000), d)).toThrowError(/上限/);
-    // 単体実行 230ms・全スイート併走 974ms（修正前 1,081ms）。併走時のばらつきが
-    // 修正前後の差より大きいので、この閾値が捕まえるのは桁違いの回帰だけ。
-    expect(Date.now() - started).toBeLessThan(2000);
+    // 単体実行 230ms・全スイート併走 974ms（修正前 1,081ms）。閾値が捕まえるのは
+    // 桁違いの回帰だけなので、負荷で伸びた測定を最小値で落とす。
+    const input = decl.repeat(5000);
+    expect(
+      fastestMs(3, () => expect(() => collectFigures(input, d)).toThrowError(/上限/)),
+    ).toBeLessThan(2000);
   });
 
   it("実在するディレクトリが多すぎたら too-large", () => {

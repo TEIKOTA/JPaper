@@ -1,4 +1,5 @@
 import { describe, it, expect, afterEach } from "vitest";
+import { fastestMs } from "../testing/timing.js";
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync, existsSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -113,9 +114,9 @@ describe("checkFigures", () => {
     // 図ごとに本文全体を走査していた頃は 5,000 図 × 8MB 本文で 1,472ms 同期ブロックした。
     const mainTex = "x".repeat(8 * 1024 * 1024);
     const figures = Array.from({ length: 5000 }, (_, i) => `/src/f${String(i)}.pdf`);
-    const started = Date.now();
-    expect(checkFigures(mainTex, mainDir, figures)).toHaveLength(5000);
-    expect(Date.now() - started).toBeLessThan(300);
+    expect(
+      fastestMs(3, () => expect(checkFigures(mainTex, mainDir, figures)).toHaveLength(5000)),
+    ).toBeLessThan(300);
   });
 
   it("\\includegraphics の引数以外に同じ綴りがあっても残存とは見なさない", () => {

@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { fastestMs } from "../testing/timing.js";
 import {
   formalCheck,
   untranslatedHeadings,
@@ -80,9 +81,12 @@ describe("formalCheck: 図(\\includegraphics)", () => {
   });
   it("未閉じ { が多数でも O(n) で打ち切る（壊れた入力の CPU 消費を防ぐ）", () => {
     const malformed = "\\includegraphics{".repeat(20000); // 未閉じ 2万個
-    const t0 = Date.now();
-    const r = formalCheck("\\includegraphics{a}", malformed, []);
-    expect(Date.now() - t0).toBeLessThan(500); // 単一走査で高速
+    let r: ReturnType<typeof formalCheck> = [];
+    expect(
+      fastestMs(3, () => {
+        r = formalCheck("\\includegraphics{a}", malformed, []);
+      }),
+    ).toBeLessThan(500); // 単一走査で高速
     expect(r.map((i) => i.kind)).toContain("graphics"); // 壊れた ja は不一致で flag
   });
   it("入れ子波括弧のパスも平衡して抽出（{{plot}.pdf}→{{plot}.png} の置換を検出）", () => {
@@ -421,9 +425,7 @@ describe("見出し走査のコスト", () => {
   it("見出し引数に閉じない \\[ を詰めても線形", () => {
     // 実測 250KiB で 4,157ms（倍化ごとに 4 倍）だった経路。
     const ja = `\\section{${"\\[".repeat(Math.floor((4 * 1024 * 1024) / 2))}}`;
-    const started = Date.now();
-    untranslatedHeadings(ja, []);
-    expect(Date.now() - started).toBeLessThan(3000);
+    expect(fastestMs(2, () => void untranslatedHeadings(ja, []))).toBeLessThan(3000);
   });
 });
 
@@ -563,11 +565,6 @@ describe("インラインのコード片で数式のペアリングがずれな�
 });
 
 describe("壊れた入力の走査コスト", () => {
-  const ms = (fn: () => void): number => {
-    const s = Date.now();
-    fn();
-    return Date.now() - s;
-  };
   const rep = (unit: string, bytes: number): string => unit.repeat(Math.ceil(bytes / unit.length));
 
   it.each([
@@ -577,12 +574,12 @@ describe("壊れた入力の走査コスト", () => {
     ["未閉じ \\lstinline{", "\\lstinline{"],
   ])("原文側 %s の羅列 1MiB でも秒未満（timeoutMs が効かない同期区間）", (_label, unit) => {
     const body = rep(unit, 1024 * 1024);
-    expect(ms(() => void formalCheck(body, "訳", []))).toBeLessThan(1_500);
+    expect(fastestMs(3, () => void formalCheck(body, "訳", []))).toBeLessThan(1_500);
   });
 
   it("見出しに詰めた未閉じオプション引数 1MiB でも秒未満", () => {
     const body = rep("\\includegraphics[", 1024 * 1024);
-    expect(ms(() => void untranslatedHeadings(`\\section{${body}}`, []))).toBeLessThan(1_500);
+    expect(fastestMs(3, () => void untranslatedHeadings(`\\section{${body}}`, []))).toBeLessThan(1_500);
   });
 });
 
@@ -746,8 +743,6 @@ describe("formalCheck: 引用・参照・脚注", () => {
 
   it("壊れた入力でも走査は 1 度で済む（開始位置ごとに舐め直さない）", () => {
     const malformed = "\\citep{".repeat(20000);
-    const t0 = Date.now();
-    formalCheck("\\citep{a}", malformed, []);
-    expect(Date.now() - t0).toBeLessThan(1000);
+    expect(fastestMs(3, () => void formalCheck("\\citep{a}", malformed, []))).toBeLessThan(1000);
   });
 });
