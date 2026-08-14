@@ -467,16 +467,24 @@ function gateError(
   typesetMessage?: string,
 ): RunError {
   const bad = results.filter((r) => !r.passed);
-  const ids = bad.map((r) => r.segmentId).slice(0, 10).join(", ");
+  // 終了コードは優先順位で 1 つに決まる（3 > 4）が、報告からもう一方を消してはいけない。
+  // failCode を見ずに全失敗を並べると、品質で落ちた節が「形式検査を通過しない」の一覧に
+  // 混ざり、運用者は存在しない形式的欠陥を探すことになる（実測: seg-0019）。
+  // 古い checkpoint 由来で failCode を持たない結果は形式側に倒す（見え方を変えない）。
+  const of = (code: 3 | 4) => bad.filter((r) => (r.failCode ?? 3) === code);
+  const ids = of(4).map((r) => r.segmentId).slice(0, 10).join(", ");
   // 落ちた検査の種別は固定語彙なので外向きに出せる（論文由来の文字列は混ざらない）。
   // ID だけだと、失敗した訳文が書き出されない設計と相まって手掛かりが 1 つも残らない。
-  const withKinds = bad
+  const withKinds = of(3)
     .slice(0, 10)
     .map((r) => {
       const kinds = [...new Set(r.failedKinds ?? [])].sort();
       return kinds.length === 0 ? r.segmentId : `${r.segmentId}(${kinds.join(", ")})`;
     })
     .join(", ");
+  // 同時に起きた他方の失敗も添える（優先順位で選ぶことと、報告から消すことは別）。
+  const alsoQuality = of(4).length === 0 ? "" : `。品質基準に達しないセグメント: ${of(4).map((r) => r.segmentId).slice(0, 10).join(", ")}`;
+  const alsoFormal = of(3).length === 0 ? "" : `。形式検査を通過しないセグメント: ${of(3).map((r) => r.segmentId).slice(0, 10).join(", ")}`;
   if (exitCode === 3) {
     const tainted = contaminatedSegments(results);
     if (tainted.length > 0) {
@@ -489,11 +497,15 @@ function gateError(
     return {
       kind: "formal",
       code: 3,
-      message: `形式検査を通過しないセグメントがあります: ${withKinds}`,
+      message: `形式検査を通過しないセグメントがあります: ${withKinds}${alsoQuality}`,
     };
   }
   if (exitCode === 4) {
-    return { kind: "quality", code: 4, message: `品質基準に達しないセグメントがあります: ${ids}` };
+    return {
+      kind: "quality",
+      code: 4,
+      message: `品質基準に達しないセグメントがあります: ${ids}${alsoFormal}`,
+    };
   }
   if (exitCode === 5) {
     // 中身は latexmk ログの切り出し＝論文が内容を操作できる。外向きの出口で必ず検疫する。
