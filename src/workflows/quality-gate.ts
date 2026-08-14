@@ -10,6 +10,7 @@ export interface FormalIssue {
     | "keep-original"
     | "bilingual"
     | "untranslated"
+    | "reference"
     | "symbol-command"
     | "unsafe-command"
     | "structure";
@@ -321,6 +322,47 @@ function describeMathDiff(src: string[], ja: string[]): string {
 }
 
 // 契約付録 §3
+const REFERENCE_COMMANDS = [
+  "cite",
+  "citep",
+  "citet",
+  "citealp",
+  "citealt",
+  "citeauthor",
+  "citeyear",
+  "footnote",
+  "footnotemark",
+  "url",
+  "href",
+  "ref",
+  "autoref",
+  "eqref",
+  "cref",
+  "Cref",
+  "pageref",
+  "nameref",
+];
+
+// 1 走査で全綴りを数える。\\cite（行終端＋地の文の cite）は綴りではないので、
+// 直前の backslash の偶奇で綴りの開始かどうかを決める。
+function countCommands(text: string): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] !== "\\") continue;
+    let back = 0;
+    for (let j = i - 1; j >= 0 && text[j] === "\\"; j--) back++;
+    if (back % 2 === 1) continue; // 自身がエスケープされた backslash
+    let end = i + 1;
+    while (end < text.length && /[a-zA-Z]/.test(text[end]!)) end++;
+    if (end === i + 1) continue; // 記号だけの綴り（別の検査が見る）
+    const name = text.slice(i + 1, end);
+    counts.set(name, (counts.get(name) ?? 0) + 1);
+    i = end - 1;
+  }
+  return counts;
+}
+
+// 契約付録 §3
 const PAIRED_SYMBOLS = ["\\\\"];
 const INTRODUCED_SYMBOLS = ["\\(", "\\)", "\\[", "\\]"];
 const INTRODUCED_BARE = ["%", "#", "$"];
@@ -465,6 +507,26 @@ export function formalCheck(
       kind: "label",
       message: `\\label の不一致: src=[${srcLbl.join(", ")}] ja=[${jaLbl.join(", ")}]`,
     });
+  }
+
+  // 引用・参照・脚注・箇条書き・見出しは、落ちても組版が成功するので黙って本文が減る。
+  // 契約付録 §3
+  {
+    const inSrc = countCommands(stripLineComments(srcLatex));
+    const inJa = countCommands(stripLineComments(ja));
+    const diffs = REFERENCE_COMMANDS.map((c) => ({
+      cmd: c,
+      src: inSrc.get(c) ?? 0,
+      ja: inJa.get(c) ?? 0,
+    })).filter((d) => d.src !== d.ja);
+    if (diffs.length > 0) {
+      issues.push({
+        kind: "reference",
+        message: `引用・参照の個数不一致: ${diffs
+          .map((d) => `\\${d.cmd} src=${String(d.src)} ja=${String(d.ja)}`)
+          .join(" / ")}。原文と同じ綴りのまま残してください（\\citet を \\cite に置き換えない、脚注を本文へ畳まない）。`,
+      });
+    }
   }
 
   // 記号だけの制御綴りは usedCommands（\\[a-zA-Z]+）に掛からず、どの検査も見ていなかった。

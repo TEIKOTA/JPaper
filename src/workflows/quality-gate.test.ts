@@ -682,3 +682,72 @@ describe("formalCheck: 記号の制御綴り", () => {
     expect(m).toContain("\\\\ src=1 ja=0");
   });
 });
+
+describe("formalCheck: 引用・参照・脚注", () => {
+  it("脚注が訳文から消えたら落とす（本文が PDF から失われるのに組版は成功する）", () => {
+    // 実測 seg-0001: local 訳が \footnote を 1 つ黙って落としていた。
+    const src = "TorchIO\\footnote{\\url{https://torchio.readthedocs.io/}} を用いた。";
+    const i = formalCheck(src, "TorchIO を用いた。", []).find((x) => x.kind === "reference");
+    expect(i?.message).toContain("\\footnote src=1 ja=0");
+  });
+
+  it("\\citet を \\cite に書き換えた訳を落とす（組版される引用の形が変わる）", () => {
+    // natbib では \citet{a} が「Smith (2019)」、\cite{a} は「(Smith 2019)」。
+    // 実測 seg-0035: \citep 9→5・\citet 3→0・\cite 0→7 で引用が 5 つ純減していた。
+    const src = "\\citet{hendrycks2019benchmarking} の手法に従う。";
+    const m =
+      formalCheck(src, "\\cite{hendrycks2019benchmarking} の手法に従う。", []).find(
+        (x) => x.kind === "reference",
+      )?.message ?? "";
+    expect(m).toContain("\\cite src=0 ja=1");
+    expect(m).toContain("\\citet src=1 ja=0");
+  });
+
+  it("引用・参照を原文どおり残した訳は通す", () => {
+    const src =
+      "\\autoref{fig:a} と \\ref{sec:b} は \\citep{x} を参照。\\url{https://e.com} も見よ。";
+    expect(formalCheck(src, "\\autoref{fig:a} と \\ref{sec:b} は \\citep{x} を参照。\\url{https://e.com} も見よ。", []).filter((i) => i.kind === "reference")).toEqual([]);
+  });
+
+  it("参照が水増しされた訳も落とす（幻覚で引用を作らせない）", () => {
+    expect(
+      formalCheck("本文である。", "本文である \\citep{smith2020}。", []).map((i) => i.kind),
+    ).toContain("reference");
+  });
+
+  it("強調系（\\textit / \\emph / \\textbf）は対象にしない", () => {
+    // claude 訳自身が \textit を 6 個落としている。強調の付け外しは訳し方の選択で、
+    // 組版も内容も壊さない。ここを見ると参照実装が不合格になる。
+    const src = "\\textit{transformed} な \\emph{test set} を \\textbf{benchmark} と呼ぶ。";
+    expect(
+      formalCheck(src, "変換されたテストセットをベンチマークと呼ぶ。", []).filter(
+        (i) => i.kind === "reference",
+      ),
+    ).toEqual([]);
+  });
+
+  it("コメントアウトされた引用は数えない（偽陽性を防ぐ）", () => {
+    expect(
+      formalCheck("本文 % \\citep{old}\n続き", "訳文 \n続き", []).filter((i) => i.kind === "reference"),
+    ).toEqual([]);
+  });
+
+  it("\\\\cite（行終端＋地の文）を綴りと数えない", () => {
+    // \\ は改行命令。続く cite は地の文であって引用ではない。
+    const src = "行末 \\\\cite の話";
+    expect(formalCheck(src, src, []).filter((i) => i.kind === "reference")).toEqual([]);
+  });
+
+  it("接頭辞が同じ別コマンドと取り違えない（\\references / \\refresh）", () => {
+    expect(
+      formalCheck("\\ref{a} を見よ", "\\refresh{a} を見よ", []).map((i) => i.kind),
+    ).toContain("reference");
+  });
+
+  it("壊れた入力でも走査は 1 度で済む（開始位置ごとに舐め直さない）", () => {
+    const malformed = "\\citep{".repeat(20000);
+    const t0 = Date.now();
+    formalCheck("\\citep{a}", malformed, []);
+    expect(Date.now() - t0).toBeLessThan(1000);
+  });
+});
