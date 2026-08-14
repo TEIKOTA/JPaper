@@ -1,4 +1,6 @@
 // 契約付録 §1・§8。LLM 応答（JSON テキスト）の取り出しと zod 検証。
+import { mkdirSync, writeFileSync } from "node:fs";
+import path from "node:path";
 import type { z } from "zod";
 import type { LlmClient, LlmRequest } from "../types/contract.js";
 import { withRetry, type RetryOptions } from "./session.js";
@@ -135,6 +137,24 @@ export function extractJson(text: string): unknown {
   throw new Error("JSON が見つかりません");
 }
 
+// 契約に合わなかった生応答を、JPAPER_DUMP_RAW が指すディレクトリへ残す（既定は残さない）。
+// 応答は checkpoint にも成果物にも永続しないので、これが無いと parse 失敗の原因が追えない。
+// 論文由来の文字列を含むため、既定では書かない。書き込み失敗は握り潰す（run は続ける）。
+function dumpRaw(req: LlmRequest, raw: string): void {
+  const dir = process.env.JPAPER_DUMP_RAW;
+  if (dir === undefined || dir === "") return;
+  try {
+    mkdirSync(dir, { recursive: true });
+    const name = [req.meta?.role ?? "agent", req.meta?.segmentId ?? "-", String(req.meta?.pass ?? 0)]
+      .join("-")
+      .replace(/[^A-Za-z0-9._-]/g, "_");
+    writeFileSync(path.join(dir, `${name}-${String(dumpSeq++)}.txt`), raw);
+  } catch {
+    // 観測チャネルの故障は run を壊さない。
+  }
+}
+let dumpSeq = 0;
+
 export async function runAgent<S extends z.ZodTypeAny>(
   client: LlmClient,
   req: LlmRequest,
@@ -152,6 +172,7 @@ export async function runAgent<S extends z.ZodTypeAny>(
       try {
         return schema.parse(extractJson(raw)) as z.infer<S>;
       } catch (e) {
+        dumpRaw(req, raw);
         throw Object.assign(e instanceof Error ? e : new Error(String(e)), {
           transient: true,
           schemaFailure: true,
