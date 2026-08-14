@@ -145,3 +145,11 @@ describe("書き写しの規則（#250）", () => {
     expect(buildSystemPrompt("translator")).toBe(buildSystemPrompt("translator"));
   });
 });
+
+describe("併記の使いどころ", () => {
+  it("確定用語の初出だけに併記を使う規約が translator に載る", () => {
+    const p = buildSystemPrompt("translator");
+    expect(p).toContain("bilingual と指示された語の初出だけ");
+    expect(buildSystemPrompt("evaluator")).not.toContain("bilingual と指示された語の初出だけ");
+  });
+});

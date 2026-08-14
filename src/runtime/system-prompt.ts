@@ -34,6 +34,12 @@ const TRANSLATOR_MARKS =
 const TRANSLATOR_FIDELITY =
   "書き写しの規則: 引用・参照・脚注のコマンドは綴りごと原文のまま残す（\\citet を \\cite に置き換えない、\\footnote{...} を落として本文へ畳まない、\\ref・\\autoref・\\url の引数を訳さない）。\\% \\# \\$ \\& の backslash を落とさない（落とすと以降が消える）。行終端の \\\\ を \\ に縮めない。";
 
+// 併記の付けすぎは evaluator が error として差し戻す（実測: 落ちた稿の指摘 3 件中 2 件が
+// 「初出以外の併記を日本語のみにする」だった）。確定用語に無い語へモデルが独自に併記を
+// 足すのが原因なので、規約そのものを先に書く。契約付録 §1
+const TRANSLATOR_BILINGUAL =
+  "併記の使いどころ: 「日本語(原語)」の併記は、user 側の用語指示で bilingual と指示された語の初出だけに使う。そこに挙がっていない語には併記を付けず、日本語だけで訳す（keep-original 指定の語は原表記のまま）。同じ語を何度も併記しない。";
+
 const PITFALLS =
   "頻出の誤訳に注意する（evaluator 用チェックリスト）: 統計語 significantly=「有意」（p 値の含意を保つ）／SI 単位は立体・°K は K に／主張強度・hedging（may/might/suggest 等）を原文どおり保つ／false friend: agency=「行為主体性」など文脈依存の訳。";
 
@@ -120,7 +126,7 @@ export function renderGlossaryBlock(glossary: ResolvedTerm[]): string {
 // system prompt は role ごとに完全な固定文字列＝キャッシュ prefix を共有し、可変データを一切含まない。
 export function buildSystemPrompt(role: AgentRole): string {
   const parts = [ROLE_DEF[role], COMMON, UNTRUSTED_DATA];
-  if (role === "translator") parts.push(TRANSLATOR_HEADINGS, TRANSLATOR_MARKS, TRANSLATOR_FIDELITY);
+  if (role === "translator") parts.push(TRANSLATOR_HEADINGS, TRANSLATOR_MARKS, TRANSLATOR_FIDELITY, TRANSLATOR_BILINGUAL);
   if (role === "evaluator") parts.push(PITFALLS, EVAL_RUBRIC);
   return parts.join("\n\n---\n\n");
 }
