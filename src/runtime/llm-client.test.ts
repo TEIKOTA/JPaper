@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { z } from "zod";
-import { extractJson, runAgent, MAX_RESPONSE_CHARS } from "./llm-client.js";
+import { extractJson, repairJsonEscapes, runAgent, MAX_RESPONSE_CHARS } from "./llm-client.js";
 import { FakeLlmClient } from "../testing/fake-llm.js";
 
 describe("extractJson", () => {
@@ -130,3 +130,51 @@ describe("応答の仕事量の上限", () => {
   });
 });
 
+
+// #264: LaTeX を JSON 文字列で運ぶと、モデルは backslash の二重化にしばしば失敗する。
+describe("repairJsonEscapes", () => {
+  it("不正なエスケープを literal な backslash へ直す（\\citep が JSON を壊す）", () => {
+    const raw = '{"ja":"\\\\subsubsection{見出し} と \\citep{smith2020} と \\%"}';
+    const v = extractJson(raw) as { ja: string };
+    expect(v.ja).toBe("\\subsubsection{見出し} と \\citep{smith2020} と \\%");
+  });
+
+  it("正しいエスケープは触らない", () => {
+    expect(repairJsonEscapes('"a\\nb\\tc\\"d\\\\e\\/f\\u3042g"')).toBe(
+      '"a\\nb\\tc\\"d\\\\e\\/f\\u3042g"',
+    );
+  });
+
+  it("\\u の後ろが 16 進 4 桁でなければ literal 扱いにする", () => {
+    const v = extractJson('{"ja":"\\unit テスト"}') as { ja: string };
+    expect(v.ja).toBe("\\unit テスト");
+  });
+
+  it("文字列の外の文字には触らない", () => {
+    expect(repairJsonEscapes('{ "a": 1, "b": [2, 3] }')).toBe('{ "a": 1, "b": [2, 3] }');
+  });
+
+  it("文字列中の生の改行・タブを綴りへ直す", () => {
+    const v = extractJson('{"ja":"1 行目\n2 行目\tタブ"}') as { ja: string };
+    expect(v.ja).toBe("1 行目\n2 行目\tタブ");
+  });
+
+  it("コードフェンス付きでも直す", () => {
+    const v = extractJson('```json\n{"ja":"\\citep{a}"}\n```') as { ja: string };
+    expect(v.ja).toBe("\\citep{a}");
+  });
+
+  it("すでに妥当な JSON は修復を通さない（既存の挙動を変えない）", () => {
+    // 修復が走ると \\\\ が \\\\\\\\ になりかねない。直接 parse できたら触らないことを固定する。
+    const v = extractJson('{"ja":"\\\\citep{a}"}') as { ja: string };
+    expect(v.ja).toBe("\\citep{a}");
+  });
+
+  it("修復しても JSON にならなければ従来どおり失敗させる", () => {
+    expect(() => extractJson("これは散文です")).toThrow(/JSON が見つかりません/);
+  });
+
+  it("末尾が backslash で切れていても例外にしない", () => {
+    expect(() => repairJsonEscapes('{"ja":"末尾 \\')).not.toThrow();
+  });
+});

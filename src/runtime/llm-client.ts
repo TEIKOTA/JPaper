@@ -43,6 +43,57 @@ function tryBalanced(body: string, start: number, budget: { steps: number }): { 
   return undefined;
 }
 
+const VALID_ESCAPES = '"\\/bfnrtu';
+
+// LaTeX を JSON 文字列で運ぶと、モデルは `\\citep` の二重化にしばしば失敗する
+// （実測: 同じ応答の中で `\\subsubsection` は二重化され `\citep` だけ 1 本だった）。
+// `\c` は不正なエスケープなので JSON.parse が落ちる。**モデルが書こうとした 1 本の
+// backslash をそのまま復元する**だけで、中身は推測しない。契約付録 §8
+export function repairJsonEscapes(text: string): string {
+  let out = "";
+  let inString = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i]!;
+    if (!inString) {
+      out += ch;
+      if (ch === '"') inString = true;
+      continue;
+    }
+    if (ch === '"') {
+      out += ch;
+      inString = false;
+      continue;
+    }
+    if (ch === "\\") {
+      const next = text[i + 1];
+      if (next === undefined) {
+        out += "\\\\";
+        continue;
+      }
+      const isHex = (c: string | undefined): boolean => c !== undefined && /[0-9a-fA-F]/.test(c);
+      const validU =
+        next === "u" && [1, 2, 3, 4].every((k) => isHex(text[i + 1 + k]));
+      if (VALID_ESCAPES.includes(next) && (next !== "u" || validU)) {
+        out += ch + next;
+        i++;
+        continue;
+      }
+      out += "\\\\" + next; // 不正なエスケープ＝literal な backslash
+      i++;
+      continue;
+    }
+    // 文字列中の生の制御文字は JSON では不正。改行・タブは正しい綴りへ直す。
+    const code = ch.charCodeAt(0);
+    if (code < 0x20) {
+      out +=
+        ch === "\n" ? "\\n" : ch === "\r" ? "\\r" : ch === "\t" ? "\\t" : `\\u${code.toString(16).padStart(4, "0")}`;
+      continue;
+    }
+    out += ch;
+  }
+  return out;
+}
+
 export function extractJson(text: string): unknown {
   if (text.length > MAX_RESPONSE_CHARS) {
     throw new Error(`LLM 応答が上限 ${MAX_RESPONSE_CHARS} 文字を超えています`);
@@ -61,6 +112,24 @@ export function extractJson(text: string): unknown {
     const found = tryBalanced(body, i, budget);
     if (found) return found.value;
     if (budget.steps < 0) break;
+  }
+  // ここまで来たら、不正なエスケープを直してもう一度だけ試す（直接 parse できた
+  // 応答には触れない＝既存の挙動を変えない）。
+  const repaired = repairJsonEscapes(body);
+  if (repaired !== body) {
+    try {
+      return JSON.parse(repaired);
+    } catch {
+      // 修復しても駄目なら諦める。
+    }
+    const budget2 = { steps: MAX_SCAN_STEPS };
+    for (let i = 0; i < repaired.length; i++) {
+      const ch = repaired[i]!;
+      if (ch !== "{" && ch !== "[") continue;
+      const found = tryBalanced(repaired, i, budget2);
+      if (found) return found.value;
+      if (budget2.steps < 0) break;
+    }
   }
   throw new Error("JSON が見つかりません");
 }
