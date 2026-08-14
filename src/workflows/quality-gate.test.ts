@@ -581,3 +581,43 @@ describe("壊れた入力の走査コスト", () => {
     expect(ms(() => void untranslatedHeadings(`\\section{${body}}`, []))).toBeLessThan(1_500);
   });
 });
+
+describe("formalCheck: 行終端", () => {
+  const table = [
+    "\\begin{tabular}{ll}",
+    "A & 1 \\\\",
+    "\\hline",
+    "B & 2 \\\\",
+    "\\end{tabular}",
+  ].join("\n");
+
+  it("\\\\ が \\ に縮んだ訳を落とす（実測: 表の全行が壊れて組版が Fatal error）", () => {
+    const broken = table.replace(/\\\\/g, "\\");
+    const issues = formalCheck(table, broken, []);
+    expect(issues.map((i) => i.kind)).toContain("linebreak");
+    expect(issues.find((i) => i.kind === "linebreak")?.message).toContain("src=2 ja=0");
+  });
+
+  it("行終端を保った訳は通す", () => {
+    const ja = table.replace("A & 1", "甲 & 1").replace("B & 2", "乙 & 2");
+    expect(formalCheck(table, ja, []).filter((i) => i.kind === "linebreak")).toEqual([]);
+  });
+
+  it("行終端が増えた場合も落とす（行の水増し）", () => {
+    const ja = `${table}\nC & 3 \\\\`;
+    expect(formalCheck(table, ja, []).map((i) => i.kind)).toContain("linebreak");
+  });
+
+  it("コメント内の \\\\ は数えない", () => {
+    const src = "A & 1 \\\\\n% ここは \\\\ コメント\n";
+    const ja = "甲 & 1 \\\\\n";
+    expect(formalCheck(src, ja, []).filter((i) => i.kind === "linebreak")).toEqual([]);
+  });
+
+  it("再訳で直せる種別なので汚染扱いにしない", () => {
+    const broken = table.replace(/\\\\/g, "\\");
+    const kinds = formalCheck(table, broken, []).map((i) => i.kind);
+    expect(kinds).not.toContain("structure");
+    expect(kinds).not.toContain("unsafe-command");
+  });
+});

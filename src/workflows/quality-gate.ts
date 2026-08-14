@@ -10,6 +10,7 @@ export interface FormalIssue {
     | "keep-original"
     | "bilingual"
     | "untranslated"
+    | "linebreak"
     | "unsafe-command"
     | "structure";
   message: string;
@@ -319,6 +320,14 @@ function describeMathDiff(src: string[], ja: string[]): string {
   return parts.join("。");
 }
 
+// 行終端（\\）。usedCommands は \\[a-zA-Z]+ で綴りを拾うので、記号だけの \\ は
+// どの検査にも掛からなかった。訳文が \\ を \ に落とすと表の行構造が壊れ、形式検査は
+// 通るのに組版が Fatal error で落ちる（実測: seg-0004 で 15 個すべてが消え、
+// Misplaced \noalign で PDF が出なくなった）。
+function countRowBreaks(text: string): number {
+  return (stripLineComments(text).match(/(?<!\\)\\\\(?!\\)/g) ?? []).length;
+}
+
 function countParagraphs(text: string): number {
   return text
     .split(/\n\s*\n/)
@@ -432,6 +441,17 @@ export function formalCheck(
     issues.push({
       kind: "label",
       message: `\\label の不一致: src=[${srcLbl.join(", ")}] ja=[${jaLbl.join(", ")}]`,
+    });
+  }
+
+  // 行終端は表の行構造そのもの。1 つ落ちるだけで組版が Fatal error になるのに、
+  // 記号だけの \\ はどの検査にも掛かっていなかった。再訳で直せるので kind は独立させる。
+  const srcRows = countRowBreaks(srcLatex);
+  const jaRows = countRowBreaks(ja);
+  if (srcRows !== jaRows) {
+    issues.push({
+      kind: "linebreak",
+      message: `行終端 \\\\ の個数不一致: src=${String(srcRows)} ja=${String(jaRows)}。表の行区切りは原文のまま持ち越してください（\\\\ を \\ に縮めない）。`,
     });
   }
 
