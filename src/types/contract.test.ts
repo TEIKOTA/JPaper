@@ -7,6 +7,7 @@ import {
   JpaperInput,
   RunSummary,
   TranslatorIn,
+  TranslatorOut,
   EvaluatorOut,
   Provider,
 } from "./contract.js";
@@ -198,3 +199,30 @@ describe("brief / style の上限", () => {
   });
 });
 
+
+describe("TranslatorOut: 小さいモデルの形の揺れ", () => {
+  it('{"seg-0019": {"ja": "…"}} を畳んで受ける（実測の形）', () => {
+    const v = TranslatorOut.parse({ "seg-0019": { ja: "訳文" } });
+    expect(v).toEqual({ segmentId: "seg-0019", ja: "訳文" });
+  });
+
+  it("正しい形はそのまま通る", () => {
+    expect(TranslatorOut.parse({ segmentId: "seg-1", ja: "訳文" })).toEqual({
+      segmentId: "seg-1",
+      ja: "訳文",
+    });
+  });
+
+  it("鍵が 2 つ以上あるものは畳まない（曖昧なので落とす）", () => {
+    expect(() => TranslatorOut.parse({ a: { ja: "x" }, b: { ja: "y" } })).toThrow();
+  });
+
+  it("中身に ja が無ければ畳まない", () => {
+    expect(() => TranslatorOut.parse({ "seg-1": { text: "x" } })).toThrow();
+  });
+
+  it("配列や null は素通しして落とす", () => {
+    expect(() => TranslatorOut.parse([{ ja: "x" }])).toThrow();
+    expect(() => TranslatorOut.parse(null)).toThrow();
+  });
+});

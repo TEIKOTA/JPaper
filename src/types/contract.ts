@@ -64,7 +64,25 @@ export const TranslatorIn = z.object({
 });
 export type TranslatorIn = z.infer<typeof TranslatorIn>;
 
-export const TranslatorOut = z.object({ segmentId: z.string(), ja: z.string() });
+// 小さいモデルは `{"seg-0019": {"ja": "…"}}` の形をよく返す（実測: 出力 10KB の節で
+// 再試行 1 回あたり 5 分を失った）。鍵が 1 つで中身に文字列 ja があるときだけ、
+// 鍵を segmentId とみなして畳む。それ以外は従来どおり落とす。契約付録 §1
+function foldSingleKeyed(v: unknown): unknown {
+  if (typeof v !== "object" || v === null || Array.isArray(v)) return v;
+  const o = v as Record<string, unknown>;
+  if (typeof o.ja === "string") return v;
+  const keys = Object.keys(o);
+  if (keys.length !== 1) return v;
+  const inner = o[keys[0]!];
+  if (typeof inner !== "object" || inner === null || Array.isArray(inner)) return v;
+  const ja = (inner as Record<string, unknown>).ja;
+  return typeof ja === "string" ? { segmentId: keys[0]!, ja } : v;
+}
+
+export const TranslatorOut = z.preprocess(
+  foldSingleKeyed,
+  z.object({ segmentId: z.string(), ja: z.string() }),
+);
 export type TranslatorOut = z.infer<typeof TranslatorOut>;
 
 // ── §1 evaluator ─────────────────────────────────────────
