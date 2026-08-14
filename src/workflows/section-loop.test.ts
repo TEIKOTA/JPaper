@@ -49,10 +49,13 @@ describe("runSectionLoop", () => {
     const r = await runSectionLoop(c, withMath, []);
     expect(r.passed).toBe(false);
     expect(r.failCode).toBe(3);
-    expect(r.usedRevisions).toBe(r.maxRevisions);
+    // 形式の予算だけを使い切る。品質の予算は手つかずで残る（ADR 20260815）。
+    expect(r.usedRevisions).toBe(r.maxRevisions / 2);
   });
 
-  it("evaluator fail は即 code 4", async () => {
+  it("evaluator fail でも品質の予算が残る限り訳し直し、尽きたら code 4", async () => {
+    // fail は「この訳が不可」であって「この節が訳せない」ではない。指摘を渡さずに
+    // 捨てるのは、1 呼び出しを節約するために節 1 本を失う取引になる。ADR 20260815。
     const c = new FakeLlmClient((req) =>
       req.system.includes("審査者")
         ? '{"verdict":"fail","issues":[]}'
@@ -61,7 +64,7 @@ describe("runSectionLoop", () => {
     const r = await runSectionLoop(c, seg, []);
     expect(r.passed).toBe(false);
     expect(r.failCode).toBe(4);
-    expect(r.usedRevisions).toBe(0);
+    expect(r.usedRevisions).toBe(r.maxRevisions / 2);
   });
 });
 
@@ -87,7 +90,7 @@ describe("runSectionLoop: 抜け穴を塞ぐ（敵対的）", () => {
     const r = await runSectionLoop(c, seg, []);
     expect(r.passed).toBe(false);
     expect(r.failCode).toBe(4);
-    expect(r.usedRevisions).toBe(r.maxRevisions);
+    expect(r.usedRevisions).toBe(r.maxRevisions / 2); // 品質の予算だけを使い切る
   });
 
   it("revise + [warn, error] 混在は error 扱いで通さない（warn に紛れた error を逃さない）", async () => {
@@ -97,12 +100,12 @@ describe("runSectionLoop: 抜け穴を塞ぐ（敵対的）", () => {
     expect(r.failCode).toBe(4);
   });
 
-  it("fail は issues が warn/空でも即失敗（verdict が最優先）", async () => {
+  it("fail は issues が warn/空でも pass にはしない（verdict が最優先）", async () => {
+    // 再訳の機会は与えるが、fail のまま予算が尽きれば失敗させる。不変条件は変えない。
     const c = new FakeLlmClient(evalReply("fail", WARN));
     const r = await runSectionLoop(c, seg, []);
     expect(r.passed).toBe(false);
     expect(r.failCode).toBe(4);
-    expect(r.usedRevisions).toBe(0);
   });
 
   it("severity ラベルを信頼する（message 本文は解析しない）＝意味反転でも warn と付ければ通す設計", async () => {
@@ -167,5 +170,61 @@ describe("数式の保護", () => {
     // 2 回目のプロンプトに、消えた印の番号が名指しで載る。
     expect(seen[1]).toContain("〔2〕");
     expect(seen[1]).toContain("印が消えています");
+  });
+});
+
+// ADR 20260815: 形式と品質は別の予算を持つ。
+describe("runSectionLoop: 改稿予算の配分", () => {
+  const withMath: Segment = { id: "seg", latex: "text $x$ here.", tokens: 100 };
+
+  it("形式で予算を使い切っても、品質の改稿はそこから始まる（実測 seg-0007 の経路）", async () => {
+    // 形式で 3 回差し戻したあと形式を通過し、そこで初めて evaluator が走る。
+    // 予算を共有していた頃は、この時点で残高ゼロ＝改稿を 1 度も試せずに落ちた。
+    let translatorCalls = 0;
+    let evaluatorCalls = 0;
+    const c = new FakeLlmClient((req) => {
+      if (req.system.includes("審査者")) {
+        evaluatorCalls++;
+        return '{"verdict":"revise","issues":[{"severity":"error","message":"語調"}]}';
+      }
+      translatorCalls++;
+      // 最初の 3 回は数式を落として形式検査に落ちる。
+      return translatorCalls <= 3
+        ? '{"segmentId":"seg","ja":"数式なしの訳"}'
+        : '{"segmentId":"seg","ja":"訳文 $x$ である。"}';
+    });
+    const r = await runSectionLoop(c, withMath, []);
+    expect(r.failCode).toBe(4); // 形式ではなく品質で落ちた＝形式は通過している
+    expect(evaluatorCalls).toBeGreaterThan(1); // 品質の改稿が実際に走った
+    expect(r.usedRevisions).toBe(r.maxRevisions); // 形式 3 + 品質 3
+  });
+
+  it("節あたりのコストは 1 + 形式上限 + 品質上限 で有界（往復しても止まる）", async () => {
+    // 形式と品質を交互に落として往復させる。両方の予算が単調に減るので停止する。
+    let n = 0;
+    const c = new FakeLlmClient((req) => {
+      if (req.system.includes("審査者")) {
+        return '{"verdict":"revise","issues":[{"severity":"error","message":"語調"}]}';
+      }
+      n++;
+      return n % 2 === 1
+        ? '{"segmentId":"seg","ja":"数式なしの訳"}'
+        : '{"segmentId":"seg","ja":"訳文 $x$ である。"}';
+    });
+    const r = await runSectionLoop(c, withMath, []);
+    expect(r.passed).toBe(false);
+    expect(n).toBeLessThanOrEqual(1 + r.maxRevisions);
+  });
+
+  it("汚染系は予算に関係なく即失敗のまま（再訳しても直る性質ではない）", async () => {
+    let translatorCalls = 0;
+    const c = new FakeLlmClient(() => {
+      translatorCalls++;
+      return '{"segmentId":"seg","ja":"訳文 \\\\write18{rm -rf /} である。"}';
+    });
+    const r = await runSectionLoop(c, seg, []);
+    expect(r.passed).toBe(false);
+    expect(r.failedKinds).toContain("unsafe-command");
+    expect(translatorCalls).toBe(1);
   });
 });

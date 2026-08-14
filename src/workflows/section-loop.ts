@@ -37,7 +37,12 @@ export async function runSectionLoop(
   glossarySlice: ResolvedTerm[],
   doc: DocContext = {},
 ): Promise<SectionLoopResult> {
-  const maxRevisions = maxRevisionsFor(segment.tokens);
+  // 形式と品質は別の予算を持つ。共有すると、形式で手こずった節は品質の改稿を
+  // 1 度も試せずに落ちる。ADR 20260815。
+  const perChecker = maxRevisionsFor(segment.tokens);
+  const maxRevisions = perChecker * 2;
+  let formalLeft = perChecker;
+  let qualityLeft = perChecker;
   // 数式は印へ差し替えて渡す。ループは印のまま回し（差し戻す前回訳も印のまま）、
   // 検査と成果物の直前でだけ復元する。契約付録 §3。
   const guarded = protectMath(segment.latex);
@@ -76,7 +81,8 @@ export async function runSectionLoop(
     }
     if (formal.length > 0) {
       lastFailCode = 3;
-      if (revisions >= maxRevisions) break;
+      if (formalLeft <= 0) break;
+      formalLeft--;
       revisions++;
       priorJa = out.ja;
       issues = [...markIssues, ...formal.map((f) => f.message)];
@@ -105,7 +111,10 @@ export async function runSectionLoop(
     }
     lastFailCode = 4;
     lastKinds = [];
-    if (ev.verdict === "fail" || revisions >= maxRevisions) break;
+    // fail は「この訳が不可」であって「この節が訳せない」ではない。指摘を渡さずに
+    // 捨てるのは、1 呼び出しを節約するために節 1 本を失う取引になる。ADR 20260815。
+    if (qualityLeft <= 0) break;
+    qualityLeft--;
     revisions++;
     priorJa = out.ja;
     issues = ev.issues.map((i) => i.message);
