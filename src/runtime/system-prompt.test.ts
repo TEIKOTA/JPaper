@@ -125,3 +125,23 @@ describe("renderGlossaryBlock（user 側の確定用語ブロック）", () => {
     expect(renderGlossaryBlock([term, t2])).toBe(renderGlossaryBlock([t2, term]));
   });
 });
+
+describe("書き写しの規則（#250）", () => {
+  // 実測で毎回差し戻されていた機械的な取りこぼしを、事前に禁じる。
+  // ローカルモデルでは再訳 1 回が 35〜226 秒なので、事後に教えるのは純粋な損。
+  it("引用・脚注・記号の綴りを保つ規則が translator の system に載る", () => {
+    const p = buildSystemPrompt("translator");
+    expect(p).toContain("\\citet を \\cite に置き換えない");
+    expect(p).toContain("\\footnote");
+    expect(p).toContain("backslash を落とさない");
+  });
+
+  it("evaluator・編纂者には載せない（訳す側の規則なので）", () => {
+    expect(buildSystemPrompt("evaluator")).not.toContain("\\citet を \\cite に置き換えない");
+    expect(buildSystemPrompt("glossary-builder")).not.toContain("\\citet を \\cite に置き換えない");
+  });
+
+  it("system は固定文字列のまま（キャッシュ prefix を壊さない）", () => {
+    expect(buildSystemPrompt("translator")).toBe(buildSystemPrompt("translator"));
+  });
+});
