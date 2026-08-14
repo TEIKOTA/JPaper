@@ -9,6 +9,7 @@ import type {
 import type { Segment } from "../segment/segmenter.js";
 import { maxRevisionsFor } from "../segment/segmenter.js";
 import { formalCheck, type FormalIssue } from "./quality-gate.js";
+import { protectMath, restoreMath, describeMarkIssues } from "../segment/protect.js";
 import { translate } from "../agents/translator.js";
 import { evaluate } from "../agents/evaluator.js";
 
@@ -37,6 +38,9 @@ export async function runSectionLoop(
   doc: DocContext = {},
 ): Promise<SectionLoopResult> {
   const maxRevisions = maxRevisionsFor(segment.tokens);
+  // 数式は印へ差し替えて渡す。ループは印のまま回し（差し戻す前回訳も印のまま）、
+  // 検査と成果物の直前でだけ復元する。契約付録 §3。
+  const guarded = protectMath(segment.latex);
   let revisions = 0;
   let priorJa: string | undefined;
   let issues: string[] | undefined;
@@ -49,7 +53,7 @@ export async function runSectionLoop(
       client,
       {
         segmentId: segment.id,
-        latex: segment.latex,
+        latex: guarded.text,
         glossarySlice,
         priorJa,
         issues,
@@ -57,9 +61,12 @@ export async function runSectionLoop(
       doc,
       revisions,
     );
-    lastJa = out.ja;
+    const restored = restoreMath(out.ja, guarded.spans);
+    lastJa = restored.text;
 
-    const formal = formalCheck(segment.latex, out.ja, glossarySlice);
+    // 印の欠落は formalCheck では「数式個数不一致」としか出ない。どの印かを名指しする。
+    const markIssues = describeMarkIssues(restored);
+    const formal = formalCheck(segment.latex, restored.text, glossarySlice);
     // 危険コマンドと文書構造の破壊は再訳の対象にしない（直せる誤りではなく、汚染の兆候
     // として即失敗させる）。\end{document} は組版が正常終了するぶん、素通しの害が大きい。
     lastKinds = [...new Set(formal.map((f) => f.kind))];
@@ -72,13 +79,13 @@ export async function runSectionLoop(
       if (revisions >= maxRevisions) break;
       revisions++;
       priorJa = out.ja;
-      issues = formal.map((f) => f.message);
+      issues = [...markIssues, ...formal.map((f) => f.message)];
       continue;
     }
 
     const ev = await evaluate(
       client,
-      { segmentId: segment.id, srcLatex: segment.latex, ja: out.ja },
+      { segmentId: segment.id, srcLatex: segment.latex, ja: restored.text },
       { glossary: glossarySlice, brief: doc.brief, style: doc.style },
       revisions,
     );
@@ -88,7 +95,7 @@ export async function runSectionLoop(
     if (ev.verdict !== "fail" && !hasError) {
       return {
         segmentId: segment.id,
-        ja: out.ja,
+        ja: restored.text,
         passed: true,
         failedKinds: [],
         usedRevisions: revisions,

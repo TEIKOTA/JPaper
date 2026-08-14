@@ -25,6 +25,11 @@ const COMMON =
 const TRANSLATOR_HEADINGS =
   "見出しの扱い: \\section・\\subsection・\\subsubsection 等のコマンドはそのまま残し、その引数テキストは地の文として日本語に訳す（体言止め）。訳し忘れて英語のままにしない。ただし keep-original 指定の固有名・略語（例: BLEU, Transformer）は原表記のまま残す。";
 
+// 数式は印へ差し替えて渡す（契約付録 §3）。印の意味を system で 1 度だけ教える
+// （プロンプトキャッシュの前置きを崩さないよう、per-segment の情報は載せない）。
+const TRANSLATOR_MARKS =
+  "差し替え記号の扱い: 本文中の〔1〕〔2〕のような記号は、数式を伏せた**中身を持たない目印**である。訳さず、消さず、番号を変えず、増やさず、同じ形のまま訳文の対応する位置に残す。日本語の語順に合わせて位置を動かしてよく、助詞は目印の外に付ける（例: 〔1〕を設定した）。目印の中に文字を足さない。";
+
 const PITFALLS =
   "頻出の誤訳に注意する（evaluator 用チェックリスト）: 統計語 significantly=「有意」（p 値の含意を保つ）／SI 単位は立体・°K は K に／主張強度・hedging（may/might/suggest 等）を原文どおり保つ／false friend: agency=「行為主体性」など文脈依存の訳。";
 
@@ -111,7 +116,7 @@ export function renderGlossaryBlock(glossary: ResolvedTerm[]): string {
 // system prompt は role ごとに完全な固定文字列＝キャッシュ prefix を共有し、可変データを一切含まない。
 export function buildSystemPrompt(role: AgentRole): string {
   const parts = [ROLE_DEF[role], COMMON, UNTRUSTED_DATA];
-  if (role === "translator") parts.push(TRANSLATOR_HEADINGS);
+  if (role === "translator") parts.push(TRANSLATOR_HEADINGS, TRANSLATOR_MARKS);
   if (role === "evaluator") parts.push(PITFALLS, EVAL_RUBRIC);
   return parts.join("\n\n---\n\n");
 }

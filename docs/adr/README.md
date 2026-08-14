@@ -65,3 +65,4 @@
 | 2026-08-11 | [出力先を決める paperId は単射でなければならない](./20260811-paper-id-must-be-injective.md) | accepted |
 | 2026-08-11 | [文脈の持ち越しは名前ではなく内容で判定する](./20260811-context-carry-over-keys-on-content-not-name.md) | accepted |
 | 2026-08-11 | [パス引数はコマンド名によらず危険として扱う](./20260811-path-arguments-are-unsafe-regardless-of-command-name.md) | accepted |
+| 2026-08-14 | [数式は翻訳前に保護区間へ差し替え、モデルに触らせない](./20260814-protect-math-spans-before-translation.md) | accepted |

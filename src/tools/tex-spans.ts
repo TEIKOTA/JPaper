@@ -151,6 +151,20 @@ export function maskChars(tex: string, spans: Span[]): string {
 
 // 数式区間。verbatim を先に潰してから走るので、コード片の中の $ や \[ に釣られない。
 // 返す添字は元の tex に対して有効。
+// 数式環境の正本。保護（差し替え）と検査（照合）が別の一覧を持つと、
+// 保護した区間が検査されない／検査される区間が保護されない、という食い違いになる。
+export const MATH_ENVS = [
+  "equation",
+  "align",
+  "gather",
+  "multline",
+  "eqnarray",
+  "alignat",
+  "flalign",
+  "math",
+  "displaymath",
+];
+
 export function mathSpans(tex: string, envs: readonly string[] = []): Span[] {
   const masked = maskChars(tex, verbatimSpans(tex));
   return [

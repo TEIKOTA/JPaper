@@ -127,3 +127,45 @@ describe("runSectionLoop: 抜け穴を塞ぐ（敵対的）", () => {
     expect(r.failCode).toBe(3); // 形式検査で確実に止まる
   });
 });
+
+describe("数式の保護", () => {
+  const mathSeg: Segment = {
+    id: "seg-0000",
+    latex: "We set $\\alpha = 0.05$ and report $0.83 \\pm 0.05$ here.",
+    tokens: 100,
+  };
+
+  it("印を保った訳なら、モデルが数式を一度も見なくても math 検査を通る", async () => {
+    let sawMath = false;
+    const c = new FakeLlmClient((req) => {
+      if (req.system.includes("審査者")) return '{"verdict":"pass","issues":[]}';
+      // translator へ渡る本文に数式が含まれていないこと自体を確認する。
+      if (req.user.includes("\\alpha")) sawMath = true;
+      return '{"segmentId":"seg-0000","ja":"ここでは〔1〕を設定し、〔2〕を報告する。"}';
+    });
+    const r = await runSectionLoop(c, mathSeg, []);
+    expect(sawMath).toBe(false);
+    expect(r.passed).toBe(true);
+    // 復元された訳文には原文どおりの数式が入っている。
+    expect(r.ja).toContain("$\\alpha = 0.05$");
+    expect(r.ja).toContain("$0.83 \\pm 0.05$");
+  });
+
+  it("印を落とした訳には、どの印が消えたかを名指しで差し戻す", async () => {
+    const seen: string[] = [];
+    let pass = 0;
+    const c = new FakeLlmClient((req) => {
+      if (req.system.includes("審査者")) return '{"verdict":"pass","issues":[]}';
+      seen.push(req.user);
+      return pass++ === 0
+        ? '{"segmentId":"seg-0000","ja":"ここでは〔1〕だけを設定する。"}'
+        : '{"segmentId":"seg-0000","ja":"ここでは〔1〕を設定し、〔2〕を報告する。"}';
+    });
+    const r = await runSectionLoop(c, mathSeg, []);
+    expect(r.passed).toBe(true);
+    expect(r.usedRevisions).toBe(1);
+    // 2 回目のプロンプトに、消えた印の番号が名指しで載る。
+    expect(seen[1]).toContain("〔2〕");
+    expect(seen[1]).toContain("印が消えています");
+  });
+});

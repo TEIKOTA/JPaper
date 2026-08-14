@@ -32,7 +32,7 @@ const MAX_INLINE_ARG = 200;
 // ^^ 記法の展開は組版側の検査と同一実装を使う（正本は tools/tex-safety.ts）。
 export { decodeCarets } from "../tools/tex-safety.js";
 import { decodeCarets as decode } from "../tools/tex-safety.js";
-import { blankSpans, mathSpans } from "../tools/tex-spans.js";
+import { blankSpans, mathSpans, MATH_ENVS } from "../tools/tex-spans.js";
 
 // 実行・入出力に触れる制御綴り。訳文が原文に無いこれらを持ち込むのは翻訳ではない。
 const UNSAFE_COMMANDS = [
@@ -206,18 +206,6 @@ export function untranslatedHeadings(ja: string, keepOriginal: string[]): string
   }
   return found;
 }
-
-const MATH_ENVS = [
-  "equation",
-  "align",
-  "gather",
-  "multline",
-  "eqnarray",
-  "alignat",
-  "flalign",
-  "math",
-  "displaymath",
-];
 
 // 数式の本体（区切りを除いた中身）。個数だけを数えていた頃は、不等号の反転も
 // 表示数式の空洞化も無検査だった（実測: $\alpha < 0.05$ → $\alpha > 0.95$ が [] を返す）。
