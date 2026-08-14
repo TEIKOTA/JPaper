@@ -9,6 +9,8 @@ const SMALL: IngestLimits = {
   maxTotalBytes: 64 * 1024,
   maxEntryBytes: 32 * 1024,
   maxEntries: 4,
+  maxLatexBytes: DEFAULT_LIMITS.maxLatexBytes,
+  maxFigureRefs: DEFAULT_LIMITS.maxFigureRefs,
 };
 
 function tarEntry(name: string, size: number): Buffer {

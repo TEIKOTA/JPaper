@@ -1,4 +1,5 @@
 import { describe, it, expect, afterEach } from "vitest";
+import { DEFAULT_LIMITS } from "../ingest/limits.js";
 import { mkdtempSync, rmSync, writeFileSync, existsSync, readdirSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -153,7 +154,13 @@ describe("素の .tex 入力の上限", () => {
       {
         client: await fakeClient(),
         db: new GlossaryDb(),
-        limits: { maxArchiveBytes: 1024, maxTotalBytes: 1024, maxEntryBytes: 1024, maxEntries: 10 },
+        limits: {
+          ...DEFAULT_LIMITS,
+          maxArchiveBytes: 1024,
+          maxTotalBytes: 1024,
+          maxEntryBytes: 1024,
+          maxEntries: 10,
+        },
       },
     );
     expect(r.status).toBe("failed");

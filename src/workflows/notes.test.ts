@@ -60,8 +60,8 @@ describe("buildNotes", () => {
     });
     const headingNotes = notes.filter((n) => n.trigger === "heading-untranslated");
     expect(headingNotes).toHaveLength(2);
-    expect(headingNotes[0].segmentId).toBe("seg-2");
-    expect(headingNotes[0].text).toContain("Training");
-    expect(headingNotes[1].text).toContain("Results");
+    expect(headingNotes[0]?.segmentId).toBe("seg-2");
+    expect(headingNotes[0]?.text).toContain("Training");
+    expect(headingNotes[1]?.text).toContain("Results");
   });
 });

@@ -14,6 +14,8 @@ const okResult: Result = {
     notes: { total: 0, byTrigger: {} },
     layout: null,
     buildOk: null,
+    llmCalls: 0,
+    sharedDefaults: [],
     exitCode: 0,
   },
 };

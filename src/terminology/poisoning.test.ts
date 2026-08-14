@@ -6,7 +6,7 @@ import { FakeLlmClient } from "../testing/fake-llm.js";
 
 const OUT = (src: string, form: string): GlossaryBuilderOut => ({
   resolved: [
-    { src, form, class: "paper-defined", rendering: "translate", firstOccurrence: true },
+    { src, form, class: "paper-defined", rendering: "translate" },
   ],
   brief: { thesis: "t", sectionRoles: [], notationConventions: [], claimStrengthNotes: [] },
   style: {

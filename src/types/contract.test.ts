@@ -108,7 +108,7 @@ describe("contract zod schemas", () => {
       issues: [{ severity: "warn", message: "hedging を弱めない" }],
     });
     expect(e.verdict).toBe("revise");
-    expect(e.issues[0].severity).toBe("warn");
+    expect(e.issues[0]?.severity).toBe("warn");
   });
 
   it("RunSummary: (A) 単体では buildOk/layout は null 可", () => {

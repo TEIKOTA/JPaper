@@ -11,7 +11,7 @@ function okResponse(body: string): Response {
 
 describe("fetchArxivSource", () => {
   it("成功時に Buffer を返し User-Agent を付与する", async () => {
-    const fetchImpl = vi.fn(async () => okResponse("SRC"));
+    const fetchImpl = vi.fn(async (_url: string, _init?: RequestInit) => okResponse("SRC"));
     const buf = await fetchArxivSource("1706.03762", {
       fetchImpl: fetchImpl as unknown as typeof fetch,
       state: { lastRequestAt: 0 },
@@ -20,7 +20,7 @@ describe("fetchArxivSource", () => {
     expect(buf.toString("utf8")).toBe("SRC");
     const [url, init] = fetchImpl.mock.calls[0]!;
     expect(url).toContain("/e-print/1706.03762");
-    expect((init as RequestInit).headers).toMatchObject({
+    expect(init?.headers).toMatchObject({
       "User-Agent": expect.stringContaining("JPaper"),
     });
   });
