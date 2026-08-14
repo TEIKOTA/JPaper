@@ -189,6 +189,11 @@ export interface RunProgress {
   segmentId?: string;
   done: number;
   total: number;
+  // 契約付録 §5
+  passed?: boolean;
+  failedKinds?: string[];
+  usedRevisions?: number;
+  maxRevisions?: number;
 }
 
 interface PaperContext {
@@ -863,6 +868,10 @@ export async function translatePaper(
           segmentId: seg.id,
           done: doneSegments,
           total: segments.length,
+          passed: r.passed,
+          failedKinds: r.failedKinds,
+          usedRevisions: r.usedRevisions,
+          maxRevisions: r.maxRevisions,
         });
         return r;
       });

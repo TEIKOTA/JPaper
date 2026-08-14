@@ -1,6 +1,6 @@
 // 契約付録 §5・§6・§8。jpaper CLI（core API translatePaper の薄い皮）。
 import { detectInput } from "./ingest/detect-input.js";
-import { translatePaper } from "./workflows/translate-paper.js";
+import { translatePaper, type RunProgress } from "./workflows/translate-paper.js";
 import { Provider, type Result } from "./types/contract.js";
 import { JpaperError } from "./types/errors.js";
 import { forTerminal } from "./runtime/untrusted.js";
@@ -87,6 +87,30 @@ function ollamaConfigFrom(
   };
 }
 
+const PHASE_LABEL: Record<RunProgress["phase"], string> = {
+  ingest: "取り込み",
+  context: "文脈",
+  translate: "翻訳",
+  typeset: "組版",
+};
+
+// 契約付録 §5
+export function formatProgress(e: RunProgress): string | undefined {
+  const label = PHASE_LABEL[e.phase];
+  if (e.phase !== "translate") {
+    return e.done < e.total ? undefined : `[${label}] 完了`;
+  }
+  if (e.segmentId === undefined) return undefined;
+  const head = `[${label} ${String(e.done)}/${String(e.total)}] ${e.segmentId}`;
+  const rev =
+    e.maxRevisions === undefined
+      ? ""
+      : ` (改稿 ${String(e.usedRevisions ?? 0)}/${String(e.maxRevisions)})`;
+  if (e.passed !== false) return `${head} ok${rev}`;
+  const kinds = e.failedKinds ?? [];
+  return `${head} 失敗 ${kinds.length > 0 ? kinds.join(", ") : "品質"}${rev}`;
+}
+
 export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number> {
   const translate = deps.translate ?? translatePaper;
   const stdout = deps.stdout ?? ((s) => process.stdout.write(s));
@@ -150,7 +174,13 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number
         ollama,
         ...(concurrencyArg === undefined ? {} : { concurrency: parseConcurrency(concurrencyArg) }),
       },
-      { onError: (m) => stderr(`エラー: ${m}\n`) },
+      {
+        onError: (m) => stderr(`エラー: ${m}\n`),
+        onProgress: (e) => {
+          const line = formatProgress(e);
+          if (line !== undefined) stderr(`${line}\n`);
+        },
+      },
     );
     stdout(`${JSON.stringify(result.summary, null, 2)}\n`);
     if (result.pdfPath) stdout(`PDF: ${result.pdfPath}\n`);

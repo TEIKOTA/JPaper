@@ -128,6 +128,48 @@ describe("注入クライアントの観測", () => {
     expect(translate).toHaveLength(r.summary.segments.total);
     expect(translate.at(-1)?.done).toBe(r.summary.segments.total);
     expect(seen.some((e) => e.phase === "context")).toBe(true);
+    // 合否を載せないと、失敗した節は checkpoint に残らないので実行中に観測できない。
+    expect(translate.every((e) => e.passed === true)).toBe(true);
+    expect(translate.every((e) => typeof e.maxRevisions === "number")).toBe(true);
+  });
+
+  it("落ちた節の進捗には合否と検査の種別が載る", async () => {
+    const { translatePaper } = await import("./translate-paper.js");
+    const { GlossaryDb } = await import("../terminology/db.js");
+    const { FakeLlmClient } = await import("../testing/fake-llm.js");
+    const seen: RunProgress[] = [];
+    // 数式を落とす訳文を返す＝ formalCheck の math で落ちる。
+    const client = new FakeLlmClient((req) => {
+      if (req.system.includes("編纂者")) {
+        return JSON.stringify({
+          resolved: [],
+          brief: { thesis: "核", sectionRoles: [], notationConventions: [] },
+          style: { tensePolicy: "a", headingStyle: "b", numberStyle: "c" },
+        });
+      }
+      if (req.system.includes("審査者")) return '{"verdict":"pass","issues":[]}';
+      return JSON.stringify({ segmentId: "x", ja: "訳文である。" });
+    });
+    const { makeTar } = await import("../ingest/archive.fixtures.js");
+    const tar = path.join(tmp(), "p.tar");
+    writeFileSync(
+      tar,
+      makeTar([
+        {
+          name: "main.tex",
+          content:
+            "\\documentclass{a}\\begin{document}\\section{S}Alpha with $x = 1$ inside.\\end{document}",
+        },
+      ]),
+    );
+    await translatePaper(
+      { kind: "path", path: tar },
+      { provider: "ollama", outDir: path.join(tmp(), "out"), concurrency: 1 },
+      { client, db: new GlossaryDb(), latexRunner: okBuild, onProgress: (e) => seen.push(e) },
+    );
+    const failed = seen.filter((e) => e.phase === "translate" && e.passed === false);
+    expect(failed.length).toBeGreaterThan(0);
+    expect(failed[0]?.failedKinds).toContain("math");
   });
 });
 

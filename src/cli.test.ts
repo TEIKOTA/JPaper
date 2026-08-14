@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { runCli } from "./cli.js";
+import { runCli, formatProgress } from "./cli.js";
 import type { Result } from "./types/contract.js";
 
 const okResult: Result = {
@@ -267,5 +267,103 @@ describe("runCli", () => {
     expect(code).toBe(0);
     expect(got?.input).toEqual({ kind: "arxiv", id: "1706.03762" });
     expect(got?.opts).toMatchObject({ provider: "claude", outDir: "dir" });
+  });
+});
+
+describe("実行中の進捗（#246）", () => {
+  // 失敗したセグメントは checkpoint に永続しないので、実行中に出さないと
+  // 「どれが落ちたか」は run が終わるまで誰にも分からない。契約付録 §5。
+  it("通過した節を件数付きで 1 行に出す", () => {
+    expect(
+      formatProgress({
+        phase: "translate",
+        segmentId: "seg-0006",
+        done: 7,
+        total: 36,
+        passed: true,
+        failedKinds: [],
+        usedRevisions: 1,
+        maxRevisions: 3,
+      }),
+    ).toBe("[翻訳 7/36] seg-0006 ok (改稿 1/3)");
+  });
+
+  it("落ちた節は検査の種別を添えて出す", () => {
+    expect(
+      formatProgress({
+        phase: "translate",
+        segmentId: "seg-0007",
+        done: 8,
+        total: 36,
+        passed: false,
+        failedKinds: ["math", "symbol-command"],
+        usedRevisions: 3,
+        maxRevisions: 3,
+      }),
+    ).toBe("[翻訳 8/36] seg-0007 失敗 math, symbol-command (改稿 3/3)");
+  });
+
+  it("種別が空の失敗は品質の失敗として出す（形式は通ったが evaluator が落とした）", () => {
+    const line = formatProgress({
+      phase: "translate",
+      segmentId: "seg-0005",
+      done: 6,
+      total: 36,
+      passed: false,
+      failedKinds: [],
+      usedRevisions: 3,
+      maxRevisions: 3,
+    });
+    expect(line).toContain("失敗 品質");
+  });
+
+  it("翻訳以外のフェーズは完了時だけ 1 行出す", () => {
+    expect(formatProgress({ phase: "ingest", done: 1, total: 1 })).toBe("[取り込み] 完了");
+    expect(formatProgress({ phase: "context", done: 0, total: 1 })).toBeUndefined();
+    expect(formatProgress({ phase: "typeset", done: 1, total: 1 })).toBe("[組版] 完了");
+  });
+
+  it("進捗を stderr へ流す（stdout の JSON を汚さない）", async () => {
+    let out = "";
+    let err = "";
+    await runCli(["node", "jpaper", "1706.03762", "--provider", "claude"], {
+      stdout: (s) => (out += s),
+      stderr: (s) => (err += s),
+      translate: async (_input, _opts, deps) => {
+        deps?.onProgress?.({ phase: "ingest", done: 1, total: 1 });
+        deps?.onProgress?.({
+          phase: "translate",
+          segmentId: "seg-0000",
+          done: 1,
+          total: 2,
+          passed: false,
+          failedKinds: ["math"],
+          usedRevisions: 3,
+          maxRevisions: 3,
+        });
+        return okResult;
+      },
+    });
+    expect(err).toContain("[取り込み] 完了");
+    expect(err).toContain("[翻訳 1/2] seg-0000 失敗 math (改稿 3/3)");
+    expect(out).not.toContain("seg-0000");
+  });
+
+  it("進捗の宛先が投げても run の終了コードを変えない（副作用チャネル）", async () => {
+    const code = await runCli(["node", "jpaper", "1706.03762", "--provider", "claude"], {
+      stdout: () => {},
+      stderr: () => {
+        throw new Error("端末が閉じた");
+      },
+      translate: async (_input, _opts, deps) => {
+        try {
+          deps?.onProgress?.({ phase: "ingest", done: 1, total: 1 });
+        } catch {
+          // 呼び出し側（core）は握り潰す。契約付録 §5。
+        }
+        return okResult;
+      },
+    });
+    expect(code).toBe(0);
   });
 });
