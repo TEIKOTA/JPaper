@@ -116,6 +116,47 @@ describe("runCli", () => {
     expect(got?.ollama).toBeUndefined();
   });
 
+  it("--provider openrouter で --model と --context-window を openrouter 設定として渡す", async () => {
+    let got: unknown;
+    const code = await runCli(
+      [
+        "node",
+        "jpaper",
+        "1706.03762",
+        "--provider",
+        "openrouter",
+        "--model",
+        "google/gemma-4-26b-a4b-it:free",
+        "--context-window",
+        "32768",
+      ],
+      {
+        stdout: () => {},
+        translate: async (_input, opts) => {
+          got = opts;
+          return okResult;
+        },
+      },
+    );
+    expect(code).toBe(0);
+    expect(got).toMatchObject({
+      provider: "openrouter",
+      openrouter: { model: "google/gemma-4-26b-a4b-it:free", contextWindow: 32768 },
+    });
+    expect((got as { ollama?: unknown }).ollama).toBeUndefined();
+  });
+
+  // --think は ollama だけの口。OpenRouter はモデル側の既定に委ねる。
+  it("--provider openrouter に --think を付けると exit 2", async () => {
+    let err = "";
+    const code = await runCli(
+      ["node", "jpaper", "1706.03762", "--provider", "openrouter", "--think"],
+      { stderr: (s) => (err += s), translate: async () => okResult },
+    );
+    expect(code).toBe(2);
+    expect(err).toContain("--think");
+  });
+
   it("--provider claude に --model を付けると exit 2（黙って捨てない）", async () => {
     let called = false;
     let err = "";

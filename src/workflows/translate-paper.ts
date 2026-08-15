@@ -49,6 +49,7 @@ import {
   MAX_CONTEXT_WINDOW,
   MIN_CONTEXT_WINDOW,
   type OllamaConfig,
+  type OpenRouterConfig,
 } from "../config.js";
 import { makeLlmClient } from "../providers/index.js";
 import { makeJsonlTrace, withTrace } from "../runtime/trace.js";
@@ -121,6 +122,7 @@ export interface TranslateOptions {
   provider: Provider;
   outDir?: string;
   ollama?: OllamaConfig;
+  openrouter?: OpenRouterConfig;
   concurrency?: number;
   // 呼び出し側の中断。LLM 呼び出し・組版・arXiv 取得へ伝播し、exitCode 6 で返る。
   signal?: AbortSignal;
@@ -645,6 +647,25 @@ function entryError(input: JpaperInput, opts: TranslateOptions): string | undefi
       return `ollama.requestTimeoutMs が不正です: ${outwardMessage(String(rt))}`;
     }
   }
+  const r = opts.openrouter;
+  if (r !== undefined) {
+    if (typeof r.model !== "string" || r.model.trim() === "") {
+      return `openrouter.model が不正です: ${outwardMessage(String(r?.model))}`;
+    }
+    const cw = r.contextWindow;
+    if (
+      typeof cw !== "number" ||
+      !Number.isSafeInteger(cw) ||
+      cw < MIN_CONTEXT_WINDOW ||
+      cw > MAX_CONTEXT_WINDOW
+    ) {
+      return `openrouter.contextWindow が不正です: ${outwardMessage(String(cw))}`;
+    }
+    const rt = r.requestTimeoutMs;
+    if (rt !== undefined && (typeof rt !== "number" || !Number.isFinite(rt) || rt < 1)) {
+      return `openrouter.requestTimeoutMs が不正です: ${outwardMessage(String(rt))}`;
+    }
+  }
   return undefined;
 }
 
@@ -689,7 +710,7 @@ export async function translatePaper(
   // プロバイダ生成側にだけ配線すると課金の記録が構造的に消える。
   const client0 =
     deps.client === undefined
-      ? makeLlmClient(opts.provider, { ollama: opts.ollama, trace })
+      ? makeLlmClient(opts.provider, { ollama: opts.ollama, openrouter: opts.openrouter, trace })
       : withTrace(deps.client, trace, opts.provider);
   // 中断は境界 1 箇所（client ラッパ）で効かせる。各エージェントの引数は増やさない。
   // ゲートを外側に置くのは、枠を取ってから中断を見るため（待ち行列に中断済みが居座らない）。
@@ -728,7 +749,7 @@ export async function translatePaper(
     const callBudget = createCallBudget(
       // 期限はゲートの内側（枠待ちは「モデルが返らない」ではない）。
       withProviderErrors(
-        withSignal(withCallTimeout(client0, requestTimeoutMsFor(opts.provider, opts.ollama)), signal),
+        withSignal(withCallTimeout(client0, requestTimeoutMsFor(opts.provider, opts.ollama, opts.openrouter)), signal),
       ),
       work.maxLlmCalls,
     );
@@ -795,7 +816,7 @@ export async function translatePaper(
     }
 
     progress({ phase: "ingest", done: 1, total: 1 });
-    const budget = segmentBudgetFor(contextWindowFor(opts.provider, opts.ollama));
+    const budget = segmentBudgetFor(contextWindowFor(opts.provider, opts.ollama, opts.openrouter));
     const segments = segment(ingested.cleanLatex, budget);
     // LLM を 1 回も呼ぶ前に判定する（超過が確定した入力に課金しない。契約付録 §8）。
     // glossary は run 中で最大コンテキストの呼び出しなので、この順序が逆だと

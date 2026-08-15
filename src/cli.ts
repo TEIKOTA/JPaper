@@ -6,11 +6,12 @@ import { JpaperError } from "./types/errors.js";
 import { forTerminal } from "./runtime/untrusted.js";
 import {
   DEFAULT_OLLAMA,
+  DEFAULT_OPENROUTER,
   MAX_CONCURRENCY,
   MAX_CONTEXT_WINDOW,
   MIN_CONTEXT_WINDOW,
 } from "./config.js";
-import type { OllamaConfig } from "./config.js";
+import type { OllamaConfig, OpenRouterConfig } from "./config.js";
 
 export interface CliDeps {
   translate?: typeof translatePaper;
@@ -53,37 +54,55 @@ function parseContextWindow(raw: string): number {
 
 // 契約付録 §5。claude(subprocess) はログインセッションのモデルで動くため、モデル系の
 // 指定を受け取れない。黙って捨てると「指定したのに効かない」になるので入口で落とす。
-function ollamaConfigFrom(
+// --think は ollama だけの口（OpenRouter はモデル側の既定に委ねる）。
+function modelConfigFrom(
   provider: Provider,
   model: string | undefined,
   contextWindow: string | undefined,
   think: boolean | undefined,
-): OllamaConfig | undefined {
-  if (provider !== "ollama") {
-    const given =
-      model !== undefined
-        ? "--model"
-        : contextWindow !== undefined
-          ? "--context-window"
-          : think !== undefined
-            ? think
-              ? "--think"
-              : "--no-think"
-            : undefined;
+): { ollama?: OllamaConfig; openrouter?: OpenRouterConfig } {
+  const givenModelFlag =
+    model !== undefined ? "--model" : contextWindow !== undefined ? "--context-window" : undefined;
+  const givenThinkFlag = think === undefined ? undefined : think ? "--think" : "--no-think";
+
+  if (provider === "claude") {
+    const given = givenModelFlag ?? givenThinkFlag;
     if (given !== undefined) {
-      throw new JpaperError(2, "input", `${given} は --provider ollama のときだけ指定できます`);
+      throw new JpaperError(2, "input", `${given} は --provider ollama|openrouter のときだけ指定できます`);
     }
-    return undefined;
+    return {};
   }
-  if (model === undefined && contextWindow === undefined && think === undefined) return undefined;
+
+  if (provider === "openrouter") {
+    if (givenThinkFlag !== undefined) {
+      throw new JpaperError(2, "input", `${givenThinkFlag} は --provider ollama のときだけ指定できます`);
+    }
+    if (givenModelFlag === undefined) return {};
+    const id = (model ?? DEFAULT_OPENROUTER.model).trim();
+    if (id === "") throw new JpaperError(2, "input", "--model に値が必要です");
+    return {
+      openrouter: {
+        ...DEFAULT_OPENROUTER,
+        model: id,
+        contextWindow:
+          contextWindow === undefined
+            ? DEFAULT_OPENROUTER.contextWindow
+            : parseContextWindow(contextWindow),
+      },
+    };
+  }
+
+  if (model === undefined && contextWindow === undefined && think === undefined) return {};
   const id = (model ?? DEFAULT_OLLAMA.model).trim();
   if (id === "") throw new JpaperError(2, "input", "--model に値が必要です");
   return {
-    ...DEFAULT_OLLAMA,
-    model: id,
-    contextWindow:
-      contextWindow === undefined ? DEFAULT_OLLAMA.contextWindow : parseContextWindow(contextWindow),
-    ...(think === undefined ? {} : { think }),
+    ollama: {
+      ...DEFAULT_OLLAMA,
+      model: id,
+      contextWindow:
+        contextWindow === undefined ? DEFAULT_OLLAMA.contextWindow : parseContextWindow(contextWindow),
+      ...(think === undefined ? {} : { think }),
+    },
   };
 }
 
@@ -150,7 +169,7 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number
       throw new JpaperError(2, "input", "<input> が必要です");
     }
     if (providerArg === undefined) {
-      throw new JpaperError(2, "input", "--provider {ollama|claude} が必要です");
+      throw new JpaperError(2, "input", "--provider {ollama|claude|openrouter} が必要です");
     }
     const provider = Provider.parse(providerArg);
     const wantThink = flags.has("--think");
@@ -158,7 +177,7 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number
     if (wantThink && wantNoThink) {
       throw new JpaperError(2, "input", "--think と --no-think は同時に指定できません");
     }
-    const ollama = ollamaConfigFrom(
+    const modelCfg = modelConfigFrom(
       provider,
       flags.get("--model"),
       flags.get("--context-window"),
@@ -171,7 +190,7 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number
       {
         provider,
         outDir: outArg,
-        ollama,
+        ...modelCfg,
         ...(concurrencyArg === undefined ? {} : { concurrency: parseConcurrency(concurrencyArg) }),
       },
       {
@@ -192,7 +211,7 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number
       return e.code;
     }
     if ((e as { name?: string })?.name === "ZodError") {
-      stderr(`エラー: --provider は ollama|claude のいずれか\n`);
+      stderr(`エラー: --provider は ollama|claude|openrouter のいずれか\n`);
       return 2;
     }
     stderr(`想定外エラー: ${String((e as Error)?.message ?? e)}\n`);

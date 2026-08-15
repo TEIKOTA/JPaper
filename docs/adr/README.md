@@ -71,3 +71,4 @@
 | 2026-08-15 | [Ollama へ format:"json" を送らない（制約デコードが LaTeX の綴りを壊す）](./20260815-drop-ollama-json-mode.md) | accepted |
 | 2026-08-15 | [保護区間は既定で切る（壊していたのは符号化であって、モデルではなかった）](./20260815-protection-was-compensating-for-encoding.md) | accepted |
 | 2026-08-15 | [訳文は JSON 文字列で運ばない（区切り付きの平文で返す）](./20260815-translator-returns-plain-text.md) | accepted |
+| 2026-08-15 | [検証の往復を縮めるために OpenRouter を第 3 のプロバイダにする](./20260815-openrouter-provider-for-fast-iteration.md) | accepted |
