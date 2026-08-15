@@ -131,29 +131,30 @@ describe("runSectionLoop: 抜け穴を塞ぐ（敵対的）", () => {
   });
 });
 
-describe("数式の扱い（保護は既定で切ってある）", () => {
+describe("数式の扱い（保護は既定で入れてある）", () => {
   const mathSeg: Segment = {
     id: "seg-0000",
     latex: "We set $\\alpha = 0.05$ and report $0.83 \\pm 0.05$ here.",
     tokens: 100,
   };
 
-  it("数式をそのまま translator へ渡す（印には差し替えない）", async () => {
-    // 保護は format:"json" が綴りを壊していた時期の埋め合わせだった。真因が直った今は
-    // 印の過密が別の失敗を生むだけなので既定で切る。ADR 20260815-protection-was-compensating-for-encoding。
+  it("数式は印へ差し替えて translator へ渡し、訳文へ復元する", async () => {
+    // 保護の要否はモデルの能力で決まる。26B は印を扱えるが、保護が無いと似た綴りの
+    // 略語を書き写せない。ADR 20260816-protection-depends-on-model-capability。
     let sawMath = false;
+    let sawMark = false;
     const c = new FakeLlmClient((req) => {
       if (req.system.includes("審査者")) return '{"verdict":"pass","issues":[]}';
       if (req.user.includes("\\alpha")) sawMath = true;
-      return JSON.stringify({
-        segmentId: "seg-0000",
-        ja: "ここでは $\\alpha = 0.05$ を設定し、$0.83 \\pm 0.05$ を報告する。",
-      });
+      if (req.user.includes("〔1〕")) sawMark = true;
+      return "```tex\nここでは 〔1〕 を設定し、〔2〕 を報告する。\n```";
     });
     const r = await runSectionLoop(c, mathSeg, []);
-    expect(sawMath).toBe(true);
+    expect(sawMark).toBe(true);
+    expect(sawMath).toBe(false); // 数式の中身はモデルへ渡らない＝書き写しの機会を与えない
     expect(r.passed).toBe(true);
-    expect(r.ja).toContain("$\\alpha = 0.05$");
+    expect(r.ja).toContain("$\\alpha = 0.05$"); // 復元されている
+    expect(r.ja).not.toContain("〔");
   });
 
   it("数式を落とした訳は math で差し戻し、直れば通る", async () => {

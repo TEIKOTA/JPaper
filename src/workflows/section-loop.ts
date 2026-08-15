@@ -13,8 +13,9 @@ import { protectMath, restoreMath, describeMarkIssues } from "../segment/protect
 import { translate } from "../agents/translator.js";
 import { evaluate } from "../agents/evaluator.js";
 
-// 数式・記号を印へ差し替えるか。既定は false（ADR 20260815-protection-was-compensating-for-encoding）。
-const PROTECT_SPANS = false;
+// 数式・記号を印へ差し替えるか。既定は true（ADR 20260816-protection-depends-on-model-capability）。
+// モデル依存の既定で、切り替えはこの 1 行。判断材料は「落ちた節の数」と「1 節あたりの改稿回数」。
+const PROTECT_SPANS = true;
 
 export interface SectionLoopResult {
   segmentId: string;
@@ -46,8 +47,7 @@ export async function runSectionLoop(
   const maxRevisions = perChecker * 2;
   let formalLeft = perChecker;
   let qualityLeft = perChecker;
-  // 保護区間は既定で切る。ADR 20260815-protection-was-compensating-for-encoding。
-  // 1 行で戻せる形にしておく（書き写せないモデルでは再び有効になりうる）。
+  // 保護区間は既定で入れる。ADR 20260816-protection-depends-on-model-capability。
   const guarded = protectMath(segment.latex, { off: !PROTECT_SPANS });
   let revisions = 0;
   let priorJa: string | undefined;

@@ -1,7 +1,8 @@
 # 2026/08/15 保護区間は既定で切る（壊していたのは符号化であって、モデルではなかった）
 
 # Status
-- accepted
+- superseded
+- 既定値は [保護の要否はモデルの能力で決まる ADR](./20260816-protection-depends-on-model-capability.md) が置き換える（本 ADR が定めた切り替え条件に、モデルを 26B へ替えた時点で該当した）。
 - [数式保護 ADR](./20260814-protect-math-spans-before-translation.md) と [エスケープ特殊文字保護 ADR](./20260815-protect-escaped-specials-too.md) の決定を、既定値の面で置き換える。
 
 # Situation
