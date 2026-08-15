@@ -2,11 +2,11 @@
 import type {
   LlmClient,
   TranslatorIn,
+  TranslatorOut,
   DocumentBrief,
   StyleContract,
 } from "../types/contract.js";
-import { TranslatorOut } from "../types/contract.js";
-import { runAgent } from "../runtime/llm-client.js";
+import { runText, extractFenced, extractJson } from "../runtime/llm-client.js";
 import { oneLine, MAX_ISSUE_CHARS } from "../runtime/untrusted.js";
 import {
   buildSystemPrompt,
@@ -33,7 +33,7 @@ function renderUser(input: TranslatorIn, doc: DocContext): string {
   }
   lines.push(
     "## 指示",
-    '本文のみを日本語に訳し、{"segmentId": "…", "ja": "…"} の JSON だけを返す。',
+    "本文のみを日本語に訳し、訳文だけを ```tex と ``` で囲んで返す。JSON にしない。囲みの外に説明を書かない。",
   );
   return lines.join("\n\n");
 }
@@ -45,13 +45,30 @@ export async function translate(
   pass?: number,
 ): Promise<TranslatorOut> {
   const system = buildSystemPrompt("translator");
-  return runAgent(
+  // 訳文は JSON 文字列で運ばない。頭文字が妥当なエスケープ（\t \n \b \f \r \u）の綴りが
+  // 黙って壊れるため（実測: `\times` → TAB+`imes`）。ADR 20260815-translator-returns-plain-text。
+  // 平文が既定。JSON で返ってきた場合も受けるが、その経路は \t 系の綴りが壊れる危険を
+  // 残したままなので、あくまで後方互換の受け皿にとどめる。
+  const takeJa = (raw: string): string | undefined => {
+    const fenced = extractFenced(raw);
+    if (fenced !== undefined) return fenced;
+    try {
+      const v = extractJson(raw) as { ja?: unknown };
+      return typeof v.ja === "string" ? v.ja : undefined;
+    } catch {
+      return undefined;
+    }
+  };
+
+  const ja = await runText(
     client,
     {
       system,
       user: renderUser(input, doc),
       meta: { role: "translator", phase: "translate", segmentId: input.segmentId, pass },
     },
-    TranslatorOut,
+    takeJa,
   );
+  // segmentId は呼び出し側が既に知っているので、モデルに書かせない。
+  return { segmentId: input.segmentId, ja };
 }

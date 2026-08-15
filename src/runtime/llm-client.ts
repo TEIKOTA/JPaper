@@ -151,6 +151,53 @@ function dumpRaw(req: LlmRequest, raw: string): void {
 }
 let dumpSeq = 0;
 
+// 区切り付き平文の取り出し。LaTeX を JSON 文字列で運ぶと、頭文字が妥当なエスケープ
+// （\t \n \b \f \r \u）の綴りが黙って壊れる（実測: `\times` → TAB+`imes`）。
+// エスケープを介在させないための受け口。契約付録 §8
+export function extractFenced(text: string): string | undefined {
+  if (text.length > MAX_RESPONSE_CHARS) {
+    throw new Error(`LLM 応答が上限 ${MAX_RESPONSE_CHARS} 文字を超えています`);
+  }
+  // 最初のフェンスから対応する閉じフェンスまで。言語指定は任意。
+  const open = /```[a-zA-Z]*[ \t]*\r?\n/.exec(text);
+  if (open === null) return undefined;
+  const from = open.index + open[0].length;
+  const close = text.indexOf("```", from);
+  if (close === -1) return undefined;
+  const body = text.slice(from, close);
+  return body.replace(/\r?\n$/, "");
+}
+
+// 平文を返すエージェント用の retry ラッパ。取り出しに失敗したら schemaFailure として
+// 再試行し、尽きたら provider 起因の失敗にする（runAgent と同じ扱い）。
+export async function runText(
+  client: LlmClient,
+  req: LlmRequest,
+  extract: (raw: string) => string | undefined,
+  retry: RetryOptions = {},
+): Promise<string> {
+  try {
+    return await withRetry(async () => {
+      const raw = await client.complete(req);
+      const out = extract(raw);
+      if (out === undefined || out.trim() === "") {
+        dumpRaw(req, raw);
+        throw Object.assign(new Error("応答から本文を取り出せません"), {
+          transient: true,
+          schemaFailure: true,
+        });
+      }
+      return out;
+    }, retry);
+  } catch (e) {
+    if ((e as { schemaFailure?: boolean }).schemaFailure === true) {
+      const detail = String((e as Error).message ?? e).slice(0, 200);
+      throw new JpaperError(2, "provider", `LLM 応答が契約に合いません: ${detail}`);
+    }
+    throw e;
+  }
+}
+
 export async function runAgent<S extends z.ZodTypeAny>(
   client: LlmClient,
   req: LlmRequest,

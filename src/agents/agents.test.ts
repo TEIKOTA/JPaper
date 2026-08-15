@@ -108,3 +108,51 @@ describe("glossary-builder", () => {
     expect(c.calls[0]!.meta).toEqual({ role: "glossary-builder", phase: "glossary" });
   });
 });
+
+// #267: 訳文は JSON 文字列で運ばない（\t 系の綴りが黙って壊れるため）。
+describe("translator: 平文で受け取る", () => {
+  it("```tex 囲みの中身をそのまま訳文にする", async () => {
+    const c = new FakeLlmClient("```tex\n$3\\times3\\times3$ の体積\n```");
+    const r = await translate(c, { segmentId: "seg-1", latex: "x", glossarySlice: [] });
+    expect(r).toEqual({ segmentId: "seg-1", ja: "$3\\times3\\times3$ の体積" });
+  });
+
+  it("囲みの外に説明があっても中身だけを取る", async () => {
+    const c = new FakeLlmClient("承知しました。\n```tex\n訳文\n```\n以上です。");
+    const r = await translate(c, { segmentId: "seg-1", latex: "x", glossarySlice: [] });
+    expect(r.ja).toBe("訳文");
+  });
+
+  it("言語指定なしのフェンスも受ける", async () => {
+    const c = new FakeLlmClient("```\n訳文\n```");
+    expect((await translate(c, { segmentId: "seg-1", latex: "x", glossarySlice: [] })).ja).toBe(
+      "訳文",
+    );
+  });
+
+  it("segmentId はモデルに書かせず、呼び出し側の値を返す", async () => {
+    const c = new FakeLlmClient("```tex\n訳文\n```");
+    const r = await translate(c, { segmentId: "seg-0042", latex: "x", glossarySlice: [] });
+    expect(r.segmentId).toBe("seg-0042");
+  });
+
+  it("JSON で返ってきた場合も後方互換で受ける", async () => {
+    const c = new FakeLlmClient('{"segmentId":"x","ja":"訳文"}');
+    expect((await translate(c, { segmentId: "seg-1", latex: "x", glossarySlice: [] })).ja).toBe(
+      "訳文",
+    );
+  });
+
+  it("どちらでもなければ再試行して provider エラーにする", async () => {
+    const c = new FakeLlmClient("囲みも JSON もありません");
+    await expect(
+      translate(c, { segmentId: "seg-1", latex: "x", glossarySlice: [] }),
+    ).rejects.toThrow(/契約に合いません/);
+  }, 30_000); // 再試行の待ちを含む
+
+  it("指示は平文を求める（JSON を求めない）", async () => {
+    const c = new FakeLlmClient("```tex\n訳文\n```");
+    await translate(c, { segmentId: "seg-1", latex: "x", glossarySlice: [] });
+    expect(c.calls[0]?.user).toContain("```tex と ``` で囲んで返す");
+  });
+});
