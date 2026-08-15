@@ -1,7 +1,8 @@
 # 2026/08/15 エスケープした特殊文字も保護区間に含める
 
 # Status
-- accepted
+- superseded
+- 既定値は [保護区間は既定で切る ADR](./20260815-protection-was-compensating-for-encoding.md) が置き換える（本 ADR の前提だった「モデルが書き写せない」は、実際には Ollama の `format:"json"` による符号化の破壊だった）。
 
 # Situation
 - ローカル LLM 単独（`gemma4:12b-it-qat` / MacBook Air M4 24GB、11.8 tok/s）で arXiv 2203.06060 を訳し切る運用中。翻訳 1 呼び出しは 35〜226 秒。

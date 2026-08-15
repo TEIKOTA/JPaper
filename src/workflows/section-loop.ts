@@ -13,6 +13,9 @@ import { protectMath, restoreMath, describeMarkIssues } from "../segment/protect
 import { translate } from "../agents/translator.js";
 import { evaluate } from "../agents/evaluator.js";
 
+// 数式・記号を印へ差し替えるか。既定は false（ADR 20260815-protection-was-compensating-for-encoding）。
+const PROTECT_SPANS = false;
+
 export interface SectionLoopResult {
   segmentId: string;
   ja: string;
@@ -43,9 +46,9 @@ export async function runSectionLoop(
   const maxRevisions = perChecker * 2;
   let formalLeft = perChecker;
   let qualityLeft = perChecker;
-  // 数式は印へ差し替えて渡す。ループは印のまま回し（差し戻す前回訳も印のまま）、
-  // 検査と成果物の直前でだけ復元する。契約付録 §3。
-  const guarded = protectMath(segment.latex);
+  // 保護区間は既定で切る。ADR 20260815-protection-was-compensating-for-encoding。
+  // 1 行で戻せる形にしておく（書き写せないモデルでは再び有効になりうる）。
+  const guarded = protectMath(segment.latex, { off: !PROTECT_SPANS });
   let revisions = 0;
   let priorJa: string | undefined;
   let issues: string[] | undefined;

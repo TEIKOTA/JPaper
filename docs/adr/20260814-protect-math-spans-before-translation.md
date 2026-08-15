@@ -1,7 +1,8 @@
 # 2026/08/14 数式は翻訳前に保護区間へ差し替え、モデルに触らせない
 
 # Status
-- accepted
+- superseded
+- 既定値は [保護区間は既定で切る ADR](./20260815-protection-was-compensating-for-encoding.md) が置き換える（本 ADR の前提だった「モデルが書き写せない」は、実際には Ollama の `format:"json"` による符号化の破壊だった）。
 
 # Situation
 - ローカル LLM 単独（cloud を使わない）で論文 1 本を訳し切る運用を始めた。実行環境は MacBook Air M4 / 24GB、`gemma4:12b-it-qat` で **11.8 tok/s**。翻訳 1 呼び出しが 100〜400 秒かかり、**改稿 1 往復のコストが cloud とは桁違いに高い**。

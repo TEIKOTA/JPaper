@@ -131,49 +131,59 @@ describe("runSectionLoop: 抜け穴を塞ぐ（敵対的）", () => {
   });
 });
 
-describe("数式の保護", () => {
+describe("数式の扱い（保護は既定で切ってある）", () => {
   const mathSeg: Segment = {
     id: "seg-0000",
     latex: "We set $\\alpha = 0.05$ and report $0.83 \\pm 0.05$ here.",
     tokens: 100,
   };
 
-  it("印を保った訳なら、モデルが数式を一度も見なくても math 検査を通る", async () => {
+  it("数式をそのまま translator へ渡す（印には差し替えない）", async () => {
+    // 保護は format:"json" が綴りを壊していた時期の埋め合わせだった。真因が直った今は
+    // 印の過密が別の失敗を生むだけなので既定で切る。ADR 20260815-protection-was-compensating-for-encoding。
     let sawMath = false;
     const c = new FakeLlmClient((req) => {
       if (req.system.includes("審査者")) return '{"verdict":"pass","issues":[]}';
-      // translator へ渡る本文に数式が含まれていないこと自体を確認する。
       if (req.user.includes("\\alpha")) sawMath = true;
-      return '{"segmentId":"seg-0000","ja":"ここでは〔1〕を設定し、〔2〕を報告する。"}';
+      return JSON.stringify({
+        segmentId: "seg-0000",
+        ja: "ここでは $\\alpha = 0.05$ を設定し、$0.83 \\pm 0.05$ を報告する。",
+      });
     });
     const r = await runSectionLoop(c, mathSeg, []);
-    expect(sawMath).toBe(false);
+    expect(sawMath).toBe(true);
     expect(r.passed).toBe(true);
-    // 復元された訳文には原文どおりの数式が入っている。
     expect(r.ja).toContain("$\\alpha = 0.05$");
-    expect(r.ja).toContain("$0.83 \\pm 0.05$");
   });
 
-  it("印を落とした訳には、どの印が消えたかを名指しで差し戻す", async () => {
-    const seen: string[] = [];
+  it("数式を落とした訳は math で差し戻し、直れば通る", async () => {
     let pass = 0;
     const c = new FakeLlmClient((req) => {
       if (req.system.includes("審査者")) return '{"verdict":"pass","issues":[]}';
-      seen.push(req.user);
       return pass++ === 0
-        ? '{"segmentId":"seg-0000","ja":"ここでは〔1〕だけを設定する。"}'
-        : '{"segmentId":"seg-0000","ja":"ここでは〔1〕を設定し、〔2〕を報告する。"}';
+        ? '{"segmentId":"seg-0000","ja":"ここでは $\\alpha = 0.05$ だけを設定する。"}'
+        : JSON.stringify({
+            segmentId: "seg-0000",
+            ja: "ここでは $\\alpha = 0.05$ を設定し、$0.83 \\pm 0.05$ を報告する。",
+          });
     });
     const r = await runSectionLoop(c, mathSeg, []);
     expect(r.passed).toBe(true);
     expect(r.usedRevisions).toBe(1);
-    // 2 回目のプロンプトに、消えた印の番号が名指しで載る。
-    expect(seen[1]).toContain("〔2〕");
-    expect(seen[1]).toContain("印が消えています");
+  });
+
+  it("直らなければ形式の予算を使い切って math で落ちる", async () => {
+    const c = new FakeLlmClient((req) =>
+      req.system.includes("審査者")
+        ? '{"verdict":"pass","issues":[]}'
+        : '{"segmentId":"seg-0000","ja":"数式のない訳文である。"}',
+    );
+    const r = await runSectionLoop(c, mathSeg, []);
+    expect(r.passed).toBe(false);
+    expect(r.failedKinds).toContain("math");
   });
 });
 
-// ADR 20260815: 形式と品質は別の予算を持つ。
 describe("runSectionLoop: 改稿予算の配分", () => {
   const withMath: Segment = { id: "seg", latex: "text $x$ here.", tokens: 100 };
 

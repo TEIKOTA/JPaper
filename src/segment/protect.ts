@@ -54,12 +54,24 @@ function mergeSpans(a: readonly Span[], b: readonly Span[]): Span[] {
   return [...a, ...b].sort((x, y) => x[0] - y[0]);
 }
 
-export function protectMath(latex: string): Protection {
+export interface ProtectOptions {
+  // エスケープした特殊文字も伏せるか。印が過密になる節で位置の取り違えを誘うため、
+  // 呼び出し側で切れるようにする。契約付録 §3
+  escapedSpecials?: boolean;
+  // 保護そのものを切る（比較実験用）。
+  off?: boolean;
+}
+
+export function protectMath(latex: string, opts: ProtectOptions = {}): Protection {
+  if (opts.off === true) return { text: latex, spans: [] };
   // 原文が印そのものを含むなら保護しない。復元時にどちらが印か区別できず、
   // 原文の一部を数式で上書きしてしまう（保護しなければ従来どおりの経路に戻るだけ）。
   if (latex.includes(MARK_OPEN)) return { text: latex, spans: [] };
   const math = mathSpans(latex, MATH_ENVS);
-  const spans = mergeSpans(math, escapedSpecialSpans(latex, mergeSpans(math, verbatimSpans(latex))));
+  const spans =
+    opts.escapedSpecials === false
+      ? math
+      : mergeSpans(math, escapedSpecialSpans(latex, mergeSpans(math, verbatimSpans(latex))));
   if (spans.length === 0) return { text: latex, spans: [] };
   const kept: string[] = [];
   let out = "";
