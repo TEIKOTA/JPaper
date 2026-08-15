@@ -66,6 +66,7 @@
 ## コマンド
 
 - `npm install` — 依存の導入（初回）
+- `cp .env.example .env` — 秘密（API キー等）の受け渡し。読むのは CLI のプロセス入口だけで、既存の環境変数が優先される（[.env ADR](./docs/adr/20260815-secrets-from-dotenv-at-process-entry.md)）
 - `npm test` — vitest 単体テスト（決定的な検査。LLM を含めない）
 - `npm run build` / `npm run typecheck` — tsc ビルド / 型チェック（emit なし）
 - `npm run dev` — `src/cli.ts`（jpaper CLI）を tsx で実行

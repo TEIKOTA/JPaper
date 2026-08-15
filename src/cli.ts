@@ -3,6 +3,7 @@ import { detectInput } from "./ingest/detect-input.js";
 import { translatePaper } from "./workflows/translate-paper.js";
 import { Provider, type Result } from "./types/contract.js";
 import { JpaperError } from "./types/errors.js";
+import { loadDotEnv } from "./runtime/env-file.js";
 
 export interface CliDeps {
   translate?: typeof translatePaper;
@@ -67,6 +68,15 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number
   }
 }
 
+// .env はプロセス入口でだけ読む（runCli はライブラリ経路と共有するので触らない）。
 if (import.meta.url === `file://${process.argv[1]}`) {
-  runCli(process.argv).then((code) => process.exit(code));
+  void (async (): Promise<never> => {
+    try {
+      loadDotEnv();
+    } catch (e) {
+      process.stderr.write(`エラー: ${String((e as Error).message)}\n`);
+      process.exit(e instanceof JpaperError ? e.code : 1);
+    }
+    process.exit(await runCli(process.argv));
+  })();
 }
