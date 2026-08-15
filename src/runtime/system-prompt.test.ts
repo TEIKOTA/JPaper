@@ -38,6 +38,16 @@ describe("buildSystemPrompt", () => {
     expect(buildSystemPrompt("translator")).toBe(buildSystemPrompt("translator"));
   });
 
+  it("応答の形式は role ごとに分ける（translator だけ平文＝system が user と矛盾しない）", () => {
+    const t = buildSystemPrompt("translator");
+    expect(t).toContain("```tex");
+    expect(t).not.toContain("JSON のみを返す");
+    for (const role of ["evaluator", "glossary-builder"] as const) {
+      expect(buildSystemPrompt(role)).toContain("JSON のみを返す");
+      expect(buildSystemPrompt(role)).not.toContain("```tex");
+    }
+  });
+
   it("translator にのみ見出し和訳の指示を出す", () => {
     expect(buildSystemPrompt("translator")).toContain("見出しの扱い");
     expect(buildSystemPrompt("evaluator")).not.toContain("見出しの扱い");

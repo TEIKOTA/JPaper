@@ -12,7 +12,7 @@ export interface RunContext {
 
 const ROLE_DEF: Record<AgentRole, string> = {
   translator:
-    "あなたは学術論文の本文（散文）だけを日本語に翻訳する専門家である。構造・数式・図・引用は与えられた LaTeX のまま保持し、地の文のみ訳す。出力は指定の JSON のみ。",
+    "あなたは学術論文の本文（散文）だけを日本語に翻訳する専門家である。構造・数式・図・引用は与えられた LaTeX のまま保持し、地の文のみ訳す。",
   evaluator:
     "あなたは日本語訳の品質を評価する審査者である。原文と訳文を比較し、verdict（pass/revise/fail）と issues を返す。出力は指定の JSON のみ。",
   "glossary-builder":
@@ -20,7 +20,15 @@ const ROLE_DEF: Record<AgentRole, string> = {
 };
 
 const COMMON =
-  "共通規約: 構造・数式（$..$ / \\[..\\] / 各種環境）・図・表・引用番号・組版はコードが管理する。あなたは本文のみを扱い、これらのマークアップは改変・削除・追加しない。段落数を水増ししない。応答は前後に散文やコードフェンスを付けず、指定スキーマの JSON のみを返す。";
+  "共通規約: 構造・数式（$..$ / \\[..\\] / 各種環境）・図・表・引用番号・組版はコードが管理する。あなたは本文のみを扱い、これらのマークアップは改変・削除・追加しない。段落数を水増ししない。";
+
+// 応答の形は role ごとに違う。translator だけ平文（ADR 20260815-translator-returns-plain-text）
+// なので、共通規約に JSON を書くと system が user 側の指示と正面から矛盾する。
+const FORMAT_JSON =
+  "応答の形式: 前後に散文やコードフェンスを付けず、指定スキーマの JSON のみを返す。";
+
+const FORMAT_FENCED =
+  "応答の形式: 訳文だけを ```tex と ``` で囲んで返す。JSON にしない。囲みの外に散文や見出しを書かない。";
 
 const TRANSLATOR_HEADINGS =
   "見出しの扱い: \\section・\\subsection・\\subsubsection 等のコマンドはそのまま残し、その引数テキストは地の文として日本語に訳す（体言止め）。訳し忘れて英語のままにしない。ただし keep-original 指定の固有名・略語（例: BLEU, Transformer）は原表記のまま残す。";
@@ -126,6 +134,7 @@ export function renderGlossaryBlock(glossary: ResolvedTerm[]): string {
 // system prompt は role ごとに完全な固定文字列＝キャッシュ prefix を共有し、可変データを一切含まない。
 export function buildSystemPrompt(role: AgentRole): string {
   const parts = [ROLE_DEF[role], COMMON, UNTRUSTED_DATA];
+  parts.push(role === "translator" ? FORMAT_FENCED : FORMAT_JSON);
   if (role === "translator") parts.push(TRANSLATOR_HEADINGS, TRANSLATOR_MARKS, TRANSLATOR_FIDELITY, TRANSLATOR_BILINGUAL);
   if (role === "evaluator") parts.push(PITFALLS, EVAL_RUBRIC);
   return parts.join("\n\n---\n\n");
