@@ -71,11 +71,35 @@ describe("normalizeBilingualForms", () => {
     { ...base, src: "BLEU", form: "BLEU", rendering: "keep-original" },
   ];
 
-  it("bilingual だけを正規化する", () => {
+  it("bilingual は原語を src で固定する", () => {
     const out = normalizeBilingualForms(terms);
     expect(out[0]!.form).toBe("ガンマ圧縮(gamma compression)");
-    expect(out[1]!.form).toBe("アテンション");
+  });
+
+  // translate なのに併記が入ると、本文の全出現に英語が撒かれる（実測: run5 の
+  // 「等方性 (isotropic) downsampling」を evaluator が「英語が混じりすぎている」と指摘）。
+  it("translate は末尾の原語併記を落とす", () => {
+    const out = normalizeBilingualForms([
+      { ...base, src: "isotropic", form: "等方性 (isotropic)", rendering: "translate" },
+      { ...base, src: "Vision Transformers", form: "Vision Transformer (ViT)", rendering: "translate" },
+      { ...base, src: "attention", form: "アテンション", rendering: "translate" },
+    ]);
+    expect(out[0]!.form).toBe("等方性");
+    expect(out[1]!.form).toBe("Vision Transformer");
+    expect(out[2]!.form).toBe("アテンション");
+  });
+
+  it("translate でも日本語側の括弧は壊さない", () => {
+    const out = normalizeBilingualForms([
+      { ...base, src: "OOD data", form: "分布外 (OOD) データ", rendering: "translate" },
+    ]);
+    expect(out[0]!.form).toBe("分布外 (OOD) データ");
+  });
+
+  it("keep-original は触らない", () => {
+    const out = normalizeBilingualForms(terms);
     expect(out[2]!.form).toBe("BLEU");
+    expect(out[1]!.form).toBe("アテンション");
   });
 
   it("入力を書き換えない", () => {

@@ -35,11 +35,22 @@ export function canonicalBilingualForm(form: string, src: string): string {
   return ja === "" ? src : `${ja}(${src})`;
 }
 
-// bilingual の語だけ form を正規化する。translate/keep-original は対象外。
+// 末尾の原語併記だけを落とす。日本語側の括弧（分布外 (OOD) データ）は残る。
+function withoutTrailingOriginal(form: string): string {
+  const ja = jaPartOf(form);
+  return ja === "" ? form : ja;
+}
+
+// form を rendering の契約に合わせる。
+// - bilingual: 原語部分を src で固定する（モデルの綴りを採らない）
+// - translate: 原語併記を落とす（translate は日本語のみ。併記は bilingual の初出だけ）
+// - keep-original: 触らない（原表記そのものが form）
 export function normalizeBilingualForms<T extends Pick<ResolvedTerm, "form" | "src" | "rendering">>(
   terms: readonly T[],
 ): T[] {
-  return terms.map((t) =>
-    t.rendering === "bilingual" ? { ...t, form: canonicalBilingualForm(t.form, t.src) } : t,
-  );
+  return terms.map((t) => {
+    if (t.rendering === "bilingual") return { ...t, form: canonicalBilingualForm(t.form, t.src) };
+    if (t.rendering === "translate") return { ...t, form: withoutTrailingOriginal(t.form) };
+    return t;
+  });
 }
