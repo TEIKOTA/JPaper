@@ -1,6 +1,7 @@
 // 契約付録 §1・設計メモ §13A。3部品固定順の system-prompt ビルダー（決定的出力）。
 import type { ResolvedTerm, DocumentBrief, StyleContract } from "../types/contract.js";
 import { oneLine, MAX_TERM_CHARS, MAX_NOTE_CHARS } from "./untrusted.js";
+import { jaPartOf } from "../terminology/bilingual-form.js";
 
 export type AgentRole = "translator" | "evaluator" | "glossary-builder";
 
@@ -63,9 +64,7 @@ const UNTRUSTED_DATA =
 const EVAL_RUBRIC =
   "判定基準: verdict は pass=そのまま出版できる品質／revise=直すべき点がある／fail=意味の反転・大幅な欠落・重大な誤りで即時不可。severity は error=意味を損なう問題（誤訳・意味の反転・内容や数式・引用の欠落・数値/単位の誤り・主張強度や hedging の反転・確定用語違反）で、これらは必ず error か verdict=fail にする。warn=出版を妨げない軽微な指摘（表記ゆれ・語調・言い回しの統一など）に限る。重大な問題を warn に格下げしてはならない。";
 
-function jaPart(form: string): string {
-  return form.replace(/\s*[（(].*$/, "").trim();
-}
+
 
 // 用語ブロックに載る文字列は全て 1 行化を通す。ここを素通しにすると
 // form の改行で見出しを偽装して user prompt の構造を乗っ取れる。
@@ -79,7 +78,7 @@ function instructionFor(t: ResolvedTerm): string {
     case "bilingual":
       return t.firstOccurrence
         ? `初出なので併記「${form}」を使う`
-        : `2回目以降なので「${term(jaPart(t.form))}」（日本語のみ・併記しない）を使う`;
+        : `2回目以降なので「${term(jaPartOf(t.form))}」（日本語のみ・併記しない）を使う`;
     default:
       return `訳語「${form}」を使う`;
   }
