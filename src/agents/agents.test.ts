@@ -42,6 +42,29 @@ describe("translator", () => {
     expect(c.calls[0]!.user).toContain("hedging を保持");
   });
 
+  it("初稿は訳出、改稿は前稿の最小差分修正として指示する", async () => {
+    const c = new FakeLlmClient('{"segmentId":"s1","ja":"訳"}');
+    await translate(c, { segmentId: "s1", latex: "x", glossarySlice: [] });
+    expect(c.calls[0]!.user).toContain("本文のみを日本語に訳し");
+    expect(c.calls[0]!.user).not.toContain("訳し直さない");
+
+    const r = new FakeLlmClient('{"segmentId":"s1","ja":"訳"}');
+    await translate(r, {
+      segmentId: "s1",
+      latex: "x",
+      glossarySlice: [],
+      priorJa: "前訳",
+      issues: ["数式が欠けている"],
+    });
+    // 「1 文字も変えない」を先に置くとモデルは前稿をそのまま返す（実測: 2 稿目が
+    // 1 稿目とバイト単位で一致）。直す義務を先に、残す指示を後に置く。
+    expect(r.calls[0]!.user).toContain("指摘された箇所を必ず直す");
+    expect(r.calls[0]!.user).toContain("前回の訳を土台にして残し");
+    expect(r.calls[0]!.user).toContain("訳し直さない");
+    // 形式の指示は改稿でも落とさない（平文フェンスの契約は稿によらない）。
+    expect(r.calls[0]!.user).toContain("```tex");
+  });
+
   it("トレース用 meta（role/phase/segmentId/pass）を request に載せる", async () => {
     const c = new FakeLlmClient('{"segmentId":"s1","ja":"訳"}');
     await translate(c, { segmentId: "s1", latex: "x", glossarySlice: [] }, {}, 2);
