@@ -42,6 +42,12 @@ const TRANSLATOR_MARKS =
 const TRANSLATOR_FIDELITY =
   "書き写しの規則: 引用・参照・脚注のコマンドは綴りごと原文のまま残す（\\citet を \\cite に置き換えない、\\footnote{...} を落として本文へ畳まない、\\ref・\\autoref・\\url の引数を訳さない）。\\% \\# \\$ \\& の backslash を落とさない（落とすと以降が消える）。行終端の \\\\ を \\ に縮めない。";
 
+// 数式の併合は組版結果が変わらないので無害に見えるが、併合するには記号を記憶から
+// 書き直すことになり、そこで綴りが壊れる（実測: \Delta\mathrm{vDDeg}_T →
+// \Delta\mathrm{vDegd}_T）。書き写しではなく再構成をさせないための規則。契約付録 §1
+const TRANSLATOR_MATH_BOUNDARY =
+  "数式の区切りの規則: 数式の切れ目を動かさない。原文にある $..$ の 1 つ 1 つを、中身も切れ目もそのまま 1 つずつ訳文へ運ぶ。隣り合う数式を 1 つに繋げない（$p$-value $< 0.01$ を $p < 0.01$ にしない）。1 つの数式を分けない。原文で数式の外にある語・記号を数式の中へ入れない（and・exceed 等を > などの記号に言い換えて数式へ畳まない）。数式を新しく作らない——原文が地の文で書いている記号や変数名は地の文のまま訳す（p-value の p を $p$ にしない）。数式の中身は読まずに 1 文字ずつ書き写す。";
+
 // 併記の付けすぎは evaluator が error として差し戻す（実測: 落ちた稿の指摘 3 件中 2 件が
 // 「初出以外の併記を日本語のみにする」だった）。確定用語に無い語へモデルが独自に併記を
 // 足すのが原因なので、規約そのものを先に書く。契約付録 §1
@@ -135,7 +141,14 @@ export function renderGlossaryBlock(glossary: ResolvedTerm[]): string {
 export function buildSystemPrompt(role: AgentRole): string {
   const parts = [ROLE_DEF[role], COMMON, UNTRUSTED_DATA];
   parts.push(role === "translator" ? FORMAT_FENCED : FORMAT_JSON);
-  if (role === "translator") parts.push(TRANSLATOR_HEADINGS, TRANSLATOR_MARKS, TRANSLATOR_FIDELITY, TRANSLATOR_BILINGUAL);
+  if (role === "translator")
+    parts.push(
+      TRANSLATOR_HEADINGS,
+      TRANSLATOR_MARKS,
+      TRANSLATOR_FIDELITY,
+      TRANSLATOR_MATH_BOUNDARY,
+      TRANSLATOR_BILINGUAL,
+    );
   if (role === "evaluator") parts.push(PITFALLS, EVAL_RUBRIC);
   return parts.join("\n\n---\n\n");
 }

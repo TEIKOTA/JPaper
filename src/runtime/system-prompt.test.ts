@@ -48,6 +48,12 @@ describe("buildSystemPrompt", () => {
     }
   });
 
+  it("translator にのみ数式の区切りを動かさない規則を出す", () => {
+    expect(buildSystemPrompt("translator")).toContain("数式の区切りの規則");
+    expect(buildSystemPrompt("evaluator")).not.toContain("数式の区切りの規則");
+    expect(buildSystemPrompt("glossary-builder")).not.toContain("数式の区切りの規則");
+  });
+
   it("translator にのみ見出し和訳の指示を出す", () => {
     expect(buildSystemPrompt("translator")).toContain("見出しの扱い");
     expect(buildSystemPrompt("evaluator")).not.toContain("見出しの扱い");
