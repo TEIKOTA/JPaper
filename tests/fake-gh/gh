@@ -1,7 +1,12 @@
 #!/usr/bin/env bash
 # self-test 用の gh スタブ。呼び出しを 1 行ずつ $FAKE_GH_LOG に記録する。
-# `gh label list` だけは $FAKE_GH_LABELS（改行区切りのラベル名）を出力して
-# 既存ラベル一覧の読み取りを模倣する。それ以外は成功を返すだけ。
+# 模倣する読み取り:
+#   - `gh label list`            … $FAKE_GH_LABELS（改行区切りのラベル名）を出力
+#   - `gh pr view ... --json X`  … $FAKE_GH_PR_TITLE / $FAKE_GH_PR_BODY を出力
+#   - `gh api repos/*/issues/N`  … N が $FAKE_GH_ISSUES にあれば "issue"、
+#                                  $FAKE_GH_ISSUE_PRS にあれば "pr" を出力（--jq 適用後を模倣）。
+#                                  どちらにも無ければ exit 1（存在しない issue）
+# それ以外は成功を返すだけ。
 set -eu
 
 printf '%s\n' "$*" >> "${FAKE_GH_LOG:?FAKE_GH_LOG が未設定です}"
@@ -10,6 +15,28 @@ if [ "${1:-}" = "label" ] && [ "${2:-}" = "list" ]; then
   if [ -n "${FAKE_GH_LABELS:-}" ]; then
     printf '%s\n' "${FAKE_GH_LABELS}"
   fi
+fi
+
+if [ "${1:-}" = "pr" ] && [ "${2:-}" = "view" ]; then
+  case "$*" in
+    *"--json title"*) printf '%s\n' "${FAKE_GH_PR_TITLE:-}";;
+    *"--json body"*) printf '%s\n' "${FAKE_GH_PR_BODY:-}";;
+  esac
+fi
+
+if [ "${1:-}" = "api" ]; then
+  case "${2:-}" in
+    repos/*/issues/*)
+      n="${2##*/}"
+      for x in ${FAKE_GH_ISSUES:-}; do
+        if [ "$x" = "$n" ]; then printf 'issue\n'; exit 0; fi
+      done
+      for x in ${FAKE_GH_ISSUE_PRS:-}; do
+        if [ "$x" = "$n" ]; then printf 'pr\n'; exit 0; fi
+      done
+      exit 1
+      ;;
+  esac
 fi
 
 exit 0

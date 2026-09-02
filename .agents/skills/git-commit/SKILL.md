@@ -1,6 +1,6 @@
 ---
 name: git-commit
-description: "Generate commit message suggestion only. Do NOT execute commit."
+description: "Use when a commit message is needed for the current diff — on explicit request, or immediately before an authorized commit. Generate the message suggestion only. Do NOT execute commit."
 ---
 
 # Git Commit Message
@@ -25,7 +25,9 @@ Generate commit message
 
 ## Trigger Conditions
 - When user explicitly asks to create a commit message
-- When user or AI indicates task completion (e.g., "作業終わった", "done", "完了")
+- When an authorized commit is about to be made — invoke immediately before each
+  commit. Task completion alone (e.g., after read-only work with nothing to
+  commit) does not trigger this skill.
 
 ## Workflow
 
@@ -94,8 +96,11 @@ Conventional Commits format:
 
 **Rules:**
 - Type: select the option that best describes the changes.
-- Subject: imperative, lowercase, no period, ≤50 chars
+- Subject: 日本語で書く。末尾ピリオドなし、50 字以内。
 - Body: optional. Add it when the subject alone cannot explain what/why; wrap at 72 chars and keep it concise.
+- 機械検査の正本は `scripts/check-commit-msg.sh`(lefthook commit-msg で強制)。
+  強制されるのは type prefix の形式と件名に日本語を含むことまでで、字数や
+  分割判定は検査されない — そこはこの skill の生成規約が担う。
 
 **Output Suggestion**
 
@@ -110,6 +115,19 @@ Conventional Commits format:
 - If the diff spans multiple semantic units, do not invent a single message
 - If there is no diff, do not invent a commit message
 - Do not answer until the current-turn inspection steps have completed
+
+## Execution Hygiene（commit を実行する側の規律）
+
+生成した message を使って commit / PR / issue を作る側は、次を守る
+（根拠: 複数行日本語や制御文字の argv 直渡しによる gh / git 失敗、
+編集スクリプトの失敗を検知せず commit だけ成功して amend + force-push を
+強いられた事故の反復）:
+
+- commit message は必ずファイル経由で渡す（`git commit -F <file>`）。PR / issue の
+  body も同様に `--body-file` を使い、複数行テキストを argv に直接書かない。
+- ファイルを変更するスクリプトと `git commit` を同一のシェル行で連結しない。
+  commit の前に `git status` / `git diff --stat` で変更が適用されたことを確認する。
+- issue / PR にラベルを指定するときは `.github/labels.yml` に実在するものだけを使う。
 
 ## Examples
 
