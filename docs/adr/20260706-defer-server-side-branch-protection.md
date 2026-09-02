@@ -2,6 +2,7 @@
 
 # Status
 - accepted
+- 部分 supersede（2026-09-01）: 強制手段のうち「pr-checks / self-test CI」の条項は [`20260901-disable-github-actions-by-default.md`](./20260901-disable-github-actions-by-default.md) により置換（CI は既定オフとなり、強制手段は lefthook・`scripts/check-pr.sh`・`tests/run-tests.sh`・AGENTS.md の規約）。branch protection を見送る判断・再検討条件の条項は存続。
 
 # Situation
 - issue 駆動 PR workflow は「main への direct push 禁止・PR 必須・CI 検査」を宣言しているが、GitHub の branch protection / ruleset は private repo では有料プラン（Pro / Team）を要する。

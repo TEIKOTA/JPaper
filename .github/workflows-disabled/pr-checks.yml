@@ -1,3 +1,7 @@
+# 【既定オフ】このディレクトリ（workflows-disabled/）にある限り GitHub は workflow として
+# 認識しない。同等の検査はローカルの scripts/check-pr.sh が正本。CI を有効化する手順は
+# README「CI を有効化する場合」を参照（ADR: docs/adr/20260901-disable-github-actions-by-default.md）。
+#
 # PR のタイトルと body を規約に照らして検査する最小 CI。
 # タイトル: 日本語 Conventional Commits（許可 type の正本は scripts/check-commit-msg.sh）
 # body:    issue close keyword か例外理由（chore PR は免除）

@@ -24,39 +24,19 @@ This skill assumes the ADR workflow under `docs/adr/`.
 
 ## ADR Creation Workflow
 
-- 新しい ADR を作る前に、必ず `docs/adr/` の adopt-adr-format ADR
-  （`*-adopt-adr-format.md`）を読む。
-- あわせて `docs/adr/README.md` を読み、その論点を ADR に書くべきか確認する。
-- 以下に当てはまる場合に ADR を作る。
-  - システム全体のアーキテクチャ方針
-  - 永続化、外部 API、認証、セキュリティなどの基盤方針
-  - AI / 外部サービスとの責務分担、安全策
-  - repo 全体に効く運用ルール
-  - 複数案を比較した重要な採択
-- 仕様詳細、受け入れ条件、未決定事項、局所的な実装都合は ADR に書かない。
-- ファイル名は `YYYYMMDD-slug.md` とし、slug は英語の短い要約にする。
-- 章立ては `docs/adr/template.md` の順序に合わせる。
-  - `Status`
-  - `Situation`
-  - `Context`
-  - `Material for decision`
-  - `Decision`
-  - `Consequences`
+- 新しい ADR を作る前に、必ず `docs/adr/README.md`(対象判定=「なぜ ADR を
+  書くのか」「運用ルール」、命名、`Status` 語彙=「セクション構成」表の正本)と
+  `docs/adr/template.md`(章立ての正本)を読む。対象判定・命名・章構成は
+  そこに従い、本 skill には複製しない。
 - ADR は仕様書ではなく決定ログとして書く。背景、比較材料、決定、影響を残す。
 - 関連する既存 ADR や docs があれば `Material for decision` に含める。
 - 作成後は `docs/adr/README.md` の索引に 1 行追加する。
 
 ## Updating Existing ADRs
 
-- 新しい ADR によって過去の ADR を `superseded` または `deprecated` にすべき
-  場合でも、過去 ADR の本文は書き換えない。
-- 過去 ADR に対して変更してよいのは `Status` セクションだけとする。
-- `Status` の値は `proposed`、`accepted`、`rejected`、`deprecated`、
-  `superseded` の範囲で扱う。
-- `Status` 以外の `Situation`、`Context`、`Material for decision`、
-  `Decision`、`Consequences` は変更しない。
-- 過去 ADR を削除しない。
-- 過去 ADR の内容を現在の理解で書き換えない。判断の変遷自体を資産として扱う。
+- 過去 ADR の扱い(本文不変・`Status` セクションのみ更新・削除禁止・部分
+  supersede の記法)は `docs/adr/README.md`「運用ルール」を正本とし、本 skill
+  には複製しない。
 
 ## Decision Rule
 

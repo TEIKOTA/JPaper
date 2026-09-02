@@ -2,6 +2,7 @@
 
 # Status
 - accepted
+- 部分 supersede（2026-09-01）: 「強制は二重にする」のうちリモート（GitHub Actions `pr-checks`）による PR タイトル検査の条項は [`20260901-disable-github-actions-by-default.md`](./20260901-disable-github-actions-by-default.md) により置換（ローカル `scripts/check-pr.sh` へ移行。CI は既定オフの opt-in）。日本語 Conventional Commits の規約自体・ローカル lefthook 強制・type 正本の条項は存続。
 
 # Situation
 - 個人＋AI 協働開発では commit が高頻度に生成されるため、後から履歴を検索・監査できる一貫した形式が最初から必要である。

@@ -4,7 +4,9 @@
 #      --prune 指定時のみ、labels.yml に無い既存ラベル（GitHub デフォルト含む）を削除する。
 #      初回セットアップは --prune 付きで実行してデフォルトラベルを入れ替える。
 #   2. merge 方式を squash のみに固定し、merge 後の head branch 自動削除を有効化する
-# 使い方: scripts/setup-github-repo.sh [--repo <owner>/<name>] [--prune] [--dry-run]
+#   3. GitHub Actions を repo 設定で無効化する（既定。template から生成された repo には
+#      設定が引き継がれないため毎回必要。--enable-actions でスキップ）
+# 使い方: scripts/setup-github-repo.sh [--repo <owner>/<name>] [--prune] [--dry-run] [--enable-actions]
 #   --repo 省略時はカレントリポジトリの origin を使う。
 #   --dry-run は変更コマンドを表示するだけで実行しない（読み取りは行う）。
 set -euo pipefail
@@ -12,12 +14,14 @@ set -euo pipefail
 REPO=""
 DRY_RUN=0
 PRUNE=0
+ENABLE_ACTIONS=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --repo) REPO="${2:?--repo には <owner>/<name> が必要です}"; shift 2;;
     --prune) PRUNE=1; shift;;
     --dry-run) DRY_RUN=1; shift;;
-    -h|--help) sed -nE 's/^# ?//p' "$0" | sed -n '1,9p'; exit 0;;
+    --enable-actions) ENABLE_ACTIONS=1; shift;;
+    -h|--help) sed -nE 's/^# ?//p' "$0" | sed -n '1,11p'; exit 0;;
     *) echo "不明な引数: $1" >&2; exit 2;;
   esac
 done
@@ -134,13 +138,26 @@ fi
 
 echo "▶ squash commit の件名を PR title に固定する"
 if [[ -n "$REPO" ]]; then
-  run gh api --method PATCH "repos/$REPO" \
+  run gh api --silent --method PATCH "repos/$REPO" \
     -f squash_merge_commit_title=PR_TITLE \
     -f squash_merge_commit_message=PR_BODY
 else
-  run gh api --method PATCH 'repos/{owner}/{repo}' \
+  run gh api --silent --method PATCH 'repos/{owner}/{repo}' \
     -f squash_merge_commit_title=PR_TITLE \
     -f squash_merge_commit_message=PR_BODY
+fi
+
+# CI はローカル検証が正本（ADR: docs/adr/20260901-disable-github-actions-by-default.md）。
+# -F は enabled=false を boolean に型変換する（-f だと文字列 "false" になり無効）。
+if [[ $ENABLE_ACTIONS -eq 1 ]]; then
+  echo "▶ GitHub Actions は有効のまま維持する（workflow は .github/workflows-disabled/ から .github/workflows/ へ戻すこと）"
+else
+  echo "▶ GitHub Actions を無効化する（有効化する場合は --enable-actions。手順は README）"
+  if [[ -n "$REPO" ]]; then
+    run gh api --method PUT "repos/$REPO/actions/permissions" -F enabled=false
+  else
+    run gh api --method PUT 'repos/{owner}/{repo}/actions/permissions' -F enabled=false
+  fi
 fi
 
 echo "✔ 完了"

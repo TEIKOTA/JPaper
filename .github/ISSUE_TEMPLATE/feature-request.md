@@ -32,6 +32,15 @@ assignees: []
 
 - 関連する docs / ADR / code path
 
+## 重複確認
+
+<!-- 起票前に --state all で既存 issue / PR を検索する。空の記録はゲート未実施とみなす -->
+
+- 確認日時: YYYY-MM-DD
+- 検索キーワード: <...>
+- 確認した issue/PR: #xxx（無関係な理由）
+- 判定: 重複なし / #zzz の続きとして起票
+
 ## Done When
 
 - 完了条件を 1-3 個
