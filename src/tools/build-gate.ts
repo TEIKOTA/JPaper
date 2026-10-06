@@ -203,7 +203,7 @@ export function unsafeSupportFiles(
   return bad;
 }
 
-// build dir に main.tex＋支援ファイル(.sty/.cls/.bst/.bib/.bbl は srcpkg/ へ基底名で)＋図(main 相対で配置)を置く。
+// build dir に main.tex＋支援ファイル(.sty/.cls/.bst/.bib/.bbl は srcpkg/ へ基底名で)＋main と同じ階層の唯一の .bbl(main.bbl として)＋図(main 相対で配置)を置く。
 export function stageBuild(
   buildDir: string,
   mainTex: string,
@@ -223,6 +223,13 @@ export function stageBuild(
   }
   const distributed = resolver(bases);
   const shadowed = bases.filter((b) => distributed.has(b));
+  // 契約付録 §8（.bbl だけの提出物）。
+  const mainBbls = existsSync(opts.mainDir)
+    ? readdirSync(opts.mainDir).filter((f) => /\.bbl$/i.test(f) && statSync(path.join(opts.mainDir, f)).isFile())
+    : [];
+  if (mainBbls.length === 1 && !distributed.has(mainBbls[0]!)) {
+    cpSync(path.join(opts.mainDir, mainBbls[0]!), path.join(buildDir, "main.bbl"));
+  }
   for (const fig of opts.figures) {
     const abs = path.isAbsolute(fig) ? fig : path.join(opts.mainDir, fig);
     if (!existsSync(abs)) continue;

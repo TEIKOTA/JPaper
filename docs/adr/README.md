@@ -40,7 +40,7 @@
 | 2026-07-06 | [日本語 Conventional Commits を commit と PR タイトルに適用](./20260706-adopt-commit-and-pr-message-convention.md) | accepted（CI 検査条項のみ 2026-09-01 に部分 supersede） |
 | 2026-07-06 | [GitHub デフォルトラベルを廃止しカスタムラベル体系を採用](./20260706-adopt-custom-github-labels.md) | accepted |
 | 2026-07-06 | [server-side branch protection の導入を見送る](./20260706-defer-server-side-branch-protection.md) | accepted（CI 強制手段の条項のみ 2026-09-01 に部分 supersede） |
-| 2026-07-06 | [テンプレート版数の記録と手動更新戦略の採用](./20260706-adopt-template-versioning-and-update-strategy.md) | accepted |
+| 2026-07-06 | [テンプレート版数の記録と手動更新戦略の採用](./20260706-adopt-template-versioning-and-update-strategy.md) | accepted（生成経路・形式・保証・metadata コメントを 2026-09-26 に部分 supersede） |
 | 2026-07-06 | [ラベル同期の削除を --prune オプトインに限定する](./20260706-clarify-label-sync-prune-behavior.md) | accepted |
 | 2026-07-08 | [エージェント基盤: 素の TS ワークフロー＋薄い自作ランタイム（Flue 設計準拠）](./20260708-adopt-deterministic-agent-architecture.md) | accepted |
 | 2026-07-08 | [翻訳パイプライン: ソース優先取り込み・図はベクタ優先・決定的処理のツール化](./20260708-translation-pipeline-ingestion-and-figures.md) | accepted |
@@ -48,7 +48,7 @@
 | 2026-07-09 | [品質ゲートの2層化・再訳契約・組版エラー分類](./20260709-quality-gate-two-layer-and-build-error-triage.md) | accepted |
 | 2026-07-09 | [LLM プロバイダ抽象化: ローカル(Ollama) と cloud(公式 CLI subprocess) を使い分け](./20260709-llm-provider-abstraction-local-ollama-and-cloud-cli.md) | accepted |
 | 2026-07-09 | [用語アーキテクチャ: 2層辞書・4クラス分類・表記方針・proposed 書き戻し](./20260709-terminology-architecture-two-tier-classified-glossary.md) | accepted |
-| 2026-07-09 | [ユーザーインターフェース: ファイル配置・jpaper CLI・GUI は core の薄い皮](./20260709-user-interface-file-layout-and-cli.md) | accepted |
+| 2026-07-09 | [ユーザーインターフェース: ファイル配置・jpaper CLI・GUI は core の薄い皮](./20260709-user-interface-file-layout-and-cli.md) | accepted（論文ごと成果物の既定の置き場所のみ 2026-10-07 に部分 supersede） |
 | 2026-07-10 | [翻訳一貫性: 文書ブリーフ＋文体契約・evaluator 軸の明文化・訳注 surface](./20260710-translation-consistency-brief-style-and-annotations.md) | accepted |
 | 2026-07-10 | [組版レイアウト方針: 原プリアンブル温存を既定・共通テンプレへ明示的フォールバック](./20260710-typesetting-layout-original-first-hybrid.md) | accepted |
 | 2026-07-10 | [ソースコメント方針: コードは事実のみ・why は正本・地雷は登録簿＋標識](./20260710-source-comments-facts-only-rationale-to-docs.md) | accepted |
@@ -56,7 +56,7 @@
 | 2026-07-22 | [LLM 呼び出しトレースは local-first JSONL・メタのみ（Langfuse は将来の opt-in exporter）](./20260722-llm-call-trace-local-jsonl.md) | accepted |
 | 2026-07-22 | [プロンプトキャッシュ再利用: system prompt を role ごとに安定化し用語スライスを user へ移す](./20260722-prompt-cache-reuse-stable-system-prompt.md) | accepted |
 | 2026-07-23 | [構造化出力をプロバイダ能力で分岐（Ollama ネイティブ JSON モード・claude プロンプト維持）](./20260723-provider-branched-structured-output.md) | superseded |
-| 2026-07-29 | [AI セッション運用ガード（重複確認・失敗ログ・worktree/待機規律）の採用](./20260729-adopt-ai-session-operational-guards.md) | accepted |
+| 2026-07-29 | [AI セッション運用ガード（重複確認・失敗ログ・worktree/待機規律）の採用](./20260729-adopt-ai-session-operational-guards.md) | accepted（新規 worktree の標準配置・例外規約のみ 2026-10-02 に部分 supersede） |
 | 2026-08-09 | [組版の堅牢化: LuaTeX 互換 shim の注入と共通テンプレによる原前文の吸収](./20260809-typesetting-shims-luatex-compat-and-class-absorption.md) | accepted |
 | 2026-08-11 | [組版サンドボックス: shell escape 明示禁止と同梱パッケージの探索順後置](./20260811-typesetting-sandbox-and-package-precedence.md) | accepted |
 | 2026-08-11 | [プロンプト注入対策: 論文・LLM 由来のテキストを指示面へ載せない](./20260811-untrusted-text-never-becomes-instructions.md) | accepted |
@@ -76,6 +76,14 @@
 | 2026-08-15 | [訳文は JSON 文字列で運ばない（区切り付きの平文で返す）](./20260815-translator-returns-plain-text.md) | accepted |
 | 2026-08-15 | [検証の往復を縮めるために OpenRouter を第 3 のプロバイダにする](./20260815-openrouter-provider-for-fast-iteration.md) | accepted |
 | 2026-08-16 | [保護区間の要否はモデルの能力で決まる（26B では既定へ戻す）](./20260816-protection-depends-on-model-capability.md) | accepted |
-| 2026-09-01 | [セッション横断監査に基づく運用ガード第 2 弾の採用](./20260901-adopt-session-audit-guards-v2.md) | accepted |
+| 2026-09-01 | [セッション横断監査に基づく運用ガード第 2 弾の採用](./20260901-adopt-session-audit-guards-v2.md) | accepted（PR 滞留の単一閾値条項のみ 2026-09-26 に部分 supersede） |
 | 2026-09-01 | [GitHub Actions を既定オフにしローカル検証を正とする](./20260901-disable-github-actions-by-default.md) | accepted |
+| 2026-09-05 | [運用ガード第 2 弾の是正（第 2 ラウンド監査の反映）](./20260905-adopt-session-audit-guards-round2.md) | accepted |
+| 2026-09-18 | [AI の merge authority と human review boundary の採用](./20260918-adopt-ai-merge-authority.md) | accepted |
+| 2026-09-26 | [repo 内 producer による template provenance の採用](./20260926-adopt-repo-owned-template-provenance.md) | accepted |
+| 2026-09-26 | [二段 PR backlog policy の採用](./20260926-adopt-two-stage-pr-backlog.md) | accepted |
+| 2026-10-02 | [worktree の標準配置・終了記録・安全な回収の採用](./20261002-adopt-worktree-lifecycle-management.md) | accepted（管理機能の実装は後続） |
+| 2026-10-06 | [worktree 標準配置へのエージェント作業許可の採用](./20261006-allow-agent-access-to-worktree-root.md) | accepted |
 | 2026-10-06 | [横長の対訳 PDF（A4 縦 2 枚分・左=原文／右=和訳）を標準の出力にする](./20261006-bilingual-side-by-side-pdf.md) | accepted |
+| 2026-10-07 | [図表のキャプションは全プロバイダの翻訳指示で訳す](./20261007-translate-captions-in-all-prompt-profiles.md) | accepted |
+| 2026-10-07 | [論文ごとの既定の出力先を CWD 配下の article/ にまとめる](./20261007-default-output-under-article-dir.md) | accepted |

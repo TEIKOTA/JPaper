@@ -17,11 +17,20 @@
 - **Skill**（何を知っている）: 用語・スタイル規約などの知識は段階開示。`.agents/skills/`
 - **Workflow**（配線）: `src/workflows/*.ts` の素の TS 関数で複数エージェントを配線（`Promise.all` / `for` / `if`）。順序・並列・上限は TS が固定し、品質判定は LLM
 - **知識 SSOT**: 用語集・スタイルガイド等は `input/` に置く（コミット対象）
-- **ファイル配置**: グローバル状態は `~/.jpaper/`（cross-paper 共有の `glossary.db`・設定）、論文ごとの成果物と実行証跡は可視フォルダ `./<paper>-ja/`（`source/`・`figures/`・`glossary.md`・`translation/`・`main.pdf`・`.run/`）。`--out` で変更可（[UI/配置 ADR](./docs/adr/20260709-user-interface-file-layout-and-cli.md)）
+- **ファイル配置**: グローバル状態は `~/.jpaper/`（cross-paper 共有の `glossary.db`・設定）、論文ごとの成果物と実行証跡は可視フォルダ `./article/<paper>-ja/`（`source/`・`figures/`・`glossary.md`・`translation/`・`main.pdf`・`.run/`）。`--out` で変更可（[UI/配置 ADR](./docs/adr/20260709-user-interface-file-layout-and-cli.md)）
 
 決定性の方針: ループ上限・並列・分岐は素の TS（`for`/`Promise.all`/`if`）、契約検査は zod。品質判定・stuck・介入は LLM。ランタイムは Flue の Agent/Workflow 設計を借りた薄い自作で、将来 durable/観測/多環境デプロイが要れば Flue へ移行できるよう形を寄せる。詳細は [ADR](./docs/adr/20260708-adopt-deterministic-agent-architecture.md) を参照。
 
 ## セットアップ
+
+### 前提ツール
+
+- Node.js（22.5 以上）と npm — 本体の実行・テスト
+- LaTeX（`latexmk`・LuaLaTeX）— 組版
+- `gh`（GitHub CLI）— issue / PR の確認・初期設定
+- Python 3（`python3`）— hook 設定と一部の self-test
+- Ruby（`ruby`）— skill frontmatter の検査
+- lefthook — commit-msg / pre-push のローカル hook
 
 ```sh
 npm install
@@ -53,8 +62,8 @@ LLM プロバイダは `LlmClient` 境界で差し替え可能。v1 は **local=
 ## 開発ルール
 
 運用ガイドは [`AGENTS.md`](./AGENTS.md)（`CLAUDE.md` は symlink）。issue 駆動・PR 必須・日本語 Conventional Commits・ADR による決定記録を最初から機械強制（lefthook + ローカル検査）している。
-GitHub Actions は既定オフ（`.github/workflows-disabled/` に退避。[ADR](./docs/adr/20260901-disable-github-actions-by-default.md)）で、検証は `bash tests/run-tests.sh` と `scripts/check-pr.sh` のローカル実行が正本。CI を使う場合は `git mv .github/workflows-disabled .github/workflows` の上で `scripts/setup-github-repo.sh --enable-actions` を実行する（Actions 無効のまま required status checks を設定しない）。
-Claude Code 用の権限既定と hook は `.agents/settings.json`（read-only コマンドの allowlist・secret ファイルの Read deny・`scripts/hooks/` の Bash ガード / scripts 編集後の自動 self-test / 未コミット差分の Stop 警告）。
+GitHub Actions は既定オフ（`.github/workflows-disabled/` に退避。[ADR](./docs/adr/20260901-disable-github-actions-by-default.md)）で、検証はローカル script が正本（`bash tests/run-tests.sh` と `scripts/check-pr.sh`）。CI を使う場合は `git mv .github/workflows-disabled .github/workflows` の上で `scripts/setup-github-repo.sh --enable-actions` を実行する（Actions 無効のまま required status checks を設定しない）。
+Claude Code 用の権限既定と hook は `.claude/settings.json`（read-only コマンドの allowlist・secret ファイルの Read deny・`scripts/hooks/` の Bash ガード / scripts 編集後の自動 self-test / 未コミット差分の Stop 警告）。
 
 ## ライセンス
 

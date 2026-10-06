@@ -20,7 +20,7 @@ description: Use when the user wants relentless interview-style alignment before
 使わないとき:
 
 - 書かれた仕様・設計文書への尋問
-  - 正本は `.agents/skills/grill-spec/SKILL.md`
+  - 正本は `.claude/skills/grill-spec/SKILL.md`
 - 着手済みタスク内の個別の疑問
   - その場で通常の質問をする
 
@@ -81,6 +81,24 @@ description: Use when the user wants relentless interview-style alignment before
 - 尋問で新しいドメイン概念・用語が出たら、該当 docs への追記候補として扱う。
 - 長く効く判断(architecture / repo-wide rule)に触れる決定が出たら、
   `manage-adrs` skill の ADR 要否判定へ接続する。
+
+## 中断・引き継ぎ後の再開
+
+1. 再開先のエージェントは、対象 issue の最新本文・関連コメントと、現在の
+   会話にある最新のユーザー回答を読む。issue が無ければ、引き継がれた
+   会話内サマリや対象文書の Open Questions 節を読む。
+2. checkpoint の決定木を最新回答と照合し、確定済みの決定・未解決の決定と
+   その依存・剪定した枝・調査待ちを区別する。回答・承認済みの質問は
+   繰り返さず、回答の変更や矛盾があれば「尋問の原則」に従って扱う。
+3. 残る未解決から frontier を再計算し、必要な議論・質問をユーザーとの
+   現在の会話(Codex なら Codex 内の対話)で再開する。質問数・順序・
+   調査待ちの扱いは「尋問の原則」に従う。
+4. 回答を得たら「反映契約」に従って正本と決定木を更新し、「終了条件と
+   成果物」に従って合意まで進める。
+
+未解決事項を issue へ保存する checkpoint は引き継ぎのために維持する。
+保存しただけでは対話・回答・承認の代替にならず、未回答を承認済みとして
+扱わない。
 
 ## 終了条件と成果物
 

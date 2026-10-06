@@ -19,7 +19,7 @@ description: Use when a written spec or design document should be adversarially 
 使わないとき:
 
 - まだ文書になっていないアイデア・依頼
-  - 正本は `.agents/skills/grill-me/SKILL.md`
+  - 正本は `.claude/skills/grill-me/SKILL.md`
 - 実装後の変更レビュー
   - 通常のコードレビューで扱う
 
@@ -60,10 +60,12 @@ description: Use when a written spec or design document should be adversarially 
 - ラウンドをまたぐ・中断する場合の決定木の checkpoint は `grill-me` の
   反映契約に従う(未解決の指摘・依存・調査待ちを issue / Open Questions 節へ
   残せば、後続セッションが frontier を再構成できる)。
+- 再開時は [`grill-me` の「中断・引き継ぎ後の再開」](../grill-me/SKILL.md#中断引き継ぎ後の再開)
+  に従い、checkpoint の未解決判断をユーザーとの現在の会話へ戻す。
 - 長く効く判断に触れる結論が出たら、`manage-adrs` skill の ADR 要否判定へ
   接続する。
 
 ## 関連
 
-- `.agents/skills/grill-me/SKILL.md`(尋問の原則の正本)
-- `.agents/skills/manage-adrs/SKILL.md`(ADR 要否判定・作成)
+- `.claude/skills/grill-me/SKILL.md`(尋問の原則の正本)
+- `.claude/skills/manage-adrs/SKILL.md`(ADR 要否判定・作成)

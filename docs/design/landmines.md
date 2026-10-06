@@ -101,3 +101,9 @@
 - **おかしく見える点**: 右（和訳）の列だけ `\bibliography{…}` / `\bibliographystyle{…}` を `\jpNoAux{…}`（`\@fileswfalse` の群）で包んでいる。左は原文のまま。
 - **なぜ意図的か**: 両方の列で実行すると `.aux` に `\bibdata` / `\bibstyle` が 2 回書かれ、bibtex が `Illegal, another \bibdata command` で異常終了し、latexmk が再実行を止めるので引用・参照が全部未解決のまま残る（実測: 2410.16038 で未解決 72 件、build gate が失敗）。`.aux` へ書かないだけで、右の列でも `.bbl` を読んで参考文献一覧は出る。
 - **正本ポインタ**: 契約付録 §8（対訳 PDF）。
+
+## `src/providers/claude.ts` — `--max-turns` が 1 でなく 3
+
+- **おかしく見える点**: `--tools none` で 1 回しか答えさせないはずなのに、`--max-turns` が `1` ではなく `3`。「1 回きり」なら 1 に締めたくなる。
+- **なぜ意図的か**: claude CLI 2.1.291 は、用語集構築のような長い入力で内部的に 2 ターンを使う（実測: `num_turns: 2`）。`--max-turns 1` だと `subtype: error_max_turns`（「Reached maximum number of turns (1)」）で exit 1 になり、応答が正常でも run が `claude exited 1` で失敗する。`--tools none` でツールは使えないので、ターン上限は安全境界ではない（安全は `--tools none` が担う）。1 に戻すと該当呼び出しが全て落ちる。
+- **正本ポインタ**: [LLM プロバイダ抽象化 ADR](../adr/20260709-llm-provider-abstraction-local-ollama-and-cloud-cli.md)。回帰テストは `src/providers/claude.test.ts`。

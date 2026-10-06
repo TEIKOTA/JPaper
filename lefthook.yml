@@ -13,3 +13,7 @@ pre-push:
       run: bash scripts/check-branch-name.sh
       # Git pre-push が渡す ref 一覧を検査スクリプトへ転送する。
       use_stdin: true
+    check-branch-topology:
+      # 実際に push する local branch を pre-push refspec から取り、live PR topology を検査する。
+      run: bash scripts/check-branch-topology.sh --stdin
+      use_stdin: true

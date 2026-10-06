@@ -2,9 +2,7 @@
 # 認識しない。同等の検査はローカルの scripts/check-pr.sh が正本。CI を有効化する手順は
 # README「CI を有効化する場合」を参照（ADR: docs/adr/20260901-disable-github-actions-by-default.md）。
 #
-# PR のタイトルと body を規約に照らして検査する最小 CI。
-# タイトル: 日本語 Conventional Commits（許可 type の正本は scripts/check-commit-msg.sh）
-# body:    issue close keyword か例外理由（chore PR は免除）
+# PR のタイトル・body・参照 issue をローカル gate と同じ正本で検査する最小 CI。
 name: pr-checks
 
 on:
@@ -15,52 +13,20 @@ permissions:
   contents: read
 
 jobs:
-  pr-title:
-    runs-on: ubuntu-latest
-    steps:
-      # 検査対象 PR が検証スクリプト自体を書き換えて CI を迂回できないよう、
-      # PR の merge commit ではなく base commit からスクリプトを取得する。
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          ref: ${{ github.event.pull_request.base.sha }}
-      - name: PR タイトルを検査
-        env:
-          PR_TITLE: ${{ github.event.pull_request.title }}
-        run: bash scripts/check-commit-msg.sh --subject "$PR_TITLE"
-
-  pr-body-close:
+  pr-check:
     runs-on: ubuntu-latest
     permissions:
       contents: read
       issues: read
+      pull-requests: read
     steps:
+      # 検査対象 PR が検証スクリプト自体を書き換えて CI を迂回できないよう、
+      # PR head / merge commit ではなく fixed base commit から正本 gate を取得する。
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           ref: ${{ github.event.pull_request.base.sha }}
-      - name: PR body の issue 連結を検査
+      - name: base 側の正本 gate で PR を検査
         env:
-          PR_TITLE: ${{ github.event.pull_request.title }}
-          PR_BODY: ${{ github.event.pull_request.body }}
-        run: printf '%s' "$PR_BODY" | bash scripts/check-pr-body-close.sh --title "$PR_TITLE"
-      - name: 参照 issue の実在を検証
-        env:
-          PR_TITLE: ${{ github.event.pull_request.title }}
-          PR_BODY: ${{ github.event.pull_request.body }}
           GH_TOKEN: ${{ github.token }}
-        run: |
-          issues="$(printf '%s' "$PR_BODY" | bash scripts/check-pr-body-close.sh --title "$PR_TITLE" --print-issues)"
-          if [ -z "$issues" ]; then
-            echo "同一 repo の close 参照なし（chore / 例外理由 / cross-repo）のため API 検証をスキップ"
-            exit 0
-          fi
-          for n in $issues; do
-            if ! response="$(gh api "repos/$GITHUB_REPOSITORY/issues/$n" 2>/dev/null)"; then
-              echo "::error::close keyword が参照する issue #$n が存在しません"
-              exit 1
-            fi
-            if printf '%s' "$response" | jq -e '.pull_request' >/dev/null 2>&1; then
-              echo "::error::#$n は issue ではなく Pull Request です。issue を参照してください"
-              exit 1
-            fi
-            echo "issue #$n の実在を確認"
-          done
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: bash scripts/check-pr.sh "$PR_NUMBER" --repo "$GITHUB_REPOSITORY"

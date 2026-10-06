@@ -245,10 +245,12 @@ describe("単一ユーザ既定の可視化", () => {
 
   it("既定へ落ちた資源を summary と警告で観測できる", async () => {
     const { translatePaper, tar, client, GlossaryDb, work } = await makeRun();
+    const articleDir = path.join(process.cwd(), "article");
+    const hadArticleDir = existsSync(articleDir);
     const warns: string[] = [];
     const r = await translatePaper(
       { kind: "path", path: tar },
-      // outDir を渡さない＝cwd 直下の <paperId>-ja へ書く単一ユーザ既定。
+      // outDir を渡さない＝cwd 配下の article/<paperId>-ja へ書く単一ユーザ既定。
       { provider: "ollama" },
       {
         client: client(),
@@ -265,13 +267,16 @@ describe("単一ユーザ既定の可視化", () => {
     expect(r.summary.sharedDefaults).toContain("limits");
     expect(r.summary.sharedDefaults).toContain("work");
     expect(warns.some((w) => w.includes("単一ユーザ既定"))).toBe(true);
-    // 既定の出力先は cwd 直下の <paperId>-ja＝作業用 tmp ではない、が「分離できていない」証拠。
-    expect(existsSync(path.join(process.cwd(), `${r.summary.paperId}-ja`))).toBe(true);
-    expect(existsSync(path.join(work, `${r.summary.paperId}-ja`))).toBe(false);
-    rmSync(path.join(process.cwd(), `${r.summary.paperId}-ja`), {
+    // 既定の出力先は cwd 配下の article/<paperId>-ja＝作業用 tmp ではない、が「分離できていない」証拠。
+    expect(existsSync(path.join(articleDir, `${r.summary.paperId}-ja`))).toBe(true);
+    expect(existsSync(path.join(process.cwd(), `${r.summary.paperId}-ja`))).toBe(false);
+    expect(existsSync(path.join(work, "article", `${r.summary.paperId}-ja`))).toBe(false);
+    rmSync(path.join(articleDir, `${r.summary.paperId}-ja`), {
       recursive: true,
       force: true,
     });
+    // テストが作った article/ だけを消す（元からあった利用者の出力には触れない）。
+    if (!hadArticleDir) rmSync(articleDir, { recursive: true, force: true });
   });
 
   it("失敗して抜けた run でも sharedDefaults を返す", async () => {
