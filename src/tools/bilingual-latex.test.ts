@@ -142,7 +142,9 @@ describe("\\providecommand 置換", () => {
   });
 
   it("訳文側（右）だけを置き換える", () => {
-    const [block] = renderPairs([{ segmentId: "s", left: "\\newcommand{\\a}{1}", right: "\\newcommand{\\a}{1}" }], {
+    const {
+      blocks: [block],
+    } = renderPairs([{ segmentId: "s", left: "\\newcommand{\\a}{1}", right: "\\newcommand{\\a}{1}" }], {
       left: "",
       right: "",
     });
@@ -159,24 +161,94 @@ describe("タイトル", () => {
     expect(titleOf("\\titlerunning{x}")).toBeUndefined();
   });
 
-  it("段落が \\maketitle だけのペアをタイトルブロックに置き換える", () => {
-    const blocks = renderPairs(
+  it("段落が \\maketitle だけのペアを、前文の \\title から作ったタイトルブロックに置き換える", () => {
+    const { blocks, titled } = renderPairs(
       [
         { segmentId: "s", left: "\\maketitle", right: "\\maketitle" },
         { segmentId: "s", left: "A", right: "和" },
       ],
-      { left: "Title", right: "題" },
+      { left: "\\title{Title}", right: "\\title{題}" },
     );
+    expect(titled).toBe(true);
     expect(blocks).toEqual([titleBlock("Title", "題"), "A\n\\switchcolumn\n和\n\\switchcolumn*"]);
     expect(blocks[0]).toBe("\\jpTitleBlock{Title}\n\\switchcolumn\n\\jpTitleBlock{題}\n\\switchcolumn*");
   });
 
   it("\\maketitle で始まる段落はタイトルブロックと残りに分ける", () => {
-    const blocks = renderPairs([{ segmentId: "s", left: "\\maketitle\nA", right: "\\maketitle\n和" }], {
-      left: "T",
-      right: "題",
+    const { blocks } = renderPairs([{ segmentId: "s", left: "\\maketitle\nA", right: "\\maketitle\n和" }], {
+      left: "\\title{T}",
+      right: "\\title{題}",
     });
     expect(blocks).toEqual([titleBlock("T", "題"), "A\n\\switchcolumn\n和\n\\switchcolumn*"]);
+  });
+
+  it("本文の \\title と同じ段落の \\maketitle: 前を残し、本文の \\title でタイトルブロックを作る", () => {
+    const { blocks, titled } = renderPairs(
+      [
+        {
+          segmentId: "s",
+          left: "\\title{The Real Title}\n\\author{Ann\\thanks{x}}\n\\maketitle\n\\section{Intro}",
+          right: "\\title{本当の題}\n\\author{Ann\\thanks{x}}\n\\maketitle\n\\section{はじめに}",
+        },
+      ],
+      { left: "\\documentclass{article}\n", right: "\\documentclass{article}\n\\title{}\n" },
+    );
+    expect(titled).toBe(true);
+    expect(blocks).toEqual([
+      "\\title{The Real Title}\n\\author{Ann\\thanks{x}}\n\\switchcolumn\n\\title{本当の題}\n\\author{Ann\\thanks{x}}\n\\switchcolumn*",
+      titleBlock("The Real Title", "本当の題"),
+      "\\section{Intro}\n\\switchcolumn\n\\section{はじめに}\n\\switchcolumn*",
+    ]);
+  });
+
+  it("\\title と \\maketitle が別の段落でも、本文の \\title でタイトルブロックを作る", () => {
+    const { blocks } = renderPairs(
+      [
+        { segmentId: "s", left: "\\title{T}\n\\author{Ann}", right: "\\title{題}\n\\author{Ann}" },
+        { segmentId: "s", left: "\\maketitle", right: "\\maketitle" },
+      ],
+      { left: "", right: "" },
+    );
+    expect(blocks).toEqual([
+      "\\title{T}\n\\author{Ann}\n\\switchcolumn\n\\title{題}\n\\author{Ann}\n\\switchcolumn*",
+      titleBlock("T", "題"),
+    ]);
+  });
+
+  it("コメント内の \\maketitle と、環境・波括弧の中の \\maketitle は置き換えない", () => {
+    const pairs = [
+      { segmentId: "s", left: "% \\maketitle\nA", right: "% \\maketitle\n和" },
+      {
+        segmentId: "s",
+        left: "\\begin{frontmatter}\n\\title{T}\n\\maketitle\n\\end{frontmatter}",
+        right: "\\begin{frontmatter}\n\\title{題}\n\\maketitle\n\\end{frontmatter}",
+      },
+    ];
+    const { blocks, titled } = renderPairs(pairs, { left: "", right: "" });
+    expect(titled).toBe(false);
+    expect(blocks).toEqual(pairs.map((p) => `${p.left}\n\\switchcolumn\n${p.right}\n\\switchcolumn*`));
+  });
+
+  it("タイトルブロックは題の \\thanks も潰す", () => {
+    expect(bilingualPreamble("")).toContain("\\bfseries\\begingroup\\let\\thanks\\@gobble #1\\endgroup");
+  });
+
+  it("frontmatter 環境のようにタイトルブロックへ置き換えられなければ titleUnplaced で知らせる", () => {
+    const front = "\\begin{frontmatter}\n\\title{T}\n\\begin{abstract}\nX\n\\end{abstract}\n\\end{frontmatter}";
+    const out = assembleBilingual({
+      cleanLatex: "\\documentclass{elsarticle}\\begin{document}\\end{document}",
+      translatedMainTex: "\\documentclass{elsarticle}\n\\begin{document}\n\\end{document}\n",
+      source: [{ id: "seg-0000", tex: `${front}\n\nA` }],
+      translated: [{ id: "seg-0000", tex: `${front}\n\n和` }],
+    });
+    expect(out.titleUnplaced).toBe(true);
+    const plain = assembleBilingual({
+      cleanLatex: "\\documentclass{article}\\begin{document}\\end{document}",
+      translatedMainTex: "\\documentclass{article}\n\\begin{document}\n\\end{document}\n",
+      source: [{ id: "seg-0000", tex: "% \\maketitle\nA" }],
+      translated: [{ id: "seg-0000", tex: "和" }],
+    });
+    expect(plain.titleUnplaced).toBe(false);
   });
 });
 

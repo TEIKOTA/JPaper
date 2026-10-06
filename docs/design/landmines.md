@@ -74,6 +74,6 @@
 
 ## `src/tools/bilingual-latex.ts` — `renderPairs` が `\maketitle` を `\jpTitleBlock` の左右ペアに置き換える
 
-- **おかしく見える点**: 原文と訳文の段落をそのまま並べる関数なのに、`\maketitle` で始まる段落だけは消して、前文の `\title` から作ったタイトルブロック（左=原文の `\title`／右=和訳 main.tex の前文の `\title`）を差し込んでいる。
-- **なぜ意図的か**: 学会クラス（neurips 等）の `\maketitle` は全幅で、脚注（`\thanks`・学会表記）の挿入物が後続の paracol と衝突して空白ページが出る（PoC で実測）。タイトルと著者を左右の半分にそれぞれ置く仕様なので、`\thanks` を潰した著者とタイトルだけのブロックを各列に置く。タイトルは paracol の中に入れるので、本文先頭がタイトルでも空の paracol は作らない。
+- **おかしく見える点**: 原文と訳文の段落をそのまま並べる関数なのに、最初の `\maketitle`（コメント外・環境や波括弧の外）だけは消して、その位置にタイトルブロック（左=原文の前文と `\maketitle` までの本文にある最後の `\title`／右=和訳 main.tex の前文と本文の同じ範囲の `\title`）を差し込んでいる。`\maketitle` と同じ段落の前の部分（本文の `\title` / `\author`）は 1 行として残す。
+- **なぜ意図的か**: 学会クラス（neurips 等）の `\maketitle` は全幅で、脚注（`\thanks`・学会表記）の挿入物が後続の paracol と衝突して空白ページが出る（PoC で実測）。タイトルと著者を左右の半分にそれぞれ置く仕様なので、`\thanks` を潰した著者とタイトルだけのブロックを各列に置く。タイトルは paracol の中に入れるので、本文先頭がタイトルでも空の paracol は作らない。本文に `\title` を書く論文（article・llncs・revtex で一般的）で前文だけを見ると左右とも空のタイトルになり、`\maketitle` が段落の先頭に単独で無いと左の列で `\maketitle` が実行される。article の `\maketitle` は実行後に `\title` / `\author` を `\relax` にするので、右の列ではタイトルが素の文字列で出る（いずれも実測）。前の部分を残すのは、`\author` が `\@author` を大域に定義してタイトルブロックがそれを使うため（`\title` / `\author` は何も出力しない）。frontmatter 環境（elsarticle）や環境の中の `\maketitle` は置き換えず、`titleUnplaced` で警告する。
 - **正本ポインタ**: [対訳 PDF ADR](../adr/20261006-bilingual-side-by-side-pdf.md)（Decision「タイトルと著者」）。

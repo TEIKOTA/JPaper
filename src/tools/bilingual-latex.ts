@@ -22,6 +22,8 @@ export interface BilingualOutput {
   mainTex: string;
   pairs: number;
   fallbackSegments: string[];
+  // 原文にタイトルを組む命令（\maketitle・frontmatter 環境）があるのに、タイトルブロックに置き換えられなかった。
+  titleUnplaced: boolean;
 }
 
 const BLANK_LINES = /\n[ \t]*(?:\n[ \t]*)+/;
@@ -39,31 +41,35 @@ function count(s: string, needle: string): number {
   return n;
 }
 
-// コメントを除いた \begin{ と \end{ の差（env）、エスケープしていない { と } の差（brace）。
-export function nestingOf(tex: string): { env: number; brace: number } {
-  let text = "";
-  let brace = 0;
+// エスケープしていない % から行末までを除く。
+export function stripComments(tex: string): string {
+  let out = "";
   let from = 0;
   for (let i = 0; i < tex.length; i++) {
     const c = tex[i];
     if (c === "\\") {
       i++;
     } else if (c === "%") {
-      text += tex.slice(from, i);
+      out += tex.slice(from, i);
       const nl = tex.indexOf("\n", i);
-      if (nl === -1) {
-        from = tex.length;
-        break;
-      }
+      if (nl === -1) return out;
       from = nl;
       i = nl - 1;
-    } else if (c === "{") {
-      brace++;
-    } else if (c === "}") {
-      brace--;
     }
   }
-  text += tex.slice(from);
+  return out + tex.slice(from);
+}
+
+// コメントを除いた \begin{ と \end{ の差（env）、エスケープしていない { と } の差（brace）。
+export function nestingOf(tex: string): { env: number; brace: number } {
+  const text = stripComments(tex);
+  let brace = 0;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (c === "\\") i++;
+    else if (c === "{") brace++;
+    else if (c === "}") brace--;
+  }
   return { env: count(text, "\\begin{") - count(text, "\\end{"), brace };
 }
 
@@ -138,7 +144,7 @@ function braceBody(s: string, open: number): string | undefined {
   return undefined;
 }
 
-// 前文の最後の \title{...} の中身。無ければ undefined。
+// 最後の \title{...} の中身。無ければ undefined。
 export function titleOf(preamble: string): string | undefined {
   let last: number | undefined;
   for (const m of preamble.matchAll(/\\title\s*(?:\[[^\]]*\]\s*)?\{/g)) last = m.index + m[0].length;
@@ -160,7 +166,7 @@ const SETUP = [
   "\\makeatletter",
   "\\newcommand{\\jpTitleBlock}[1]{%",
   "  \\par\\hrule height 4\\p@\\vskip 0.15in",
-  "  {\\centering\\Large\\bfseries #1\\par}",
+  "  {\\centering\\Large\\bfseries\\begingroup\\let\\thanks\\@gobble #1\\endgroup\\par}",
   "  \\vskip 0.2in\\hrule height 1\\p@\\vskip 0.1in",
   "  {\\centering\\begingroup\\let\\thanks\\@gobble\\@author\\endgroup\\par}",
   "  \\vskip 0.15in}",
@@ -192,26 +198,59 @@ export function titleBlock(left: string, right: string): string {
   return `\\jpTitleBlock{${left}}\n\\switchcolumn\n\\jpTitleBlock{${right}}\n\\switchcolumn*`;
 }
 
-const MAKETITLE = /^\\maketitle(?![A-Za-z@])\s*/;
+const MAKETITLE = /\\maketitle(?![A-Za-z@])\s*/g;
+const TITLE_COMMANDS = /\\maketitle(?![A-Za-z@])|\\begin\{frontmatter\}/;
+
+// コメント外で最初の \maketitle の範囲（後続の空白を含む）。
+function findMaketitle(tex: string): { start: number; end: number } | undefined {
+  for (const m of tex.matchAll(MAKETITLE)) {
+    const prefix = tex.slice(tex.lastIndexOf("\n", m.index) + 1, m.index);
+    if (stripComments(prefix) === prefix) return { start: m.index, end: m.index + m[0].length };
+  }
+  return undefined;
+}
+
+function atTopLevel(tex: string): boolean {
+  const n = nestingOf(tex);
+  return n.env === 0 && n.brace === 0;
+}
 
 // ⚠ landmines.md
 export function renderPairs(
   pairs: ParagraphPair[],
-  titles: { left: string; right: string },
-): string[] {
+  preambles: { left: string; right: string },
+): { blocks: string[]; titled: boolean } {
   const blocks: string[] = [];
-  for (const p of pairs) {
-    let left = p.left;
-    let right = p.right;
-    if (MAKETITLE.test(left)) {
-      blocks.push(titleBlock(titles.left, titles.right));
-      left = left.replace(MAKETITLE, "");
-      right = right.replace(MAKETITLE, "");
-    }
-    if (left.trim() === "" && right.trim() === "") continue;
+  const push = (left: string, right: string): void => {
+    if (left.trim() === "" && right.trim() === "") return;
     blocks.push(`${left}\n\\switchcolumn\n${provideCommands(right)}\n\\switchcolumn*`);
+  };
+  let seenLeft = preambles.left;
+  let seenRight = preambles.right;
+  let titled = false;
+  for (const p of pairs) {
+    if (titled) {
+      push(p.left, p.right);
+      continue;
+    }
+    const l = findMaketitle(p.left);
+    const r = findMaketitle(p.right);
+    const leftBefore = l === undefined ? p.left : p.left.slice(0, l.start);
+    const rightBefore = r === undefined ? p.right : p.right.slice(0, r.start);
+    if (l === undefined || !atTopLevel(leftBefore) || !atTopLevel(rightBefore)) {
+      seenLeft += `\n${p.left}`;
+      seenRight += `\n${p.right}`;
+      push(p.left, p.right);
+      continue;
+    }
+    push(leftBefore.trimEnd(), rightBefore.trimEnd());
+    blocks.push(
+      titleBlock(titleOf(`${seenLeft}\n${leftBefore}`) ?? "", titleOf(`${seenRight}\n${rightBefore}`) ?? ""),
+    );
+    titled = true;
+    push(p.left.slice(l.end), r === undefined ? "" : p.right.slice(r.end));
   }
-  return blocks;
+  return { blocks, titled };
 }
 
 export function paracolBody(blocks: string[]): string {
@@ -227,10 +266,8 @@ export function assembleBilingual(input: {
 }): BilingualOutput {
   const preamble = extractPreamble(input.translatedMainTex);
   const { pairs, fallbackSegments } = pairSegments(input.source, input.translated);
-  const blocks = renderPairs(pairs, {
-    left: titleOf(extractPreamble(input.cleanLatex)) ?? "",
-    right: titleOf(preamble) ?? "",
-  });
+  const { blocks, titled } = renderPairs(pairs, { left: extractPreamble(input.cleanLatex), right: preamble });
   const mainTex = `${bilingualPreamble(preamble)}${BEGIN}\n${paracolBody(blocks)}\\end{document}\n`;
-  return { mainTex, pairs: blocks.length, fallbackSegments };
+  const titleUnplaced = !titled && input.source.some((s) => TITLE_COMMANDS.test(stripComments(s.tex)));
+  return { mainTex, pairs: blocks.length, fallbackSegments, titleUnplaced };
 }
