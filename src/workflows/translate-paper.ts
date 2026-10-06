@@ -681,7 +681,7 @@ async function typesetBilingual(
   source: { id: string; tex: string }[],
   translated: { id: string; tex: string }[],
   layout: Layout,
-  opts: { outDir: string; sourceDir: string; mainDir: string; figures: string[] },
+  opts: { outDir: string; sourceDir: string; mainDir: string; figures: string[]; title?: string },
   runner: LatexRunner | undefined,
   surface: (m: string) => void,
   signal?: AbortSignal,
@@ -703,7 +703,7 @@ async function typesetBilingual(
   const assemble = (mode: Layout) =>
     assembleBilingual({
       cleanLatex,
-      translatedMainTex: assembleWithMap({ cleanLatex, segments: translated, mode }).mainTex,
+      translatedMainTex: assembleWithMap({ cleanLatex, segments: translated, mode, title: opts.title }).mainTex,
       source,
       translated,
     });
@@ -1224,16 +1224,19 @@ export async function translatePaper(
       typesetMessage = outcome.message;
       if (titled !== undefined && !outcome.titleApplied && outcome.buildOk) titleStatus = "failed";
       if (buildOk === true && layout !== null && opts.bilingual !== false) {
+        // 和訳 PDF に訳題が入った run だけ、右側にも同じ訳題（前文の \title・本文の \title）を使う。
+        const applied = outcome.titleApplied ? titled : undefined;
         bilingual = await typesetBilingual(
           ingested.cleanLatex,
           segments.map((s) => ({ id: s.id, tex: s.latex })),
-          rendered,
+          applied?.segments ?? rendered,
           layout,
           {
             outDir,
             sourceDir: ingested.sourceDir,
             mainDir: ingested.mainDir ?? ingested.sourceDir,
             figures: ingested.figures,
+            title: applied?.title,
           },
           deps.latexRunner,
           (m) => notify(m),
