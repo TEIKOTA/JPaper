@@ -8,7 +8,11 @@ import type {
 } from "../types/contract.js";
 import { EvaluatorOut } from "../types/contract.js";
 import { runAgent } from "../runtime/llm-client.js";
-import { buildSystemPrompt, renderGlossaryBlock } from "../runtime/system-prompt.js";
+import {
+  buildSystemPrompt,
+  renderGlossaryBlock,
+  renderDocContextBlock,
+} from "../runtime/system-prompt.js";
 
 export interface EvalContext {
   glossary?: ResolvedTerm[];
@@ -16,7 +20,7 @@ export interface EvalContext {
   style?: StyleContract;
 }
 
-function renderUser(input: EvaluatorIn, glossary: ResolvedTerm[]): string {
+function renderUser(input: EvaluatorIn, glossary: ResolvedTerm[], ctx: EvalContext): string {
   return [
     `# セグメント ${input.segmentId}`,
     "## 原文 LaTeX",
@@ -24,6 +28,7 @@ function renderUser(input: EvaluatorIn, glossary: ResolvedTerm[]): string {
     "## 訳文",
     input.ja,
     renderGlossaryBlock(glossary), // per-segment 用語は user 側（system の cache prefix を保つ）
+    renderDocContextBlock({ brief: ctx.brief, style: ctx.style }),
     "## 指示",
     'JSON だけを返す。形式: {"verdict":"pass"|"revise"|"fail","issues":[{"severity":"error"|"warn","message":"指摘文","span":"該当箇所(任意)"}]}。' +
       "指摘が無ければ issues は空配列。issues は必ずこのオブジェクト形式（文字列の配列にしない）。",
@@ -36,15 +41,12 @@ export async function evaluate(
   ctx: EvalContext = {},
   pass?: number,
 ): Promise<EvaluatorOut> {
-  const system = buildSystemPrompt("evaluator", {
-    brief: ctx.brief,
-    style: ctx.style,
-  });
+  const system = buildSystemPrompt("evaluator");
   return runAgent(
     client,
     {
       system,
-      user: renderUser(input, ctx.glossary ?? []),
+      user: renderUser(input, ctx.glossary ?? [], ctx),
       meta: { role: "evaluator", phase: "evaluate", segmentId: input.segmentId, pass },
     },
     EvaluatorOut,

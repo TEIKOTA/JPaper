@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { resolveExitCode, isTransient, JpaperError } from "./errors.js";
+import { resolveExitCode, isTransient, JpaperError, redactPaths, toRunError } from "./errors.js";
 
 describe("resolveExitCode", () => {
   it("失敗が無ければ 0", () => {
@@ -33,6 +33,26 @@ describe("isTransient", () => {
     expect(isTransient(new Error("socket hang up"))).toBe(true);
     expect(isTransient(new Error("Request timeout after 30s"))).toBe(true);
     expect(isTransient(new Error("429 Too Many Requests"))).toBe(true);
+  });
+
+  it("undici の切断（terminated / UND_ERR_*）を一時障害として扱う", () => {
+    // 実測: arXiv からの取り込みが `arXiv 取得に失敗: terminated` で 1 度も再試行されずに
+    // 落ちた。直後に同じ URL を curl すると 5.8 秒で取得できた＝一時的な切断だった。
+    expect(isTransient(new Error("terminated"))).toBe(true);
+    expect(isTransient({ code: "UND_ERR_SOCKET" })).toBe(true);
+    expect(isTransient({ code: "UND_ERR_BODY_TIMEOUT" })).toBe(true);
+    expect(isTransient({ code: "UND_ERR_HEADERS_TIMEOUT" })).toBe(true);
+    expect(isTransient({ code: "UND_ERR_CONNECT_TIMEOUT" })).toBe(true);
+    expect(
+      isTransient(Object.assign(new TypeError("fetch failed"), { cause: new Error("terminated") })),
+    ).toBe(true);
+  });
+
+  it("中断は一時障害にしない（利用者が切ったものを再試行しない）", () => {
+    expect(isTransient(new Error("This operation was aborted"))).toBe(false);
+    expect(isTransient(Object.assign(new Error("The user aborted a request."), {}))).toBe(false);
+    // 「terminated」を含まない語（terminate/termination）で誤判定しない。
+    expect(isTransient(new Error("process termination requested"))).toBe(false);
   });
 
   it("transient マーカーを尊重する", () => {
@@ -69,5 +89,73 @@ describe("JpaperError", () => {
     expect(e.code).toBe(2);
     expect(e.kind).toBe("provider");
     expect(e).toBeInstanceOf(Error);
+  });
+});
+
+describe("redactPaths", () => {
+  it("ホストの絶対パスを伏せる（Unix / Windows / UNC / ~）", () => {
+    expect(redactPaths("open /Users/a/JPaper/secret.tex")).toBe("open <path>");
+    expect(redactPaths("C:\\Users\\a\\secret.tex")).toBe("<path>");
+    expect(redactPaths("\\\\server\\share\\secret.tex")).toBe("<path>");
+    expect(redactPaths("~/.jpaper/db.sqlite が読めません")).toBe("<path> が読めません");
+    expect(redactPaths("cannot write /etc")).toBe("cannot write <path>");
+  });
+
+  it("URL・相対パス・日付は伏せない（外向きの唯一の診断情報を壊さない）", () => {
+    const url = "https://arxiv.org/abs/2401.12345 に到達できません";
+    expect(redactPaths(url)).toBe(url);
+    expect(redactPaths("出力先 ./out/ja を確認してください")).toBe(
+      "出力先 ./out/ja を確認してください",
+    );
+    expect(redactPaths("期限 2026/08/11 を超過しました")).toBe("期限 2026/08/11 を超過しました");
+    expect(redactPaths("図 fig/x.png が見つかりません")).toBe("図 fig/x.png が見つかりません");
+  });
+
+  it("区切りとして書いた単独の / を伏せない", () => {
+    // 先頭の / の直後にパス構成要素を要求していなかった頃は、区切りの / まで伏せて
+    // 外向きメッセージの意味が壊れた（実測: .paper-id 不一致の警告文で発生）。
+    expect(redactPaths("既存の glossary.md / brief.md / style.md は使いません")).toBe(
+      "既存の glossary.md / brief.md / style.md は使いません",
+    );
+    expect(redactPaths("入力/出力 の設定")).toBe("入力/出力 の設定");
+    expect(redactPaths("進捗 3/5 セグメント")).toBe("進捗 3/5 セグメント");
+  });
+});
+
+describe("sqlite の競合は internal ではなく busy", () => {
+  it("database is locked は kind=busy / exit 2", () => {
+    const e = Object.assign(new Error("database is locked"), { code: "ERR_SQLITE_ERROR" });
+    const r = toRunError(e);
+    expect(r.kind).toBe("busy");
+    expect(r.code).toBe(2);
+    expect(r.message).not.toContain("locked");
+  });
+
+  it("sqlite の文法エラーは internal のまま（本当のバグ）", () => {
+    const e = Object.assign(new Error('near "SELCT": syntax error'), {
+      code: "ERR_SQLITE_ERROR",
+    });
+    expect(toRunError(e).kind).toBe("internal");
+  });
+});
+
+describe("redactPaths は非 ASCII の絶対パスも伏せる", () => {
+  it("日本語ディレクトリ名で始まるパスを丸ごと伏せる", () => {
+    expect(redactPaths("/ユーザ/機密/論文/main.tex")).toBe("<path>");
+    expect(redactPaths("~/ドキュメント/paper.tex")).toBe("<path>");
+    expect(redactPaths("/@tenant42/secret/paper.tex")).toBe("<path>");
+  });
+
+  it("区切りの / ・URL・日付は伏せない", () => {
+    expect(redactPaths("glossary.md / brief.md")).toBe("glossary.md / brief.md");
+    expect(redactPaths("入力/出力 の設定")).toBe("入力/出力 の設定");
+    expect(redactPaths("https://example.com/a/b")).toBe("https://example.com/a/b");
+    expect(redactPaths("2026/08/11 の実行")).toBe("2026/08/11 の実行");
+    expect(redactPaths("and/or の判断")).toBe("and/or の判断");
+  });
+
+  it("文中・括弧内のパスも伏せる", () => {
+    expect(redactPaths("見つかりません: /tmp/x/y")).toBe("見つかりません: <path>");
+    expect(redactPaths("(/tmp/x) を確認")).toBe("(<path>) を確認");
   });
 });

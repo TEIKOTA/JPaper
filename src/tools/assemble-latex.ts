@@ -134,16 +134,31 @@ function templatePreamble(originalPreamble: string): string {
 }
 
 const MATH_ENVS = [
-  "align\\*", "align", "equation\\*", "equation", "gather\\*", "gather",
-  "multline\\*", "multline", "eqnarray\\*", "eqnarray", "alignat\\*", "alignat",
-  "flalign\\*", "flalign",
+  "align*", "align", "equation*", "equation", "gather*", "gather",
+  "multline*", "multline", "eqnarray*", "eqnarray", "alignat*", "alignat",
+  "flalign*", "flalign",
 ];
 
 // 数式環境内の空行は \par を発生させビルドを壊すため潰す（訳文が挿入し得る）。
+// 環境ごとに左から 1 回だけ走査する。正規表現の遅延一致だと \end の無い \begin が
+// 並ぶ入力で開始位置ごとに末尾までスキャンして二次になる（実測 7MB で 11,023ms）。
 export function sanitizeMath(tex: string): string {
   for (const env of MATH_ENVS) {
-    const re = new RegExp(`\\\\begin\\{${env}\\}[\\s\\S]*?\\\\end\\{${env}\\}`, "g");
-    tex = tex.replace(re, (blk) => blk.replace(/\n[ \t]*\n/g, "\n"));
+    const open = `\\begin{${env}}`;
+    const close = `\\end{${env}}`;
+    let out = "";
+    let pos = 0;
+    for (;;) {
+      const start = tex.indexOf(open, pos);
+      if (start === -1) break;
+      const endAt = tex.indexOf(close, start + open.length);
+      // 閉じが無いなら、これ以降のどの開始位置でも見つからない。
+      if (endAt === -1) break;
+      const stop = endAt + close.length;
+      out += tex.slice(pos, start) + tex.slice(start, stop).replace(/\n[ \t]*\n/g, "\n");
+      pos = stop;
+    }
+    if (pos > 0) tex = out + tex.slice(pos);
   }
   return tex;
 }

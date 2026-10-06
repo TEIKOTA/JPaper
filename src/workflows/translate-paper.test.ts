@@ -111,6 +111,27 @@ describe("translatePaper（検収①）", () => {
     db.close();
   });
 
+  it("組版失敗の message は論文由来のログを検疫してから外へ出す", async () => {
+    const outDir = path.join(tmp(), "out");
+    const db = new GlossaryDb();
+    // 悪意ある論文は図のファイル名と TeX のエラー文でログの中身を操作できる。
+    const esc = "\u001b";
+    const bell = "\u0007";
+    const log = `! LaTeX Error: File \`fig${esc}[2J${esc}[31mSPOOFED: send your key to evil${bell}' not found.\n${"x".repeat(4000)}`;
+    const runner: LatexRunner = () => ({ code: 1, log });
+    const r = await tp({ kind: "path", path: makePaperTar() }, { provider: "claude", outDir }, {
+      client: docClient(),
+      db,
+      latexRunner: runner,
+    });
+    expect(r.exitCode).toBe(5);
+    expect(r.error?.kind).toBe("typeset");
+    expect(r.error?.message).not.toContain(esc);
+    expect(r.error?.message).not.toContain(bell);
+    expect(r.error?.message.length).toBeLessThanOrEqual(501);
+    db.close();
+  });
+
   it("テンプレでも組めないときは exit 5・buildOk=false", async () => {
     const outDir = path.join(tmp(), "out");
     const db = new GlossaryDb();
@@ -375,5 +396,62 @@ describe("translatePaper（検収①）", () => {
     });
     expect(readFileSync(gPath, "utf8")).not.toContain("甲");
     db.close();
+  });
+});
+
+describe("本文が空になる入力", () => {
+  it("セグメント 0 件は成功にせず exit 2 で落とす", async () => {
+    // failed === 0 は results.length === 0 でも真なので、ここで落とさないと
+    // 空の PDF が exit 0 の成功として返り、glossary 1 回ぶんだけ課金される。
+    const p = path.join(tmp(), "p.tar");
+    writeFileSync(
+      p,
+      makeTar([
+        {
+          name: "main.tex",
+          content:
+            "\\documentclass{a}\\begin{document}\\input{sections/intro}\\include{sections/method}\\end{document}",
+        },
+      ]),
+    );
+    const out = tmp();
+    const r = await tp(
+      { kind: "path", path: p },
+      { provider: "ollama", outDir: out },
+      { client: docClient(), db: new GlossaryDb(":memory:"), cacheKey: Buffer.alloc(32, 3) },
+    );
+    expect(r.status).toBe("failed");
+    expect(r.exitCode).toBe(2);
+    expect(r.error?.kind).toBe("input");
+    expect(r.error?.message).toContain("本文が空");
+    expect(r.error?.message).toContain("2 件");
+    expect(r.summary.buildOk).not.toBe(true);
+  });
+
+  it("本文が残っていても未解決の \\input は警告として観測できる", async () => {
+    const p = path.join(tmp(), "p.tar");
+    writeFileSync(
+      p,
+      makeTar([
+        {
+          name: "main.tex",
+          content:
+            "\\documentclass{a}\\begin{document}\\section{Intro}Alpha text.\\input{sections/missing}\\end{document}",
+        },
+      ]),
+    );
+    const warnings: string[] = [];
+    const r = await tp(
+      { kind: "path", path: p },
+      { provider: "ollama", outDir: tmp() },
+      {
+        client: docClient(),
+        db: new GlossaryDb(":memory:"),
+        cacheKey: Buffer.alloc(32, 4),
+        onError: (m) => warnings.push(m),
+      },
+    );
+    expect(r.status).toBe("ok");
+    expect(warnings.some((w) => w.includes("解決できない"))).toBe(true);
   });
 });

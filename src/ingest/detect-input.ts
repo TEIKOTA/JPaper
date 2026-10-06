@@ -6,6 +6,13 @@ import { JpaperError } from "../types/errors.js";
 const ARXIV_NEW = /^(?:arxiv:)?(\d{4}\.\d{4,5})(v\d+)?$/i;
 const ARXIV_OLD = /^(?:arxiv:)?([a-z][a-z-]*(?:\.[a-z][a-z-]*)?\/\d{7})(v\d+)?$/i;
 
+// 正規化済み ID の厳格形（arxiv: 接頭辞なし）。URL 組み立て前の検証に使う。
+const ARXIV_ID_STRICT = /^(?:\d{4}\.\d{4,5}|[a-z][a-z-]*(?:\.[a-z][a-z-]*)?\/\d{7})(?:v\d+)?$/i;
+
+export function isArxivId(s: string): boolean {
+  return ARXIV_ID_STRICT.test(s);
+}
+
 export function detectInput(
   raw: string,
   exists: (p: string) => boolean = existsSync,

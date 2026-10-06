@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { formalCheck, untranslatedHeadings } from "./quality-gate.js";
+import { fastestMs } from "../testing/timing.js";
+import {
+  formalCheck,
+  untranslatedHeadings,
+  introducedUnsafeCommands,
+  decodeCarets,
+} from "./quality-gate.js";
 import type { ResolvedTerm } from "../types/contract.js";
 
 const kinds = (src: string, ja: string, terms: ResolvedTerm[] = []) =>
@@ -34,6 +40,10 @@ describe("formalCheck: 図(\\includegraphics)", () => {
   it("オプション無し・\\includegraphics* も数える", () => {
     expect(formalCheck("\\includegraphics{a}", "訳 \\includegraphics{a}", [])).toEqual([]);
     expect(formalCheck("\\includegraphics*[p]{a}", "訳 \\includegraphics*[p]{a}", [])).toEqual([]);
+    // 数えている証拠は「落としたら捕まる」こと。同一文字列の比較だけでは何も示せない。
+    expect(kinds("\\includegraphics{a}", "訳のみ")).toContain("graphics");
+    expect(kinds("\\includegraphics*[p]{a}", "訳のみ")).toContain("graphics");
+    expect(kinds("\\includegraphics*[p]{a}", "訳 \\includegraphics*[p]{b}")).toContain("graphics");
   });
   it("図の水増し（幻覚で増やす）も検出（src=1 ja=2）", () => {
     expect(kinds("\\includegraphics{a}", "\\includegraphics{a}\\includegraphics{b}")).toContain("graphics");
@@ -60,16 +70,23 @@ describe("formalCheck: 図(\\includegraphics)", () => {
   });
   it("エスケープした \\% はコメント扱いしない", () => {
     expect(formalCheck("50\\% と \\includegraphics{a}", "50\\% と \\includegraphics{a}", [])).toEqual([]);
+    // \% 以降をコメントとして捨てていれば、図を落としても気づけない。
+    expect(kinds("50\\% と \\includegraphics{a}", "50\\% と 訳のみ")).toContain("graphics");
   });
   it("\\includegraphicsbox 等の別コマンドは誤検知しない", () => {
-    // 直後に {path} を要求＝別マクロを図と誤認しない。
+    // 直後に {path} を要求＝別マクロを図と誤認しない。図として数えていないことの証拠は
+    // 「訳文から消えても graphics にならない」こと（同一文字列の比較では示せない）。
     expect(formalCheck("\\includegraphicsbox{x} は図ではない", "\\includegraphicsbox{x} は図ではない", [])).toEqual([]);
+    expect(kinds("\\includegraphicsbox{x} は図ではない", "これは図ではない")).not.toContain("graphics");
   });
   it("未閉じ { が多数でも O(n) で打ち切る（壊れた入力の CPU 消費を防ぐ）", () => {
     const malformed = "\\includegraphics{".repeat(20000); // 未閉じ 2万個
-    const t0 = Date.now();
-    const r = formalCheck("\\includegraphics{a}", malformed, []);
-    expect(Date.now() - t0).toBeLessThan(500); // 単一走査で高速
+    let r: ReturnType<typeof formalCheck> = [];
+    expect(
+      fastestMs(3, () => {
+        r = formalCheck("\\includegraphics{a}", malformed, []);
+      }),
+    ).toBeLessThan(500); // 単一走査で高速
     expect(r.map((i) => i.kind)).toContain("graphics"); // 壊れた ja は不一致で flag
   });
   it("入れ子波括弧のパスも平衡して抽出（{{plot}.pdf}→{{plot}.png} の置換を検出）", () => {
@@ -81,7 +98,11 @@ describe("formalCheck: 図(\\includegraphics)", () => {
     // TeX 上 \\ は改行命令で続く % はコメント開始。ja で図を \\% でコメントアウト＝実質脱落なので flag する。
     expect(kinds("\\includegraphics{a}", "\\\\% \\includegraphics{a}")).toContain("graphics");
     // 奇数（\%）はエスケープ＝コメントではないので図は生きている（pass）。
-    expect(formalCheck("x \\includegraphics{a}", "x \\% \\includegraphics{a}", [])).toEqual([]);
+    expect(
+      formalCheck("x \\includegraphics{a}", "x \\% \\includegraphics{a}", []).filter(
+        (i) => i.kind === "graphics",
+      ),
+    ).toEqual([]);
   });
 });
 
@@ -235,5 +256,493 @@ describe("formalCheck: bilingual", () => {
       firstOccurrence: false,
     };
     expect(formalCheck("y", "用語（仮称）を繰り返し使う", [jaParen])).toEqual([]);
+  });
+});
+
+describe("formalCheck: 未翻訳の検出", () => {
+  const PROSE =
+    "We evaluate the proposed method on three benchmark datasets and report accuracy, " +
+    "precision and recall for every configuration considered in this study.";
+
+  it("原文をそのままコピーした訳文は落とす", () => {
+    const issues = formalCheck(PROSE, PROSE, []);
+    expect(issues.map((i) => i.kind)).toContain("untranslated");
+    expect(issues.find((i) => i.kind === "untranslated")!.message).toContain("原文と同一");
+  });
+
+  it("日本語を含まない別文でも落とす", () => {
+    const issues = formalCheck(PROSE, `${PROSE} Additionally we discuss limitations.`, []);
+    expect(issues.map((i) => i.kind)).toContain("untranslated");
+  });
+
+  it("和訳されていれば通す", () => {
+    const ja =
+      "提案手法を 3 つのベンチマークデータセットで評価し、検討した全ての構成について" +
+      "正解率・適合率・再現率を報告する。";
+    expect(formalCheck(PROSE, ja, []).filter((i) => i.kind === "untranslated")).toEqual([]);
+  });
+
+  it("数式・図だけの節は原文と一致しても未翻訳としない", () => {
+    const seg = "\\begin{equation}\n E = mc^2 \\label{eq:e}\n\\end{equation}\n\\includegraphics{a.pdf}";
+    expect(formalCheck(seg, seg, []).filter((i) => i.kind === "untranslated")).toEqual([]);
+  });
+});
+
+describe("formalCheck: 危険コマンドの持ち込み", () => {
+  const SRC = "\\section{Intro} The accuracy is $95\\%$.";
+
+  it("訳文が原文に無い \\directlua を持ち込んだら落とす", () => {
+    const ja = "\\section{はじめに} 正解率は $95\\%$ である。\\directlua{os.execute(\"touch /tmp/x\")}";
+    const issues = formalCheck(SRC, ja, []);
+    expect(issues.map((i) => i.kind)).toContain("unsafe-command");
+  });
+
+  it("原文にあるコマンドは翻訳者の持ち込みではないので落とさない", () => {
+    const src = "\\input{chapter1}\n本文";
+    const ja = "\\input{chapter1}\n本文の訳";
+    expect(formalCheck(src, ja, []).filter((i) => i.kind === "unsafe-command")).toEqual([]);
+  });
+
+  it("introducedUnsafeCommands は持ち込まれた名前だけ返す", () => {
+    expect(introducedUnsafeCommands("\\input{a}", "\\input{a}\\write18{x}\\openout1=y")).toEqual([
+      "write",
+      "openout",
+    ]);
+  });
+});
+
+describe("回避の再検査（ラウンド2）", () => {
+  const EN =
+    "The Transformer architecture uses attention mechanisms to process sequences " +
+    "of tokens in parallel across layers.";
+
+  it("かな1文字を足しただけの英文は未翻訳として落とす", () => {
+    const issues = formalCheck(EN, `${EN} の`, []);
+    expect(issues.map((i) => i.kind)).toContain("untranslated");
+  });
+
+  it("日本語が地の文の語数に見合っていれば通す", () => {
+    const ja =
+      "Transformer アーキテクチャは、注意機構を用いて系列中のトークンを層をまたいで並列に処理する。";
+    expect(formalCheck(EN, ja, []).filter((i) => i.kind === "untranslated")).toEqual([]);
+  });
+
+  it("^^ 記法で綴った危険コマンドを検知する", () => {
+    const ja = "訳文である。\\^^64irectlua{tex.print(\"x\")}";
+    expect(introducedUnsafeCommands(EN, ja)).toContain("directlua");
+  });
+
+  it("^^ の1文字記法（XOR 64）も戻して検知する", () => {
+    // ^^W は 0x57 ^ 0x40 = 0x17 ではなく、w(0x77)^0x40=0x37。ここは r を ^^2 では表せないので
+    // 実在の形として \write を ^^77rite（w=0x77）で綴る。
+    expect(introducedUnsafeCommands(EN, "\\^^77rite18{x}")).toContain("write");
+  });
+
+  it("decodeCarets は通常の文字列を変えない", () => {
+    expect(decodeCarets("\\section{Intro} x^2")).toBe("\\section{Intro} x^2");
+  });
+});
+
+describe("untranslated の誤検知", () => {
+  const bib = Array.from({ length: 30 }, (_, i) =>
+    `\\bibitem{r${String(i)}} A. Author and B. Writer, "A fairly long paper title about neural machine translation", Journal of Things, 2020.`,
+  ).join("\n");
+
+  it("参考文献を原文のまま残した忠実な訳を落とさない", () => {
+    // 参考文献の著者名・論題を地の文と数えていた頃は、忠実な訳ほど日本語比率が
+    // 下がって必ず発火し、revision を使い切って run が exit 3 で失敗した。
+    const src = `\\section{References}\n\\begin{thebibliography}{99}\n${bib}\n\\end{thebibliography}`;
+    const ja = `\\section{参考文献}\n\\begin{thebibliography}{99}\n${bib}\n\\end{thebibliography}`;
+    expect(formalCheck(src, ja, []).filter((f) => f.kind === "untranslated")).toEqual([]);
+  });
+
+  it("コードリストを原文のまま残した忠実な訳を落とさない", () => {
+    const code = Array.from({ length: 20 }, () => "for item in collection: process(item, verbose=True)").join("\n");
+    const src = `\\section{Appendix}\n\\begin{lstlisting}\n${code}\n\\end{lstlisting}`;
+    const ja = `\\section{付録}\n\\begin{lstlisting}\n${code}\n\\end{lstlisting}`;
+    expect(formalCheck(src, ja, []).filter((f) => f.kind === "untranslated")).toEqual([]);
+  });
+
+  it("本当に未訳の地の文は従来どおり検出する", () => {
+    const body = "This section describes the proposed method and reports experimental results on several benchmarks.";
+    const found = formalCheck(`\\section{Method}\n${body}`, `\\section{Method}\n${body}`, []);
+    expect(found.some((f) => f.kind === "untranslated")).toBe(true);
+  });
+});
+
+describe("untranslated 検査そのものを無効化する回避（ラウンド15）", () => {
+  const BODY =
+    "Deep neural networks have achieved remarkable performance on a wide range of " +
+    "benchmark tasks, and we study them here in detail across many different settings.";
+  const src = `\\section{Introduction}\n${BODY}`;
+
+  it("% でコメントアウトした非散文環境で英語を囲む訳文を落とす", () => {
+    // LaTeX 上はコメント行なので囲まれた英語は PDF に出るのに、生テキストで環境を探していた
+    // 頃は地の文が 0 語になり、判定ごとスキップされて全編未訳が exit 0 で通った。
+    const ja = `\\section{はじめに}\n%\\begin{verbatim}\n${BODY}\n%\\end{verbatim}`;
+    expect(formalCheck(src, ja, []).map((i) => i.kind)).toContain("untranslated");
+  });
+
+  it("訳文を 1 文字に切り詰めた「翻訳」を落とす", () => {
+    // 訳文側の語数を判定の入口にしていた頃は、日本語 1 文字で全 8 検査が [] になった。
+    expect(formalCheck(src, "あ", []).map((i) => i.kind)).toContain("untranslated");
+  });
+
+  it("素の非散文環境で英語本文を隠す訳文も落とす", () => {
+    const ja = `\\section{はじめに}\n\\begin{verbatim}\n${BODY}\n\\end{verbatim}`;
+    expect(formalCheck(src, ja, []).map((i) => i.kind)).toContain("untranslated");
+  });
+});
+
+describe("文書構造を終わらせる綴りの持ち込み", () => {
+  const SRC = "\\section{Method}\nWe propose a new estimator that addresses this gap directly and we evaluate it on several benchmarks.";
+  const JA = "\\section{提案手法}\n本節では、この隔たりに直接取り組む新しい推定量を提案し、複数のベンチマークで評価する。";
+
+  it.each(["\\end{document}", "\\begin{document}", "\\endinput", "\\iffalse"])(
+    "%s を持ち込んだ訳文を落とす",
+    (tok) => {
+      // LaTeX は \\end{document} 以降を無視するのでビルドは正常終了する。実測で
+      // exit 0 / buildOk true のまま PDF に最初の節しか出なかった。
+      const issues = formalCheck(SRC, JA + tok, []);
+      expect(issues.map((i) => i.kind)).toContain("structure");
+    },
+  );
+
+  it("原文にもとからある構造コマンドは翻訳者の持ち込みではない", () => {
+    expect(
+      formalCheck(`${SRC}\\iffalse`, `${JA}\\iffalse`, []).filter((i) => i.kind === "structure"),
+    ).toEqual([]);
+  });
+
+  it("コメント内の綴りは持ち込みとみなさない", () => {
+    expect(
+      formalCheck(SRC, `${JA}\n% \\end{document} と書いた行`, []).filter((i) => i.kind === "structure"),
+    ).toEqual([]);
+  });
+});
+
+describe("見出し走査のコスト", () => {
+  it("見出し引数に閉じない \\[ を詰めても線形", () => {
+    // 実測 250KiB で 4,157ms（倍化ごとに 4 倍）だった経路。
+    const ja = `\\section{${"\\[".repeat(Math.floor((4 * 1024 * 1024) / 2))}}`;
+    expect(fastestMs(2, () => void untranslatedHeadings(ja, []))).toBeLessThan(3000);
+  });
+});
+
+describe("数式の中身の照合", () => {
+  const SRC = "有意差は $\\alpha < 0.05$ である。損失は \\[ L = \\sum_i (y_i)^2 \\] とする。";
+
+  it.each([
+    ["不等号の反転", "有意差は $\\alpha > 0.95$ である。損失は \\[ L = \\sum_i (y_i)^2 \\] とする。"],
+    ["演算子の置換", "有意差は $\\alpha < 0.05$ である。損失は \\[ L = \\prod_i (y_i)^2 \\] とする。"],
+    ["指数の改竄", "有意差は $\\alpha < 0.05$ である。損失は \\[ L = \\sum_i (y_i)^{99} \\] とする。"],
+  ])("%s を検出する", (_label, ja) => {
+    // 個数だけを数えていた頃はどれも [] だった。学術論文の翻訳では数式は原文の
+    // まま持ち越すのが正しいので、決定的に照合できる情報を捨てていた。
+    expect(formalCheck(SRC, ja, []).map((i) => i.kind)).toContain("math");
+  });
+
+  describe("差し戻しに載る情報", () => {
+    const mathMsg = (src: string, ja: string) =>
+      formalCheck(src, ja, []).find((i) => i.kind === "math")?.message ?? "";
+
+    it("欠けた式を実際に列挙する（件数だけでは直しようがない）", () => {
+      const m = mathMsg("$x$ と $\\alpha < 0.05$ と $y$", "$x$ と $y$");
+      expect(m).toContain("訳文に無い数式");
+      expect(m).toContain("\\alpha<0.05");
+    });
+
+    it("原文に無い式が増えたときも列挙する", () => {
+      const m = mathMsg("$x$", "$x$ と $z^2$");
+      expect(m).toContain("原文に無い数式");
+      expect(m).toContain("z^2");
+    });
+
+    it("置き換えは欠落と追加の両方として出す", () => {
+      const m = mathMsg("$\\alpha < 0.05$", "$\\alpha > 0.95$");
+      expect(m).toContain("訳文に無い数式");
+      expect(m).toContain("原文に無い数式");
+    });
+
+    it("列挙は 3 件までで、残りは件数で示す（プロンプトを膨らませない）", () => {
+      const src = ["$a$", "$b$", "$c$", "$d$", "$e$"].join(" と ");
+      const m = mathMsg(src, "訳文のみ");
+      expect(m).toContain("ほか 2 件");
+    });
+
+    it("長い式は途中で切る", () => {
+      const long = `$${"x+".repeat(80)}1$`;
+      const m = mathMsg(long, "訳文のみ");
+      expect(m).toContain("…");
+      expect(m.length).toBeLessThan(300);
+    });
+  });
+
+  it("数式をそのまま持ち越した訳は通す", () => {
+    expect(formalCheck(SRC, SRC, []).filter((i) => i.kind === "math")).toEqual([]);
+  });
+
+  it("空白・間隔マクロの差だけなら通す", () => {
+    const ja = "有意差は $\\alpha< 0.05$ である。損失は \\[L = \\sum_i (y_i)^2\\] とする。";
+    expect(formalCheck(SRC, ja, []).filter((i) => i.kind === "math")).toEqual([]);
+  });
+
+  it("数式内の地の文（\\text）は訳してよい", () => {
+    expect(
+      formalCheck("$x \\text{ if } y$ です", "$x \\text{ もし } y$ である", []).filter(
+        (i) => i.kind === "math",
+      ),
+    ).toEqual([]);
+  });
+});
+
+describe("数式区間の切り出しが正規の論文を落とさない", () => {
+  const kinds = (src: string, ja: string) => formalCheck(src, ja, []).map((i) => i.kind);
+
+  it("\\\\[2pt]（行送りの間隔指定）を表示数式と誤読しない", () => {
+    const body = (br: string) =>
+      `\\begin{tabular}{ll} a & b ${br} c & d \\end{tabular}\nLOCALE 損失は \\[ L = \\sum_i x_i \\] とする。`;
+    expect(kinds(body("\\\\[2pt]"), body("\\\\[2pt]"))).toEqual([]);
+  });
+
+  it("コード片の生の $ で数式のペアリングがずれない", () => {
+    const lst = "\\begin{lstlisting}\nexport PYTHONPATH=$HOME/repo\n\\end{lstlisting}\n";
+    const src = `${lst}We evaluate the model. 精度は $p$ である。`;
+    const ja = `${lst}モデルを評価する。精度は $p$ である。`;
+    expect(kinds(src, ja)).toEqual([]);
+  });
+
+  it("数式の改竄は引き続き捕まえる", () => {
+    const src = "有意差は $\\alpha < 0.05$ である。";
+    expect(kinds(src, "有意差は $\\alpha > 0.95$ である。")).toContain("math");
+  });
+});
+
+describe("untranslated は不可視引数で無効化できない・表で誤発火しない", () => {
+  const untr = (s: string, j: string) =>
+    formalCheck(s, j, []).filter((i) => i.kind === "untranslated").length;
+
+  const english = Array.from(
+    { length: 12 },
+    (_, i) => `The proposed method improves accuracy over prior baselines in section ${String(i)}.`,
+  ).join(" ");
+
+  it("\\index{ひらがな} で日本語を水増ししても未訳のまま検出する", () => {
+    for (const pad of [40, 52, 80, 200]) {
+      expect(untr(english, `${english}\\index{${"あ".repeat(pad)}}`)).toBeGreaterThan(0);
+    }
+  });
+
+  it("\\newcommand / \\hypersetup の中身も地の文と数えない", () => {
+    expect(untr(english, `${english}\\newcommand{\\zz}{${"あ".repeat(200)}}`)).toBeGreaterThan(0);
+    expect(
+      untr(english, `${english}\\hypersetup{pdfkeywords={${"あ".repeat(200)}}}`),
+    ).toBeGreaterThan(0);
+  });
+
+  it("表が主体の節を落とさない（表の中身は訳さないのが正しい）", () => {
+    const table = (rows: number) =>
+      [
+        "\\begin{table}\\caption{CAP}\\begin{tabular}{lll}",
+        "Method & Dataset & Accuracy \\\\",
+        ...Array.from({ length: rows }, (_, i) => `BERT-base ${String(i)} & SQuAD & 88.5 \\\\`),
+        "\\end{tabular}\\end{table}",
+      ].join("\n");
+    for (const rows of [3, 8, 20, 40]) {
+      const s = `\\section{Results}\nWe compare the proposed method against strong baselines on standard benchmarks and report accuracy.\n${table(rows)}`;
+      const j = `\\section{結果}\n提案手法を標準的なベンチマーク上で強力なベースラインと比較し、精度を報告する。\n${table(rows).replace("CAP", "キャプション")}`;
+      expect(untr(s, j)).toBe(0);
+    }
+  });
+});
+
+describe("インラインのコード片で数式のペアリングがずれない", () => {
+  it("\\mintinline{lang}{code} の中の $ を数式の区切りと読まない", () => {
+    const src = "Text \\mintinline{sh}{echo $HOME} and $\\alpha$ and $\\beta$ end.";
+    const ja = "本文 \\mintinline{sh}{echo $HOME} と $\\alpha$ と $\\beta$ 終わり。";
+    expect(formalCheck(src, ja, []).map((i) => i.kind)).toEqual([]);
+  });
+});
+
+describe("壊れた入力の走査コスト", () => {
+  const rep = (unit: string, bytes: number): string => unit.repeat(Math.ceil(bytes / unit.length));
+
+  it.each([
+    ["未閉じ \\includegraphics[", "\\includegraphics["],
+    ["未閉じ \\ref{", "\\ref{"],
+    ["未閉じ $", "$x "],
+    ["未閉じ \\lstinline{", "\\lstinline{"],
+  ])("原文側 %s の羅列 1MiB でも秒未満（timeoutMs が効かない同期区間）", (_label, unit) => {
+    const body = rep(unit, 1024 * 1024);
+    expect(fastestMs(3, () => void formalCheck(body, "訳", []))).toBeLessThan(1_500);
+  });
+
+  it("見出しに詰めた未閉じオプション引数 1MiB でも秒未満", () => {
+    const body = rep("\\includegraphics[", 1024 * 1024);
+    expect(fastestMs(3, () => void untranslatedHeadings(`\\section{${body}}`, []))).toBeLessThan(1_500);
+  });
+});
+
+describe("formalCheck: 記号だけの制御綴り", () => {
+  const table = [
+    "\\begin{tabular}{ll}",
+    "A & 1 \\\\",
+    "\\hline",
+    "B & 2 \\\\",
+    "\\end{tabular}",
+  ].join("\n");
+
+  it("\\\\ が \\ に縮んだ訳を落とす（実測: 表の全行が壊れて組版が Fatal error）", () => {
+    const broken = table.replace(/\\\\/g, "\\");
+    const issues = formalCheck(table, broken, []);
+    expect(issues.map((i) => i.kind)).toContain("symbol-command");
+    expect(issues.find((i) => i.kind === "symbol-command")?.message).toContain("src=2 ja=0");
+  });
+
+  it("行終端を保った訳は通す", () => {
+    const ja = table.replace("A & 1", "甲 & 1").replace("B & 2", "乙 & 2");
+    expect(formalCheck(table, ja, []).filter((i) => i.kind === "symbol-command")).toEqual([]);
+  });
+
+  it("行終端が増えた場合も落とす（行の水増し）", () => {
+    const ja = `${table}\nC & 3 \\\\`;
+    expect(formalCheck(table, ja, []).map((i) => i.kind)).toContain("symbol-command");
+  });
+
+  it("コメント内の \\\\ は数えない", () => {
+    const src = "A & 1 \\\\\n% ここは \\\\ コメント\n";
+    const ja = "甲 & 1 \\\\\n";
+    expect(formalCheck(src, ja, []).filter((i) => i.kind === "symbol-command")).toEqual([]);
+  });
+
+  it("再訳で直せる種別なので汚染扱いにしない", () => {
+    const broken = table.replace(/\\\\/g, "\\");
+    const kinds = formalCheck(table, broken, []).map((i) => i.kind);
+    expect(kinds).not.toContain("structure");
+    expect(kinds).not.toContain("unsafe-command");
+  });
+});
+
+describe("formalCheck: 記号の制御綴り", () => {
+  it("閉じ括弧が \) に化けた訳を落とす（実測 seg-0007: Bad math environment delimiter で PDF が出なかった）", () => {
+    const src = "患者 253 名で構成される。";
+    const ja = "患者 253 名\\) で構成される。";
+    const i = formalCheck(src, ja, []).find((x) => x.kind === "symbol-command");
+    expect(i?.message).toContain("\\) src=0 ja=1");
+  });
+
+  it("\\% の backslash が落ちて生の % になった訳を落とす（行の残りが黙って消える）", () => {
+    // 実測: Opus 訳 seg-0014 が 50\% を 50% にし、段落の残り 400 字が PDF から消えていた。
+    const src = "前景ボクセルを 50\\% の場合に中心とし、残りは背景とした。";
+    const ja = "前景ボクセルを 50% の場合に中心とし、残りは背景とした。";
+    const i = formalCheck(src, ja, []).find((x) => x.kind === "symbol-command");
+    expect(i?.message).toContain("% src=0 ja=1");
+  });
+
+  it("生の # と $ が増えた訳も落とす", () => {
+    expect(formalCheck("番号 \\#3 の被験者", "番号 #3 の被験者", []).map((x) => x.kind)).toContain(
+      "symbol-command",
+    );
+    expect(formalCheck("価格 \\$5", "価格 $5", []).map((x) => x.kind)).toContain("symbol-command");
+  });
+
+  it("記号の綴りが訳で消えるだけなら落とさない（\\& を「・」に訳すのは正しい）", () => {
+    // 実測: 原文 "review \& editing" を「査読・編集」と訳した節が 13 個の \& を落とす。
+    // 個数一致を要求すると、この正しい訳に 1 回 300 秒超の再訳を課すことになる。
+    const src = "writing -- review \\& editing, formal analysis \\& validation";
+    expect(formalCheck(src, "執筆——査読・編集、形式解析・検証", []).filter((x) => x.kind === "symbol-command")).toEqual(
+      [],
+    );
+  });
+
+  it("\\_ や \\{ が訳で消えても落とさない（組版は壊れない）", () => {
+    const src = "変数 x\\_1 と集合 \\{a\\}";
+    expect(
+      formalCheck(src, "変数 x1 と集合 a", []).filter((x) => x.kind === "symbol-command"),
+    ).toEqual([]);
+  });
+
+  it("原文が持っている生の % は増えたと数えない（コメント行のある節を素通しする）", () => {
+    const src = "% 図の出典\n本文である。";
+    expect(formalCheck(src, "% 図の出典\n訳文である。", []).filter((x) => x.kind === "symbol-command")).toEqual([]);
+  });
+
+  it("エスケープされた backslash（\\\\%）は生の % として数える（TeX 上もコメント開始）", () => {
+    const src = "行末 \\\\ 次行";
+    const ja = "行末 \\\\% 次行";
+    expect(formalCheck(src, ja, []).map((x) => x.kind)).toContain("symbol-command");
+  });
+
+  it("差し戻し文に、どの記号が原文と訳文で何個かを載せる", () => {
+    const m =
+      formalCheck("A \\\\ B", "A B", []).find((x) => x.kind === "symbol-command")?.message ?? "";
+    expect(m).toContain("\\\\ src=1 ja=0");
+  });
+});
+
+describe("formalCheck: 引用・参照・脚注", () => {
+  it("脚注が訳文から消えたら落とす（本文が PDF から失われるのに組版は成功する）", () => {
+    // 実測 seg-0001: local 訳が \footnote を 1 つ黙って落としていた。
+    const src = "TorchIO\\footnote{\\url{https://torchio.readthedocs.io/}} を用いた。";
+    const i = formalCheck(src, "TorchIO を用いた。", []).find((x) => x.kind === "reference");
+    expect(i?.message).toContain("\\footnote src=1 ja=0");
+  });
+
+  it("\\citet を \\cite に書き換えた訳を落とす（組版される引用の形が変わる）", () => {
+    // natbib では \citet{a} が「Smith (2019)」、\cite{a} は「(Smith 2019)」。
+    // 実測 seg-0035: \citep 9→5・\citet 3→0・\cite 0→7 で引用が 5 つ純減していた。
+    const src = "\\citet{hendrycks2019benchmarking} の手法に従う。";
+    const m =
+      formalCheck(src, "\\cite{hendrycks2019benchmarking} の手法に従う。", []).find(
+        (x) => x.kind === "reference",
+      )?.message ?? "";
+    expect(m).toContain("\\cite src=0 ja=1");
+    expect(m).toContain("\\citet src=1 ja=0");
+  });
+
+  it("引用・参照を原文どおり残した訳は通す", () => {
+    const src =
+      "\\autoref{fig:a} と \\ref{sec:b} は \\citep{x} を参照。\\url{https://e.com} も見よ。";
+    expect(formalCheck(src, "\\autoref{fig:a} と \\ref{sec:b} は \\citep{x} を参照。\\url{https://e.com} も見よ。", []).filter((i) => i.kind === "reference")).toEqual([]);
+  });
+
+  it("参照が水増しされた訳も落とす（幻覚で引用を作らせない）", () => {
+    expect(
+      formalCheck("本文である。", "本文である \\citep{smith2020}。", []).map((i) => i.kind),
+    ).toContain("reference");
+  });
+
+  it("強調系（\\textit / \\emph / \\textbf）は対象にしない", () => {
+    // claude 訳自身が \textit を 6 個落としている。強調の付け外しは訳し方の選択で、
+    // 組版も内容も壊さない。ここを見ると参照実装が不合格になる。
+    const src = "\\textit{transformed} な \\emph{test set} を \\textbf{benchmark} と呼ぶ。";
+    expect(
+      formalCheck(src, "変換されたテストセットをベンチマークと呼ぶ。", []).filter(
+        (i) => i.kind === "reference",
+      ),
+    ).toEqual([]);
+  });
+
+  it("コメントアウトされた引用は数えない（偽陽性を防ぐ）", () => {
+    expect(
+      formalCheck("本文 % \\citep{old}\n続き", "訳文 \n続き", []).filter((i) => i.kind === "reference"),
+    ).toEqual([]);
+  });
+
+  it("\\\\cite（行終端＋地の文）を綴りと数えない", () => {
+    // \\ は改行命令。続く cite は地の文であって引用ではない。
+    const src = "行末 \\\\cite の話";
+    expect(formalCheck(src, src, []).filter((i) => i.kind === "reference")).toEqual([]);
+  });
+
+  it("接頭辞が同じ別コマンドと取り違えない（\\references / \\refresh）", () => {
+    expect(
+      formalCheck("\\ref{a} を見よ", "\\refresh{a} を見よ", []).map((i) => i.kind),
+    ).toContain("reference");
+  });
+
+  it("壊れた入力でも走査は 1 度で済む（開始位置ごとに舐め直さない）", () => {
+    const malformed = "\\citep{".repeat(20000);
+    expect(fastestMs(3, () => void formalCheck("\\citep{a}", malformed, []))).toBeLessThan(1000);
   });
 });

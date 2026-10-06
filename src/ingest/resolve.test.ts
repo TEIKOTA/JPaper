@@ -1,4 +1,5 @@
 import { describe, it, expect, afterEach } from "vitest";
+import { fastestMs } from "../testing/timing.js";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -98,5 +99,72 @@ describe("collectFigures", () => {
     expect(
       collectFigures("\\graphicspath{{../}}\n\\includegraphics{outside.png}", src),
     ).toEqual([]);
+  });
+});
+
+describe("図の解決コストの上限", () => {
+  it("未解決参照が多くてもツリーを 1 度しか走査しない", () => {
+    // 参照ごとに listAllFiles を呼んでいた頃は O(参照数 × ファイル数) で、
+    // 2,000 参照 × 500 ファイル（main.tex 49KB）が 770ms 同期でイベントループを止めた。
+    const files = Array.from({ length: 500 }, (_, i) => `pad/p${String(i)}.png`);
+    const d = tmp(files);
+    const latex = Array.from(
+      { length: 2000 },
+      (_, i) => `\\includegraphics{nope${String(i)}}`,
+    ).join("");
+    expect(fastestMs(3, () => expect(collectFigures(latex, d)).toEqual([]))).toBeLessThan(500);
+  });
+
+  it("\\graphicspath の綴りが長くても memo キーの生成でコストが膨らまない", () => {
+    // 参照ごとに JSON.stringify([bases, ref]) でキーを作っていた頃は、base 1 本の長さに
+    // 上限が無いため二次になった（実測 8MiB で 94,071ms、中断もタイマーも配送されない）。
+    // "./" の繰り返しは baseDir へ解決するので existsSync を通り、文字列としては相異なる。
+    const d = tmp(["a.pdf"]);
+    const inner = Array.from({ length: 63 }, (_, i) => `{${"./".repeat(16_000 - i)}}`).join("");
+    const latex = `\\graphicspath{${inner}}${"\\includegraphics{a}".repeat(20_000)}`;
+    expect(
+      fastestMs(2, () => expect(collectFigures(latex, d)).toEqual([path.join(d, "a.pdf")])),
+    ).toBeLessThan(3000);
+  });
+
+  it("\\graphicspath のディレクトリ数でコストが膨らまない", () => {
+    // maxFigureRefs は参照件数しか縛らない。1 参照あたりのコストが bases に比例するので、
+    // 同じ綴りを数千個並べるだけで実測 39KiB の入力が 36,769ms 同期ブロックした。
+    const d = tmp(["fig.png"]);
+    const gp = `\\graphicspath{${"{nowhere/}".repeat(4000)}}`;
+    const body = Array.from({ length: 1000 }, (_, i) => `\\includegraphics{nope${String(i)}}`).join("");
+    expect(fastestMs(3, () => expect(collectFigures(gp + body, d)).toEqual([]))).toBeLessThan(1000);
+  });
+
+  it("\\graphicspath の宣言数も予算に計上する", () => {
+    // ディレクトリ数は 64 で抑えたが、宣言そのものは maxLatexBytes まで並べられる。
+    // 計上していなかった頃は 8MiB の入力で existsSync が 92 万回走り 1,081ms 止まった。
+    const d = tmp(["fig.png"]);
+    const decl = `\\graphicspath{${Array.from({ length: 63 }, (_, i) => `{gdir${String(i)}/}`).join("")}}`;
+    // 単体実行 230ms・全スイート併走 974ms（修正前 1,081ms）。閾値が捕まえるのは
+    // 桁違いの回帰だけなので、負荷で伸びた測定を最小値で落とす。
+    const input = decl.repeat(5000);
+    expect(
+      fastestMs(3, () => expect(() => collectFigures(input, d)).toThrowError(/上限/)),
+    ).toBeLessThan(2000);
+  });
+
+  it("実在するディレクトリが多すぎたら too-large", () => {
+    const dirs = Array.from({ length: 70 }, (_, i) => `d${String(i)}/keep.png`);
+    const d = tmp(dirs);
+    const gp = `\\graphicspath{${dirs.map((_, i) => `{d${String(i)}/}`).join("")}}`;
+    expect(() => collectFigures(`${gp}\\includegraphics{keep}`, d)).toThrowError(/上限/);
+  });
+
+  it("図の参照が上限を超えたら too-large", () => {
+    const d = tmp(["fig.png"]);
+    const latex = Array.from(
+      { length: 20 },
+      (_, i) => `\\includegraphics{nope${String(i)}}`,
+    ).join("");
+    expect(() => collectFigures(latex, d, d, 10)).toThrowError(/上限/);
+    // 同じ参照の繰り返しは 1 件として数える（正規の論文が同じ図を並べても落ちない）。
+    const repeated = "\\includegraphics{fig}".repeat(50);
+    expect(collectFigures(repeated, d, d, 10)).toEqual([path.resolve(d, "fig.png")]);
   });
 });

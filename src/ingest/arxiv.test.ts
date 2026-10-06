@@ -11,7 +11,7 @@ function okResponse(body: string): Response {
 
 describe("fetchArxivSource", () => {
   it("成功時に Buffer を返し User-Agent を付与する", async () => {
-    const fetchImpl = vi.fn(async () => okResponse("SRC"));
+    const fetchImpl = vi.fn(async (_url: string, _init?: RequestInit) => okResponse("SRC"));
     const buf = await fetchArxivSource("1706.03762", {
       fetchImpl: fetchImpl as unknown as typeof fetch,
       state: { lastRequestAt: 0 },
@@ -20,7 +20,7 @@ describe("fetchArxivSource", () => {
     expect(buf.toString("utf8")).toBe("SRC");
     const [url, init] = fetchImpl.mock.calls[0]!;
     expect(url).toContain("/e-print/1706.03762");
-    expect((init as RequestInit).headers).toMatchObject({
+    expect(init?.headers).toMatchObject({
       "User-Agent": expect.stringContaining("JPaper"),
     });
   });
@@ -28,7 +28,7 @@ describe("fetchArxivSource", () => {
   it("直近リクエストから3秒未満なら待機する", async () => {
     const sleep = vi.fn(async () => {});
     const state = { lastRequestAt: 1000 };
-    await fetchArxivSource("x", {
+    await fetchArxivSource("2203.06060", {
       fetchImpl: (async () => okResponse("S")) as unknown as typeof fetch,
       now: () => 2000,
       sleep,
@@ -42,7 +42,7 @@ describe("fetchArxivSource", () => {
   it("発火が遅延したら lastRequestAt を実時刻に補正する", async () => {
     let t = 0;
     const state = { lastRequestAt: 0 };
-    await fetchArxivSource("x", {
+    await fetchArxivSource("2203.06060", {
       fetchImpl: (async () => okResponse("S")) as unknown as typeof fetch,
       now: () => t,
       sleep: async () => {
@@ -68,8 +68,8 @@ describe("fetchArxivSource", () => {
       state,
     };
     await Promise.all([
-      fetchArxivSource("a", common),
-      fetchArxivSource("b", common),
+      fetchArxivSource("2203.06060", common),
+      fetchArxivSource("2203.06060", common),
     ]);
     expect(state.lastRequestAt).toBe(6000);
     expect(waits).toEqual([3000, 6000]);
@@ -77,7 +77,7 @@ describe("fetchArxivSource", () => {
 
   it("間隔が空いていれば待機しない", async () => {
     const sleep = vi.fn(async () => {});
-    await fetchArxivSource("x", {
+    await fetchArxivSource("2203.06060", {
       fetchImpl: (async () => okResponse("S")) as unknown as typeof fetch,
       now: () => 99999,
       sleep,
@@ -93,7 +93,7 @@ describe("fetchArxivSource", () => {
       const s = statuses.shift()!;
       return s === 200 ? okResponse("SRC") : ({ ok: false, status: s } as Response);
     });
-    const buf = await fetchArxivSource("x", {
+    const buf = await fetchArxivSource("2203.06060", {
       fetchImpl: fetchImpl as unknown as typeof fetch,
       sleep: async () => {},
       now: () => 1e9,
@@ -103,10 +103,31 @@ describe("fetchArxivSource", () => {
     expect(fetchImpl).toHaveBeenCalledTimes(3);
   });
 
+  it("本体受信中の切断（undici の terminated）も再試行する", async () => {
+    // 実測: 1 回目の実行が `arXiv 取得に失敗: terminated` で即死した。直後に curl で
+    // 同じ URL を 5.8 秒で取得できたので、再試行すれば通る種類の失敗だった。
+    let first = true;
+    const fetchImpl = vi.fn(async () => {
+      if (first) {
+        first = false;
+        throw new TypeError("terminated");
+      }
+      return okResponse("SRC");
+    });
+    const buf = await fetchArxivSource("2203.06060", {
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      sleep: async () => {},
+      now: () => 1e9,
+      state: { lastRequestAt: 0 },
+    });
+    expect(buf.toString("utf8")).toBe("SRC");
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+
   it("リトライ上限超過（429 継続）は exit 2", async () => {
     const fetchImpl = vi.fn(async () => ({ ok: false, status: 429 }) as Response);
     await expect(
-      fetchArxivSource("x", {
+      fetchArxivSource("2203.06060", {
         fetchImpl: fetchImpl as unknown as typeof fetch,
         sleep: async () => {},
         now: () => 1e9,
@@ -120,7 +141,7 @@ describe("fetchArxivSource", () => {
   it("恒久エラー（404）は再試行せず exit 2", async () => {
     const fetchImpl = vi.fn(async () => ({ ok: false, status: 404 }) as Response);
     await expect(
-      fetchArxivSource("x", {
+      fetchArxivSource("2203.06060", {
         fetchImpl: fetchImpl as unknown as typeof fetch,
         sleep: async () => {},
         now: () => 1e9,
@@ -132,7 +153,7 @@ describe("fetchArxivSource", () => {
 
   it("HTTP エラー・ネットワーク例外は exit 2", async () => {
     await expect(
-      fetchArxivSource("x", {
+      fetchArxivSource("2203.06060", {
         fetchImpl: (async () =>
           ({ ok: false, status: 404 }) as Response) as unknown as typeof fetch,
         state: { lastRequestAt: 0 },
@@ -142,7 +163,7 @@ describe("fetchArxivSource", () => {
     ).rejects.toMatchObject({ code: 2 });
 
     await expect(
-      fetchArxivSource("x", {
+      fetchArxivSource("2203.06060", {
         fetchImpl: (async () => {
           throw new Error("network down");
         }) as unknown as typeof fetch,
@@ -151,5 +172,103 @@ describe("fetchArxivSource", () => {
         sleep: async () => {},
       }),
     ).rejects.toMatchObject({ code: 2 });
+  });
+});
+
+describe("待ち行列の上限と中断", () => {
+  const common = {
+    fetchImpl: (async () => okResponse("S")) as unknown as typeof fetch,
+    now: () => 0,
+    sleep: async () => {},
+    minIntervalMs: 3000,
+  };
+
+  it("待ち時間が上限を超えるなら待たずに失敗する（無言で数分待たない）", async () => {
+    const state = { lastRequestAt: 30_000 }; // 既に 30 秒先まで予約済み
+    await expect(
+      fetchArxivSource("2203.06060", { ...common, state, maxQueueWaitMs: 10_000 }),
+    ).rejects.toMatchObject({ code: 2, kind: "busy" });
+    // 断ったぶんで待ち行列をさらに伸ばさない。
+    expect(state.lastRequestAt).toBe(30_000);
+  });
+
+  it("上限内なら従来どおり待って取得する", async () => {
+    const state = { lastRequestAt: 3000 };
+    const buf = await fetchArxivSource("2203.06060", {
+      ...common,
+      state,
+      maxQueueWaitMs: 10_000,
+    });
+    expect(buf.toString("utf8")).toBe("S");
+  });
+
+  it("待機中に abort されたら中断として抜ける", async () => {
+    const c = new AbortController();
+    const state = { lastRequestAt: 5000 };
+    const p = fetchArxivSource("2203.06060", {
+      ...common,
+      state,
+      sleep: () => new Promise<void>(() => {}), // 永久に待つ
+      signal: c.signal,
+    });
+    c.abort();
+    await expect(p).rejects.toMatchObject({ code: 6, kind: "canceled" });
+  });
+
+  it("abort 済みなら fetch を 1 度も呼ばない", async () => {
+    const c = new AbortController();
+    c.abort();
+    const fetchImpl = vi.fn(async () => okResponse("S"));
+    await expect(
+      fetchArxivSource("2203.06060", {
+        ...common,
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+        state: { lastRequestAt: 0 },
+        signal: c.signal,
+      }),
+    ).rejects.toMatchObject({ kind: "canceled" });
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+});
+
+describe("中断時の予約の巻き戻し", () => {
+  it("待機中に中断されたら予約を返す（他のリクエストの待ちを伸ばさない）", async () => {
+    const state = { lastRequestAt: 5000 };
+    const c = new AbortController();
+    const p = fetchArxivSource("2203.06060", {
+      fetchImpl: (async () => okResponse("S")) as unknown as typeof fetch,
+      now: () => 0,
+      sleep: () => new Promise<void>(() => {}),
+      minIntervalMs: 3000,
+      state,
+      signal: c.signal,
+    });
+    c.abort();
+    await expect(p).rejects.toMatchObject({ kind: "canceled" });
+    // 予約を残すと、接続してすぐ切るだけで待ち行列を伸ばせる（fetch は 1 度も起きない）。
+    expect(state.lastRequestAt).toBe(5000);
+  });
+
+  it("中断が連続しても正当なリクエストが締め出されない", async () => {
+    const state = { lastRequestAt: 0 };
+    const common = {
+      fetchImpl: (async () => okResponse("S")) as unknown as typeof fetch,
+      now: () => 0,
+      minIntervalMs: 3000,
+      maxQueueWaitMs: 10_000,
+      state,
+    };
+    for (let i = 0; i < 6; i++) {
+      const c = new AbortController();
+      const p = fetchArxivSource("2203.06060", {
+        ...common,
+        sleep: () => new Promise<void>(() => {}),
+        signal: c.signal,
+      });
+      c.abort();
+      await expect(p).rejects.toMatchObject({ kind: "canceled" });
+    }
+    const buf = await fetchArxivSource("2203.06060", { ...common, sleep: async () => {} });
+    expect(buf.toString("utf8")).toBe("S");
   });
 });

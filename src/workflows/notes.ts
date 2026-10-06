@@ -29,7 +29,12 @@ export function buildNotes(input: NotesInput): TranslatorNote[] {
     const preserve =
       t.class === "paper-defined" &&
       (t.rendering === "keep-original" || t.rendering === "bilingual");
-    const lowConfidence = t.class === "established" && !input.hasConfirmed(t.src);
+    // 契約付録 §8 の②は「preserve に倒した語」に限定している。rendering を見ないと
+    // 普通に訳した確信のある語にも訳注が付き、読み手に出る訳注が契約より増える。
+    const lowConfidence =
+      t.class === "established" &&
+      !input.hasConfirmed(t.src) &&
+      (t.rendering === "keep-original" || t.rendering === "bilingual");
 
     if (preserve) {
       notes.push({

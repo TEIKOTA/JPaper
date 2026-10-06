@@ -1,4 +1,5 @@
 import { describe, it, expect, afterEach } from "vitest";
+import { fastestMs } from "../testing/timing.js";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, symlinkSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -66,6 +67,15 @@ describe("expandInputs", () => {
     expect(out).toContain("本体");
     expect(out).not.toContain("これはコメント");
     expect(out).toContain("50\\% 完了");
+  });
+
+  it("\\@@input も畳む（scanner だけに頼らない多層防御）", () => {
+    const d = tmp({
+      "main.tex":
+        "\\documentclass{a}\\begin{document}\\makeatletter\\@@input\n/etc/hostname\n\\end{document}",
+    });
+    // build ツリー外は解決できないので削除される（残ると latexmk が実際に読む）。
+    expect(expandInputs(d, "main.tex")).not.toContain("@@input");
   });
 
   it("\\input はルート優先で解決する（TeX 準拠）", () => {
@@ -141,5 +151,98 @@ describe("expandInputs", () => {
     writeFileSync(path.join(src, "main.tex"), "A\\input{linked}B");
     symlinkSync(path.join(container, "secret.tex"), path.join(src, "linked.tex"));
     expect(expandInputs(src, "main.tex")).toBe("AB");
+  });
+});
+
+describe("main.tex 検出の上限", () => {
+  it("参照されない巨大な .tex を全部メモリへ載せない", () => {
+    const huge = `% ${"x".repeat(2 * 1024 * 1024)}`; // 前文に \\documentclass を含まない
+    const d = tmp({
+      "main.tex": "\\documentclass{a}\\begin{document}本文\\end{document}",
+      "appendix-huge.tex": huge,
+    });
+    // 読むのは先頭 256KB までなので、巨大ファイルがあっても検出は成立する。
+    expect(detectMainTex(d)).toBe("main.tex");
+  });
+
+  it("常駐量が .tex の件数に比例しない", () => {
+    // 前文を全件分ため込んでいた頃は 1,200 件で heapUsed 307MB（上限件数なら約 2.5GB）に達し、
+    // --max-old-space-size=256 で OOM 死した。翻訳を始める前にワーカーごと落ちる。
+    const files: Record<string, string> = {
+      "main.tex": "\\documentclass{a}\\begin{document}x\\end{document}",
+    };
+    const pad = `% ${"x".repeat(256 * 1024)}`;
+    for (let i = 0; i < 200; i++) files[`pad${String(i)}.tex`] = pad;
+    const d = tmp(files);
+    global.gc?.();
+    const before = process.memoryUsage().heapUsed;
+    expect(detectMainTex(d)).toBe("main.tex");
+    // 保持していれば 200 × 256KB ≒ 50MB 増える。1 件分しか持たなければ増えない。
+    expect(process.memoryUsage().heapUsed - before).toBeLessThan(16 * 1024 * 1024);
+  });
+
+  it(".tex の数が上限を超えたら too-large", () => {
+    const files: Record<string, string> = {
+      "main.tex": "\\documentclass{a}\\begin{document}x\\end{document}",
+    };
+    for (let i = 0; i < 5; i++) files[`extra${String(i)}.tex`] = "% pad";
+    const d = tmp(files);
+    expect(() => detectMainTex(d, 3)).toThrowError(/上限/);
+  });
+});
+
+describe("展開の予算", () => {
+  it("指数展開の入力を即座に too-large で落とす", () => {
+    // 各ファイルが次を 2 回読むダイヤモンド型。stack.includes は循環しか止めないので
+    // 予算が無いと指数的に膨らみ、実測で 508 バイトの入力がループを 205 秒占有した。
+    const files: Record<string, string> = {
+      "main.tex": "\\documentclass{a}\\begin{document}\\input{l0}\\end{document}",
+    };
+    for (let i = 0; i < 26; i++) {
+      files[`l${String(i)}.tex`] =
+        i === 25 ? "終端" : `\\input{l${String(i + 1)}}\\input{l${String(i + 1)}}`;
+    }
+    const d = tmp(files);
+    // 単体実行 80ms・全スイート併走 758ms（修正前 1,096ms）。閾値が捕まえるのは
+    // 桁違いの回帰だけなので、負荷で伸びた測定を最小値で落とす。
+    expect(
+      fastestMs(3, () =>
+        expect(() => expandInputs(d, "main.tex", { maxBytes: 8 * 1024 * 1024 })).toThrowError(/上限/),
+      ),
+    ).toBeLessThan(2000);
+  });
+
+  it("解決だけで終わる \\input の羅列も上限で止まる", () => {
+    // 不在先への \input は展開もバイトも増やさないのに existsSync と realpathSync を叩く。
+    // 実測 3.8MB（gzip すれば数 KB）の羅列が 1,096ms 同期でイベントループを止め、
+    // しかも 47 バイトを返して「成功」していた。
+    const body = "\\input{zz}".repeat(400_000);
+    const d = tmp({ "main.tex": `\\documentclass{a}\\begin{document}${body}\\end{document}` });
+    expect(
+      fastestMs(2, () =>
+        expect(() => expandInputs(d, "main.tex", { maxBytes: 8 * 1024 * 1024 })).toThrowError(/上限/),
+      ),
+    ).toBeLessThan(3000);
+  });
+
+  it("入れ子の深さにも上限がある", () => {
+    const files: Record<string, string> = {
+      "main.tex": "\\documentclass{a}\\begin{document}\\input{l0}\\end{document}",
+    };
+    for (let i = 0; i < 40; i++) files[`l${String(i)}.tex`] = `\\input{l${String(i + 1)}}`;
+    files["l40.tex"] = "終端";
+    const d = tmp(files);
+    expect(() => expandInputs(d, "main.tex", { maxBytes: 8 * 1024 * 1024 })).toThrowError(/段/);
+  });
+
+  it("正規の入れ子は通す", () => {
+    const d = tmp({
+      "main.tex": "\\documentclass{a}\\begin{document}\\input{sec/intro}\\end{document}",
+      "sec/intro.tex": "序論\\input{sec/body}",
+      "sec/body.tex": "本体",
+    });
+    const out = expandInputs(d, "main.tex", { maxBytes: 8 * 1024 * 1024 });
+    expect(out).toContain("序論");
+    expect(out).toContain("本体");
   });
 });

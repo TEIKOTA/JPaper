@@ -1,7 +1,8 @@
 # 2026/07/23 構造化出力をプロバイダ能力で分岐（Ollama はネイティブ JSON モード・claude はプロンプト維持）
 
 # Status
-- accepted
+- superseded
+- Ollama 側の決定は [Ollama へ format:"json" を送らない ADR](./20260815-drop-ollama-json-mode.md) が置き換える（claude 側の決定は据え置き）。
 - [LLM プロバイダ抽象化 ADR](./20260709-llm-provider-abstraction-local-ollama-and-cloud-cli.md) を出力形式の観点で補強する。
 
 # Situation
