@@ -122,7 +122,7 @@ expect_out "print-issues: 複数・昇順・重複排除" "3
 fixes #3
 closes #12"
 expect_out "print-issues: cross-repo は対象外" "" print_issues "feat: x" "Closes owner/repo#5"
-expect_out "print-issues: chore は空" "" print_issues "chore: x" "Closes #12"
+expect_out "print-issues: chore でも明記した番号を返す" "12" print_issues "chore: x" "Closes #12"
 expect_out "print-issues: HTML コメント内は空" "" print_issues "feat: x" "<!-- Closes #9 -->"
 
 # PR テンプレート自体と gate の整合（テンプレの構造を gate 自身が拒否する

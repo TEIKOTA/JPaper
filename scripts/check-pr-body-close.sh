@@ -6,8 +6,13 @@
 #   body はファイル引数か stdin で渡す。
 #   --title の type が chore の場合、issue 連結を免除する（chore は issue なしレーン）。
 #   --print-issues は合否判定をせず、close keyword が参照する同一 repo の issue 番号だけを
-#   出力する（chore / cross-repo 参照は出力なし）。CI の issue 実在検証が使う。
+#   出力する（chore の合否免除とは独立、cross-repo 参照は出力なし）。issue 実在検証が使う。
 set -euo pipefail
+
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+  printf 'Usage: scripts/check-pr-body-close.sh [--title <PR title>] [--print-issues] [<body-file>]\nPR body の issue close keyword または例外理由を検査する。\n'
+  exit 0
+fi
 
 title=""
 body_file=""
@@ -74,9 +79,6 @@ visible_body="$(printf '%s\n' "$body" | sanitize_body)"
 # --print-issues: 合否判定はせず、close keyword 行の先頭一致から同一 repo の
 # issue 番号を抽出して出力する（cross-repo 参照 owner/repo#N は対象外）。
 if [[ $print_issues -eq 1 ]]; then
-  if printf '%s\n' "$title" | grep -qE '^chore(\([a-zA-Z0-9._/-]+\))?!?: '; then
-    exit 0
-  fi
   printf '%s\n' "$visible_body" \
     | grep -iE '^[ ]{0,3}([-*][[:space:]]*)?(close[sd]?|fix(e[sd])?|resolve[sd]?)[[:space:]]*:?[[:space:]]+([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)?#[0-9]+([[:space:]]|$)' \
     | sed -E 's/^[ ]{0,3}([-*][[:space:]]*)?//' \

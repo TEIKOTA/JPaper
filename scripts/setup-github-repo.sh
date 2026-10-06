@@ -21,7 +21,7 @@ while [[ $# -gt 0 ]]; do
     --prune) PRUNE=1; shift;;
     --dry-run) DRY_RUN=1; shift;;
     --enable-actions) ENABLE_ACTIONS=1; shift;;
-    -h|--help) sed -nE 's/^# ?//p' "$0" | sed -n '1,11p'; exit 0;;
+    -h|--help) sed -n '2,12p' "$0" | sed -nE 's/^# ?//p'; exit 0;;
     *) echo "不明な引数: $1" >&2; exit 2;;
   esac
 done

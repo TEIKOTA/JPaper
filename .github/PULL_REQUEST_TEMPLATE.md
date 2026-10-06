@@ -26,6 +26,7 @@
 実施内容:
 
 -
+- [ ] PR 作成・編集後に `scripts/check-pr.sh` を実行した（結果: ）
 
 ## docs / ADR
 
