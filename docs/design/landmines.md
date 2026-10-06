@@ -81,5 +81,23 @@
 ## `src/tools/bilingual-latex.ts` — `renderPairs` が `\maketitle` を `\jpTitleBlock` の左右ペアに置き換える
 
 - **おかしく見える点**: 原文と訳文の段落をそのまま並べる関数なのに、最初の `\maketitle`（コメント外・環境や波括弧の外）だけは消して、その位置にタイトルブロック（左=原文の前文と `\maketitle` までの本文にある最後の `\title`／右=和訳 main.tex の前文と本文の同じ範囲の `\title`）を差し込んでいる。`\maketitle` と同じ段落の前の部分（本文の `\title` / `\author`）は 1 行として残す。
-- **なぜ意図的か**: 学会クラス（neurips 等）の `\maketitle` は全幅で、脚注（`\thanks`・学会表記）の挿入物が後続の paracol と衝突して空白ページが出る（PoC で実測）。タイトルと著者を左右の半分にそれぞれ置く仕様なので、`\thanks` を潰した著者とタイトルだけのブロックを各列に置く。タイトルは paracol の中に入れるので、本文先頭がタイトルでも空の paracol は作らない。本文に `\title` を書く論文（article・llncs・revtex で一般的）で前文だけを見ると左右とも空のタイトルになり、`\maketitle` が段落の先頭に単独で無いと左の列で `\maketitle` が実行される。article の `\maketitle` は実行後に `\title` / `\author` を `\relax` にするので、右の列ではタイトルが素の文字列で出る（いずれも実測）。前の部分を残すのは、`\author` が `\@author` を大域に定義してタイトルブロックがそれを使うため（`\title` / `\author` は何も出力しない）。frontmatter 環境（elsarticle）や環境の中の `\maketitle` は置き換えず、`titleUnplaced` で警告する。
+- **なぜ意図的か**: 学会クラス（neurips 等）の `\maketitle` は全幅で、脚注（`\thanks`・学会表記）の挿入物が後続の paracol と衝突して空白ページが出る（PoC で実測）。タイトルと著者を左右の半分にそれぞれ置く仕様なので、`\thanks` を潰した著者とタイトルだけのブロックを各列に置く。タイトルは paracol の中に入れるので、本文先頭がタイトルでも空の paracol は作らない。本文に `\title` を書く論文（article・llncs・revtex で一般的）で前文だけを見ると左右とも空のタイトルになり、`\maketitle` が段落の先頭に単独で無いと左の列で `\maketitle` が実行される。article の `\maketitle` は実行後に `\title` / `\author` を `\relax` にするので、右の列ではタイトルが素の文字列で出る（いずれも実測）。前の部分を残すのは、`\author` が `\@author` を大域に定義してタイトルブロックがそれを使うため（`\title` / `\author` は何も出力しない）。環境の中の `\maketitle` は置き換えず、`titleUnplaced` で警告する。frontmatter 環境（elsarticle）のペアは `\maketitle` を探さずにタイトルとして扱う（下の `replaceFrontmatter`）。
 - **正本ポインタ**: [対訳 PDF ADR](../adr/20261006-bilingual-side-by-side-pdf.md)（Decision「タイトルと著者」）。
+
+## `src/tools/bilingual-latex.ts` — `replaceFrontmatter` が elsarticle の `frontmatter` 環境を `jpFrontmatter` に差し替える
+
+- **おかしく見える点**: 原文と訳文をそのまま並べる組み立てなのに、左右の `\begin{frontmatter}` / `\end{frontmatter}` だけを、前文（`SETUP`）で定義した `jpFrontmatter` に名前ごと置き換えている。`jpFrontmatter` は列の中で `\title` / `\author` を集めてタイトルブロックを組み、`\corref` / `\cortext` / `\fnref` / `\fntext` / `\tnoteref` / `\tnotetext` / `\ead` / `\affiliation` / `\address` を潰し、`abstract` / `keyword` / `highlights` / `graphicalabstract` をその場に組む。所属と責任著者・資金などの注は対訳 PDF に出ない。`abstract` / `keyword` の見出しは左が `Abstract` / `Keywords`、右が `概要` / `キーワード`。
+- **なぜ意図的か**: elsarticle の `frontmatter` を paracol の左右でそのまま実行すると、`\author` が大域に積み増されて右の列の著者が左右 2 回分になり、題も左右が連結され、`abstract` は保存した箱を全幅で出すので折り目をまたぎ、1 ページ目が白紙になる（実測: 2410.16038）。frontmatter は空行を含んでも `balanceParagraphs` で 1 ペアにまとまるので、ペア単位で差し替えられる。所属・注を出さないのは `\jpTitleBlock` が `\thanks` を潰すのと同じ扱い（タイトルと著者だけを左右に置く）。
+- **正本ポインタ**: 契約付録 §8（対訳 PDF）、[対訳 PDF ADR](../adr/20261006-bilingual-side-by-side-pdf.md)（Decision「タイトルと著者」）。
+
+## `src/tools/bilingual-latex.ts` — `paracolBody` が `\begin{paracol}{2}` の直後で `\jpRobustNotes` を実行する
+
+- **おかしく見える点**: paracol を開いた直後に `\MakeRobust\footnote`（`\footnotemark` / `\footnotetext` も）を入れている。和訳 PDF では不要な命令に見える。
+- **なぜ意図的か**: paracol は `\begin{paracol}` の中で `\footnote` を頑丈でない自前の定義（`\@ifstar` で分岐）に差し替える。見出しの引数の中の脚注（訳注の初出脚注は `\subsection{…(Consistency Assessment Scenario)\footnote{訳注: …}}` のように見出しに入る）は目次・しおりへ書き出す途中で展開され、`Argument of \pcol@iadjustfnctr has an extra }` の致命エラーになる（実測: 2410.16038。paracol なしの和訳 PDF は同じ見出しで組める）。差し替えは `\begin{paracol}` の中で行われるので、前文やフックでは間に合わず、開いた直後に頑丈にする。
+- **正本ポインタ**: 契約付録 §8（対訳 PDF）。
+
+## `src/tools/bilingual-latex.ts` — `muteBibliography` が右の列の `\bibliography` / `\bibliographystyle` を `\jpNoAux` で包む
+
+- **おかしく見える点**: 右（和訳）の列だけ `\bibliography{…}` / `\bibliographystyle{…}` を `\jpNoAux{…}`（`\@fileswfalse` の群）で包んでいる。左は原文のまま。
+- **なぜ意図的か**: 両方の列で実行すると `.aux` に `\bibdata` / `\bibstyle` が 2 回書かれ、bibtex が `Illegal, another \bibdata command` で異常終了し、latexmk が再実行を止めるので引用・参照が全部未解決のまま残る（実測: 2410.16038 で未解決 72 件、build gate が失敗）。`.aux` へ書かないだけで、右の列でも `.bbl` を読んで参考文献一覧は出る。
+- **正本ポインタ**: 契約付録 §8（対訳 PDF）。

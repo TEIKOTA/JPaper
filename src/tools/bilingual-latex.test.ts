@@ -12,6 +12,8 @@ import {
   paracolBody,
   titleBlock,
   assembleBilingual,
+  muteBibliography,
+  replaceFrontmatter,
 } from "./bilingual-latex.js";
 import { findUnsafeTexCommands } from "./tex-safety.js";
 
@@ -234,9 +236,10 @@ describe("タイトル", () => {
       { segmentId: "s", left: "% \\maketitle\nA", right: "% \\maketitle\n和" },
       {
         segmentId: "s",
-        left: "\\begin{frontmatter}\n\\title{T}\n\\maketitle\n\\end{frontmatter}",
-        right: "\\begin{frontmatter}\n\\title{題}\n\\maketitle\n\\end{frontmatter}",
+        left: "\\begin{center}\n\\title{T}\n\\maketitle\n\\end{center}",
+        right: "\\begin{center}\n\\title{題}\n\\maketitle\n\\end{center}",
       },
+      { segmentId: "s", left: "{\\maketitle}", right: "{\\maketitle}" },
     ];
     const { blocks, titled } = renderPairs(pairs, { left: "", right: "" });
     expect(titled).toBe(false);
@@ -247,13 +250,13 @@ describe("タイトル", () => {
     expect(bilingualPreamble("")).toContain("\\bfseries\\begingroup\\let\\thanks\\@gobble #1\\endgroup");
   });
 
-  it("frontmatter 環境のようにタイトルブロックへ置き換えられなければ titleUnplaced で知らせる", () => {
-    const front = "\\begin{frontmatter}\n\\title{T}\n\\begin{abstract}\nX\n\\end{abstract}\n\\end{frontmatter}";
+  it("環境の中の \\maketitle のようにタイトルブロックへ置き換えられなければ titleUnplaced で知らせる", () => {
+    const boxed = "\\begin{center}\n\\maketitle\n\\end{center}";
     const out = assembleBilingual({
-      cleanLatex: "\\documentclass{elsarticle}\\begin{document}\\end{document}",
-      translatedMainTex: "\\documentclass{elsarticle}\n\\begin{document}\n\\end{document}\n",
-      source: [{ id: "seg-0000", tex: `${front}\n\nA` }],
-      translated: [{ id: "seg-0000", tex: `${front}\n\n和` }],
+      cleanLatex: "\\documentclass{article}\\title{T}\\begin{document}\\end{document}",
+      translatedMainTex: "\\documentclass{article}\\title{題}\n\\begin{document}\n\\end{document}\n",
+      source: [{ id: "seg-0000", tex: `${boxed}\n\nA` }],
+      translated: [{ id: "seg-0000", tex: `${boxed}\n\n和` }],
     });
     expect(out.titleUnplaced).toBe(true);
     const plain = assembleBilingual({
@@ -263,6 +266,76 @@ describe("タイトル", () => {
       translated: [{ id: "seg-0000", tex: "和" }],
     });
     expect(plain.titleUnplaced).toBe(false);
+  });
+});
+
+describe("elsarticle の frontmatter", () => {
+  const front = (title: string) =>
+    `\\begin{frontmatter}\n\\title{${title}}\n\\author[a]{Ann\\corref{c1}}\n\\cortext[c1]{Corr}\n\n\\begin{abstract}\nX\n\\end{abstract}\n\\end{frontmatter}`;
+
+  it("左右それぞれの frontmatter を列の中で組む jpFrontmatter に置き換え、見出しを左右の言語で渡す", () => {
+    expect(replaceFrontmatter(front("T"), "left")).toBe(
+      front("T")
+        .replace("\\begin{frontmatter}", "\\begin{jpFrontmatter}{Abstract}{Keywords}")
+        .replace("\\end{frontmatter}", "\\end{jpFrontmatter}"),
+    );
+    expect(replaceFrontmatter(front("題"), "right")).toContain("\\begin{jpFrontmatter}{概要}{キーワード}");
+    expect(replaceFrontmatter(front("題"), "right")).not.toContain("{frontmatter}");
+  });
+
+  it("frontmatter のペアをタイトルとして扱い、titleUnplaced にしない", () => {
+    const out = assembleBilingual({
+      cleanLatex: "\\documentclass{elsarticle}\\begin{document}\\end{document}",
+      translatedMainTex: "\\documentclass{elsarticle}\n\\begin{document}\n\\end{document}\n",
+      source: [{ id: "seg-0000", tex: `${front("T")}\n\nA` }],
+      translated: [{ id: "seg-0000", tex: `${front("題")}\n\n和` }],
+    });
+    expect(out.titleUnplaced).toBe(false);
+    expect(out.mainTex).toContain("\\begin{jpFrontmatter}{Abstract}{Keywords}\n\\title{T}");
+    expect(out.mainTex).toContain("\\switchcolumn\n\\begin{jpFrontmatter}{概要}{キーワード}\n\\title{題}");
+    expect(out.mainTex).not.toContain("\\begin{frontmatter}");
+    expect(out.pairs).toBe(2);
+  });
+
+  it("コメント内の \\begin{frontmatter} はタイトルとして扱わない", () => {
+    const { titled } = renderPairs([{ segmentId: "s", left: "% \\begin{frontmatter}\nA", right: "和" }], {
+      left: "",
+      right: "",
+    });
+    expect(titled).toBe(false);
+  });
+
+  it("前文の jpFrontmatter は著者の脚注系コマンドを列の中で潰し、abstract・keyword をその場で組む", () => {
+    const pre = bilingualPreamble("");
+    expect(pre).toContain("\\newenvironment{jpFrontmatter}[2]{");
+    for (const s of ["\\let\\corref\\@gobble", "\\let\\cortext\\jp@gobbleom", "\\let\\tnoteref\\@gobble", "\\let\\ead\\jp@gobbleom"]) {
+      expect(pre).toContain(s);
+    }
+    expect(pre).toContain("\\def\\abstract{\\jp@fmhead");
+    expect(pre).toContain("\\def\\keyword{\\jp@fmhead");
+  });
+});
+
+describe("参考文献と脚注", () => {
+  it("右の \\bibliography / \\bibliographystyle は .aux へ書かない形で包む", () => {
+    expect(muteBibliography("\\bibliographystyle{unsrt}\n\\bibliography{ref,more}")).toBe(
+      "\\jpNoAux{\\bibliographystyle{unsrt}}\n\\jpNoAux{\\bibliography{ref,more}}",
+    );
+    expect(muteBibliography("\\bibliographyfoo{x}")).toBe("\\bibliographyfoo{x}");
+  });
+
+  it("包むのは右（和訳）だけで、左は原文のまま", () => {
+    const { blocks } = renderPairs([{ segmentId: "s", left: "\\bibliography{ref}", right: "\\bibliography{ref}" }], {
+      left: "",
+      right: "",
+    });
+    expect(blocks).toEqual(["\\bibliography{ref}\n\\switchcolumn\n\\jpNoAux{\\bibliography{ref}}\n\\switchcolumn*"]);
+    expect(bilingualPreamble("")).toContain("\\newcommand{\\jpNoAux}[1]{\\begingroup\\@fileswfalse#1\\endgroup}");
+  });
+
+  it("paracol の先頭で脚注命令を頑丈にする（見出しの中の訳注脚注のため）", () => {
+    expect(paracolBody(["A"])).toBe("\\begin{paracol}{2}\n\\jpRobustNotes\nA\n\\end{paracol}\n");
+    expect(bilingualPreamble("")).toContain("\\MakeRobust\\footnote\\MakeRobust\\footnotemark\\MakeRobust\\footnotetext");
   });
 });
 
@@ -280,7 +353,7 @@ describe("paracol 本文", () => {
     });
     expect(out.mainTex).not.toMatch(/\\begin\{paracol\}\{2\}\s*\\end\{paracol\}/);
     expect(out.mainTex.match(/\\begin\{paracol\}/g)).toHaveLength(1);
-    expect(out.mainTex).toContain(`\\begin{paracol}{2}\n${titleBlock("T", "題")}\n\n`);
+    expect(out.mainTex).toContain(`\\begin{paracol}{2}\n\\jpRobustNotes\n${titleBlock("T", "題")}\n\n`);
     expect(out.pairs).toBe(2);
   });
 });
@@ -321,7 +394,7 @@ describe("前文", () => {
     expect(body).not.toContain("\\AddToShipoutPictureFG*");
     expect(body).toContain("原文 p.\\thepage");
     expect(body).toContain("和訳 p.\\thepage");
-    expect(body).toContain("\\begin{paracol}{2}\nA\n\\switchcolumn\n和\n\\switchcolumn*\n\\end{paracol}\n\\end{document}\n");
+    expect(body).toContain("\\begin{paracol}{2}\n\\jpRobustNotes\nA\n\\switchcolumn\n和\n\\switchcolumn*\n\\end{paracol}\n\\end{document}\n");
     expect(out.mainTex.match(/\\begin\{document\}/g)).toHaveLength(1);
     expect(out.fallbackSegments).toEqual([]);
   });

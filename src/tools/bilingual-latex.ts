@@ -135,6 +135,24 @@ export function dropLabels(tex: string): string {
   return tex.replace(/^[ \t]*\\label\{[^{}]*\}[ \t]*\n/gm, "").replace(/\\label\{[^{}]*\}/g, "");
 }
 
+// ⚠ landmines.md
+export function muteBibliography(tex: string): string {
+  return tex.replace(/\\bibliography(?:style)?\{[^{}]*\}/g, (m) => `\\jpNoAux{${m}}`);
+}
+
+const FRONTMATTER_LABELS = { left: "{Abstract}{Keywords}", right: "{概要}{キーワード}" } as const;
+
+// ⚠ landmines.md
+export function replaceFrontmatter(tex: string, side: "left" | "right"): string {
+  return tex
+    .replace(/\\begin\{frontmatter\}/g, `\\begin{jpFrontmatter}${FRONTMATTER_LABELS[side]}`)
+    .replace(/\\end\{frontmatter\}/g, "\\end{jpFrontmatter}");
+}
+
+function hasFrontmatter(tex: string): boolean {
+  return stripComments(tex).includes("\\begin{frontmatter}");
+}
+
 function braceBody(s: string, open: number): string | undefined {
   let depth = 1;
   for (let j = open; j < s.length; j++) {
@@ -169,12 +187,37 @@ const SETUP = [
   "\\setlength{\\columnsep}{32mm}",
   "\\setlength{\\parindent}{1em}",
   "\\makeatletter",
-  "\\newcommand{\\jpTitleBlock}[1]{%",
+  "\\newcommand{\\jp@titleblock}[2]{%",
   "  \\par\\hrule height 4\\p@\\vskip 0.15in",
   "  {\\centering\\Large\\bfseries\\begingroup\\let\\thanks\\@gobble #1\\endgroup\\par}",
   "  \\vskip 0.2in\\hrule height 1\\p@\\vskip 0.1in",
-  "  {\\centering\\begingroup\\let\\thanks\\@gobble\\@author\\endgroup\\par}",
+  "  {\\centering\\begingroup\\let\\thanks\\@gobble #2\\endgroup\\par}",
   "  \\vskip 0.15in}",
+  "\\newcommand{\\jpTitleBlock}[1]{\\jp@titleblock{#1}{\\@author}}",
+  // ⚠ landmines.md
+  "\\newif\\ifjp@fmpending",
+  "\\def\\jp@fmhead{\\ifjp@fmpending\\global\\jp@fmpendingfalse\\jp@titleblock{\\jp@fmtitle}{\\jp@fmauthors}\\fi}",
+  "\\def\\jp@gobbleom{\\@ifnextchar[{\\jp@gobbleom@}{\\jp@gobbleom@[]}}",
+  "\\def\\jp@gobbleom@[#1]#2{}",
+  "\\def\\jp@fm@title[#1]#2{\\def\\jp@fmtitle{#2}}",
+  "\\def\\jp@fm@author[#1]#2{\\ifx\\jp@fmauthors\\@empty\\def\\jp@fmauthors{#2}\\else" +
+    "\\expandafter\\def\\expandafter\\jp@fmauthors\\expandafter{\\jp@fmauthors, #2}\\fi}",
+  "\\newenvironment{jpFrontmatter}[2]{%",
+  "  \\global\\jp@fmpendingtrue\\def\\jp@fmtitle{}\\let\\jp@fmauthors\\@empty",
+  "  \\def\\title{\\@ifnextchar[{\\jp@fm@title}{\\jp@fm@title[]}}%",
+  "  \\def\\author{\\@ifnextchar[{\\jp@fm@author}{\\jp@fm@author[]}}%",
+  "  \\let\\corref\\@gobble\\let\\fnref\\@gobble\\let\\tnoteref\\@gobble\\let\\thanksref\\@gobble\\let\\dochead\\@gobble",
+  "  \\let\\cortext\\jp@gobbleom\\let\\fntext\\jp@gobbleom\\let\\tnotetext\\jp@gobbleom\\let\\ead\\jp@gobbleom",
+  "  \\let\\affiliation\\jp@gobbleom\\let\\address\\jp@gobbleom",
+  "  \\def\\abstract{\\jp@fmhead\\par\\medskip\\noindent\\textbf{#1}\\par\\noindent\\ignorespaces}\\def\\endabstract{\\par}%",
+  "  \\def\\keyword{\\jp@fmhead\\par\\medskip\\noindent\\textit{#2:}\\ \\def\\sep{\\unskip, }\\ignorespaces}\\def\\endkeyword{\\par}%",
+  "  \\def\\highlights{\\jp@fmhead\\par\\medskip\\noindent\\textbf{Highlights}\\begin{itemize}}\\def\\endhighlights{\\end{itemize}}%",
+  "  \\def\\graphicalabstract{\\jp@fmhead\\par\\medskip\\noindent\\textbf{Graphical Abstract}\\par}\\def\\endgraphicalabstract{\\par}%",
+  "}{\\jp@fmhead\\par\\medskip}",
+  // ⚠ landmines.md
+  "\\newcommand{\\jpRobustNotes}{\\MakeRobust\\footnote\\MakeRobust\\footnotemark\\MakeRobust\\footnotetext}",
+  // ⚠ landmines.md
+  "\\newcommand{\\jpNoAux}[1]{\\begingroup\\@fileswfalse#1\\endgroup}",
   // ⚠ landmines.md
   "\\renewenvironment{figure}[1][]{\\par\\vspace{1mm}\\begin{center}\\def\\@captype{figure}}{\\end{center}\\par\\vspace{1mm}}",
   "\\renewenvironment{figure*}[1][]{\\par\\vspace{1mm}\\begin{center}\\def\\@captype{figure}}{\\end{center}\\par\\vspace{1mm}}",
@@ -228,7 +271,9 @@ export function renderPairs(
   const blocks: string[] = [];
   const push = (left: string, right: string): void => {
     if (left.trim() === "" && right.trim() === "") return;
-    blocks.push(`${left}\n\\switchcolumn\n${dropLabels(provideCommands(right))}\n\\switchcolumn*`);
+    const l = replaceFrontmatter(left, "left");
+    const r = muteBibliography(dropLabels(provideCommands(replaceFrontmatter(right, "right"))));
+    blocks.push(`${l}\n\\switchcolumn\n${r}\n\\switchcolumn*`);
   };
   let seenLeft = preambles.left;
   let seenRight = preambles.right;
@@ -236,6 +281,11 @@ export function renderPairs(
   for (const p of pairs) {
     if (titled) {
       push(p.left, p.right);
+      continue;
+    }
+    if (hasFrontmatter(p.left)) {
+      push(p.left, p.right);
+      titled = true;
       continue;
     }
     const l = findMaketitle(p.left);
@@ -259,7 +309,7 @@ export function renderPairs(
 }
 
 export function paracolBody(blocks: string[]): string {
-  return blocks.length === 0 ? "" : `\\begin{paracol}{2}\n${blocks.join("\n\n")}\n\\end{paracol}\n`;
+  return blocks.length === 0 ? "" : `\\begin{paracol}{2}\n\\jpRobustNotes\n${blocks.join("\n\n")}\n\\end{paracol}\n`;
 }
 
 // translatedMainTex は採用されたレイアウトで組んだ和訳 main.tex（前文をそのまま使う）。

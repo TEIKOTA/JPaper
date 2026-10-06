@@ -732,7 +732,7 @@ async function typesetBilingual(
     }
     if (b.titleUnplaced) {
       surface(
-        "対訳: タイトルを左右のタイトルブロックに置き換えられませんでした（frontmatter 環境など）。タイトル周りの体裁が崩れている可能性があります",
+        "対訳: タイトルを左右のタイトルブロックに置き換えられませんでした（環境の中の \\maketitle など）。タイトル周りの体裁が崩れている可能性があります",
       );
     }
     let g = await gate(b.mainTex);
