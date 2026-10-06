@@ -40,7 +40,7 @@ function renderUser(input: TranslatorIn, doc: DocContext): string {
   lines.push(
     "## 指示",
     input.priorJa === undefined
-      ? `本文のみを日本語に訳し、${FORMAT}`
+      ? `本文と図表のキャプション（\\caption の中身）を日本語に訳し、LaTeX の構造・制御綴り・参照・数式・図のパスは原文どおり残す。${FORMAT}`
       : `指摘された箇所を必ず直す。直っていない訳をそのまま返さない。それ以外は前回の訳を土台にして残し、指摘と関係のない文を訳し直さない。直した全文を返し、${FORMAT}`,
   );
   return lines.join("\n\n");
