@@ -25,8 +25,10 @@ yarn-error.log*
 !.vscode/extensions.json
 .idea/
 
-# Claude Code のローカル設定（.claude は .agents への symlink）
+# Claude Code のローカル設定（.claude が実ディレクトリ、.agents は .claude への symlink）
+.claude/settings.local.json
 .agents/settings.local.json
+**/.claude/scheduled_tasks.lock
 
 # TypeScript incremental build info
 *.tsbuildinfo
@@ -44,3 +46,7 @@ coverage/
 
 # misc
 *.local
+
+# Python のバイトコード（hook の判定器を import した検証などで生成される）
+__pycache__/
+*.pyc

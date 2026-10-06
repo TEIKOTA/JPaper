@@ -7,6 +7,11 @@
 #   check-branch-name.sh                pre-push stdin の ref、なければ現在のブランチを検査
 set -euo pipefail
 
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+  printf 'Usage: scripts/check-branch-name.sh [<branch-name>]\n指定名、pre-push stdin、または現在の branch 名を検査する。\n'
+  exit 0
+fi
+
 script_dir="$(cd "$(dirname "$0")" && pwd)"
 types="$(bash "$script_dir/check-commit-msg.sh" --types)"
 
