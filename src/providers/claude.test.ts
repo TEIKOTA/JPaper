@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { makeClaudeClient } from "./claude.js";
+import { makeClaudeClient, MAX_TURNS } from "./claude.js";
 import { isTransient } from "../types/errors.js";
 import type { LlmCallEvent } from "../types/contract.js";
 
@@ -20,6 +20,15 @@ describe("makeClaudeClient", () => {
     expect(args).toContain("SYS");
     expect(args).toContain("USR");
     expect(args).not.toContain("--model");
+  });
+
+  it("--max-turns は 2 ターン以上（CLI が内部で 2 ターン使っても error_max_turns で落とさない）", async () => {
+    let args: string[] = [];
+    const c = makeClaudeClient({ run: async (a) => ((args = a), JSON.stringify({ result: "r" })) });
+    await c.complete({ system: "s", user: "u" });
+    expect(args[args.indexOf("--max-turns") + 1]).toBe(String(MAX_TURNS));
+    expect(MAX_TURNS).toBeGreaterThanOrEqual(2);
+    expect(args[args.indexOf("--tools") + 1]).toBe("none"); // 安全境界はツール禁止が担う
   });
 
   it("jsonMode は無視する（claude CLI にネイティブ機能が無く CLI フラグを増やさない）", async () => {

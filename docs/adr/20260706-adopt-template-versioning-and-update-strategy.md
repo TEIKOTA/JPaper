@@ -2,6 +2,7 @@
 
 # Status
 - accepted
+- 生成経路・記録形式・全生成 project への保証・metadata 内コメントの条項は [20260926](./20260926-adopt-repo-owned-template-provenance.md) で置換。opt-in・hunk 手動適用・metadata 手動更新・自動再レンダリング不採用・main 配布可能性は存続。
 
 # Situation
 - 本テンプレートから生成されたプロジェクトは fetch 時点のコピーであり、テンプレート側の修正（検査スクリプトの欠陥修正・CI 強化など）を後から配布する手段が無かった。

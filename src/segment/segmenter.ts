@@ -7,6 +7,8 @@ export interface Segment {
   id: string;
   latex: string;
   tokens: number;
+  // 翻訳へ送らず原文のまま残す区間（本文中の \title 命令）。契約付録 §8
+  keep?: { start: number; end: number };
 }
 
 export function sizeClassFor(tokens: number): SizeClass {

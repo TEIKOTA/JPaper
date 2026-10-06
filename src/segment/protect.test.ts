@@ -164,3 +164,28 @@ describe("protectMath: エスケープした特殊文字", () => {
     expect(protectMath(src)).toEqual({ text: src, spans: [] });
   });
 });
+
+describe("protectMath: keep（本文中の \\title。契約付録 §8）", () => {
+  const src = "\\title{A $x$ Study}\n\nWe set $y$ here.";
+  const keep: [number, number] = [0, "\\title{A $x$ Study}".length];
+
+  it("keep を丸ごと 1 つの印で伏せ、中の数式は二重に伏せない", () => {
+    const p = protectMath(src, { keep });
+    expect(p.text).toBe("〔1〕\n\nWe set 〔2〕 here.");
+    expect(p.spans).toEqual(["\\title{A $x$ Study}", "$y$"]);
+    expect(p.keepMark).toBe(1);
+    expect(restoreMath(p.text, p.spans).text).toBe(src);
+  });
+
+  it("保護を切っても keep は伏せる", () => {
+    const p = protectMath(src, { keep, off: true });
+    expect(p.text).toBe("〔1〕\n\nWe set $y$ here.");
+    expect(p.keepMark).toBe(1);
+  });
+
+  it("原文が印を含むなら keep も伏せない（keepMark なし）", () => {
+    const p = protectMath(`${src} ${MARK_OPEN}`, { keep });
+    expect(p.spans).toEqual([]);
+    expect(p.keepMark).toBeUndefined();
+  });
+});

@@ -183,6 +183,8 @@ export const RunSummary = z.object({
   sharedDefaults: z.array(z.enum(["db", "cacheKey", "outDir", "limits", "work"])).default([]),
   // run 中に実際に発行した LLM 呼び出し回数（失敗した run でも返す＝課金相当の仕事量）。
   llmCalls: z.number().int().nonnegative().default(0),
+  // 論文タイトルの翻訳結果。null は翻訳まで到達しなかった run。契約付録 §8
+  title: z.enum(["translated", "failed", "absent"]).nullable().default(null),
   exitCode: z.number().int(),
 });
 export type RunSummary = z.infer<typeof RunSummary>;

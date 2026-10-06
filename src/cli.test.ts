@@ -16,6 +16,7 @@ const okResult: Result = {
     buildOk: null,
     llmCalls: 0,
     sharedDefaults: [],
+    title: null,
     exitCode: 0,
   },
 };

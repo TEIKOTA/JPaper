@@ -5,6 +5,7 @@ import {
   resolveJpaperHome,
   dbPath,
   paperOutDir,
+  ARTICLE_DIR,
   contextWindowFor,
   DEFAULT_CLAUDE_CW,
   DEFAULT_OLLAMA,
@@ -36,8 +37,9 @@ describe("resolveJpaperHome / dbPath", () => {
 });
 
 describe("paperOutDir", () => {
-  it("既定は ./<paperId>-ja（絶対パス化）", () => {
-    expect(paperOutDir("unet")).toBe(path.resolve("unet-ja"));
+  it("既定は ./article/<paperId>-ja（絶対パス化）", () => {
+    expect(paperOutDir("unet")).toBe(path.resolve("article", "unet-ja"));
+    expect(ARTICLE_DIR).toBe("article");
   });
   it("--out で上書きできる", () => {
     expect(paperOutDir("unet", "/somewhere/out")).toBe(

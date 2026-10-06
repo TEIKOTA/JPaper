@@ -15,9 +15,12 @@ export function dbPath(): string {
   return path.join(resolveJpaperHome(), "glossary.db");
 }
 
+// 論文ごとの出力をまとめる CWD 配下のフォルダ。ADR 20261007-default-output-under-article-dir。
+export const ARTICLE_DIR = "article";
+
 export function paperOutDir(paperId: string, outOpt?: string): string {
   if (outOpt && outOpt.trim() !== "") return path.resolve(outOpt);
-  return path.resolve(`${paperId}-ja`);
+  return path.resolve(ARTICLE_DIR, `${paperId}-ja`);
 }
 
 export const DEFAULT_CLAUDE_CW = 200_000; // 契約付録 §4

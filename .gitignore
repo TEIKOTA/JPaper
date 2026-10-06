@@ -25,8 +25,10 @@ yarn-error.log*
 !.vscode/extensions.json
 .idea/
 
-# Claude Code のローカル設定（.claude は .agents への symlink）
+# Claude Code のローカル設定（.claude が実ディレクトリ、.agents は .claude への symlink）
+.claude/settings.local.json
 .agents/settings.local.json
+**/.claude/scheduled_tasks.lock
 
 # TypeScript incremental build info
 *.tsbuildinfo
@@ -36,7 +38,9 @@ coverage/
 
 # 実行時に生成されるエージェントの証跡・作業領域（input/ の知識 SSOT はコミットする）
 /output/
-# run ごとの作業領域（source 展開・訳文・LLM トレース）。既定出力先 <paperId>-ja/ が CWD 直下でも追跡しない。
+# 論文ごとの成果物の既定の出力先（ADR 20261007-default-output-under-article-dir）。実行時の生成物なので追跡しない。
+/article/
+# run ごとの作業領域（source 展開・訳文・LLM トレース）。--out で CWD 直下などへ出した場合も追跡しない。
 **/.run/
 
 # 参照用に同梱した別プロジェクト（現行の和訳リポジトリ。JPaper の追跡対象外）
@@ -44,3 +48,7 @@ coverage/
 
 # misc
 *.local
+
+# Python のバイトコード（hook の判定器を import した検証などで生成される）
+__pycache__/
+*.pyc
