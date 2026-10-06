@@ -238,4 +238,55 @@ describe("runSectionLoop: 改稿予算の配分", () => {
     expect(r.failedKinds).toContain("unsafe-command");
     expect(translatorCalls).toBe(1);
   });
+
+  describe("keep（本文中の \\title を原文のまま残す。契約付録 §8）", () => {
+    const latex = "\\title{Alpha Study}\n\\author{A}\n\nAlpha text is here.";
+    const titleSeg: Segment = {
+      id: "seg-0000",
+      latex,
+      tokens: 100,
+      keep: { start: 0, end: "\\title{Alpha Study}".length },
+    };
+
+    it("\\title を印で伏せて送り、原文のまま復元する。evaluator には \\title を見せない", async () => {
+      const users: string[] = [];
+      const c = new FakeLlmClient((req) => {
+        users.push(req.user);
+        if (req.system.includes("審査者")) return '{"verdict":"pass","issues":[]}';
+        return "```tex\n〔1〕\n\\author{A}\n\n甲の本文がここにある。\n```";
+      });
+      const r = await runSectionLoop(c, titleSeg, []);
+      expect(r.passed).toBe(true);
+      expect(r.ja).toBe("\\title{Alpha Study}\n\\author{A}\n\n甲の本文がここにある。");
+      expect(users.every((u) => !u.includes("Alpha Study"))).toBe(true);
+    });
+
+    it("印を落とした訳は title で差し戻し、直れば通る", async () => {
+      let n = 0;
+      const translatorUsers: string[] = [];
+      const c = new FakeLlmClient((req) => {
+        if (req.system.includes("審査者")) return '{"verdict":"pass","issues":[]}';
+        translatorUsers.push(req.user);
+        return n++ === 0
+          ? "```tex\n\\author{A}\n\n甲の本文がここにある。\n```"
+          : "```tex\n〔1〕\n\\author{A}\n\n甲の本文がここにある。\n```";
+      });
+      const r = await runSectionLoop(c, titleSeg, []);
+      expect(r.passed).toBe(true);
+      expect(r.usedRevisions).toBe(1);
+      expect(translatorUsers[1]).toContain("論文タイトルの差し替え");
+      expect(r.ja.startsWith("\\title{Alpha Study}")).toBe(true);
+    });
+
+    it("印を最後まで落とし続けたら title で失敗する", async () => {
+      const c = new FakeLlmClient((req) =>
+        req.system.includes("審査者")
+          ? '{"verdict":"pass","issues":[]}'
+          : "```tex\n\\author{A}\n\n甲の本文がここにある。\n```",
+      );
+      const r = await runSectionLoop(c, titleSeg, []);
+      expect(r.passed).toBe(false);
+      expect(r.failedKinds).toEqual(["title"]);
+    });
+  });
 });

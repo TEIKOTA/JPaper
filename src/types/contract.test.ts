@@ -126,6 +126,7 @@ describe("contract zod schemas", () => {
     });
     expect(s.buildOk).toBeNull();
     expect(s.layout).toBeNull();
+    expect(s.title).toBeNull();
   });
 });
 

@@ -13,7 +13,8 @@ export interface FormalIssue {
     | "reference"
     | "symbol-command"
     | "unsafe-command"
-    | "structure";
+    | "structure"
+    | "title";
   message: string;
 }
 

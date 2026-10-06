@@ -81,9 +81,12 @@ export function injectFootnotes(
   segmentId: string,
   notes: TranslatorNote[],
   formBySrc: Map<string, string>,
+  // 脚注を挿さない追加の区間（原文のまま残した本文中の \title。契約付録 §8）。
+  skip: readonly Span[] = [],
 ): string {
   const inserts: { at: number; text: string }[] = [];
   const mask = protectedMask(segTex);
+  for (const [s, e] of skip) mask.fill(1, s, e);
   for (const n of notes) {
     if (n.segmentId !== segmentId || !n.src) continue;
     const form = formBySrc.get(n.src);

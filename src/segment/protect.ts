@@ -20,6 +20,8 @@ export interface Protection {
   text: string;
   // 印の番号順に並んだ原文の数式（区切り込み）。空なら保護していない。
   spans: string[];
+  // keep を伏せた印の番号（1 始まり）。伏せられなかったら undefined。
+  keepMark?: number;
 }
 
 // エスケープした特殊文字。訳す対象ではなく、原文のまま持ち越すのが正しいと分かって
@@ -58,20 +60,31 @@ export interface ProtectOptions {
   // エスケープした特殊文字も伏せるか。印が過密になる節で位置の取り違えを誘うため、
   // 呼び出し側で切れるようにする。契約付録 §3
   escapedSpecials?: boolean;
-  // 保護そのものを切る（比較実験用）。
+  // 保護そのものを切る（比較実験用）。keep は切っても伏せる。
   off?: boolean;
+  // 丸ごと 1 つの印で伏せる区間（本文中の \title 命令）。中に入る数式・記号の区間は keep に含める。契約付録 §8
+  keep?: Span;
 }
 
 export function protectMath(latex: string, opts: ProtectOptions = {}): Protection {
-  if (opts.off === true) return { text: latex, spans: [] };
   // 原文が印そのものを含むなら保護しない。復元時にどちらが印か区別できず、
   // 原文の一部を数式で上書きしてしまう（保護しなければ従来どおりの経路に戻るだけ）。
   if (latex.includes(MARK_OPEN)) return { text: latex, spans: [] };
-  const math = mathSpans(latex, MATH_ENVS);
-  const spans =
-    opts.escapedSpecials === false
-      ? math
-      : mergeSpans(math, escapedSpecialSpans(latex, mergeSpans(math, verbatimSpans(latex))));
+  const keep = opts.keep;
+  let spans: Span[] = [];
+  if (opts.off !== true) {
+    const math = mathSpans(latex, MATH_ENVS);
+    spans =
+      opts.escapedSpecials === false
+        ? math
+        : mergeSpans(math, escapedSpecialSpans(latex, mergeSpans(math, verbatimSpans(latex))));
+  }
+  if (keep !== undefined) {
+    spans = mergeSpans(
+      spans.filter(([s, e]) => e <= keep[0] || s >= keep[1]),
+      [keep],
+    );
+  }
   if (spans.length === 0) return { text: latex, spans: [] };
   const kept: string[] = [];
   let out = "";
@@ -83,7 +96,8 @@ export function protectMath(latex: string, opts: ProtectOptions = {}): Protectio
     kept.push(latex.slice(start, end));
     prev = end;
   }
-  return { text: out + latex.slice(prev), spans: kept };
+  const k = keep === undefined ? -1 : spans.indexOf(keep);
+  return { text: out + latex.slice(prev), spans: kept, ...(k === -1 ? {} : { keepMark: k + 1 }) };
 }
 
 export interface Restoration {
