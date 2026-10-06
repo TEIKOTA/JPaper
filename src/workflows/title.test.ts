@@ -243,6 +243,100 @@ describe("論文タイトルの翻訳（契約付録 §8）", () => {
     db.close();
   });
 
+  // arXiv の arxiv_style テンプレート（PathoROB 2507.17845）型: \title が \begin{document} の後、\maketitle の前。
+  const BODY_TITLE_PAPER = [
+    "\\documentclass{a}",
+    "\\title{Preamble Draft}",
+    "\\begin{document}",
+    "",
+    "\\title{\\textbf{Alpha Study}}",
+    "\\author{A}",
+    "\\maketitle",
+    "\\section{Intro}Alpha text.",
+    "\\section{Body}Beta text.",
+    "\\end{document}",
+  ].join("\n");
+
+  // \title を伏せた印を保って返す本文 translator（seg-0000 が \title を含む節）。
+  function bodyTitleClient(opts: { dropMark?: boolean } = {}): FakeLlmClient {
+    const base = client({ titleJa: "\\title{\\textbf{甲の研究}}" });
+    return new FakeLlmClient((req) => {
+      if (req.meta?.segmentId === "seg-0000" && req.meta.role === "translator") {
+        return `\`\`\`tex\n${opts.dropMark === true ? "" : "〔1〕\n"}\\author{A}\n\\maketitle\n\`\`\``;
+      }
+      return base.complete(req);
+    });
+  }
+
+  it("本文中の \\title（\\maketitle より前）を title 節で 1 回だけ訳し、本文の \\title に差し戻す", async () => {
+    const outDir = path.join(tmp(), "out");
+    const db = new GlossaryDb();
+    const seen: string[] = [];
+    const c = bodyTitleClient();
+    const r = await translatePaper(
+      { kind: "path", path: paperTar(BODY_TITLE_PAPER) },
+      { provider: "claude", outDir },
+      { client: c, db, latexRunner: recordingRunner(seen) },
+    );
+    expect(r.exitCode).toBe(0);
+    expect(r.summary.title).toBe("translated");
+    expect(r.summary.segments).toEqual({ total: 3, passed: 3, failed: 0 });
+    expect(seen).toHaveLength(1);
+    const [preamble, body] = seen[0]!.split("\\begin{document}");
+    // 効くのは本文の \title。前文の \title は訳さず原文のまま。
+    expect(preamble).toContain("\\title{Preamble Draft}");
+    expect(body).toContain("\\title{\\textbf{甲の研究}}\n\\author{A}\n\\maketitle");
+    expect(seen[0]).not.toContain("Alpha Study");
+    // タイトルを訳すのは title 節だけ。本文の translator・evaluator には原題を見せない（二重に訳さない）。
+    const titleCalls = c.calls.filter((q) => isTitle(q) && q.meta?.role === "translator");
+    expect(titleCalls).toHaveLength(1);
+    expect(titleCalls[0]!.user).toContain("\\title{\\textbf{Alpha Study}}");
+    expect(titleCalls[0]!.user).not.toContain("Preamble Draft");
+    const bodyCalls = c.calls.filter((q) => q.meta?.segmentId === "seg-0000");
+    expect(bodyCalls.length).toBeGreaterThan(0);
+    expect(bodyCalls.every((q) => !q.user.includes("Alpha Study"))).toBe(true);
+    // 本文の訳文（chapters）には原題の命令が残り、差し替えは組版時だけ。
+    const chapter = readFileSync(path.join(outDir, "translation", "chapters", "seg-0000.tex"), "utf8");
+    expect(chapter).toContain("\\title{\\textbf{Alpha Study}}");
+    db.close();
+  });
+
+  it("本文中の \\title の訳で組版が翻訳起因に落ちたら、本文の \\title を原題に戻して組み直す", async () => {
+    const outDir = path.join(tmp(), "out");
+    const db = new GlossaryDb();
+    const errs: string[] = [];
+    const seen: string[] = [];
+    const runner = recordingRunner(seen, (tex) => {
+      if (!tex.includes("甲の研究")) return undefined;
+      const line = tex.split("\n").findIndex((l) => l.includes("\\maketitle")) + 1;
+      return `./main.tex:${String(line)}: Undefined control sequence.`;
+    });
+    const r = await translatePaper(
+      { kind: "path", path: paperTar(BODY_TITLE_PAPER) },
+      { provider: "claude", outDir },
+      { client: bodyTitleClient(), db, latexRunner: runner, onError: (m) => errs.push(m) },
+    );
+    expect(r.exitCode).toBe(0);
+    expect(r.summary.title).toBe("failed");
+    expect(seen).toHaveLength(2);
+    expect(seen[1]).toContain("\\title{\\textbf{Alpha Study}}");
+    expect(errs.some((e) => e.includes("訳したタイトルでは組版できなかった"))).toBe(true);
+    db.close();
+  });
+
+  it("本文の \\title を伏せた印を落とし続けた節は title で落ちる（原題も訳題も黙って消さない）", async () => {
+    const outDir = path.join(tmp(), "out");
+    const db = new GlossaryDb();
+    const r = await translatePaper(
+      { kind: "path", path: paperTar(BODY_TITLE_PAPER) },
+      { provider: "claude", outDir },
+      { client: bodyTitleClient({ dropMark: true }), db, latexRunner: recordingRunner([]) },
+    );
+    expect(r.exitCode).toBe(3);
+    expect(r.summary.segments.failed).toBe(1);
+    db.close();
+  });
+
   it("\\title が無い論文ではタイトル節を作らない（absent）", async () => {
     const outDir = path.join(tmp(), "out");
     const db = new GlossaryDb();

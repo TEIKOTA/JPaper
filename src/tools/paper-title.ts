@@ -1,4 +1,4 @@
-// 契約付録 §8（論文タイトルの翻訳）。前文の \title の主引数を取り出し・差し替える。
+// 契約付録 §8（論文タイトルの翻訳）。前文・本文の \title の主引数を取り出し・差し替える。
 import type { Segment } from "../segment/segmenter.js";
 import { estimateTokens } from "../segment/token-estimator.js";
 
@@ -205,9 +205,21 @@ const DEFINERS = [
 ];
 const TITLE_SCAN = new Set(["title", ...DEFINERS]);
 
+// \title[短縮]{本題} の命令全体の範囲と、本題の中身の範囲。
+export interface TitleCommand {
+  start: number;
+  end: number;
+  arg: TitleArg;
+}
+
 // 最後の \title[短縮]{本題} の本題の中身の範囲（LaTeX は後の定義が勝つ）。
 export function findTitleArg(tex: string): TitleArg | undefined {
-  let found: TitleArg | undefined;
+  return findTitleCommand(tex)?.arg;
+}
+
+// 最後の \title[短縮]{本題} の命令全体（LaTeX は後の定義が勝つ）。
+export function findTitleCommand(tex: string): TitleCommand | undefined {
+  let found: TitleCommand | undefined;
   // 定義命令（* と空白・コメントを挟んでよい）の直後の \title は拾わない。契約付録 §8
   let definedAt = -1;
   scanCommands(tex, TITLE_SCAN, (name, start, afterName) => {
@@ -220,7 +232,7 @@ export function findTitleArg(tex: string): TitleArg | undefined {
     const r = readArgs(tex, afterName, true);
     if (r === "unclosed") return "stop";
     if (r === undefined) return afterName;
-    found = r.arg;
+    found = { start, end: r.end, arg: r.arg };
     return r.end;
   });
   return found;
@@ -262,13 +274,91 @@ function splitNotes(body: string): PaperTitle {
 
 const oneLine = (s: string): string => s.replace(/\s+/g, " ").trim();
 
+function titleAt(tex: string, arg: TitleArg): PaperTitle | undefined {
+  const { text, notes } = splitNotes(stripTexComments(tex.slice(arg.start, arg.end)));
+  const body = oneLine(text);
+  return body === "" ? undefined : { text: body, notes };
+}
+
 // 前文から翻訳対象のタイトルを取り出す。\title が無い・中身が空なら undefined。
 export function extractTitle(preamble: string): PaperTitle | undefined {
   const arg = findTitleArg(preamble);
-  if (arg === undefined) return undefined;
-  const { text, notes } = splitNotes(stripTexComments(preamble.slice(arg.start, arg.end)));
-  const body = oneLine(text);
-  return body === "" ? undefined : { text: body, notes };
+  return arg === undefined ? undefined : titleAt(preamble, arg);
+}
+
+// 本文中の \title の在処。start/end は節の原文 latex 上の \title[..]{..} 命令全体の範囲。契約付録 §8
+export interface BodyTitle {
+  segmentId: string;
+  start: number;
+  end: number;
+  // 中身が空なら undefined。
+  title: PaperTitle | undefined;
+}
+
+const TITLE_SETTERS = new Set(["maketitle", "end"]);
+const FRONTMATTER_END = /\s*\{frontmatter\}/y;
+
+// 最初の \maketitle・\end{frontmatter}（タイトルを組む位置）の開始位置。無ければ undefined。
+function titleSetterAt(tex: string): number | undefined {
+  let at: number | undefined;
+  scanCommands(tex, TITLE_SETTERS, (name, start, afterName) => {
+    if (name === "end") {
+      FRONTMATTER_END.lastIndex = afterName;
+      if (!FRONTMATTER_END.test(tex)) return afterName;
+    }
+    at = start;
+    return "stop";
+  });
+  return at;
+}
+
+// 本文で最初にタイトルを組む位置（\maketitle・\end{frontmatter}）より前にある最後の \title。
+// 組む位置が本文に無ければ undefined（前文の \title を使う）。節は本文の順に並んでいること。契約付録 §8
+export function findBodyTitle(
+  segments: readonly { id: string; latex: string }[],
+): BodyTitle | undefined {
+  let found: BodyTitle | undefined;
+  for (const seg of segments) {
+    const limit = titleSetterAt(seg.latex);
+    const cmd = findTitleCommand(limit === undefined ? seg.latex : seg.latex.slice(0, limit));
+    if (cmd !== undefined) {
+      found = { segmentId: seg.id, start: cmd.start, end: cmd.end, title: titleAt(seg.latex, cmd.arg) };
+    }
+    if (limit !== undefined) return found;
+  }
+  return undefined;
+}
+
+// 訳文の節 tex で、原文のまま残した \title 命令（source の start..end）の範囲。見つからなければ undefined。
+// 同じ綴りが複数あれば原文と同じ順番のもの、数が合わなければ最後のもの。
+export function locateBodyTitle(
+  tex: string,
+  source: { latex: string; start: number; end: number },
+): { start: number; end: number } | undefined {
+  const command = source.latex.slice(source.start, source.end);
+  const all = (s: string): number[] => {
+    const out: number[] = [];
+    for (let i = s.indexOf(command); i !== -1; i = s.indexOf(command, i + command.length)) out.push(i);
+    return out;
+  };
+  const inSource = all(source.latex);
+  const inTex = all(tex);
+  if (inTex.length === 0) return undefined;
+  const nth = inSource.indexOf(source.start);
+  const pos = inTex.length === inSource.length && nth !== -1 ? inTex[nth]! : inTex[inTex.length - 1]!;
+  return { start: pos, end: pos + command.length };
+}
+
+// 訳文の節 tex に原文のまま残した \title 命令の本題を body に差し替える。命令が見つからなければ undefined。
+export function placeBodyTitle(
+  tex: string,
+  source: { latex: string; start: number; end: number },
+  body: string,
+): string | undefined {
+  const at = locateBodyTitle(tex, source);
+  const arg = findTitleArg(source.latex.slice(source.start, source.end));
+  if (at === undefined || arg === undefined) return undefined;
+  return `${tex.slice(0, at.start + arg.start)}${body}${tex.slice(at.start + arg.end)}`;
 }
 
 // 制御綴りを除いて文字・数字が残るか（\title{\papertitle} のようなマクロ参照だけの本題は false）。契約付録 §8

@@ -1,6 +1,9 @@
 import { describe, it, expect } from "vitest";
 import {
   extractTitle,
+  findBodyTitle,
+  locateBodyTitle,
+  placeBodyTitle,
   findTitleArg,
   hasProse,
   replaceTitle,
@@ -286,5 +289,63 @@ describe("formalCheck: タイトル 1 行", () => {
     const t = term({ src: "Value", form: "値(Value)", class: "established", rendering: "bilingual" });
     expect(check("Value Estimation", "値の推定", [t])).toEqual([]);
     expect(check("Value Estimation", "値(Value)の推定", [t]).map((i) => i.kind)).toEqual(["bilingual"]);
+  });
+});
+
+describe("findBodyTitle（本文中の \\title。契約付録 §8）", () => {
+  const segs = (...latex: string[]) => latex.map((l, i) => ({ id: `seg-${String(i)}`, latex: l }));
+
+  it("最初の \\maketitle より前の最後の \\title を、命令全体の範囲つきで返す", () => {
+    const s0 = "\n\\title{Old}\n\\title{\\textbf{Towards Robust Models}}\n\\author{A}\n";
+    const s1 = "\\begin{abstract}x\\end{abstract}\n\\maketitle\n\\title{After}\n";
+    const t = findBodyTitle(segs(s0, s1));
+    expect(t?.segmentId).toBe("seg-0");
+    expect(s0.slice(t!.start, t!.end)).toBe("\\title{\\textbf{Towards Robust Models}}");
+    expect(t?.title?.text).toBe("\\textbf{Towards Robust Models}");
+  });
+
+  it("\\maketitle と同じ節にある \\title も拾い、後ろの \\title は無視する", () => {
+    const s0 = "\\title[S]{Real}\\maketitle\\title{Later}";
+    const t = findBodyTitle(segs(s0));
+    expect(s0.slice(t!.start, t!.end)).toBe("\\title[S]{Real}");
+  });
+
+  it("\\end{frontmatter} もタイトルを組む位置として扱う（elsarticle）", () => {
+    const t = findBodyTitle(segs("\\begin{frontmatter}\\title{Els}\\end{frontmatter}\\title{No}"));
+    expect(t?.title?.text).toBe("Els");
+  });
+
+  it("組む位置が本文に無い・\\title が \\maketitle の後ろだけ・コメント内なら undefined", () => {
+    expect(findBodyTitle(segs("\\title{X}\nbody"))).toBeUndefined();
+    expect(findBodyTitle(segs("\\maketitle\n\\title{X}"))).toBeUndefined();
+    expect(findBodyTitle(segs("% \\title{X}\n\\maketitle"))).toBeUndefined();
+    expect(findBodyTitle(segs("\\title{X}\n% \\maketitle\n", "\\maketitle"))?.segmentId).toBe("seg-0");
+  });
+
+  it("中身が空なら title は undefined", () => {
+    expect(findBodyTitle(segs("\\title{}\\maketitle"))?.title).toBeUndefined();
+  });
+});
+
+describe("locateBodyTitle / placeBodyTitle", () => {
+  const latex = "\\title{\\textbf{Towards X}\\thanks{F}}\n\\author{A}\n\\maketitle";
+  const source = { latex, start: 0, end: "\\title{\\textbf{Towards X}\\thanks{F}}".length };
+
+  it("訳文に残った原文どおりの命令の本題だけを差し替える", () => {
+    const ja = "\\title{\\textbf{Towards X}\\thanks{F}}\n\\author{A}\n\\maketitle";
+    expect(placeBodyTitle(ja, source, "\\textbf{Xに向けて}\\thanks{F}")).toBe(
+      "\\title{\\textbf{Xに向けて}\\thanks{F}}\n\\author{A}\n\\maketitle",
+    );
+    expect(locateBodyTitle(`前置き${ja}`, source)).toEqual({ start: 3, end: 3 + source.end });
+  });
+
+  it("命令が訳文に無ければ undefined", () => {
+    expect(placeBodyTitle("\\title{Xに向けて}\\maketitle", source, "訳")).toBeUndefined();
+  });
+
+  it("同じ綴りが複数あれば原文と同じ順番のものを差し替える", () => {
+    const twice = "\\title{A}\n\\title{A}\\maketitle";
+    const src = { latex: twice, start: 10, end: 19 };
+    expect(placeBodyTitle(twice, src, "訳")).toBe("\\title{A}\n\\title{訳}\\maketitle");
   });
 });

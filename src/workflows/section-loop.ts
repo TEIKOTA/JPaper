@@ -9,7 +9,13 @@ import type {
 import type { Segment } from "../segment/segmenter.js";
 import { maxRevisionsFor } from "../segment/segmenter.js";
 import { formalCheck, type FormalIssue } from "./quality-gate.js";
-import { protectMath, restoreMath, describeMarkIssues } from "../segment/protect.js";
+import {
+  protectMath,
+  restoreMath,
+  describeMarkIssues,
+  MARK_OPEN,
+  MARK_CLOSE,
+} from "../segment/protect.js";
 import { translate } from "../agents/translator.js";
 import { evaluate } from "../agents/evaluator.js";
 
@@ -48,7 +54,18 @@ export async function runSectionLoop(
   let formalLeft = perChecker;
   let qualityLeft = perChecker;
   // 保護区間は既定で入れる。ADR 20260816-protection-depends-on-model-capability。
-  const guarded = protectMath(segment.latex, { off: !PROTECT_SPANS });
+  const keep = segment.keep;
+  const guarded = protectMath(segment.latex, {
+    off: !PROTECT_SPANS,
+    ...(keep === undefined ? {} : { keep: [keep.start, keep.end] as [number, number] }),
+  });
+  // 原文のまま残した \title は形式検査・evaluator に見せない（訳されていないのが正しい）。契約付録 §8
+  const kept = guarded.keepMark;
+  const checkedSrc =
+    kept === undefined || keep === undefined
+      ? segment.latex
+      : segment.latex.slice(0, keep.start) + segment.latex.slice(keep.end);
+  const checkedSpans = guarded.spans.map((s, i) => (i + 1 === kept ? "" : s));
   let revisions = 0;
   let priorJa: string | undefined;
   let issues: string[] | undefined;
@@ -71,10 +88,24 @@ export async function runSectionLoop(
     );
     const restored = restoreMath(out.ja, guarded.spans);
     lastJa = restored.text;
+    const checked = kept === undefined ? restored : restoreMath(out.ja, checkedSpans);
 
     // 印の欠落は formalCheck では「数式個数不一致」としか出ない。どの印かを名指しする。
-    const markIssues = describeMarkIssues(restored);
-    const formal = formalCheck(segment.latex, restored.text, glossarySlice);
+    const markIssues = describeMarkIssues({
+      ...restored,
+      missing: restored.missing.filter((n) => n !== kept),
+      duplicated: restored.duplicated.filter((n) => n !== kept),
+    });
+    const keptIssues: FormalIssue[] =
+      kept !== undefined && (restored.missing.includes(kept) || restored.duplicated.includes(kept))
+        ? [
+            {
+              kind: "title",
+              message: `印 ${MARK_OPEN}${String(kept)}${MARK_CLOSE} は論文タイトルの差し替えです。訳さず消さず、原文と同じ位置にちょうど 1 回置いてください。`,
+            },
+          ]
+        : [];
+    const formal = [...keptIssues, ...formalCheck(checkedSrc, checked.text, glossarySlice)];
     // 危険コマンドと文書構造の破壊は再訳の対象にしない（直せる誤りではなく、汚染の兆候
     // として即失敗させる）。\end{document} は組版が正常終了するぶん、素通しの害が大きい。
     lastKinds = [...new Set(formal.map((f) => f.kind))];
@@ -94,7 +125,7 @@ export async function runSectionLoop(
 
     const ev = await evaluate(
       client,
-      { segmentId: segment.id, srcLatex: segment.latex, ja: restored.text },
+      { segmentId: segment.id, srcLatex: checkedSrc, ja: checked.text },
       { glossary: glossarySlice, brief: doc.brief, style: doc.style },
       revisions,
     );

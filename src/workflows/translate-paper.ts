@@ -91,6 +91,9 @@ import {
 import { assembleWithMap, extractPreamble, type Layout } from "../tools/assemble-latex.js";
 import {
   extractTitle,
+  findBodyTitle,
+  locateBodyTitle,
+  placeBodyTitle,
   hasProse,
   titleSegment,
   translatedTitle,
@@ -453,6 +456,12 @@ function failResult(
   };
 }
 
+// 訳したタイトルを入れた組版入力。前文の \title なら title、本文の \title なら差し替え済みの segments。契約付録 §8
+interface Titled {
+  segments: { id: string; tex: string }[];
+  title?: string;
+}
+
 interface TypesetOutcome {
   layout: Layout | null;
   buildOk: boolean | null;
@@ -559,7 +568,7 @@ function summarizeGateFailure(g: BuildGateResult): string {
 async function typeset(
   cleanLatex: string,
   segments: { id: string; tex: string }[],
-  opts: { outDir: string; sourceDir: string; mainDir: string; figures: string[]; title?: string },
+  opts: { outDir: string; sourceDir: string; mainDir: string; figures: string[]; titled?: Titled },
   runner: LatexRunner | undefined,
   surface: (m: string) => void,
   signal?: AbortSignal,
@@ -580,9 +589,14 @@ async function typeset(
   const discard = (): void => {
     rmSync(buildDir, { recursive: true, force: true });
   };
-  let title = opts.title;
-  const build = (mode: Layout, withTitle: string | undefined): Promise<BuildGateResult> => {
-    const { mainTex, sourceMap } = assembleWithMap({ cleanLatex, segments, mode, title: withTitle });
+  let titled = opts.titled;
+  const build = (mode: Layout, withTitle: Titled | undefined): Promise<BuildGateResult> => {
+    const { mainTex, sourceMap } = assembleWithMap({
+      cleanLatex,
+      segments: withTitle?.segments ?? segments,
+      mode,
+      title: withTitle?.title,
+    });
     return runBuildGate(
       {
         buildDir,
@@ -599,15 +613,15 @@ async function typeset(
   };
   // 訳したタイトルで翻訳起因の失敗になったときだけ、同じレイアウトを原題で組み直す。契約付録 §8
   const run = async (mode: Layout): Promise<BuildGateResult> => {
-    const g = await build(mode, title);
-    if (g.buildOk || title === undefined || g.failedSegments.length === 0) return g;
+    const g = await build(mode, titled);
+    if (g.buildOk || titled === undefined || g.failedSegments.length === 0) return g;
     const plain = await build(mode, undefined);
     if (!plain.buildOk) return g;
-    title = undefined;
+    titled = undefined;
     surface("訳したタイトルでは組版できなかったため原題のまま組版します");
     return plain;
   };
-  const titleApplied = (): boolean => title !== undefined;
+  const titleApplied = (): boolean => titled !== undefined;
   // 成否に関わらず、無効化した同梱パッケージは体裁差の原因になるので surface する。
   const noteShadowed = (g: BuildGateResult): void => {
     if (g.shadowedPackages.length)
@@ -854,7 +868,16 @@ export async function translatePaper(
 
     progress({ phase: "ingest", done: 1, total: 1 });
     const budget = segmentBudgetFor(contextWindowFor(opts.provider, opts.ollama, opts.openrouter));
-    const segments = segment(ingested.cleanLatex, budget);
+    // 本文で最初にタイトルを組む位置より前の \title は前文の \title より後に効く。その節では
+    // \title 命令を原文のまま残し（keep）、タイトルは title 節で 1 回だけ訳す。契約付録 §8
+    const plainSegments = segment(ingested.cleanLatex, budget);
+    const bodyTitle = findBodyTitle(plainSegments);
+    const keepsTitle = bodyTitle?.title !== undefined && hasProse(bodyTitle.title.text);
+    const segments: Segment[] = plainSegments.map((s) =>
+      keepsTitle && s.id === bodyTitle!.segmentId
+        ? { ...s, keep: { start: bodyTitle!.start, end: bodyTitle!.end } }
+        : s,
+    );
     // LLM を 1 回も呼ぶ前に判定する（超過が確定した入力に課金しない。契約付録 §8）。
     // glossary は run 中で最大コンテキストの呼び出しなので、この順序が逆だと
     // 落ちると分かっている入力に一番高い 1 回を払うことになる。
@@ -909,6 +932,7 @@ export async function translatePaper(
         JSON.stringify(slice),
         JSON.stringify(ctx.brief),
         JSON.stringify(ctx.style),
+        ...(seg.keep === undefined ? [] : [JSON.stringify(seg.keep)]),
       );
       return checkpoint(
         runDir,
@@ -935,9 +959,11 @@ export async function translatePaper(
       });
     };
 
-    // タイトルは前文にあり segments に含まれない。小さな 1 節として同じ節ループへ通し、
-    // 失敗しても原題のまま組版する（run の成否・segments の集計に入れない）。契約付録 §8
-    const found = extractTitle(extractPreamble(ingested.cleanLatex));
+    // タイトルは前文（または本文で原文のまま残した \title）にあり、翻訳する節に含まれない。
+    // 小さな 1 節として同じ節ループへ通し、失敗しても原題のまま組版する（run の成否・segments の
+    // 集計に入れない）。本文の \title があればそちらが効くので前文は見ない。契約付録 §8
+    const found =
+      bodyTitle !== undefined ? bodyTitle.title : extractTitle(extractPreamble(ingested.cleanLatex));
     const title = found !== undefined && hasProse(found.text) ? found : undefined;
     if (found !== undefined && title === undefined) {
       notify(`タイトルが地の文を含まない（${found.text}）ため訳さず原題のまま組版します`);
@@ -1057,12 +1083,28 @@ export async function translatePaper(
     if (failed === 0) {
       // 訳注を本文へ反映（初出脚注＋巻末一覧）してから組版する。
       const formBySrc = new Map(ctx.resolved.map((r) => [r.src, r.form]));
-      const rendered = results.map((r) => ({
-        id: r.segmentId,
-        tex: injectFootnotes(r.ja, r.segmentId, notes, formBySrc),
-      }));
+      const keptSource = segments.find((s) => s.keep !== undefined);
+      const keptAt = keptSource?.keep && { latex: keptSource.latex, ...keptSource.keep };
+      const rendered = results.map((r) => {
+        const kept = keptAt && r.segmentId === keptSource!.id ? locateBodyTitle(r.ja, keptAt) : undefined;
+        const skip: [number, number][] = kept === undefined ? [] : [[kept.start, kept.end]];
+        return { id: r.segmentId, tex: injectFootnotes(r.ja, r.segmentId, notes, formBySrc, skip) };
+      });
       const backmatter = renderBackmatter(notes, formBySrc);
       if (backmatter) rendered.push({ id: "backmatter", tex: backmatter });
+      // 訳したタイトルを入れた組版入力。本文の \title は原文のまま残した命令の本題を差し替える。契約付録 §8
+      let titled: Titled | undefined;
+      if (titleTex !== undefined && keptAt === undefined) titled = { segments: rendered, title: titleTex };
+      if (titleTex !== undefined && keptAt !== undefined) {
+        const i = rendered.findIndex((x) => x.id === keptSource!.id);
+        const placed = i === -1 ? undefined : placeBodyTitle(rendered[i]!.tex, keptAt, titleTex);
+        if (placed === undefined) {
+          notify("本文の \\title を訳文の中に見つけられなかったため原題のまま組版します");
+          titleStatus = "failed";
+        } else {
+          titled = { segments: rendered.map((x, j) => (j === i ? { ...x, tex: placed } : x)) };
+        }
+      }
       progress({ phase: "typeset", done: 0, total: 1 });
       const outcome = await typeset(
         ingested.cleanLatex,
@@ -1072,7 +1114,7 @@ export async function translatePaper(
           sourceDir: ingested.sourceDir,
           mainDir: ingested.mainDir ?? ingested.sourceDir,
           figures: ingested.figures,
-          title: titleTex,
+          titled,
         },
         deps.latexRunner,
         (m) => notify(m),
@@ -1080,7 +1122,7 @@ export async function translatePaper(
       );
       ({ layout, buildOk, pdfPath, exitCode } = outcome);
       typesetMessage = outcome.message;
-      if (titleTex !== undefined && !outcome.titleApplied && outcome.buildOk) titleStatus = "failed";
+      if (titled !== undefined && !outcome.titleApplied && outcome.buildOk) titleStatus = "failed";
       progress({ phase: "typeset", done: 1, total: 1 });
     }
 
