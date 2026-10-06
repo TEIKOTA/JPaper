@@ -79,7 +79,7 @@ describe("論文タイトルの翻訳（契約付録 §8）", () => {
     const db = new GlossaryDb();
     const seen: string[] = [];
     const c = client();
-    const r = await translatePaper({ kind: "path", path: paperTar() }, { provider: "claude", outDir }, {
+    const r = await translatePaper({ kind: "path", path: paperTar() }, { provider: "claude", outDir, bilingual: false }, {
       client: c,
       db,
       latexRunner: recordingRunner(seen),
@@ -207,7 +207,7 @@ describe("論文タイトルの翻訳（契約付録 §8）", () => {
       const line = tex.split("\n").findIndex((l) => l.includes("訳文")) + 1;
       return `./main.tex:${String(line)}: Undefined control sequence.`;
     });
-    const r = await translatePaper({ kind: "path", path: paperTar() }, { provider: "claude", outDir }, {
+    const r = await translatePaper({ kind: "path", path: paperTar() }, { provider: "claude", outDir, bilingual: false }, {
       client: client(),
       db,
       latexRunner: runner,
@@ -230,7 +230,7 @@ describe("論文タイトルの翻訳（契約付録 §8）", () => {
     const runner = recordingRunner(seen, (tex) =>
       tex.includes("a4paper") ? undefined : "! LaTeX Error: File `a.cls' not found.",
     );
-    const r = await translatePaper({ kind: "path", path: paperTar() }, { provider: "claude", outDir }, {
+    const r = await translatePaper({ kind: "path", path: paperTar() }, { provider: "claude", outDir, bilingual: false }, {
       client: client(),
       db,
       latexRunner: runner,
@@ -275,7 +275,7 @@ describe("論文タイトルの翻訳（契約付録 §8）", () => {
     const c = bodyTitleClient();
     const r = await translatePaper(
       { kind: "path", path: paperTar(BODY_TITLE_PAPER) },
-      { provider: "claude", outDir },
+      { provider: "claude", outDir, bilingual: false },
       { client: c, db, latexRunner: recordingRunner(seen) },
     );
     expect(r.exitCode).toBe(0);
@@ -313,7 +313,7 @@ describe("論文タイトルの翻訳（契約付録 §8）", () => {
     });
     const r = await translatePaper(
       { kind: "path", path: paperTar(BODY_TITLE_PAPER) },
-      { provider: "claude", outDir },
+      { provider: "claude", outDir, bilingual: false },
       { client: bodyTitleClient(), db, latexRunner: runner, onError: (m) => errs.push(m) },
     );
     expect(r.exitCode).toBe(0);
@@ -329,11 +329,71 @@ describe("論文タイトルの翻訳（契約付録 §8）", () => {
     const db = new GlossaryDb();
     const r = await translatePaper(
       { kind: "path", path: paperTar(BODY_TITLE_PAPER) },
-      { provider: "claude", outDir },
+      { provider: "claude", outDir, bilingual: false },
       { client: bodyTitleClient({ dropMark: true }), db, latexRunner: recordingRunner([]) },
     );
     expect(r.exitCode).toBe(3);
     expect(r.summary.segments.failed).toBe(1);
+    db.close();
+  });
+
+  it("対訳 PDF の右側のタイトルブロックにも訳したタイトルが入る（左は原題）", async () => {
+    const outDir = path.join(tmp(), "out");
+    const db = new GlossaryDb();
+    const seen: string[] = [];
+    const r = await translatePaper({ kind: "path", path: paperTar() }, { provider: "claude", outDir }, {
+      client: client(),
+      db,
+      latexRunner: recordingRunner(seen),
+    });
+    expect(r.exitCode).toBe(0);
+    expect(r.summary.title).toBe("translated");
+    expect(r.summary.bilingual.status).toBe("ok");
+    expect(seen).toHaveLength(2);
+    const bilingualTex = seen[1]!;
+    expect(bilingualTex).toContain(
+      "\\jpTitleBlock{Alpha Study\\thanks{Funded by X.}}\n\\switchcolumn\n\\jpTitleBlock{甲の研究\\thanks{Funded by X.}}",
+    );
+    db.close();
+  });
+
+  it("本文中の \\title の論文でも、対訳 PDF の右側のタイトルブロックに訳したタイトルが入る", async () => {
+    const outDir = path.join(tmp(), "out");
+    const db = new GlossaryDb();
+    const seen: string[] = [];
+    const r = await translatePaper(
+      { kind: "path", path: paperTar(BODY_TITLE_PAPER) },
+      { provider: "claude", outDir },
+      { client: bodyTitleClient(), db, latexRunner: recordingRunner(seen) },
+    );
+    expect(r.exitCode).toBe(0);
+    expect(r.summary.title).toBe("translated");
+    expect(r.summary.bilingual.status).toBe("ok");
+    expect(seen).toHaveLength(2);
+    expect(seen[1]).toMatch(/\\jpTitleBlock\{\\textbf\{Alpha Study\}\}\n\\switchcolumn\n\\jpTitleBlock\{\\textbf\{甲の研究\}\}/);
+    db.close();
+  });
+
+  it("原題で組み直した run では、対訳 PDF の右側のタイトルも原題にする", async () => {
+    const outDir = path.join(tmp(), "out");
+    const db = new GlossaryDb();
+    const seen: string[] = [];
+    const runner = recordingRunner(seen, (tex) => {
+      if (!tex.includes("甲の研究")) return undefined;
+      const line = tex.split("\n").findIndex((l) => l.includes("訳文")) + 1;
+      return `./main.tex:${String(line)}: Undefined control sequence.`;
+    });
+    const r = await translatePaper({ kind: "path", path: paperTar() }, { provider: "claude", outDir }, {
+      client: client(),
+      db,
+      latexRunner: runner,
+    });
+    expect(r.exitCode).toBe(0);
+    expect(r.summary.title).toBe("failed");
+    expect(r.summary.bilingual.status).toBe("ok");
+    expect(seen).toHaveLength(3);
+    expect(seen[2]).toContain("\\switchcolumn\n\\jpTitleBlock{Alpha Study\\thanks{Funded by X.}}");
+    expect(seen[2]).not.toContain("甲の研究");
     db.close();
   });
 
