@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { fastestMs } from "../testing/timing.js";
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync, existsSync, readdirSync } from "node:fs";
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync, existsSync, readdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import {
@@ -170,6 +170,63 @@ describe("stageBuild", () => {
       (names) => new Set(names.filter((n) => n === "graphicx.sty")),
     );
     expect(shadowed).toEqual(["graphicx.sty"]);
+  });
+  it("main と同じ階層の .bbl がちょうど 1 つなら build 直下の main.bbl として置く", () => {
+    const src = mkTemp();
+    writeFileSync(path.join(src, "arxiv.bbl"), "\\begin{thebibliography}{1}\\end{thebibliography}");
+    const build = path.join(mkTemp(), "b");
+    stageBuild(build, "MAIN", { sourceDir: src, mainDir: src, figures: [] }, () => new Set<string>());
+    expect(readFileSync(path.join(build, "main.bbl"), "utf8")).toBe(
+      "\\begin{thebibliography}{1}\\end{thebibliography}",
+    );
+    expect(existsSync(path.join(build, SRC_PKG_DIR, "arxiv.bbl"))).toBe(true);
+  });
+  it(".bbl が無ければ main.bbl を置かない", () => {
+    const src = mkTemp();
+    writeFileSync(path.join(src, "refs.bib"), "@x{}");
+    mkdirSync(path.join(src, "dir.bbl"));
+    const build = path.join(mkTemp(), "b");
+    stageBuild(build, "MAIN", { sourceDir: src, mainDir: src, figures: [] }, () => new Set<string>());
+    expect(existsSync(path.join(build, "main.bbl"))).toBe(false);
+  });
+  it(".bbl が 2 つ以上なら main.bbl を置かない", () => {
+    const src = mkTemp();
+    writeFileSync(path.join(src, "a.bbl"), "A");
+    writeFileSync(path.join(src, "b.bbl"), "B");
+    const build = path.join(mkTemp(), "b");
+    stageBuild(build, "MAIN", { sourceDir: src, mainDir: src, figures: [] }, () => new Set<string>());
+    expect(existsSync(path.join(build, "main.bbl"))).toBe(false);
+  });
+  it("入れ子 main では main と同じ階層の .bbl だけを見る", () => {
+    const src = mkTemp();
+    const mainDir = path.join(src, "paper");
+    mkdirSync(mainDir);
+    writeFileSync(path.join(src, "root.bbl"), "ROOT");
+    writeFileSync(path.join(mainDir, "paper.bbl"), "PAPER");
+    const build = path.join(mkTemp(), "b");
+    stageBuild(build, "MAIN", { sourceDir: src, mainDir, figures: [] }, () => new Set<string>());
+    expect(readFileSync(path.join(build, "main.bbl"), "utf8")).toBe("PAPER");
+  });
+  it("入れ子 main の階層に .bbl が無ければ、上の階層の .bbl は main.bbl にしない", () => {
+    const src = mkTemp();
+    const mainDir = path.join(src, "paper");
+    mkdirSync(mainDir);
+    writeFileSync(path.join(src, "root.bbl"), "ROOT");
+    const build = path.join(mkTemp(), "b");
+    stageBuild(build, "MAIN", { sourceDir: src, mainDir, figures: [] }, () => new Set<string>());
+    expect(existsSync(path.join(build, "main.bbl"))).toBe(false);
+  });
+  it("配布版と同名の .bbl は main.bbl にしない（安全検査の対象外のため）", () => {
+    const src = mkTemp();
+    writeFileSync(path.join(src, "dist.bbl"), "X");
+    const build = path.join(mkTemp(), "b");
+    stageBuild(
+      build,
+      "MAIN",
+      { sourceDir: src, mainDir: src, figures: [] },
+      (names) => new Set(names.filter((n) => n === "dist.bbl")),
+    );
+    expect(existsSync(path.join(build, "main.bbl"))).toBe(false);
   });
 });
 
