@@ -1,5 +1,18 @@
 // 契約付録 §7.5・§8。core API（取り込み→用語バリア→並列翻訳→訳注→出力→RunSummary）。
-import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import {
+  closeSync,
+  existsSync,
+  mkdirSync,
+  openSync,
+  readdirSync,
+  readFileSync,
+  readSync,
+  renameSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
+import { createHash, type Hash } from "node:crypto";
 import path from "node:path";
 import { z } from "zod";
 import type {
@@ -13,15 +26,35 @@ import {
   GlossaryBuilderOut,
   EvalIssue,
   RunSummary,
+  JpaperInput as JpaperInputSchema,
+  Provider as ProviderSchema,
   type Result,
+  type TraceSink,
   type Provider,
   type TranslatorNote,
 } from "../types/contract.js";
-import { JpaperError, resolveExitCode } from "../types/errors.js";
-import { paperOutDir, dbPath, contextWindowFor, type OllamaConfig } from "../config.js";
+import {
+  JpaperError,
+  resolveExitCode,
+  toRunError,
+  outwardMessage,
+  type RunError,
+} from "../types/errors.js";
+import {
+  paperOutDir,
+  dbPath,
+  contextWindowFor,
+  defaultConcurrencyFor,
+  requestTimeoutMsFor,
+  MAX_CONTEXT_WINDOW,
+  MIN_CONTEXT_WINDOW,
+  type OllamaConfig,
+  type OpenRouterConfig,
+} from "../config.js";
 import { makeLlmClient } from "../providers/index.js";
-import { makeJsonlTrace } from "../runtime/trace.js";
+import { makeJsonlTrace, withTrace } from "../runtime/trace.js";
 import { ingest, derivePaperId, type IngestDeps } from "../ingest/index.js";
+import type { IngestLimits } from "../ingest/limits.js";
 import { GlossaryDb } from "../terminology/db.js";
 import { buildPaperGlossary, writeBackResolved } from "../terminology/glossary.js";
 import {
@@ -34,14 +67,36 @@ import {
   type ResolvedRow,
 } from "../terminology/glossary-io.js";
 import { buildFirstOccurrenceIndex } from "../terminology/first-occurrence.js";
+import { findKatakanaDrift, describeDrift } from "../terminology/consistency.js";
 import { segment, segmentBudgetFor } from "../segment/segmenter.js";
 import { runSectionLoop } from "./section-loop.js";
 import { buildNotes } from "./notes.js";
 import { untranslatedHeadings } from "./quality-gate.js";
-import { checkpoint, hashContext } from "../durable/checkpoint.js";
+import { checkpoint, hashContext, pruneSteps } from "../durable/checkpoint.js";
+import { acquireRunLock, type RunLock } from "../durable/run-lock.js";
+import {
+  throwIfAborted,
+  withSignal,
+  withCallTimeout,
+  withProviderErrors,
+  withDeadline,
+  type Deadline,
+} from "../runtime/cancellation.js";
+import { llmGate, withGate, type Gate } from "../runtime/concurrency.js";
+import {
+  resolveWorkLimits,
+  createCallBudget,
+  type WorkLimits,
+} from "../runtime/work-budget.js";
 import { assembleWithMap, type Layout } from "../tools/assemble-latex.js";
-import { runBuildGate, type LatexRunner, type BuildGateResult } from "../tools/build-gate.js";
+import {
+  runBuildGate,
+  unsafeSupportFiles,
+  type LatexRunner,
+  type BuildGateResult,
+} from "../tools/build-gate.js";
 import { injectFootnotes, renderBackmatter } from "../tools/render-notes.js";
+import { findUnsafeTexCommands } from "../tools/tex-safety.js";
 
 const IngestCache = z.object({
   cleanLatex: z.string(),
@@ -49,12 +104,15 @@ const IngestCache = z.object({
   paperId: z.string(),
   sourceDir: z.string(),
   mainDir: z.string(), // 旧キャッシュは mainDir 欠落で無効化され再取り込みされる（入れ子 main の図配置に必須）
+  // 旧キャッシュには無いので既定 0（未解決件数を知らない＝警告を出さない側へ倒す）。
+  unresolvedInputs: z.number().int().default(0),
 });
 const SectionLoopCache = z.object({
   segmentId: z.string(),
   ja: z.string(),
   passed: z.boolean(),
   failCode: z.union([z.literal(3), z.literal(4)]).optional(),
+  failedKinds: z.array(z.string()).default([]),
   usedRevisions: z.number().int(),
   maxRevisions: z.number().int(),
   warnIssues: z.array(EvalIssue),
@@ -64,35 +122,80 @@ export interface TranslateOptions {
   provider: Provider;
   outDir?: string;
   ollama?: OllamaConfig;
+  openrouter?: OpenRouterConfig;
   concurrency?: number;
+  // 呼び出し側の中断。LLM 呼び出し・組版・arXiv 取得へ伝播し、exitCode 6 で返る。
+  signal?: AbortSignal;
+  // run 全体の期限（ms）。超過すると中断と同じ経路で exitCode 6 で返る。
+  timeoutMs?: number;
 }
 
 // subprocess プロバイダは無制限並列に耐えないため翻訳の同時実行数を制限する。
+// 契約付録 §8。1 本の失敗で即座に投げず、**全 worker の決着を待ってから**投げる。
+// Promise.all のまま投げると translatePaper が返り、finally が run lock を解放した後も
+// 残りの worker が checkpoint を書き続ける（亡霊）。⚠ landmines.md
 async function mapLimit<T, R>(
   items: T[],
   limit: number,
   fn: (item: T) => Promise<R>,
+  signal?: AbortSignal,
 ): Promise<R[]> {
   const results = new Array<R>(items.length);
   let next = 0;
+  let failure: { err: unknown } | undefined;
   async function worker(): Promise<void> {
     for (let i = next++; i < items.length; i = next++) {
-      results[i] = await fn(items[i]!);
+      // 失敗後・中断後は新しいセグメントを取りに行かない（進行中の 1 本は provider 側で落ちる）。
+      if (failure !== undefined) return;
+      try {
+        throwIfAborted(signal, "セグメント翻訳");
+        results[i] = await fn(items[i]!);
+      } catch (err) {
+        failure ??= { err };
+        return;
+      }
     }
   }
   await Promise.all(
-    Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, worker),
+    // limit が壊れていても 1 本は回す（0 本だと結果配列が穴だらけのまま返る）。
+    Array.from({ length: Math.max(1, Math.min(Math.floor(limit) || 1, items.length)) }, worker),
   );
+  if (failure !== undefined) throw failure.err;
   return results;
 }
 
 export interface TranslateDeps {
   client?: LlmClient;
+  // checkpoint 署名鍵。web ハンドラのように 1 プロセスで複数テナントを捌く場合、
+  // env 経由（JPAPER_HOME）は await を跨いで混ざるため呼び出し側から渡す。
+  cacheKey?: Buffer;
   db?: GlossaryDb;
   dbPath?: string;
   ingest?: IngestDeps;
+  // 取り込みのサイズ上限。web ではプラン別に締めたいので注入可能にする。
+  limits?: IngestLimits;
+  // 1 run が費やせる仕事量の上限（セグメント数・LLM 呼び出し回数）。プラン別に締められる。
+  work?: Partial<WorkLimits>;
+  // LLM 同時実行ゲート。既定はプロセス共有（リクエストをまたいで効く）。
+  gate?: Gate;
+  // LLM トレースの宛先。既定は <outDir>/.run/llm-trace.jsonl。注入クライアントにも掛かる。
+  trace?: TraceSink;
   onError?: (message: string) => void;
+  // 進捗。web の UI が「12/35 節完了」を出せるようにする副作用チャネル。
+  onProgress?: (e: RunProgress) => void;
   latexRunner?: LatexRunner;
+}
+
+export interface RunProgress {
+  phase: "ingest" | "context" | "translate" | "typeset";
+  segmentId?: string;
+  done: number;
+  total: number;
+  // 契約付録 §5
+  passed?: boolean;
+  failedKinds?: string[];
+  usedRevisions?: number;
+  maxRevisions?: number;
 }
 
 interface PaperContext {
@@ -100,9 +203,47 @@ interface PaperContext {
   brief: DocumentBrief;
   style: StyleContract;
   proposedAdded: number;
+  // 正常完了時に outDir へ書き出す md（パス→中身）。中断時は書かれない。
+  pending: Record<string, string>;
 }
 
-// glossary.md が有れば編集を正本として読み戻す（無ければ builder 実行＋md 描画）。既存 md は上書きしない。
+// 出力先がどの論文のものかを示す印。同じ outDir に別の論文が来たら既存 md を採用しない。
+// 1 行目が paperId、2 行目が本文のダイジェスト（旧版の印は 1 行だけ）。
+const PAPER_STAMP = ".paper-id";
+
+interface PaperStamp {
+  paperId: string;
+  // 旧版の印には無い。undefined のときは paperId だけで判定する（既存の出力先を壊さない）。
+  sourceDigest?: string;
+}
+
+function readStamp(outDir: string): PaperStamp | undefined {
+  try {
+    const [id, digest] = readFileSync(path.join(outDir, PAPER_STAMP), "utf8").split("\n");
+    if (id === undefined || id.trim() === "") return undefined;
+    const d = digest?.trim();
+    return { paperId: id.trim(), sourceDigest: d === "" ? undefined : d };
+  } catch {
+    return undefined;
+  }
+}
+
+function stampedPaperId(outDir: string): string | undefined {
+  return readStamp(outDir)?.paperId;
+}
+
+// paperId はファイル名の stem から作るので、別内容の 2 論文がどちらも main.tex
+// （arXiv ソースで最も普通の名前）だと一致する。paperId だけを印にすると
+// 「別論文なら既存 md を採用しない」ガードが発動せず、A の brief が B の全
+// セグメントのプロンプトに載ったまま両方 exit 0 で返る（実測）。本文の
+// ダイジェストを併せて印にする。⚠ landmines.md
+function sourceDigestOf(cleanLatex: string): string {
+  return createHash("sha256").update(cleanLatex).digest("hex").slice(0, 16);
+}
+
+// glossary.md が有れば編集を正本として読み戻す（無ければ builder 実行）。既存 md は上書きしない。
+// 機械出力の md は run が正常に完了したときだけ outDir へ確定する（promote）。中断・例外で
+// 抜けた run の中間物が次の run の正本になると、別論文の文脈まで上書きされる。
 async function loadOrBuildContext(
   runDir: string,
   outDir: string,
@@ -110,47 +251,141 @@ async function loadOrBuildContext(
   db: GlossaryDb,
   paperId: string,
   cleanLatex: string,
+  cacheKey?: Buffer,
+  warn?: (m: string) => void,
 ): Promise<PaperContext> {
   const built = await checkpoint(
     runDir,
     "glossary",
     GlossaryBuilderOut,
     () => buildPaperGlossary(client, db, paperId, cleanLatex),
-    { invalidation: hashContext(cleanLatex) },
+    { invalidation: hashContext(cleanLatex), key: cacheKey },
   );
   const proposedAdded = writeBackResolved(db, built, paperId);
-  mkdirSync(outDir, { recursive: true });
   const glossaryMd = path.join(outDir, "glossary.md");
   const briefMd = path.join(outDir, "brief.md");
   const styleMd = path.join(outDir, "style.md");
 
+  // 印が無い出力先は旧版が作ったもの＝これまでどおり採用する（人間の編集を捨てない）。
+  const stamp = readStamp(outDir);
+  const digest = sourceDigestOf(cleanLatex);
+  const otherPaper = stamp !== undefined && stamp.paperId !== paperId;
+  // paperId が同じでも本文が違えば別論文（同名ファイルの衝突）。ダイジェストを持たない
+  // 旧版の印では判定できないので、その場合は従来どおり paperId だけで見る。
+  const otherSource =
+    stamp?.sourceDigest !== undefined && stamp.sourceDigest !== digest;
+  const foreign = otherPaper || otherSource;
+  if (otherPaper) {
+    warn?.(
+      `出力先は別の論文（${stamp?.paperId ?? "不明"}）のものなので既存の glossary.md / brief.md / style.md は使いません`,
+    );
+  } else if (otherSource) {
+    warn?.(
+      `出力先には同じ名前（${paperId}）で内容の違う論文があるので既存の glossary.md / brief.md / style.md は使いません`,
+    );
+  }
+  const adopt = (file: string): boolean => !foreign && existsSync(file);
+
+  const pending: PaperContext["pending"] = {};
   let resolved: ResolvedRow[] = built.resolved;
-  if (existsSync(glossaryMd)) {
+  if (adopt(glossaryMd)) {
     // 既存 md が正本（空にする編集も尊重する）。
     resolved = parseGlossaryMd(readFileSync(glossaryMd, "utf8"));
   } else {
-    writeFileSync(glossaryMd, renderGlossaryMd(built.resolved));
+    pending[glossaryMd] = renderGlossaryMd(built.resolved);
   }
 
   let brief = built.brief;
-  if (existsSync(briefMd)) brief = parseBriefMd(readFileSync(briefMd, "utf8"));
-  else writeFileSync(briefMd, renderBriefMd(built.brief));
+  if (adopt(briefMd)) brief = parseBriefMd(readFileSync(briefMd, "utf8"));
+  else pending[briefMd] = renderBriefMd(built.brief);
 
   let style = built.style;
-  if (existsSync(styleMd)) style = parseStyleMd(readFileSync(styleMd, "utf8"));
-  else writeFileSync(styleMd, renderStyleMd(built.style));
+  if (adopt(styleMd)) style = parseStyleMd(readFileSync(styleMd, "utf8"));
+  else pending[styleMd] = renderStyleMd(built.style);
 
-  return { resolved, brief, style, proposedAdded };
+  // 用語集は全セグメントのプロンプトへ載るので、内部矛盾はそのまま訳文全体へ伝播する。
+  // 落とさず警告に留める（語形の違いも揺れではあるが、断定はしない）。契約付録 §3。
+  for (const d of findKatakanaDrift(resolved)) warn?.(describeDrift(d));
+
+  return { resolved, brief, style, proposedAdded, pending };
+}
+
+// 出力先が別の論文のものだったら、この run の成果物を書く前に前の論文の正本を落とす。
+// 落とさないと、組版で失敗した run が「.paper-id と glossary.md は論文 A・chapters は
+// 論文 B」という世代混在のディレクトリを残す（実測）。手で latexmk すれば A の
+// プリアンブル系 md と B の本文が混ざる。出力先は 1 つの論文のものと決める。
+function clearForeignContext(outDir: string, paperId: string): void {
+  const stamped = stampedPaperId(outDir);
+  if (stamped === undefined || stamped === paperId) return;
+  for (const f of ["glossary.md", "brief.md", "style.md", PAPER_STAMP]) {
+    rmSync(path.join(outDir, f), { force: true });
+  }
+  rmSync(path.join(outDir, "translation", "build"), { recursive: true, force: true });
+}
+
+// run が最後まで到達したときだけ md を確定する。
+function promoteContext(
+  outDir: string,
+  paperId: string,
+  sourceDigest: string,
+  pending: PaperContext["pending"],
+): void {
+  mkdirSync(outDir, { recursive: true });
+  for (const [file, body] of Object.entries(pending)) writeFileSync(file, body);
+  writeFileSync(path.join(outDir, PAPER_STAMP), `${paperId}\n${sourceDigest}\n`);
 }
 
 // ingest キャッシュの無効化キー: 入力が変わったら再取り込み（path 上書き・arXiv v1/v2 は paperId 共有）。
-function inputSignature(input: JpaperInput): string {
-  if (input.kind === "arxiv") return hashContext("arxiv", input.id);
+// 内容ダイジェストの走査上限。超える入力は取り込み側が too-large で落とすので、
+// 部分ハッシュのまま先へ進めてよい（成功する run では必ず全体を覆う）。
+const MAX_SIGNATURE_BYTES = 512 * 1024 * 1024;
+const MAX_SIGNATURE_ENTRIES = 10_000;
+
+function digestFile(h: Hash, file: string, budget: { bytes: number }): void {
+  const fd = openSync(file, "r");
   try {
-    const st = statSync(input.path);
-    return hashContext("path", path.resolve(input.path), String(st.mtimeMs), String(st.size));
+    const buf = Buffer.allocUnsafe(1 << 20);
+    for (;;) {
+      const n = readSync(fd, buf, 0, Math.min(buf.length, budget.bytes), null);
+      if (n <= 0) break;
+      h.update(buf.subarray(0, n));
+      budget.bytes -= n;
+      if (budget.bytes <= 0) break;
+    }
+  } finally {
+    closeSync(fd);
+  }
+}
+
+function digestTree(h: Hash, dir: string, rel: string, budget: { bytes: number; entries: number }): void {
+  for (const e of readdirSync(dir, { withFileTypes: true }).sort((a, b) => (a.name < b.name ? -1 : 1))) {
+    if (--budget.entries <= 0 || budget.bytes <= 0) return;
+    const abs = path.join(dir, e.name);
+    const key = rel === "" ? e.name : `${rel}/${e.name}`;
+    h.update(`\u0000${key}\u0000`);
+    if (e.isDirectory()) digestTree(h, abs, key, budget);
+    else if (e.isFile()) digestFile(h, abs, budget);
+  }
+}
+
+// checkpoint の無効化キーは入力の**内容**を代表しなければならない。(path, mtime, size) で
+// 代表させていた頃は、同一パス・同一サイズ・秒単位で同じ mtime（tar/cp -p が復元する形）の
+// 別論文が同じ入力とみなされ、論文 B を投げた利用者に論文 A の訳文が exit 0 で返った
+// （LLM 呼び出し 0 回）。署名の破綻ではなく、署名対象が内容を代表していない設計の穴。
+export function inputSignature(input: JpaperInput): string {
+  if (input.kind === "arxiv") return hashContext("arxiv", input.id);
+  const abs = path.resolve(input.path);
+  try {
+    const h = createHash("sha256");
+    const st = statSync(abs);
+    if (st.isDirectory()) {
+      digestTree(h, abs, "", { bytes: MAX_SIGNATURE_BYTES, entries: MAX_SIGNATURE_ENTRIES });
+    } else {
+      digestFile(h, abs, { bytes: MAX_SIGNATURE_BYTES });
+    }
+    return hashContext("path", abs, h.digest("hex"));
   } catch {
-    return hashContext("path", path.resolve(input.path));
+    return hashContext("path", abs);
   }
 }
 
@@ -160,19 +395,48 @@ function countByTrigger(notes: TranslatorNote[]): Record<string, number> {
   return acc;
 }
 
-function failResult(paperId: string, outDir: string, exitCode: number): Result {
+// 単一ユーザ既定にフォールバックした資源を数える。マルチテナントで気づかず共有したまま
+// 本番に出るのを防ぐため、observable にして警告も出す（契約付録 §8）。
+type SharedDefault = "db" | "cacheKey" | "outDir" | "limits" | "work";
+function sharedDefaultsOf(opts: TranslateOptions, deps: TranslateDeps): SharedDefault[] {
+  const shared: SharedDefault[] = [];
+  if (deps.db === undefined && (deps.dbPath === undefined || deps.dbPath.trim() === "")) {
+    shared.push("db");
+  }
+  if (deps.cacheKey === undefined) shared.push("cacheKey");
+  if (opts.outDir === undefined || opts.outDir.trim() === "") shared.push("outDir");
+  // 既定の取り込み上限・仕事量上限は CLI 単体利用向けに緩い。実測では資源の分離より
+  // こちらのほうがプロセスの生死を左右する（既定のまま 506KiB の .tar.gz が 508MiB に
+  // 展開されて成功し、4 本併走で正常リクエストの p50 が 79ms→1,789ms になった）。
+  if (deps.limits === undefined) shared.push("limits");
+  if (deps.work === undefined) shared.push("work");
+  return shared;
+}
+
+function failResult(
+  paperId: string,
+  outDir: string,
+  error: RunError,
+  sharedDefaults: SharedDefault[] = [],
+  llmCalls = 0,
+  segments = { total: 0, passed: 0, failed: 0 },
+): Result {
+  const exitCode = error.code;
   return {
     status: "failed",
     exitCode,
+    error,
     summary: RunSummary.parse({
       paperId,
       outDir,
-      segments: { total: 0, passed: 0, failed: 0 },
+      segments,
       revisions: { max: 0, used: 0 },
       glossary: { proposedAdded: 0 },
       notes: { total: 0, byTrigger: {} },
       layout: null,
       buildOk: null,
+      sharedDefaults,
+      llmCalls,
       exitCode,
     }),
   };
@@ -183,29 +447,127 @@ interface TypesetOutcome {
   buildOk: boolean | null;
   pdfPath?: string;
   exitCode: number;
+  message?: string;
 }
+
+// 節ループ・組版ゲートの失敗は例外ではなく戻り値で来るので、ここで構造化エラーに写す。
+// 汚染の兆候として即失敗させる形式エラー。品質の失敗と同じ見た目で返すと、
+// 運用者はプロンプトインジェクション／モデル汚染が起きたことに気づけない。
+const CONTAMINATION_KINDS = new Set(["unsafe-command", "structure"]);
+
+export function contaminatedSegments(
+  results: readonly { segmentId: string; passed: boolean; failedKinds?: readonly string[] }[],
+): string[] {
+  return results
+    .filter((r) => !r.passed && (r.failedKinds ?? []).some((k) => CONTAMINATION_KINDS.has(k)))
+    .map((r) => r.segmentId);
+}
+
+function gateError(
+  exitCode: number,
+  results: readonly {
+    segmentId: string;
+    passed: boolean;
+    failCode?: number;
+    failedKinds?: readonly string[];
+  }[],
+  typesetMessage?: string,
+): RunError {
+  const bad = results.filter((r) => !r.passed);
+  // 終了コードは優先順位で 1 つに決まる（3 > 4）が、報告からもう一方を消してはいけない。
+  // failCode を見ずに全失敗を並べると、品質で落ちた節が「形式検査を通過しない」の一覧に
+  // 混ざり、運用者は存在しない形式的欠陥を探すことになる（実測: seg-0019）。
+  // 古い checkpoint 由来で failCode を持たない結果は形式側に倒す（見え方を変えない）。
+  const of = (code: 3 | 4) => bad.filter((r) => (r.failCode ?? 3) === code);
+  const ids = of(4).map((r) => r.segmentId).slice(0, 10).join(", ");
+  // 落ちた検査の種別は固定語彙なので外向きに出せる（論文由来の文字列は混ざらない）。
+  // ID だけだと、失敗した訳文が書き出されない設計と相まって手掛かりが 1 つも残らない。
+  const withKinds = of(3)
+    .slice(0, 10)
+    .map((r) => {
+      const kinds = [...new Set(r.failedKinds ?? [])].sort();
+      return kinds.length === 0 ? r.segmentId : `${r.segmentId}(${kinds.join(", ")})`;
+    })
+    .join(", ");
+  // 同時に起きた他方の失敗も添える（優先順位で選ぶことと、報告から消すことは別）。
+  const alsoQuality = of(4).length === 0 ? "" : `。品質基準に達しないセグメント: ${of(4).map((r) => r.segmentId).slice(0, 10).join(", ")}`;
+  const alsoFormal = of(3).length === 0 ? "" : `。形式検査を通過しないセグメント: ${of(3).map((r) => r.segmentId).slice(0, 10).join(", ")}`;
+  if (exitCode === 3) {
+    const tainted = contaminatedSegments(results);
+    if (tainted.length > 0) {
+      return {
+        kind: "formal",
+        code: 3,
+        message: `訳文が危険コマンド・文書構造の破壊を持ち込みました（汚染の疑い）: ${tainted.slice(0, 10).join(", ")}`,
+      };
+    }
+    return {
+      kind: "formal",
+      code: 3,
+      message: `形式検査を通過しないセグメントがあります: ${withKinds}${alsoQuality}`,
+    };
+  }
+  if (exitCode === 4) {
+    return {
+      kind: "quality",
+      code: 4,
+      message: `品質基準に達しないセグメントがあります: ${ids}${alsoFormal}`,
+    };
+  }
+  if (exitCode === 5) {
+    // 中身は latexmk ログの切り出し＝論文が内容を操作できる。外向きの出口で必ず検疫する。
+    return {
+      kind: "typeset",
+      code: 5,
+      message: outwardMessage(typesetMessage ?? "全文組版ゲートに失敗しました"),
+      detail: typesetMessage,
+    };
+  }
+  return { kind: "internal", code: exitCode, message: `未分類の失敗です（exitCode ${exitCode}）` };
+}
+
+// ログ由来の断片は長さを切る（1 行 4000 文字のログで message が上限を無視して膨らむ）。
+const clip = (s: string, n = 120): string => (s.length > n ? `${s.slice(0, n)}…` : s);
 
 function summarizeGateFailure(g: BuildGateResult): string {
   const parts: string[] = [];
   if (g.failedSegments.length)
     parts.push(`翻訳起因: ${g.failedSegments.map((f) => `${f.id}(${f.line})`).join(", ")}`);
-  if (g.structuralErrors.length) parts.push(`構造: ${g.structuralErrors.slice(0, 3).join(" / ")}`);
-  if (g.missingFigures.length) parts.push(`欠図: ${g.missingFigures.join(", ")}`);
-  if (g.droppedFigures.length) parts.push(`図欠落: ${g.droppedFigures.join(", ")}`);
-  if (g.unresolvedRefs.length) parts.push(`未解決参照: ${g.unresolvedRefs.slice(0, 5).join(", ")}`);
+  if (g.structuralErrors.length) parts.push(`構造: ${g.structuralErrors.slice(0, 3).map((e) => clip(e)).join(" / ")}`);
+  if (g.missingFigures.length) parts.push(`欠図: ${g.missingFigures.map((f) => clip(f, 60)).join(", ")}`);
+  if (g.droppedFigures.length) parts.push(`図欠落: ${g.droppedFigures.map((f) => clip(f, 60)).join(", ")}`);
+  if (g.unresolvedRefs.length) parts.push(`未解決参照: ${g.unresolvedRefs.slice(0, 5).map((r) => clip(r, 60)).join(", ")}`);
+  if (g.shadowedPackages.length)
+    parts.push(`同梱パッケージを無効化: ${g.shadowedPackages.join(", ")}`);
   return parts.join(" | ") || "不明なビルド失敗";
 }
 
 // 全文組版ゲート: 原プリアンブル温存を試し、構造起因失敗のみ共通テンプレへ明示的にフォールバック（surface）。
-function typeset(
+async function typeset(
   cleanLatex: string,
   segments: { id: string; tex: string }[],
   opts: { outDir: string; sourceDir: string; mainDir: string; figures: string[] },
   runner: LatexRunner | undefined,
   surface: (m: string) => void,
-): TypesetOutcome {
-  const buildDir = path.join(opts.outDir, "translation", "build");
-  const run = (mode: Layout): BuildGateResult => {
+  signal?: AbortSignal,
+): Promise<TypesetOutcome> {
+  // 組版は隣の staging へ行い、成功したときだけ正規の build を置き換える。
+  // 直接 build を使うと stageBuild の rmSync が先に走り、**失敗した run が前回の
+  // 成功 PDF を破壊する**（実測: 論文 A を成功させた outDir で論文 B を組版失敗
+  // させると、A の build/main.pdf が消えた）。⚠ landmines.md
+  const finalDir = path.join(opts.outDir, "translation", "build");
+  const buildDir = `${finalDir}.next`;
+  const publish = (pdfPath?: string): string | undefined => {
+    rmSync(finalDir, { recursive: true, force: true });
+    renameSync(buildDir, finalDir);
+    return pdfPath === undefined
+      ? undefined
+      : path.join(finalDir, path.relative(buildDir, pdfPath));
+  };
+  const discard = (): void => {
+    rmSync(buildDir, { recursive: true, force: true });
+  };
+  const run = (mode: Layout): Promise<BuildGateResult> => {
     const { mainTex, sourceMap } = assembleWithMap({ cleanLatex, segments, mode });
     return runBuildGate(
       {
@@ -216,23 +578,95 @@ function typeset(
         figures: opts.figures,
         sourceMap,
         originalTex: cleanLatex,
+        signal,
       },
       runner,
     );
   };
+  // 成否に関わらず、無効化した同梱パッケージは体裁差の原因になるので surface する。
+  const noteShadowed = (g: BuildGateResult): void => {
+    if (g.shadowedPackages.length)
+      surface(`配布版を優先し同梱パッケージを無効化: ${g.shadowedPackages.join(", ")}`);
+  };
   // pdfPath は buildOk のときだけ返す（ゲート棄却済みの成果物を成功として渡さない）。
-  const orig = run("original");
-  if (orig.buildOk) return { layout: "original", buildOk: true, pdfPath: orig.pdfPath, exitCode: 0 };
+  const orig = await run("original");
+  noteShadowed(orig);
+  if (orig.buildOk) {
+    return { layout: "original", buildOk: true, pdfPath: publish(orig.pdfPath), exitCode: 0 };
+  }
   if (orig.failedSegments.length > 0) {
     // 翻訳起因のビルド失敗。再訳ループ(WP10)未実装のため明示的失敗として surface する。
-    surface(`組版失敗(翻訳起因・要再訳): ${summarizeGateFailure(orig)}`);
-    return { layout: "original", buildOk: false, exitCode: 5 };
+    const m = `組版失敗(翻訳起因・要再訳): ${summarizeGateFailure(orig)}`;
+    surface(m);
+    discard();
+    return { layout: "original", buildOk: false, exitCode: 5, message: m };
   }
   surface(`原プリアンブルで組めず共通テンプレへフォールバック: ${summarizeGateFailure(orig)}`);
-  const tmpl = run("template");
-  if (tmpl.buildOk) return { layout: "template", buildOk: true, pdfPath: tmpl.pdfPath, exitCode: 0 };
-  surface(`組版失敗(テンプレでも不可): ${summarizeGateFailure(tmpl)}`);
-  return { layout: "template", buildOk: false, exitCode: 5 };
+  const tmpl = await run("template");
+  if (tmpl.buildOk) {
+    return { layout: "template", buildOk: true, pdfPath: publish(tmpl.pdfPath), exitCode: 0 };
+  }
+  const m = `組版失敗(テンプレでも不可): ${summarizeGateFailure(tmpl)}`;
+  surface(m);
+  discard();
+  return { layout: "template", buildOk: false, exitCode: 5, message: m };
+}
+
+// 入口の検証。web は文字列由来の値（Number(req.query.x)）をそのまま渡してくるので、
+// 形が違うものは黙って既定へ倒さず input で拒否する（timeoutMs と同じ扱いに揃える）。
+function entryError(input: JpaperInput, opts: TranslateOptions): string | undefined {
+  if (!JpaperInputSchema.safeParse(input).success) {
+    return "入力の指定が不正です（kind と path/id を確認してください）";
+  }
+  if (!ProviderSchema.safeParse(opts.provider).success) {
+    return `provider が不正です: ${outwardMessage(String(opts.provider))}`;
+  }
+  if (opts.outDir !== undefined && (typeof opts.outDir !== "string" || opts.outDir.trim() === "")) {
+    return `outDir が不正です: ${outwardMessage(String(opts.outDir))}`;
+  }
+  const c = opts.concurrency;
+  if (c !== undefined && (typeof c !== "number" || !Number.isFinite(c) || c < 1)) {
+    return `concurrency が不正です: ${outwardMessage(String(c))}`;
+  }
+  const o = opts.ollama;
+  if (o !== undefined) {
+    if (typeof o.model !== "string" || o.model.trim() === "") {
+      return `ollama.model が不正です: ${outwardMessage(String(o?.model))}`;
+    }
+    const cw = o.contextWindow;
+    if (
+      typeof cw !== "number" ||
+      !Number.isSafeInteger(cw) ||
+      cw < MIN_CONTEXT_WINDOW ||
+      cw > MAX_CONTEXT_WINDOW
+    ) {
+      return `ollama.contextWindow が不正です: ${outwardMessage(String(cw))}`;
+    }
+    const rt = o.requestTimeoutMs;
+    if (rt !== undefined && (typeof rt !== "number" || !Number.isFinite(rt) || rt < 1)) {
+      return `ollama.requestTimeoutMs が不正です: ${outwardMessage(String(rt))}`;
+    }
+  }
+  const r = opts.openrouter;
+  if (r !== undefined) {
+    if (typeof r.model !== "string" || r.model.trim() === "") {
+      return `openrouter.model が不正です: ${outwardMessage(String(r?.model))}`;
+    }
+    const cw = r.contextWindow;
+    if (
+      typeof cw !== "number" ||
+      !Number.isSafeInteger(cw) ||
+      cw < MIN_CONTEXT_WINDOW ||
+      cw > MAX_CONTEXT_WINDOW
+    ) {
+      return `openrouter.contextWindow が不正です: ${outwardMessage(String(cw))}`;
+    }
+    const rt = r.requestTimeoutMs;
+    if (rt !== undefined && (typeof rt !== "number" || !Number.isFinite(rt) || rt < 1)) {
+      return `openrouter.requestTimeoutMs が不正です: ${outwardMessage(String(rt))}`;
+    }
+  }
+  return undefined;
 }
 
 export async function translatePaper(
@@ -240,24 +674,104 @@ export async function translatePaper(
   opts: TranslateOptions,
   deps: TranslateDeps = {},
 ): Promise<Result> {
-  const paperId = derivePaperId(input);
-  const outDir = paperOutDir(paperId, opts.outDir);
-  const runDir = path.join(outDir, ".run");
+  // 入口の検証。web ハンドラへ生の例外を漏らさない（契約付録 §8「例外は投げず戻り値で表現」）。
+  const badInput = entryError(input, opts);
+  if (badInput !== undefined) {
+    // outDir 自体が不正な場合もあるので、サマリには文字列として安全な値だけ載せる。
+    const shown = typeof opts.outDir === "string" ? opts.outDir : "";
+    return failResult("unknown", shown, { kind: "input", code: 2, message: badInput });
+  }
+  let paperId: string;
+  let outDir: string;
+  let runDir: string;
+  let sharedDefaults: SharedDefault[];
+  try {
+    paperId = derivePaperId(input);
+    outDir = paperOutDir(paperId, opts.outDir);
+    runDir = path.join(outDir, ".run");
+    sharedDefaults = sharedDefaultsOf(opts, deps);
+  } catch (e) {
+    return failResult("unknown", typeof opts.outDir === "string" ? opts.outDir : "", toRunError(e));
+  }
+  if (sharedDefaults.length > 0) {
+    // ここはまだ notify を組み立てる前。通知の失敗で run を落とさない。
+    try {
+      deps.onError?.(
+        `単一ユーザ既定を使用: ${sharedDefaults.join(", ")}（マルチテナントでは dbPath / cacheKey / outDir / limits / work を明示的に渡すこと）`,
+      );
+    } catch {
+      // 通知の失敗は run を壊さない。
+    }
+  }
   // 注入 client（テスト）はそのまま尊重し、内部生成時のみトレースを配線する。LLM トレース ADR。
   const runId = `${paperId}-${Date.now()}`;
-  const client =
-    deps.client ??
-    makeLlmClient(opts.provider, {
-      ollama: opts.ollama,
-      trace: makeJsonlTrace(path.join(runDir, "llm-trace.jsonl"), runId),
-    });
+  const trace = deps.trace ?? makeJsonlTrace(path.join(runDir, "llm-trace.jsonl"), runId);
+  // 注入クライアントにもトレースを掛ける。web はテナント別資格情報のために必ず注入するので、
+  // プロバイダ生成側にだけ配線すると課金の記録が構造的に消える。
+  const client0 =
+    deps.client === undefined
+      ? makeLlmClient(opts.provider, { ollama: opts.ollama, openrouter: opts.openrouter, trace })
+      : withTrace(deps.client, trace, opts.provider);
+  // 中断は境界 1 箇所（client ラッパ）で効かせる。各エージェントの引数は増やさない。
+  // ゲートを外側に置くのは、枠を取ってから中断を見るため（待ち行列に中断済みが居座らない）。
+  // 注入クライアントにも掛ける（web が自前クライアントを渡すとプロセス上限が消えていた）。
+  const work = resolveWorkLimits(deps.work);
   let db: GlossaryDb | undefined;
+  let lock: RunLock | undefined;
+  let deadline: Deadline = { signal: opts.signal, dispose: () => undefined };
+  let llmCalls: () => number = () => 0;
+  // 失敗・中断でも「どこまで進んだか」を返す（0/0/0 だと課金と突き合わせられない）。
+  let reached = { total: 0, passed: 0, failed: 0 };
+  // 通知は副作用チャネル。web の SSE 切断などで投げても run の結果を変えない。
+  // 併せて外向き検疫を通す（message だけ検疫しても onError から生の文字列が出ていた）。
+  const notify = (m: string): void => {
+    try {
+      deps.onError?.(outwardMessage(m));
+    } catch {
+      // 通知の失敗は run を壊さない。
+    }
+  };
+  const progress = (e: RunProgress): void => {
+    try {
+      deps.onProgress?.(e);
+    } catch {
+      // 同上。
+    }
+  };
 
   try {
+    // 期限は呼び出し側の signal と合流させる。以降は signal（合流後）だけを見る。
+    // 不正な timeoutMs はここで input エラーになるので、try の内側で組み立てる。
+    deadline = withDeadline(opts.signal, opts.timeoutMs);
+    const signal = deadline.signal;
+    // 注入ゲートはプロセス上限を置き換えず、内側の第 2 段として重ねる。
+    // 置き換えにすると、web がリクエスト単位でゲートを作った瞬間にプロセス上限が消える。
+    const callBudget = createCallBudget(
+      // 期限はゲートの内側（枠待ちは「モデルが返らない」ではない）。
+      withProviderErrors(
+        withSignal(withCallTimeout(client0, requestTimeoutMsFor(opts.provider, opts.ollama, opts.openrouter)), signal),
+      ),
+      work.maxLlmCalls,
+    );
+    llmCalls = callBudget.used;
+    // プロセスゲートを内側に置く。外側で先に取ると、内側で待つ間もプロセス枠を占有して
+    // 無関係なテナントを待たせる（実測: 実行中 1 本でプロセス枠を 2 消費）。
+    const gated = withGate(callBudget.client, llmGate(), signal);
+    // 同じゲートを二重に掛けると、外側で取った枠を内側で待って自己デッドロックする
+    // （ゲートは非再入。実測: limit 1 のプロセスゲートを deps.gate に渡すと全 run が
+    // 「LLM 同時実行の待機」で期限切れ。timeoutMs 未指定なら永久ハング）。⚠ landmines.md
+    const client =
+      deps.gate === undefined || deps.gate === llmGate()
+        ? gated
+        : withGate(gated, deps.gate, signal);
+    // チェックポイントは runDir 単位なので、同一 outDir の並行実行は訳文を混ぜる。契約付録 §8。
+    lock = acquireRunLock(runDir);
     if (deps.db) {
       db = deps.db;
     } else {
-      const loc = deps.dbPath ?? dbPath();
+      // 空白のみの dbPath は「未指定」として扱う（sharedDefaults の判定と一致させる）。
+      const given = deps.dbPath?.trim();
+      const loc = given === undefined || given === "" ? dbPath() : given;
       mkdirSync(path.dirname(loc), { recursive: true });
       db = new GlossaryDb(loc);
     }
@@ -266,11 +780,68 @@ export async function translatePaper(
       runDir,
       "ingest",
       IngestCache,
-      () => ingest(input, path.join(runDir, "source"), deps.ingest),
-      { invalidation: inputSignature(input) },
+      () =>
+        ingest(input, path.join(runDir, "source"), {
+          ...deps.ingest,
+          limits: deps.limits ?? deps.ingest?.limits,
+          arxiv: { ...deps.ingest?.arxiv, signal },
+        }),
+      { invalidation: inputSignature(input), key: deps.cacheKey },
     );
 
+    // プリアンブルは翻訳対象ではなく verbatim に持ち越されるため、節ループの品質ゲートでは
+    // 検査されない。LLM を呼ぶ前にここで弾く（悪意ある論文にコストを払わない）。組版安全 ADR。
+    const unsafe = findUnsafeTexCommands(ingested.cleanLatex);
+    // 同梱の .sty/.cls は \usepackage 経由で読み込まれ、cleanLatex には現れない。
+    // 配布版に無い名前は shadow されずそのまま実行されるので、ここで別に検査する。
+    const unsafeSupport = unsafeSupportFiles(ingested.sourceDir);
+    if (unsafe.length > 0 || unsafeSupport.length > 0) {
+      const detail = [
+        ...unsafe.map((c) => `main.tex: \\${c}`),
+        ...unsafeSupport.map((u) => `${u.file}: ${u.commands.map((c) => `\\${c}`).join(", ")}`),
+      ];
+      throw new JpaperError(
+        2,
+        "input",
+        `論文が組版時にファイル読み書き・Lua 実行を行うコマンドを含んでいます: ${detail.join(" / ")}`,
+      );
+    }
+
+    // 解決できない \input は黙って空文字列になる。本文が残っていても一部は欠けているので、
+    // 成功として返す前に必ず観測可能にする（本文消失の直接の原因がこの沈黙だった）。
+    if (ingested.unresolvedInputs > 0) {
+      notify(
+        `解決できない \\input / \\include が ${String(ingested.unresolvedInputs)} 件あります（本文の一部が欠けている可能性）`,
+      );
+    }
+
+    progress({ phase: "ingest", done: 1, total: 1 });
+    const budget = segmentBudgetFor(contextWindowFor(opts.provider, opts.ollama, opts.openrouter));
+    const segments = segment(ingested.cleanLatex, budget);
+    // LLM を 1 回も呼ぶ前に判定する（超過が確定した入力に課金しない。契約付録 §8）。
+    // glossary は run 中で最大コンテキストの呼び出しなので、この順序が逆だと
+    // 落ちると分かっている入力に一番高い 1 回を払うことになる。
+    // 本文が 1 節も無い＝成果物が空。failed === 0 は results.length === 0 でも真なので、
+    // ここで落とさないと「空の PDF が exit 0 の成功」として返り課金だけ残る（実測: 本文を
+    // \input{sections/intro} だけで書いた論文の同梱漏れで segments 0 / llmCalls 1 / exit 0）。
+    if (segments.length === 0) {
+      throw new JpaperError(
+        2,
+        "input",
+        ingested.unresolvedInputs > 0
+          ? `翻訳対象の本文が空です（解決できない \\input / \\include が ${String(ingested.unresolvedInputs)} 件あります）`
+          : "翻訳対象の本文が空です",
+      );
+    }
+    if (segments.length > work.maxSegments) {
+      throw new JpaperError(
+        2,
+        "too-large",
+        `翻訳対象セグメント数 ${segments.length} が上限 ${work.maxSegments} を超えています`,
+      );
+    }
     // 用語バリア: 並列翻訳の前に resolved/brief/style を確定する。
+    progress({ phase: "context", done: 0, total: 1 });
     const ctx = await loadOrBuildContext(
       runDir,
       outDir,
@@ -278,15 +849,20 @@ export async function translatePaper(
       db,
       ingested.paperId,
       ingested.cleanLatex,
+      deps.cacheKey,
+      (m) => notify(m),
     );
-    const budget = segmentBudgetFor(contextWindowFor(opts.provider, opts.ollama));
-    const segments = segment(ingested.cleanLatex, budget);
     const firstOcc = buildFirstOccurrenceIndex(
       segments,
       ctx.resolved.map((r) => r.src),
     );
 
-    const results = await mapLimit(segments, opts.concurrency ?? 4, (seg) => {
+    let doneSegments = 0;
+    let donePassed = 0;
+    let doneFailed = 0;
+    progress({ phase: "context", done: 1, total: 1 });
+    progress({ phase: "translate", done: 0, total: segments.length });
+    const results = await mapLimit(segments, opts.concurrency ?? defaultConcurrencyFor(opts.provider), (seg) => {
       const slice = ctx.resolved
         .filter((t) => seg.latex.includes(t.src))
         .map((t) => ({ ...t, firstOccurrence: firstOcc.get(t.src) === seg.id })) as ResolvedTerm[];
@@ -302,9 +878,25 @@ export async function translatePaper(
         seg.id,
         SectionLoopCache,
         () => runSectionLoop(client, seg, slice, { brief: ctx.brief, style: ctx.style }),
-        { invalidation, cacheable: (r) => r.passed },
-      );
-    });
+        { invalidation, cacheable: (r) => r.passed, key: deps.cacheKey },
+      ).then((r) => {
+        doneSegments++;
+        if (r.passed) donePassed++;
+        else doneFailed++;
+        reached = { total: segments.length, passed: donePassed, failed: doneFailed };
+        progress({
+          phase: "translate",
+          segmentId: seg.id,
+          done: doneSegments,
+          total: segments.length,
+          passed: r.passed,
+          failedKinds: r.failedKinds,
+          usedRevisions: r.usedRevisions,
+          maxRevisions: r.maxRevisions,
+        });
+        return r;
+      });
+    }, signal);
 
     // 見出し未訳の非ブロッキング lint。keep-original 確定語は除外して訳注へ流す（ビルドは壊さない）。
     const keepOriginal = ctx.resolved
@@ -324,21 +916,35 @@ export async function translatePaper(
       })),
     });
 
+    clearForeignContext(outDir, ingested.paperId);
     const chaptersDir = path.join(outDir, "translation", "chapters");
     rmSync(chaptersDir, { recursive: true, force: true }); // 縮小時の古い chapter を残さない
     mkdirSync(chaptersDir, { recursive: true });
-    for (const r of results) {
+    // 落ちたセグメントの訳文は書き出さない。汚染で落ちた run でも成果物ディレクトリに
+    // \write18{...} 入りの .tex が残り、利用者が手で組版すれば発火した。
+    for (const r of results.filter((x) => x.passed)) {
       writeFileSync(path.join(chaptersDir, `${r.segmentId}.tex`), r.ja);
     }
     writeFileSync(path.join(outDir, "notes.json"), JSON.stringify(notes, null, 2));
 
     const passed = results.filter((r) => r.passed).length;
     const failed = results.length - passed;
+    reached = { total: results.length, passed, failed };
+
+    // 汚染は品質の失敗に埋もれさせない。exit code は他の失敗に持っていかれうるので、
+    // 種別そのものを警告として必ず観測可能にする。
+    const tainted = contaminatedSegments(results);
+    if (tainted.length > 0) {
+      notify(
+        `訳文が危険コマンド・文書構造の破壊を持ち込みました（汚染の疑い）: ${tainted.slice(0, 10).join(", ")}`,
+      );
+    }
 
     // 全節通過時のみ組版する（翻訳失敗の 3/4 は組版前に確定）。
     let layout: Layout | null = null;
     let buildOk: boolean | null = null;
     let pdfPath: string | undefined;
+    let typesetMessage: string | undefined;
     let exitCode = resolveExitCode(results.filter((r) => !r.passed).map((r) => r.failCode ?? 4));
     if (failed === 0) {
       // 訳注を本文へ反映（初出脚注＋巻末一覧）してから組版する。
@@ -349,7 +955,8 @@ export async function translatePaper(
       }));
       const backmatter = renderBackmatter(notes, formBySrc);
       if (backmatter) rendered.push({ id: "backmatter", tex: backmatter });
-      const outcome = typeset(
+      progress({ phase: "typeset", done: 0, total: 1 });
+      const outcome = await typeset(
         ingested.cleanLatex,
         rendered,
         {
@@ -359,9 +966,25 @@ export async function translatePaper(
           figures: ingested.figures,
         },
         deps.latexRunner,
-        (m) => deps.onError?.(m),
+        (m) => notify(m),
+        signal,
       );
       ({ layout, buildOk, pdfPath, exitCode } = outcome);
+      typesetMessage = outcome.message;
+      progress({ phase: "typeset", done: 1, total: 1 });
+    }
+
+    // 正本の確定は組版まで到達してから（契約付録 §2）。組版に失敗した run で
+    // glossary.md / brief.md / style.md と .paper-id を確定すると、壊れた出力先が
+    // 次の run の正本になる。LLM の成果は .run/steps の checkpoint に残るので、
+    // 確定を見送っても再実行のコストは増えない。
+    // 翻訳自体が失敗して組版へ進まなかった run（failed > 0）は、run としては最後まで
+    // 到達しているので従来どおり確定する。
+    if (buildOk !== false) {
+      // 今回使わなかった step の checkpoint を掃除する（節が減った再実行の孤児が
+      // 残ると、前の論文の訳文がそのまま出力先に居座る）。
+      pruneSteps(runDir, new Set(["ingest", "glossary", ...segments.map((s) => s.id)]));
+      promoteContext(outDir, ingested.paperId, sourceDigestOf(ingested.cleanLatex), ctx.pending);
     }
 
     const summary = RunSummary.parse({
@@ -376,13 +999,19 @@ export async function translatePaper(
       notes: { total: notes.length, byTrigger: countByTrigger(notes) },
       layout,
       buildOk,
+      sharedDefaults,
+      llmCalls: llmCalls(),
       exitCode,
     });
-    return { status: exitCode === 0 ? "ok" : "failed", exitCode, pdfPath, summary };
+    if (exitCode === 0) return { status: "ok", exitCode, pdfPath, summary };
+    return { status: "failed", exitCode, pdfPath, error: gateError(exitCode, results, typesetMessage), summary };
   } catch (e) {
-    deps.onError?.(String((e as Error)?.message ?? e));
-    return failResult(paperId, outDir, e instanceof JpaperError ? e.code : 1);
+    const error = toRunError(e);
+    notify(error.message);
+    return failResult(paperId, outDir, error, sharedDefaults, llmCalls(), reached);
   } finally {
+    deadline.dispose();
     if (!deps.db) db?.close();
+    lock?.release();
   }
 }

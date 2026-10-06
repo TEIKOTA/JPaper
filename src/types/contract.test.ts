@@ -7,6 +7,7 @@ import {
   JpaperInput,
   RunSummary,
   TranslatorIn,
+  TranslatorOut,
   EvaluatorOut,
   Provider,
 } from "./contract.js";
@@ -108,7 +109,7 @@ describe("contract zod schemas", () => {
       issues: [{ severity: "warn", message: "hedging を弱めない" }],
     });
     expect(e.verdict).toBe("revise");
-    expect(e.issues[0].severity).toBe("warn");
+    expect(e.issues[0]?.severity).toBe("warn");
   });
 
   it("RunSummary: (A) 単体では buildOk/layout は null 可", () => {
@@ -125,5 +126,103 @@ describe("contract zod schemas", () => {
     });
     expect(s.buildOk).toBeNull();
     expect(s.layout).toBeNull();
+  });
+});
+
+describe("用語集の上限", () => {
+  const term = (over: Record<string, unknown> = {}) => ({
+    src: "value",
+    form: "値",
+    class: "paper-defined",
+    rendering: "bilingual",
+    ...over,
+  });
+  const wrap = (resolved: unknown[]) => ({
+    resolved,
+    brief: { thesis: "t", sectionRoles: [], notationConventions: [] },
+    style: { tensePolicy: "a", headingStyle: "b", numberStyle: "c" },
+  });
+
+  it("件数の上限を超えたら弾く", () => {
+    // 上限が無かった頃は 2 万件を返させて、275 バイトの入力から 1 run で
+    // 560 万文字ぶんのプロンプトを吐かせられた（maxLlmCalls は回数しか見ない）。
+    expect(() => GlossaryBuilderOut.parse(wrap(Array.from({ length: 501 }, () => term())))).toThrow();
+    expect(GlossaryBuilderOut.parse(wrap(Array.from({ length: 500 }, () => term()))).resolved).toHaveLength(500);
+  });
+
+  it("空の src を弾く", () => {
+    // 用語スライスは seg.latex.includes(src) で選ぶので、空だと全件が全セグメントに乗る。
+    expect(() => GlossaryBuilderOut.parse(wrap([term({ src: "" })]))).toThrow();
+  });
+
+  it("長すぎる src/form を弾く", () => {
+    expect(() => GlossaryBuilderOut.parse(wrap([term({ src: "x".repeat(201) })]))).toThrow();
+    expect(() => GlossaryBuilderOut.parse(wrap([term({ form: "x".repeat(201) })]))).toThrow();
+  });
+});
+
+describe("brief / style の上限", () => {
+  const wrap = (brief: unknown, style?: unknown) => ({
+    resolved: [],
+    brief,
+    style: style ?? { tensePolicy: "a", headingStyle: "b", numberStyle: "c" },
+  });
+  const brief = (over: Record<string, unknown> = {}) => ({
+    thesis: "t",
+    sectionRoles: [],
+    notationConventions: [],
+    ...over,
+  });
+
+  it("brief は全セグメントのプロンプトに載るので件数・長さを縛る", () => {
+    expect(() =>
+      GlossaryBuilderOut.parse(wrap(brief({ thesis: "x".repeat(2001) }))),
+    ).toThrow();
+    expect(() =>
+      GlossaryBuilderOut.parse(
+        wrap(brief({ notationConventions: Array.from({ length: 101 }, () => "x") })),
+      ),
+    ).toThrow();
+    expect(() =>
+      GlossaryBuilderOut.parse(
+        wrap(brief({ sectionRoles: Array.from({ length: 101 }, () => ({ id: "a", role: "b" })) })),
+      ),
+    ).toThrow();
+  });
+
+  it("style も同じ上限で縛る", () => {
+    expect(() =>
+      GlossaryBuilderOut.parse(
+        wrap(brief(), { tensePolicy: "x".repeat(2001), headingStyle: "b", numberStyle: "c" }),
+      ),
+    ).toThrow();
+  });
+});
+
+
+describe("TranslatorOut: 小さいモデルの形の揺れ", () => {
+  it('{"seg-0019": {"ja": "…"}} を畳んで受ける（実測の形）', () => {
+    const v = TranslatorOut.parse({ "seg-0019": { ja: "訳文" } });
+    expect(v).toEqual({ segmentId: "seg-0019", ja: "訳文" });
+  });
+
+  it("正しい形はそのまま通る", () => {
+    expect(TranslatorOut.parse({ segmentId: "seg-1", ja: "訳文" })).toEqual({
+      segmentId: "seg-1",
+      ja: "訳文",
+    });
+  });
+
+  it("鍵が 2 つ以上あるものは畳まない（曖昧なので落とす）", () => {
+    expect(() => TranslatorOut.parse({ a: { ja: "x" }, b: { ja: "y" } })).toThrow();
+  });
+
+  it("中身に ja が無ければ畳まない", () => {
+    expect(() => TranslatorOut.parse({ "seg-1": { text: "x" } })).toThrow();
+  });
+
+  it("配列や null は素通しして落とす", () => {
+    expect(() => TranslatorOut.parse([{ ja: "x" }])).toThrow();
+    expect(() => TranslatorOut.parse(null)).toThrow();
   });
 });

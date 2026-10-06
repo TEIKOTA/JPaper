@@ -7,7 +7,7 @@ describe("FakeLlmClient", () => {
     expect(await c.complete({ system: "s", user: "u1" })).toBe('{"ok":true}');
     await c.complete({ system: "s", user: "u2" });
     expect(c.calls).toHaveLength(2);
-    expect(c.calls[1].user).toBe("u2");
+    expect(c.calls[1]?.user).toBe("u2");
   });
 
   it("キューは順に返し、尽きたら例外", async () => {

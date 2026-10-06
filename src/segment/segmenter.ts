@@ -1,5 +1,5 @@
 // 契約付録 §3・§4。\section 境界＋0.30×CW 予算での決定的セグメント分割。
-import { estimateTokens } from "./token-estimator.js";
+import { countChars, estimateTokens, tokensOf, type CharCounts } from "./token-estimator.js";
 
 export type SizeClass = "small" | "medium" | "large";
 
@@ -53,13 +53,23 @@ function splitByParagraphs(chunk: string, budget: number): string[] {
   const paras = chunk.split(/\n\s*\n/);
   const out: string[] = [];
   let buf = "";
+  // バッファの文字数は足し込みで持つ。連結後の文字列を数え直すと O(バッファ長) が
+  // 段落ごとに掛かり、実測 400KiB の入力が 120 秒同期でイベントループを止めた。
+  let bufCounts: CharCounts = { cjk: 0, other: 0 };
+  const sep = countChars("\n\n");
   for (const p of paras) {
+    const pc = countChars(p);
     const candidate = buf ? `${buf}\n\n${p}` : p;
-    if (buf !== "" && estimateTokens(candidate) > budget) {
+    const candCounts: CharCounts = buf
+      ? { cjk: bufCounts.cjk + sep.cjk + pc.cjk, other: bufCounts.other + sep.other + pc.other }
+      : pc;
+    if (buf !== "" && tokensOf(candCounts) > budget) {
       out.push(buf);
       buf = p;
+      bufCounts = pc;
     } else {
       buf = candidate;
+      bufCounts = candCounts;
     }
   }
   if (buf.trim() !== "") out.push(buf);

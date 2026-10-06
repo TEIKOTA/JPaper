@@ -8,15 +8,23 @@ import type {
 } from "../types/contract.js";
 import type { Segment } from "../segment/segmenter.js";
 import { maxRevisionsFor } from "../segment/segmenter.js";
-import { formalCheck } from "./quality-gate.js";
+import { formalCheck, type FormalIssue } from "./quality-gate.js";
+import { protectMath, restoreMath, describeMarkIssues } from "../segment/protect.js";
 import { translate } from "../agents/translator.js";
 import { evaluate } from "../agents/evaluator.js";
+
+// 数式・記号を印へ差し替えるか。既定は true（ADR 20260816-protection-depends-on-model-capability）。
+// モデル依存の既定で、切り替えはこの 1 行。判断材料は「落ちた節の数」と「1 節あたりの改稿回数」。
+const PROTECT_SPANS = true;
 
 export interface SectionLoopResult {
   segmentId: string;
   ja: string;
   passed: boolean;
   failCode?: 3 | 4;
+  // 落ちた形式検査の種別。「数式を 1 つ落とした」と「危険コマンドを注入された」を
+  // 同じ見た目で返すと、運用者は汚染に気づけない（メッセージはどこにも出力されない）。
+  failedKinds: FormalIssue["kind"][];
   usedRevisions: number;
   maxRevisions: number;
   warnIssues: EvalIssue[];
@@ -33,19 +41,27 @@ export async function runSectionLoop(
   glossarySlice: ResolvedTerm[],
   doc: DocContext = {},
 ): Promise<SectionLoopResult> {
-  const maxRevisions = maxRevisionsFor(segment.tokens);
+  // 形式と品質は別の予算を持つ。共有すると、形式で手こずった節は品質の改稿を
+  // 1 度も試せずに落ちる。ADR 20260815。
+  const perChecker = maxRevisionsFor(segment.tokens);
+  const maxRevisions = perChecker * 2;
+  let formalLeft = perChecker;
+  let qualityLeft = perChecker;
+  // 保護区間は既定で入れる。ADR 20260816-protection-depends-on-model-capability。
+  const guarded = protectMath(segment.latex, { off: !PROTECT_SPANS });
   let revisions = 0;
   let priorJa: string | undefined;
   let issues: string[] | undefined;
   let lastJa = "";
   let lastFailCode: 3 | 4 = 3;
+  let lastKinds: FormalIssue["kind"][] = [];
 
   while (true) {
     const out = await translate(
       client,
       {
         segmentId: segment.id,
-        latex: segment.latex,
+        latex: guarded.text,
         glossarySlice,
         priorJa,
         issues,
@@ -53,21 +69,32 @@ export async function runSectionLoop(
       doc,
       revisions,
     );
-    lastJa = out.ja;
+    const restored = restoreMath(out.ja, guarded.spans);
+    lastJa = restored.text;
 
-    const formal = formalCheck(segment.latex, out.ja, glossarySlice);
+    // 印の欠落は formalCheck では「数式個数不一致」としか出ない。どの印かを名指しする。
+    const markIssues = describeMarkIssues(restored);
+    const formal = formalCheck(segment.latex, restored.text, glossarySlice);
+    // 危険コマンドと文書構造の破壊は再訳の対象にしない（直せる誤りではなく、汚染の兆候
+    // として即失敗させる）。\end{document} は組版が正常終了するぶん、素通しの害が大きい。
+    lastKinds = [...new Set(formal.map((f) => f.kind))];
+    if (formal.some((f) => f.kind === "unsafe-command" || f.kind === "structure")) {
+      lastFailCode = 3;
+      break;
+    }
     if (formal.length > 0) {
       lastFailCode = 3;
-      if (revisions >= maxRevisions) break;
+      if (formalLeft <= 0) break;
+      formalLeft--;
       revisions++;
       priorJa = out.ja;
-      issues = formal.map((f) => f.message);
+      issues = [...markIssues, ...formal.map((f) => f.message)];
       continue;
     }
 
     const ev = await evaluate(
       client,
-      { segmentId: segment.id, srcLatex: segment.latex, ja: out.ja },
+      { segmentId: segment.id, srcLatex: segment.latex, ja: restored.text },
       { glossary: glossarySlice, brief: doc.brief, style: doc.style },
       revisions,
     );
@@ -77,15 +104,20 @@ export async function runSectionLoop(
     if (ev.verdict !== "fail" && !hasError) {
       return {
         segmentId: segment.id,
-        ja: out.ja,
+        ja: restored.text,
         passed: true,
+        failedKinds: [],
         usedRevisions: revisions,
         maxRevisions,
         warnIssues: ev.issues.filter((i) => i.severity === "warn"),
       };
     }
     lastFailCode = 4;
-    if (ev.verdict === "fail" || revisions >= maxRevisions) break;
+    lastKinds = [];
+    // fail は「この訳が不可」であって「この節が訳せない」ではない。指摘を渡さずに
+    // 捨てるのは、1 呼び出しを節約するために節 1 本を失う取引になる。ADR 20260815。
+    if (qualityLeft <= 0) break;
+    qualityLeft--;
     revisions++;
     priorJa = out.ja;
     issues = ev.issues.map((i) => i.message);
@@ -96,6 +128,7 @@ export async function runSectionLoop(
     ja: lastJa,
     passed: false,
     failCode: lastFailCode,
+    failedKinds: lastKinds,
     usedRevisions: revisions,
     maxRevisions,
     warnIssues: [],

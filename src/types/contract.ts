@@ -1,5 +1,14 @@
 // 契約付録 §1-8 の写経（値の正本＝docs/design/contract-appendix.md）。
 import { z } from "zod";
+import {
+  MAX_BRIEF_CHARS,
+  MAX_BRIEF_ITEMS,
+  MAX_ISSUE_CHARS,
+  MAX_ISSUES,
+  MAX_NOTE_CHARS,
+  MAX_TERM_CHARS,
+  MAX_TERMS,
+} from "../runtime/untrusted.js";
 
 // ── §1 用語 ───────────────────────────────────────────────
 export const TermClass = z.enum([
@@ -14,30 +23,34 @@ export const Rendering = z.enum(["translate", "bilingual", "keep-original"]);
 export type Rendering = z.infer<typeof Rendering>;
 
 export const ResolvedTerm = z.object({
-  src: z.string(),
-  form: z.string(),
+  // 空の src は seg.latex.includes("") が常に真になり、全用語が全セグメントに乗る。
+  src: z.string().min(1).max(MAX_TERM_CHARS),
+  form: z.string().min(1).max(MAX_TERM_CHARS),
   class: TermClass,
   rendering: Rendering,
   firstOccurrence: z.boolean(),
-  note: z.string().optional(),
+  note: z.string().max(MAX_NOTE_CHARS).optional(),
 });
 export type ResolvedTerm = z.infer<typeof ResolvedTerm>;
 
 // ── §1 文書ブリーフ / 文体契約 ──
+// 上限の理由は resolved と同じ。brief は全セグメントのプロンプトに載る。
 export const DocumentBrief = z.object({
-  thesis: z.string(),
-  sectionRoles: z.array(z.object({ id: z.string(), role: z.string() })),
-  notationConventions: z.array(z.string()),
-  claimStrengthNotes: z.array(z.string()).default([]),
+  thesis: z.string().max(MAX_BRIEF_CHARS),
+  sectionRoles: z
+    .array(z.object({ id: z.string().max(MAX_TERM_CHARS), role: z.string().max(MAX_BRIEF_CHARS) }))
+    .max(MAX_BRIEF_ITEMS),
+  notationConventions: z.array(z.string().max(MAX_BRIEF_CHARS)).max(MAX_BRIEF_ITEMS),
+  claimStrengthNotes: z.array(z.string().max(MAX_BRIEF_CHARS)).max(MAX_BRIEF_ITEMS).default([]),
 });
 export type DocumentBrief = z.infer<typeof DocumentBrief>;
 
 export const StyleContract = z.object({
   register: z.enum(["plain", "polite"]).default("plain"),
-  tensePolicy: z.string(),
-  headingStyle: z.string(),
-  numberStyle: z.string(),
-  notes: z.array(z.string()).default([]),
+  tensePolicy: z.string().max(MAX_BRIEF_CHARS),
+  headingStyle: z.string().max(MAX_BRIEF_CHARS),
+  numberStyle: z.string().max(MAX_BRIEF_CHARS),
+  notes: z.array(z.string().max(MAX_BRIEF_CHARS)).max(MAX_BRIEF_ITEMS).default([]),
 });
 export type StyleContract = z.infer<typeof StyleContract>;
 
@@ -51,14 +64,33 @@ export const TranslatorIn = z.object({
 });
 export type TranslatorIn = z.infer<typeof TranslatorIn>;
 
-export const TranslatorOut = z.object({ segmentId: z.string(), ja: z.string() });
+// 小さいモデルは `{"seg-0019": {"ja": "…"}}` の形をよく返す（実測: 出力 10KB の節で
+// 再試行 1 回あたり 5 分を失った）。鍵が 1 つで中身に文字列 ja があるときだけ、
+// 鍵を segmentId とみなして畳む。それ以外は従来どおり落とす。契約付録 §1
+function foldSingleKeyed(v: unknown): unknown {
+  if (typeof v !== "object" || v === null || Array.isArray(v)) return v;
+  const o = v as Record<string, unknown>;
+  if (typeof o.ja === "string") return v;
+  const keys = Object.keys(o);
+  if (keys.length !== 1) return v;
+  const inner = o[keys[0]!];
+  if (typeof inner !== "object" || inner === null || Array.isArray(inner)) return v;
+  const ja = (inner as Record<string, unknown>).ja;
+  return typeof ja === "string" ? { segmentId: keys[0]!, ja } : v;
+}
+
+export const TranslatorOut = z.preprocess(
+  foldSingleKeyed,
+  z.object({ segmentId: z.string(), ja: z.string() }),
+);
 export type TranslatorOut = z.infer<typeof TranslatorOut>;
 
 // ── §1 evaluator ─────────────────────────────────────────
 export const EvalIssue = z.object({
   severity: z.enum(["error", "warn"]),
-  message: z.string(),
-  span: z.string().optional(),
+  // 上限は prompt 膨張（＝コスト増幅）と指示文の埋め込みを抑えるため。プロンプト注入 ADR(20260811)。
+  message: z.string().max(MAX_ISSUE_CHARS),
+  span: z.string().max(MAX_ISSUE_CHARS).optional(),
 });
 export type EvalIssue = z.infer<typeof EvalIssue>;
 
@@ -71,7 +103,7 @@ export type EvaluatorIn = z.infer<typeof EvaluatorIn>;
 
 export const EvaluatorOut = z.object({
   verdict: z.enum(["pass", "revise", "fail"]),
-  issues: z.array(EvalIssue),
+  issues: z.array(EvalIssue).max(MAX_ISSUES),
 });
 export type EvaluatorOut = z.infer<typeof EvaluatorOut>;
 
@@ -95,7 +127,8 @@ export const GlossaryBuilderIn = z.object({
 export type GlossaryBuilderIn = z.infer<typeof GlossaryBuilderIn>;
 
 export const GlossaryBuilderOut = z.object({
-  resolved: z.array(ResolvedTerm.omit({ firstOccurrence: true })),
+  // 件数の上限はプロンプト膨張（＝コスト増幅）を抑えるため。EvalIssue と同じ理由。
+  resolved: z.array(ResolvedTerm.omit({ firstOccurrence: true })).max(MAX_TERMS),
   brief: DocumentBrief,
   style: StyleContract,
 });
@@ -121,7 +154,7 @@ export const TranslatorNote = z.object({
 export type TranslatorNote = z.infer<typeof TranslatorNote>;
 
 // ── §5/§8 プロバイダ・入力・サマリ・結果 ──────────────────
-export const Provider = z.enum(["ollama", "claude"]);
+export const Provider = z.enum(["ollama", "claude", "openrouter"]);
 export type Provider = z.infer<typeof Provider>;
 
 export const JpaperInput = z.discriminatedUnion("kind", [
@@ -146,14 +179,44 @@ export const RunSummary = z.object({
   }),
   layout: z.enum(["original", "template"]).nullable(),
   buildOk: z.boolean().nullable(),
+  // 単一ユーザ既定にフォールバックした資源。マルチテナントでは空でなければ分離できていない。
+  sharedDefaults: z.array(z.enum(["db", "cacheKey", "outDir", "limits", "work"])).default([]),
+  // run 中に実際に発行した LLM 呼び出し回数（失敗した run でも返す＝課金相当の仕事量）。
+  llmCalls: z.number().int().nonnegative().default(0),
   exitCode: z.number().int(),
 });
 export type RunSummary = z.infer<typeof RunSummary>;
+
+export const ErrorKind = z.enum([
+  "input",
+  "conflict",
+  "too-large",
+  "provider",
+  "formal",
+  "quality",
+  "typeset",
+  "canceled",
+  "timeout",
+  "busy",
+  "upstream",
+  "infra",
+  "internal",
+]);
+
+export const RunError = z.object({
+  kind: ErrorKind,
+  code: z.number().int(),
+  message: z.string(),
+  detail: z.string().optional(),
+});
+export type RunError = z.infer<typeof RunError>;
 
 export const Result = z.object({
   status: z.enum(["ok", "failed"]),
   pdfPath: z.string().optional(),
   exitCode: z.number().int(),
+  // 失敗の理由。status="failed" のとき必ず入る（契約付録 §8）。
+  error: RunError.optional(),
   summary: RunSummary,
 });
 export type Result = z.infer<typeof Result>;
@@ -174,6 +237,8 @@ export interface LlmRequest {
   // JSON 出力を期待する呼び出し。ネイティブ構造化出力を持つプロバイダ（Ollama）だけが強制に使う。
   // claude CLI は該当機能が無いので無視しプロンプト指定に委ねる。構造化出力 ADR。
   jsonMode?: boolean;
+  // 呼び出し側の中断（web でクライアントが切断した等）。プロバイダは進行中の I/O を中止する。
+  signal?: AbortSignal;
 }
 export interface LlmClient {
   complete(req: LlmRequest): Promise<string>;
@@ -196,6 +261,8 @@ export interface LlmCallEvent {
   cacheReadTokens?: number;
   cacheCreationTokens?: number;
   costUsd?: number;
+  // 呼び出しが失敗したか。失敗した呼び出しも課金されるので、記録から落とすと過小計上になる。
+  failed?: boolean;
 }
 export type LlmCallRecord = LlmCallEvent & { runId: string };
 export type TraceSink = (ev: LlmCallEvent) => void;

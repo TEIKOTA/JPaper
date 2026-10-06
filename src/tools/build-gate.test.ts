@@ -1,9 +1,20 @@
 import { describe, it, expect, afterEach } from "vitest";
+import { fastestMs } from "../testing/timing.js";
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync, existsSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { classifyLog, stageBuild, runBuildGate, checkFigures } from "./build-gate.js";
+import {
+  classifyLog,
+  stageBuild,
+  runBuildGate,
+  checkFigures,
+  sandboxEnv,
+  SRC_PKG_DIR,
+  parseResolved,
+  unsafeSupportFiles,
+} from "./build-gate.js";
 import type { SourceSpan } from "./assemble-latex.js";
+import type { LatexRunner } from "./build-gate.js";
 
 const MAP: SourceSpan[] = [
   { id: "seg-0000", startLine: 10, endLine: 20 },
@@ -98,10 +109,24 @@ describe("checkFigures", () => {
     const dropped = checkFigures(mainTex, mainDir, ["/src/Figures/a.png", "/src/Figures/gone.pdf"]);
     expect(dropped).toEqual(["Figures/gone.pdf"]);
   });
+
+  it("図数 × 本文長に比例しない", () => {
+    // 図ごとに本文全体を走査していた頃は 5,000 図 × 8MB 本文で 1,472ms 同期ブロックした。
+    const mainTex = "x".repeat(8 * 1024 * 1024);
+    const figures = Array.from({ length: 5000 }, (_, i) => `/src/f${String(i)}.pdf`);
+    expect(
+      fastestMs(3, () => expect(checkFigures(mainTex, mainDir, figures)).toHaveLength(5000)),
+    ).toBeLessThan(300);
+  });
+
+  it("\\includegraphics の引数以外に同じ綴りがあっても残存とは見なさない", () => {
+    const mainTex = "本文で Figures/a という語に触れるだけ";
+    expect(checkFigures(mainTex, mainDir, ["/src/Figures/a.png"])).toEqual(["Figures/a.png"]);
+  });
 });
 
 describe("stageBuild", () => {
-  it("main.tex・支援ファイル(.sty/.bib はフラット・再帰)・図(main 相対)を複製する", () => {
+  it("main.tex・支援ファイル(.sty/.bib は srcpkg/ へ再帰収集)・図(main 相対)を複製する", () => {
     const src = mkTemp();
     writeFileSync(path.join(src, "nips.sty"), "% sty");
     writeFileSync(path.join(src, "refs.bib"), "@x{}");
@@ -111,17 +136,58 @@ describe("stageBuild", () => {
     mkdirSync(path.join(src, "Figures"));
     writeFileSync(path.join(src, "Figures", "a.png"), "PNG");
     const build = path.join(mkTemp(), "b");
-    stageBuild(build, "MAIN", {
-      sourceDir: src,
-      mainDir: src,
-      figures: [path.join(src, "Figures", "a.png")],
-    });
+    stageBuild(
+      build,
+      "MAIN",
+      { sourceDir: src, mainDir: src, figures: [path.join(src, "Figures", "a.png")] },
+      () => new Set<string>(),
+    );
+    const pkg = path.join(build, SRC_PKG_DIR);
     expect(existsSync(path.join(build, "main.tex"))).toBe(true);
-    expect(existsSync(path.join(build, "nips.sty"))).toBe(true);
-    expect(existsSync(path.join(build, "refs.bib"))).toBe(true);
-    expect(existsSync(path.join(build, "extra.cls"))).toBe(true); // 再帰・フラット
+    expect(existsSync(path.join(pkg, "nips.sty"))).toBe(true);
+    expect(existsSync(path.join(pkg, "refs.bib"))).toBe(true);
+    expect(existsSync(path.join(pkg, "extra.cls"))).toBe(true); // 再帰
     expect(existsSync(path.join(build, "Figures", "a.png"))).toBe(true);
-    expect(readdirSync(build)).not.toContain("notes.txt");
+    expect(readdirSync(pkg)).not.toContain("notes.txt");
+  });
+  it("同梱パッケージは build 直下に置かない（cwd 優先で配布版を上書きさせない）", () => {
+    const src = mkTemp();
+    writeFileSync(path.join(src, "graphicx.sty"), "% EVIL");
+    const build = path.join(mkTemp(), "b");
+    stageBuild(build, "MAIN", { sourceDir: src, mainDir: src, figures: [] }, () => new Set<string>());
+    expect(existsSync(path.join(build, "graphicx.sty"))).toBe(false);
+    expect(existsSync(path.join(build, SRC_PKG_DIR, "graphicx.sty"))).toBe(true);
+  });
+  it("配布パッケージと同名の同梱ファイルを shadowed として返す", () => {
+    const src = mkTemp();
+    writeFileSync(path.join(src, "graphicx.sty"), "% EVIL");
+    writeFileSync(path.join(src, "mypaper.sty"), "% own");
+    const build = path.join(mkTemp(), "b");
+    const shadowed = stageBuild(
+      build,
+      "MAIN",
+      { sourceDir: src, mainDir: src, figures: [] },
+      (names) => new Set(names.filter((n) => n === "graphicx.sty")),
+    );
+    expect(shadowed).toEqual(["graphicx.sty"]);
+  });
+});
+
+describe("sandboxEnv", () => {
+  it("探索パスは既定を先頭に置き、同梱 srcpkg を後ろへ回す", () => {
+    const env = sandboxEnv({}, "/b");
+    for (const key of ["TEXINPUTS", "BIBINPUTS", "BSTINPUTS"] as const) {
+      expect(env[key]).toBe(`:${path.join("/b", SRC_PKG_DIR)}//`);
+      expect(env[key]!.startsWith(":")).toBe(true); // 先頭の空要素＝既定パス
+    }
+  });
+  it("shell escape と build ツリー外への書き出しを禁止する", () => {
+    const env = sandboxEnv({}, "/b");
+    expect(env.shell_escape).toBe("f");
+    expect(env.openout_any).toBe("p");
+  });
+  it("既存の環境変数は保つ", () => {
+    expect(sandboxEnv({ PATH: "/usr/bin" }, "/b").PATH).toBe("/usr/bin");
   });
   it("入れ子 main の図は main 相対で配置する（sourceDir 相対にしない）", () => {
     const src = mkTemp();
@@ -141,34 +207,163 @@ describe("runBuildGate", () => {
     writeFileSync(path.join(s, "s.sty"), "% x");
     return s;
   };
-  it("ビルド成功＋警告なしは buildOk かつ pdfPath", () => {
+  it("ビルド成功＋警告なしは buildOk かつ pdfPath", async () => {
     const s = src();
     const build = path.join(mkTemp(), "b");
     const runner = (dir: string) => {
       writeFileSync(path.join(dir, "main.pdf"), "%PDF");
       return { code: 0, log: "Output written on main.pdf (15 pages)." };
     };
-    const r = runBuildGate({ buildDir: build, mainTex: "M", sourceDir: s, mainDir: s, figures: [], sourceMap: MAP }, runner);
+    const r = await runBuildGate({ buildDir: build, mainTex: "M", sourceDir: s, mainDir: s, figures: [], sourceMap: MAP }, runner);
     expect(r.buildOk).toBe(true);
     expect(r.pdfPath).toBe(path.join(build, "main.pdf"));
   });
-  it("翻訳起因の fatal は buildOk=false かつ failedSegments に載る", () => {
+  it("翻訳起因の fatal は buildOk=false かつ failedSegments に載る", async () => {
     const s = src();
     const build = path.join(mkTemp(), "b");
     const runner = () => ({ code: 1, log: "./main.tex:25: Missing $ inserted." });
-    const r = runBuildGate({ buildDir: build, mainTex: "M", sourceDir: s, mainDir: s, figures: [], sourceMap: MAP }, runner);
+    const r = await runBuildGate({ buildDir: build, mainTex: "M", sourceDir: s, mainDir: s, figures: [], sourceMap: MAP }, runner);
     expect(r.buildOk).toBe(false);
     expect(r.failedSegments[0]!.id).toBe("seg-0001");
   });
-  it("欠図（構造起因）は成功終了でも buildOk=false", () => {
+  it("欠図（構造起因）は成功終了でも buildOk=false", async () => {
     const s = src();
     const build = path.join(mkTemp(), "b");
     const runner = (dir: string) => {
       writeFileSync(path.join(dir, "main.pdf"), "%PDF");
       return { code: 0, log: "LaTeX Warning: File `Figures/x.png' not found." };
     };
-    const r = runBuildGate({ buildDir: build, mainTex: "M", sourceDir: s, mainDir: s, figures: [], sourceMap: MAP }, runner);
+    const r = await runBuildGate({ buildDir: build, mainTex: "M", sourceDir: s, mainDir: s, figures: [], sourceMap: MAP }, runner);
     expect(r.buildOk).toBe(false);
     expect(r.missingFigures).toEqual(["Figures/x.png"]);
+  });
+});
+
+describe("組版はイベントループを止めない", () => {
+  it("runner の待ち時間中もタイマーが進む", async () => {
+    const s = mkTemp();
+    const build = path.join(mkTemp(), "b");
+    let ticks = 0;
+    const timer = setInterval(() => {
+      ticks++;
+    }, 10);
+    const slowRunner: LatexRunner = async (dir) => {
+      await new Promise((r) => setTimeout(r, 300));
+      writeFileSync(path.join(dir, "main.pdf"), "%PDF");
+      return { code: 0, log: "" };
+    };
+    await runBuildGate(
+      { buildDir: build, mainTex: "M", sourceDir: s, mainDir: s, figures: [], sourceMap: MAP },
+      slowRunner,
+    );
+    clearInterval(timer);
+    expect(ticks).toBeGreaterThan(5); // 同期実行なら 0 になる
+  });
+
+  it("同期 runner も従来どおり受け付ける", async () => {
+    const s = mkTemp();
+    const build = path.join(mkTemp(), "b");
+    const r = await runBuildGate(
+      { buildDir: build, mainTex: "M", sourceDir: s, mainDir: s, figures: [], sourceMap: MAP },
+      (dir) => {
+        writeFileSync(path.join(dir, "main.pdf"), "%PDF");
+        return { code: 0, log: "" };
+      },
+    );
+    expect(r.buildOk).toBe(true);
+  });
+});
+
+describe("kpsewhich はまとめて 1 回だけ問う", () => {
+  it("支援ファイルが何個でも resolver 呼び出しは 1 回", () => {
+    const src = mkTemp();
+    for (const n of ["a.sty", "b.sty", "c.cls", "d.bib"]) {
+      writeFileSync(path.join(src, n), "%");
+    }
+    const build = path.join(mkTemp(), "b");
+    let calls = 0;
+    stageBuild(build, "MAIN", { sourceDir: src, mainDir: src, figures: [] }, (names) => {
+      calls++;
+      expect(names).toHaveLength(4);
+      return new Set<string>();
+    });
+    expect(calls).toBe(1);
+  });
+});
+
+describe("組版の中断", () => {
+  it("abort 済みならステージングも走らせずに中断で抜ける", async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "jpaper-gate-abort-"));
+    const src = path.join(dir, "src");
+    mkdirSync(src, { recursive: true });
+    const c = new AbortController();
+    c.abort();
+    let ran = false;
+    await expect(
+      runBuildGate(
+        {
+          buildDir: path.join(dir, "build"),
+          mainTex: "\\documentclass{article}\\begin{document}x\\end{document}",
+          sourceDir: src,
+          mainDir: src,
+          figures: [],
+          sourceMap: [],
+          signal: c.signal,
+        },
+        () => {
+          ran = true;
+          return { code: 0, log: "" };
+        },
+      ),
+    ).rejects.toMatchObject({ code: 6, kind: "canceled" });
+    expect(ran).toBe(false);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("runner に signal を渡す（実行中の中断を子プロセスへ届ける）", async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "jpaper-gate-sig-"));
+    const src = path.join(dir, "src");
+    mkdirSync(src, { recursive: true });
+    const c = new AbortController();
+    let seen: AbortSignal | undefined;
+    await runBuildGate(
+      {
+        buildDir: path.join(dir, "build"),
+        mainTex: "\\documentclass{article}\\begin{document}x\\end{document}",
+        sourceDir: src,
+        mainDir: src,
+        figures: [],
+        sourceMap: [],
+        signal: c.signal,
+      },
+      (_d, signal) => {
+        seen = signal;
+        return { code: 1, log: "" };
+      },
+    );
+    expect(seen).toBe(c.signal);
+    rmSync(dir, { recursive: true, force: true });
+  });
+});
+
+describe("配布パッケージの解決", () => {
+  it("一部だけ解決できた出力からも集合を作れる", () => {
+    // kpsewhich は 1 つでも未解決だと exit != 0 を返すが、解決分は stdout に出ている。
+    // throw を「全滅」として扱うと、read プリミティブを含む配布パッケージ（TeX Live の
+    // tex/latex 6,000 件のうち実測 4.4%）を同梱しただけの正規論文が組版前に落ちる。
+    // arXiv 提出物は .bbl を同梱するのが常道なので、未解決が混ざるのはむしろ普通。
+    const out = "/usr/share/texmf/tex/latex/cleveref/cleveref.sty\n\n";
+    expect([...parseResolved(out)]).toEqual(["cleveref.sty"]);
+    expect(parseResolved("").size).toBe(0);
+  });
+
+  it("解決できた配布パッケージは危険判定から除外される", () => {
+    const dir = mkTemp();
+    writeFileSync(path.join(dir, "vendor.sty"), "\\openin1=x \\read1 to \\y");
+    writeFileSync(path.join(dir, "mine.sty"), "\\directlua{print(1)}");
+    const bad = unsafeSupportFiles(dir, (names) =>
+      names.includes("vendor.sty") ? new Set(["vendor.sty"]) : new Set(),
+    );
+    expect(bad.map((b) => b.file)).toEqual(["mine.sty"]);
   });
 });

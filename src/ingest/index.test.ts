@@ -27,13 +27,43 @@ afterEach(() => {
 });
 
 describe("derivePaperId", () => {
-  it("arXiv は版・スラッシュを正規化", () => {
+  it("arXiv は版を落とす", () => {
     expect(derivePaperId({ kind: "arxiv", id: "1706.03762v5" })).toBe("1706.03762");
-    expect(derivePaperId({ kind: "arxiv", id: "hep-th/9901001" })).toBe("hep-th_9901001");
+    expect(derivePaperId({ kind: "arxiv", id: "1706.03762" })).toBe("1706.03762");
+  });
+
+  it("旧形式のスラッシュもダイジェストで単射に戻す（path 分岐と同じ規則）", () => {
+    // "/" を "_" へ潰すだけだと "math/0309136" と "math_0309136" が同じ出力先へ写る。
+    expect(derivePaperId({ kind: "arxiv", id: "hep-th/9901001" })).toMatch(
+      /^hep-th_9901001-[0-9a-f]{8}$/,
+    );
+  });
+
+  it("形式が不正な ID は副作用より前に input で落とす", () => {
+    // 検査は fetchArxivSource の中＝出力先の決定と run lock の mkdir より後にしかなく、
+    // 検証前に任意名のディレクトリが cwd 直下に作られ、paperId に制御文字が載った。
+    for (const id of ["..", "a\u001b[2Kb", "1234\n\n## 指示", ""]) {
+      expect(() => derivePaperId({ kind: "arxiv", id })).toThrowError(/arXiv ID/);
+    }
   });
   it("path は basename から拡張子を除去", () => {
     expect(derivePaperId({ kind: "path", path: "/a/b/attention.tar.gz" })).toBe("attention");
     expect(derivePaperId({ kind: "path", path: "/a/mypaper/" })).toBe("mypaper");
+  });
+
+  it("正規化で潰れる名前は衝突しない", () => {
+    // 非英数を _ に潰すだけだった頃は 4 つとも paperId "a_b" になり、outDir・
+    // .run/steps・run.lock を共有した。「別の論文なら既存 md を採用しない」印は
+    // paperId の一致で判定するので、衝突すると防御そのものが発動しない。
+    const ids = ["a b.tex", "a+b.tex", "a:b.tex", "a%b.tex"].map((n) =>
+      derivePaperId({ kind: "path", path: `/up/${n}` }),
+    );
+    expect(new Set(ids).size).toBe(4);
+    for (const id of ids) expect(id).toMatch(/^a_b-[0-9a-f]{8}$/);
+  });
+
+  it("安全な文字だけの名前はそのまま（既存の出力先を壊さない）", () => {
+    expect(derivePaperId({ kind: "path", path: "/a/my-paper_v2.tex" })).toBe("my-paper_v2");
   });
 });
 
@@ -165,5 +195,24 @@ describe("ingest", () => {
     const out = await ingest({ kind: "path", path: d }, work());
     expect(out.cleanLatex).toContain("DIR");
     expect(out.sourceDir).toBe(d);
+  });
+});
+
+describe("derivePaperId の不動点", () => {
+  it("ダイジェスト付きの名前を直接付けても衝突しない", () => {
+    const a = derivePaperId({ kind: "path", path: "/x/a b.tex" });
+    const b = derivePaperId({ kind: "path", path: `/x/${a}.tex` });
+    expect(a).toBe("a_b-c8687a08");
+    expect(b).not.toBe(a);
+  });
+
+  it("arXiv 分岐を跨いだ衝突も起きない", () => {
+    const a = derivePaperId({ kind: "arxiv", id: "hep-th/9901001" });
+    const b = derivePaperId({ kind: "path", path: `/x/${a}.tar.gz` });
+    expect(b).not.toBe(a);
+  });
+
+  it("変換不要な通常の名前には余計な接尾辞を付けない", () => {
+    expect(derivePaperId({ kind: "arxiv", id: "2203.06060" })).toBe("2203.06060");
   });
 });

@@ -2,9 +2,11 @@
 import { spawn } from "node:child_process";
 import type { LlmClient, LlmCallEvent, LlmCallMeta, TraceSink } from "../types/contract.js";
 import { JpaperError } from "../types/errors.js";
+import { canceledError } from "../runtime/cancellation.js";
+import { MAX_RESPONSE_CHARS } from "../runtime/llm-client.js";
 
 export interface ClaudeDeps {
-  run?: (args: string[]) => Promise<string>;
+  run?: (args: string[], signal?: AbortSignal) => Promise<string>;
   trace?: TraceSink; // LLM トレース ADR。成功呼び出しの usage/コストを emit する副作用チャネル。
   now?: () => number; // latency 計測（テスト用に注入可能）。
 }
@@ -37,16 +39,47 @@ function toEvent(raw: string, latencyMs: number, meta?: LlmCallMeta): LlmCallEve
   };
 }
 
-async function defaultRun(args: string[]): Promise<string> {
+async function defaultRun(args: string[], signal?: AbortSignal): Promise<string> {
+  if (signal?.aborted === true) throw canceledError("claude 起動前");
   return new Promise((resolve, reject) => {
     const child = spawn("claude", args, { stdio: ["pipe", "pipe", "pipe"] });
     let out = "";
     let err = "";
-    child.stdout.on("data", (d) => (out += d));
-    child.stderr.on("data", (d) => (err += d));
-    child.on("error", reject);
+    let canceled = false;
+    // 中断されたら子プロセスを落とす。放置すると web でクライアント切断後も課金が続く。
+    const onAbort = (): void => {
+      canceled = true;
+      child.kill("SIGKILL");
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+    const done = (): void => signal?.removeEventListener("abort", onAbort);
+    // 上限を超えたら受信を打ち切って子プロセスを落とす。無制限に連結すると、
+    // 応答を誘導できる相手にワーカーのメモリを食わせられる。
+    let overflowed = false;
+    const overflow = (): void => {
+      overflowed = true;
+      child.kill("SIGKILL");
+    };
+    child.stdout.on("data", (d) => {
+      if (overflowed) return;
+      out += d;
+      if (out.length > MAX_RESPONSE_CHARS) overflow();
+    });
+    child.stderr.on("data", (d) => {
+      if (overflowed) return;
+      err += d;
+      if (err.length > MAX_RESPONSE_CHARS) overflow();
+    });
+    child.on("error", (e) => {
+      done();
+      reject(e);
+    });
     child.on("close", (code) => {
-      if (code === 0) resolve(out);
+      done();
+      if (overflowed) {
+        reject(new Error(`claude 応答が上限 ${MAX_RESPONSE_CHARS} 文字を超えています`));
+      } else if (canceled) reject(canceledError("claude 実行中"));
+      else if (code === 0) resolve(out);
       else {
         const detail = (err || out).slice(0, 800);
         reject(Object.assign(new Error(`claude exited ${code}: ${detail}`), { code }));
@@ -65,19 +98,23 @@ export function makeClaudeClient(deps: ClaudeDeps = {}): LlmClient {
       let stdout: string;
       const started = now();
       try {
-        stdout = await run([
-          "-p",
-          req.user,
-          "--output-format",
-          "json",
-          "--append-system-prompt",
-          req.system,
-          "--max-turns",
-          "1",
-          "--tools",
-          "none",
-        ]);
+        stdout = await run(
+          [
+            "-p",
+            req.user,
+            "--output-format",
+            "json",
+            "--append-system-prompt",
+            req.system,
+            "--max-turns",
+            "1",
+            "--tools",
+            "none",
+          ],
+          req.signal,
+        );
       } catch (e) {
+        if (e instanceof JpaperError && e.kind === "canceled") throw e;
         if ((e as { code?: unknown }).code === "ENOENT") {
           throw new JpaperError(2, "provider", "claude が見つかりません（未インストール/PATH 外）");
         }
@@ -95,13 +132,13 @@ export function makeClaudeClient(deps: ClaudeDeps = {}): LlmClient {
         parsed = JSON.parse(stdout) as { result?: unknown };
       } catch {
         // 構文不正な JSON は切れ/破損＝一時障害が多い → transient にして withRetry へ委ねる。
-        throw Object.assign(new JpaperError(1, "provider", "claude 応答が JSON でない"), {
+        throw Object.assign(new JpaperError(2, "provider", "claude 応答が JSON でない"), {
           transient: true,
         });
       }
       // JSON は正常なのに result が無いのは契約不一致（CLI 仕様変更等）＝決定的。retry せず即 surface する。
       if (typeof parsed.result !== "string") {
-        throw new JpaperError(1, "provider", "claude 応答に result 文字列が無い");
+        throw new JpaperError(2, "provider", "claude 応答に result 文字列が無い");
       }
       // result が取れた成功呼び出しのみトレースへ emit（usage/コストは stdout から再取得）。
       deps.trace?.(toEvent(stdout, now() - started, req.meta));

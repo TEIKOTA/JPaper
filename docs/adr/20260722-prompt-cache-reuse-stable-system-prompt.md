@@ -1,7 +1,7 @@
 # 2026/07/22 プロンプトキャッシュ再利用: system prompt を role ごとに安定化し per-segment 用語スライスを user へ移す
 
 # Status
-- accepted
+- accepted（brief/style を system prompt へ置く部分は [プロンプト注入 ADR](./20260811-untrusted-text-never-becomes-instructions.md) 決定1 で改められた。prefix 安定化という主旨は有効）
 
 # Situation
 - コスト調査でユーザーが費用に驚愕。「コストを抑えつつ性能を保つ」が最優先目標。

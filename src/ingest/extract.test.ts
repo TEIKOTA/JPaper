@@ -1,6 +1,9 @@
 import { describe, it, expect } from "vitest";
 import { gzipSync } from "node:zlib";
-import { extractArchive, parseTar } from "./extract.js";
+import { extractArchive, parseTar, writeFileMap } from "./extract.js";
+import { mkdtempSync, rmSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import {
   makeTar,
   makeZip,
@@ -113,5 +116,37 @@ describe("extractArchive", () => {
     expect(() => parseTar(makeTar([{ name: "../evil.tex", content: "x" }]))).toThrow(
       /不正なアーカイブパス/,
     );
+  });
+});
+
+describe("エントリ名が不正で書けない場合の分類", () => {
+  it('"." エントリは input で落ちる（infra ではない）', () => {
+    // INFRA_SYSCODES に素通しすると exit 1（サーバ側の障害）として報告され、
+    // 入力起因なのに誤ったアラートと自動リトライを誘発する。
+    const d = mkdtempSync(path.join(os.tmpdir(), "jpaper-wfm-"));
+    try {
+      const files = new Map([[".", Buffer.from("x")]]);
+      expect(() => writeFileMap(files, d)).toThrowError(/エントリ名が不正/);
+      try {
+        writeFileMap(files, d);
+      } catch (e) {
+        expect((e as { kind?: string }).kind).toBe("input");
+      }
+    } finally {
+      rmSync(d, { recursive: true, force: true });
+    }
+  });
+
+  it("ファイル a とファイル a/b の衝突も input", () => {
+    const d = mkdtempSync(path.join(os.tmpdir(), "jpaper-wfm-"));
+    try {
+      const files = new Map([
+        ["a", Buffer.from("x")],
+        ["a/b", Buffer.from("y")],
+      ]);
+      expect(() => writeFileMap(files, d)).toThrowError(/エントリ名が不正/);
+    } finally {
+      rmSync(d, { recursive: true, force: true });
+    }
   });
 });
