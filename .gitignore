@@ -36,7 +36,9 @@ coverage/
 
 # 実行時に生成されるエージェントの証跡・作業領域（input/ の知識 SSOT はコミットする）
 /output/
-# run ごとの作業領域（source 展開・訳文・LLM トレース）。既定出力先 <paperId>-ja/ が CWD 直下でも追跡しない。
+# 論文ごとの成果物の既定の出力先（ADR 20261007-default-output-under-article-dir）。実行時の生成物なので追跡しない。
+/article/
+# run ごとの作業領域（source 展開・訳文・LLM トレース）。--out で CWD 直下などへ出した場合も追跡しない。
 **/.run/
 
 # 参照用に同梱した別プロジェクト（現行の和訳リポジトリ。JPaper の追跡対象外）

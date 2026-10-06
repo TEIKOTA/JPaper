@@ -102,7 +102,7 @@
 - **方式は「状態はファイル」**。durable 実行ライブラリ（Temporal / Restate / DBOS）も常駐サーバーも使わない。素の TS ＋ `fs` で、checkpoint を**エージェント呼び出しの境界に人手で置く**。
   - Flue の「Workflow は非 durable」は「任意コードを**自動**では checkpoint しない」という意味であって、checkpoint 自体は置ける。境界を自分で決めるこの形が「独立して読めるワークフロー」要件とも両立する（イベントログ＋manifest で状態を持つ設計と同型）。
   - 常駐サーバー案は不採用: ディスク永続するなら本方式の再発明、メモリのみなら「サーバー落ち＝全ロスト」で再起動すら耐える本方式より弱い。サーバーが要るのは複数クライアント／並行オーケストレーションが必要になったときで、単発 CLI 翻訳には該当しない。
-- **保存先**: 論文ごとフォルダ配下 `<paper>-ja/.run/steps/<step>.json`（[UI/配置 ADR](../adr/20260709-user-interface-file-layout-and-cli.md) 決定 1。可視だが触らなくてよい trace 領域）。書き込みは **tmp→rename の原子的更新**。
+- **保存先**: 論文ごとフォルダ配下 `article/<paper>-ja/.run/steps/<step>.json`（[UI/配置 ADR](../adr/20260709-user-interface-file-layout-and-cli.md) 決定 1。可視だが触らなくてよい trace 領域）。書き込みは **tmp→rename の原子的更新**。
 - **再開**: 同じ `run-id` で再実行。各ステップは checkpoint でくるみ、「出力が既にあり zod スキーマに妥当なら読んで skip」＝ idempotent-skip。
 - **編集による無効化**: ユーザーが `glossary.md`／`brief.md`／`style.md` を編集して再実行したときは、これらを注入する**下流の翻訳ステップの checkpoint を無効化**して再訳する（checkpoint キーに注入コンテキストのハッシュを含める）。取り込み・用語収集など未影響ステップは skip のまま。
 - **リトライは一時エラーのみ**（API タイムアウト・429・瞬断を数回バックオフ）。ビルド失敗・欠図・品質未達などタスク自体の失敗はリトライせず明示的に上げる（境界は [品質ゲート ADR](../adr/20260708-quality-gate-machine-vs-llm-and-explicit-failure.md) 決定 3）。

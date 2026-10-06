@@ -17,7 +17,7 @@
 - **Skill**（何を知っている）: 用語・スタイル規約などの知識は段階開示。`.agents/skills/`
 - **Workflow**（配線）: `src/workflows/*.ts` の素の TS 関数で複数エージェントを配線（`Promise.all` / `for` / `if`）。順序・並列・上限は TS が固定し、品質判定は LLM
 - **知識 SSOT**: 用語集・スタイルガイド等は `input/` に置く（コミット対象）
-- **ファイル配置**: グローバル状態は `~/.jpaper/`（cross-paper 共有の `glossary.db`・設定）、論文ごとの成果物と実行証跡は可視フォルダ `./<paper>-ja/`（`source/`・`figures/`・`glossary.md`・`translation/`・`main.pdf`・`.run/`）。`--out` で変更可（[UI/配置 ADR](./docs/adr/20260709-user-interface-file-layout-and-cli.md)）
+- **ファイル配置**: グローバル状態は `~/.jpaper/`（cross-paper 共有の `glossary.db`・設定）、論文ごとの成果物と実行証跡は可視フォルダ `./article/<paper>-ja/`（`source/`・`figures/`・`glossary.md`・`translation/`・`main.pdf`・`.run/`）。`--out` で変更可（[UI/配置 ADR](./docs/adr/20260709-user-interface-file-layout-and-cli.md)）
 
 決定性の方針: ループ上限・並列・分岐は素の TS（`for`/`Promise.all`/`if`）、契約検査は zod。品質判定・stuck・介入は LLM。ランタイムは Flue の Agent/Workflow 設計を借りた薄い自作で、将来 durable/観測/多環境デプロイが要れば Flue へ移行できるよう形を寄せる。詳細は [ADR](./docs/adr/20260708-adopt-deterministic-agent-architecture.md) を参照。
 
