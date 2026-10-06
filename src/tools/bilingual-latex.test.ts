@@ -180,7 +180,7 @@ describe("前文", () => {
     for (const s of [
       "\\usepackage{paracol}",
       "\\usepackage{eso-pic}",
-      "\\geometry{paperwidth=420mm,paperheight=297mm",
+      "\\geometry{onecolumn,paperwidth=420mm,paperheight=297mm",
       "\\setlength{\\columnsep}{",
       "\\newcommand{\\jpTitleBlock}",
       "\\renewenvironment{figure}[1][]{",
@@ -203,7 +203,7 @@ describe("前文", () => {
     });
     expect(out.mainTex.startsWith("\\RequirePackage{luatex85}\n\\documentclass{article}\n\\usepackage[ipaex]{luatexja-preset}\n")).toBe(true);
     const body = out.mainTex.slice(out.mainTex.indexOf("\\begin{document}"));
-    expect(body).toContain("\\newgeometry{paperwidth=420mm,paperheight=297mm");
+    expect(body).toContain("\\newgeometry{onecolumn,paperwidth=420mm,paperheight=297mm");
     expect(body).toContain("\\pagestyle{empty}");
     expect(body).toContain("\\AddToShipoutPictureFG{");
     expect(body).not.toContain("\\AddToShipoutPictureFG*");
@@ -212,6 +212,18 @@ describe("前文", () => {
     expect(body).toContain("\\begin{paracol}{2}\nA\n\\switchcolumn\n和\n\\switchcolumn*\n\\end{paracol}\n\\end{document}\n");
     expect(out.mainTex.match(/\\begin\{document\}/g)).toHaveLength(1);
     expect(out.fallbackSegments).toEqual([]);
+  });
+
+  it("二段組の原プリアンブルでも、前文と本文先頭の両方で一段組に戻す", () => {
+    const out = assembleBilingual({
+      cleanLatex: "\\documentclass[twocolumn]{article}\\begin{document}A\\end{document}",
+      translatedMainTex: "\\documentclass[twocolumn]{article}\n\\begin{document}\n和\n\\end{document}\n",
+      source: [{ id: "seg-0000", tex: "A" }],
+      translated: [{ id: "seg-0000", tex: "和" }],
+    });
+    const at = out.mainTex.indexOf("\\begin{document}");
+    expect(out.mainTex.slice(0, at)).toContain("\\geometry{onecolumn,");
+    expect(out.mainTex.slice(at)).toContain("\\newgeometry{onecolumn,");
   });
 
   it("注入する部品は組版の安全検査に掛からない", () => {

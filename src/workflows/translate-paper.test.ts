@@ -532,6 +532,35 @@ describe("対訳 PDF", () => {
     db.close();
   });
 
+  it("原プリアンブルで対訳が組めなければ共通テンプレで組み直す", async () => {
+    const outDir = path.join(tmp(), "out");
+    const db = new GlossaryDb();
+    const errs: string[] = [];
+    const built: string[] = [];
+    const runner: LatexRunner = (dir) => {
+      const template = readFileSync(path.join(dir, "main.tex"), "utf8").includes("a4paper");
+      built.push(`${isBilingual(dir) ? "bilingual" : "translation"}:${template ? "template" : "original"}`);
+      if (isBilingual(dir) && !template) {
+        return { code: 1, log: "! Package paracol Error: Environment paracol cannot work with ordinary two-column typesetting." };
+      }
+      return okRunner(dir);
+    };
+    const r = await tp({ kind: "path", path: makePaperTar() }, { provider: "claude", outDir }, {
+      client: docClient(),
+      db,
+      latexRunner: runner,
+      onError: (m) => errs.push(m),
+    });
+    expect(r.exitCode).toBe(0);
+    expect(r.summary.layout).toBe("original");
+    expect(built).toEqual(["translation:original", "bilingual:original", "bilingual:template"]);
+    expect(r.summary.bilingual.status).toBe("ok");
+    expect(errs.some((e) => e.includes("対訳: 原プリアンブルで組めず共通テンプレで組み直します"))).toBe(true);
+    const tex = readFileSync(path.join(outDir, "translation", "bilingual", "main.tex"), "utf8");
+    expect(tex).toContain("\\documentclass[a4paper]{article}");
+    db.close();
+  });
+
   it("対訳の組版中の例外も警告に留める", async () => {
     const outDir = path.join(tmp(), "out");
     const db = new GlossaryDb();

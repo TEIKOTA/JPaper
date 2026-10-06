@@ -115,7 +115,8 @@ export function titleOf(preamble: string): string | undefined {
   return last === undefined ? undefined : braceBody(preamble, last);
 }
 
-export const PAPER = "paperwidth=420mm,paperheight=297mm,top=18mm,bottom=22mm,left=16mm,right=16mm";
+// ⚠ landmines.md
+export const PAPER = "onecolumn,paperwidth=420mm,paperheight=297mm,top=18mm,bottom=22mm,left=16mm,right=16mm";
 
 const SETUP = [
   "% --- JPaper 注入: 対訳 (対訳 PDF ADR 20261006) ---",

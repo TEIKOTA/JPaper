@@ -696,20 +696,18 @@ async function typesetBilingual(
     surface(message);
     return { status: "failed", message: outwardMessage(message), pairs, fallbackSegments };
   };
-  try {
-    const { mainTex: translatedMainTex } = assembleWithMap({ cleanLatex, segments: translated, mode: layout });
-    const b = assembleBilingual({ cleanLatex, translatedMainTex, source, translated });
-    pairs = b.pairs;
-    fallbackSegments = b.fallbackSegments.length;
-    if (fallbackSegments > 0) {
-      surface(
-        `対訳: 段落数が一致せずセグメント全体を 1 ペアにしました: ${b.fallbackSegments.slice(0, 10).join(", ")}`,
-      );
-    }
-    const g = await runBuildGate(
+  const assemble = (mode: Layout) =>
+    assembleBilingual({
+      cleanLatex,
+      translatedMainTex: assembleWithMap({ cleanLatex, segments: translated, mode }).mainTex,
+      source,
+      translated,
+    });
+  const gate = (mainTex: string): Promise<BuildGateResult> =>
+    runBuildGate(
       {
         buildDir,
-        mainTex: b.mainTex,
+        mainTex,
         sourceDir: opts.sourceDir,
         mainDir: opts.mainDir,
         figures: opts.figures,
@@ -719,6 +717,20 @@ async function typesetBilingual(
       },
       runner,
     );
+  try {
+    const b = assemble(layout);
+    pairs = b.pairs;
+    fallbackSegments = b.fallbackSegments.length;
+    if (fallbackSegments > 0) {
+      surface(
+        `対訳: 段落数が一致せずセグメント全体を 1 ペアにしました: ${b.fallbackSegments.slice(0, 10).join(", ")}`,
+      );
+    }
+    let g = await gate(b.mainTex);
+    if (!g.buildOk && layout === "original") {
+      surface(`対訳: 原プリアンブルで組めず共通テンプレで組み直します: ${summarizeGateFailure(g)}`);
+      g = await gate(assemble("template").mainTex);
+    }
     if (!g.buildOk || g.pdfPath === undefined) return failed(summarizeGateFailure(g));
     rmSync(finalDir, { recursive: true, force: true });
     renameSync(buildDir, finalDir);
