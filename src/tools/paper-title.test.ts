@@ -61,6 +61,21 @@ describe("extractTitle", () => {
     expect(extractTitle(pre("a\\\\title{x}"))).toBeUndefined();
   });
 
+  it("定義命令の直後の \\title（波括弧なし・* 付き・\\let の左辺）は拾わない", () => {
+    const p = pre(
+      "\\title{Real}",
+      "\\let\\oldtitle\\title\\renewcommand\\title[1]{\\oldtitle{#1}}",
+    );
+    expect(extractTitle(p)?.text).toBe("Real");
+    expect(replaceTitle(p, "訳題")).toBe(p.replace("{Real}", "{訳題}"));
+    expect(extractTitle(pre("\\newcommand*\\title[1]{X}"))).toBeUndefined();
+    expect(extractTitle(pre("\\providecommand % c", "  \\title[2][a]{X}"))).toBeUndefined();
+    expect(extractTitle(pre("\\DeclareRobustCommand\\title{X}"))).toBeUndefined();
+    expect(extractTitle(pre("\\let\\title={X}"))).toBeUndefined();
+    // 定義命令の後でも、直後でなければ拾う。
+    expect(extractTitle(pre("\\def\\x{y}\\title{Kept}"))?.text).toBe("Kept");
+  });
+
   it("複数あれば最後の \\title を取る", () => {
     expect(extractTitle(pre("\\title{First}", "\\title{Second}"))?.text).toBe("Second");
   });

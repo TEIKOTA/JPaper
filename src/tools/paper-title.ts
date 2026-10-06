@@ -192,10 +192,31 @@ function scanCommands(
   }
 }
 
+const DEFINERS = [
+  "newcommand",
+  "renewcommand",
+  "providecommand",
+  "DeclareRobustCommand",
+  "let",
+  "def",
+  "gdef",
+  "edef",
+  "xdef",
+];
+const TITLE_SCAN = new Set(["title", ...DEFINERS]);
+
 // 最後の \title[短縮]{本題} の本題の中身の範囲（LaTeX は後の定義が勝つ）。
 export function findTitleArg(tex: string): TitleArg | undefined {
   let found: TitleArg | undefined;
-  scanCommands(tex, new Set(["title"]), (_name, _start, afterName) => {
+  // 定義命令（* と空白・コメントを挟んでよい）の直後の \title は拾わない。契約付録 §8
+  let definedAt = -1;
+  scanCommands(tex, TITLE_SCAN, (name, start, afterName) => {
+    if (name !== "title") {
+      definedAt = skipSpaceAndComments(tex, afterName);
+      if (tex[definedAt] === "*") definedAt = skipSpaceAndComments(tex, definedAt + 1);
+      return afterName;
+    }
+    if (start === definedAt) return afterName;
     const r = readArgs(tex, afterName, true);
     if (r === "unclosed") return "stop";
     if (r === undefined) return afterName;
