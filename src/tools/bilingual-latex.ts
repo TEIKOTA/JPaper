@@ -25,7 +25,6 @@ export interface BilingualOutput {
 }
 
 const BLANK_LINES = /\n[ \t]*(?:\n[ \t]*)+/;
-const LINE_COMMENT = /(?<!\\)%.*/g;
 
 export function splitParagraphs(tex: string): string[] {
   return tex
@@ -40,19 +39,50 @@ function count(s: string, needle: string): number {
   return n;
 }
 
+// コメントを除いた \begin{ と \end{ の差（env）、エスケープしていない { と } の差（brace）。
+export function nestingOf(tex: string): { env: number; brace: number } {
+  let text = "";
+  let brace = 0;
+  let from = 0;
+  for (let i = 0; i < tex.length; i++) {
+    const c = tex[i];
+    if (c === "\\") {
+      i++;
+    } else if (c === "%") {
+      text += tex.slice(from, i);
+      const nl = tex.indexOf("\n", i);
+      if (nl === -1) {
+        from = tex.length;
+        break;
+      }
+      from = nl;
+      i = nl - 1;
+    } else if (c === "{") {
+      brace++;
+    } else if (c === "}") {
+      brace--;
+    }
+  }
+  text += tex.slice(from);
+  return { env: count(text, "\\begin{") - count(text, "\\end{"), brace };
+}
+
 // ⚠ landmines.md
 export function balanceParagraphs(paras: string[]): string[] {
   const out: string[] = [];
   let buf: string[] = [];
-  let depth = 0;
+  let env = 0;
+  let brace = 0;
   for (const p of paras) {
-    const t = p.replace(LINE_COMMENT, "");
-    depth += count(t, "\\begin{") - count(t, "\\end{");
+    const n = nestingOf(p);
+    env += n.env;
+    brace += n.brace;
     buf.push(p);
-    if (depth <= 0) {
+    if (env <= 0 && brace <= 0) {
       out.push(buf.join("\n\n"));
       buf = [];
-      depth = 0;
+      env = 0;
+      brace = 0;
     }
   }
   if (buf.length > 0) out.push(buf.join("\n\n"));

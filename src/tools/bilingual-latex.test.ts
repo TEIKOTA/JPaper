@@ -52,6 +52,32 @@ describe("段落分割", () => {
     ]);
   });
 
+  it("波括弧の中の空行（複数段落の脚注・色付きの群）では割らない", () => {
+    expect(paragraphsOf("Alpha.\\footnote{Alpha.\n\nBeta.} More.\n\nNext.")).toEqual([
+      "Alpha.\\footnote{Alpha.\n\nBeta.} More.",
+      "Next.",
+    ]);
+    expect(paragraphsOf("{\\color{blue} a\n\nb}\n\nc")).toEqual(["{\\color{blue} a\n\nb}", "c"]);
+  });
+
+  it("エスケープした波括弧とコメント内の波括弧は数えない", () => {
+    expect(balanceParagraphs(["a \\{", "b % {", "c \\\\{", "d}", "e"])).toEqual([
+      "a \\{",
+      "b % {",
+      "c \\\\{\n\nd}",
+      "e",
+    ]);
+  });
+
+  it("段落の対応は脚注の中の空行で崩れない", () => {
+    const r = pairSegments(
+      [{ id: "seg-0000", tex: "Alpha.\\footnote{Alpha.\n\nBeta.} More.\n\nNext." }],
+      [{ id: "seg-0000", tex: "甲。\\footnote{甲。\n\n乙。}続き。\n\n次。" }],
+    );
+    expect(r.fallbackSegments).toEqual([]);
+    expect(r.pairs.map((p) => p.right)).toEqual(["甲。\\footnote{甲。\n\n乙。}続き。", "次。"]);
+  });
+
   it("数式環境内の空行は割らない", () => {
     expect(paragraphsOf("a\n\n\\begin{align}\nx\n\ny\n\\end{align}")).toEqual([
       "a",
