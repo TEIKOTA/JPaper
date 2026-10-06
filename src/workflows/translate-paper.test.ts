@@ -510,9 +510,12 @@ describe("対訳 PDF", () => {
     const outDir = path.join(tmp(), "out");
     const db = new GlossaryDb();
     const errs: string[] = [];
+    const tar = makePaperTar();
+    const first = await tp({ kind: "path", path: tar }, { provider: "claude", outDir }, { client: docClient(), db });
+    expect(first.summary.bilingual.status).toBe("ok");
     const runner: LatexRunner = (dir) =>
       isBilingual(dir) ? { code: 1, log: "! LaTeX Error: File `paracol.sty' not found." } : okRunner(dir);
-    const r = await tp({ kind: "path", path: makePaperTar() }, { provider: "claude", outDir }, {
+    const r = await tp({ kind: "path", path: tar }, { provider: "claude", outDir }, {
       client: docClient(),
       db,
       latexRunner: runner,
@@ -528,6 +531,8 @@ describe("対訳 PDF", () => {
     expect(r.summary.bilingual.message).toContain("対訳 PDF の組版に失敗しました");
     expect(errs.some((e) => e.includes("対訳 PDF の組版に失敗しました"))).toBe(true);
     expect(existsSync(path.join(outDir, "translation", "bilingual.next"))).toBe(false);
+    // 和訳 build は今回の訳に置き換わったので、前回の訳の対訳は残さない。
+    expect(existsSync(path.join(outDir, "translation", "bilingual"))).toBe(false);
     expect(existsSync(path.join(outDir, "glossary.md"))).toBe(true);
     db.close();
   });

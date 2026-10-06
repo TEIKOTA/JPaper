@@ -675,7 +675,7 @@ async function typeset(
 }
 
 // 対訳 PDF。和訳 PDF の publish 後に別の staging で組み、結果は戻り値だけで返す（例外を投げない）。
-// 契約付録 §8・対訳 PDF ADR(20261006)。
+// 組めなければ前回の対訳も消す。契約付録 §8・対訳 PDF ADR(20261006)。
 async function typesetBilingual(
   cleanLatex: string,
   source: { id: string; tex: string }[],
@@ -690,8 +690,12 @@ async function typesetBilingual(
   const buildDir = `${finalDir}.next`;
   let pairs = 0;
   let fallbackSegments = 0;
-  const failed = (m: string): BilingualSummary => {
+  const drop = (): void => {
     rmSync(buildDir, { recursive: true, force: true });
+    rmSync(finalDir, { recursive: true, force: true });
+  };
+  const failed = (m: string): BilingualSummary => {
+    drop();
     const message = `対訳 PDF の組版に失敗しました（和訳 PDF は出力済み）: ${m}`;
     surface(message);
     return { status: "failed", message: outwardMessage(message), pairs, fallbackSegments };
