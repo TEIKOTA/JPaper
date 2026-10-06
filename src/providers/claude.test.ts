@@ -1,4 +1,7 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { makeClaudeClient, MAX_TURNS } from "./claude.js";
 import { isTransient } from "../types/errors.js";
 import type { LlmCallEvent } from "../types/contract.js";
@@ -18,8 +21,22 @@ describe("makeClaudeClient", () => {
     expect(args).toContain("--tools");
     expect(args).toContain("none");
     expect(args).toContain("SYS");
-    expect(args).toContain("USR");
     expect(args).not.toContain("--model");
+  });
+
+  it("プロンプト本文は引数に入れず stdin で渡す", async () => {
+    let args: string[] = [];
+    let input = "";
+    const c = makeClaudeClient({
+      run: async (a, i) => {
+        args = a;
+        input = i;
+        return JSON.stringify({ result: "訳文" });
+      },
+    });
+    await c.complete({ system: "SYS", user: "USR" });
+    expect(input).toBe("USR");
+    expect(args).not.toContain("USR");
   });
 
   it("--max-turns は 2 ターン以上（CLI が内部で 2 ターン使っても error_max_turns で落とさない）", async () => {
@@ -152,5 +169,42 @@ describe("makeClaudeClient", () => {
         expect(isTransient(e)).toBe(true);
       }
     }
+  });
+});
+
+describe("makeClaudeClient（既定の run: PATH 上の claude を起動）", () => {
+  const origPath = process.env.PATH;
+  let root = "";
+  const useFakeClaude = (name: string, body: string): void => {
+    const dir = path.join(root, name);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(path.join(dir, "claude"), `#!/bin/sh\n${body}\n`, { mode: 0o755 });
+    process.env.PATH = `${dir}${path.delimiter}${origPath ?? ""}`;
+  };
+
+  beforeAll(() => {
+    root = mkdtempSync(path.join(os.tmpdir(), "jpaper-claude-"));
+  });
+  afterEach(() => {
+    process.env.PATH = origPath;
+  });
+  afterAll(() => {
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it("大きなプロンプト本文を stdin で子プロセスへ渡し、引数には載せない", async () => {
+    useFakeClaude("echo", `n=$(wc -c | tr -d ' ')\nprintf '{"result":"stdin=%s argc=%s"}' "$n" "$#"`);
+    const user = "x".repeat(200_000);
+    const c = makeClaudeClient();
+    expect(await c.complete({ system: "SYS", user })).toBe("stdin=200000 argc=9");
+  });
+
+  it("stdin を読まずに終了しても親プロセスを落とさず provider 失敗にする", async () => {
+    useFakeClaude("early-exit", "exit 3");
+    const c = makeClaudeClient();
+    await expect(c.complete({ system: "SYS", user: "x".repeat(1_000_000) })).rejects.toMatchObject({
+      code: 2,
+      kind: "provider",
+    });
   });
 });

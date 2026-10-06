@@ -142,6 +142,7 @@ CREATE INDEX idx_term_src ON term(src);
 - v1 実装 = **2つ**: `ollama`（local, オンデマンド daemon）/ `claude`（cloud, `claude -p --output-format json` の `result` を抽出）。codex/OpenRouter/API キーは将来。
 - `--provider {ollama|claude}` は **必須（既定なし）**。省略はエラー（終了コード §6）。**受理値の正本は `ollama|claude`**（[UI/配置 ADR](../adr/20260709-user-interface-file-layout-and-cli.md) の例示 `local|cloud` は概念軸。CLI 実値は本付録が正本）。
 - claude CLI は純変換器化して使う: `--append-system-prompt` で役割注入、`--max-turns 1`、内蔵ツール無効化（`--tools none`。`--allowedTools ""` はツールを無効化できずモデルが tool_use を試みて `error_max_turns` になるため不可。SHOW 検収で判明）。対応 CLI バージョンはレンジ指定し、出力 JSON 形式は統合テストで回帰検知。
+- **claude CLI へのプロンプト本文（`req.user`）は stdin で渡す**（`-p` の位置引数にしない）。引数で渡すと論文によっては引数長の上限を超えて起動できない（実測: cmux のシム経由で上限 122,880 バイト、用語集構築で exit 2）。子プロセスが本文を読まずに終了したときの `EPIPE` は捨て、失敗は終了コードで provider エラーにする（[landmines](./landmines.md)）。`--append-system-prompt`（system）は引き続き引数で渡す。
 - モデル ID: claude(subprocess) は CLI のログインセッションのモデルを使うため JPaper から渡さない。ollama は設定でモデル ID 明示（例 `llama3.1:8b`、変更可）。
 - CLI: `jpaper <input> --provider {ollama|claude} [--out DIR] [--model ID] [--context-window N] [--think|--no-think] [--concurrency N]`。`<input>` は zip/tar.gz/gzip-tar/.tex.gz/.tex/ディレクトリ/arXiv ID を自動判定（判定不能は明示的失敗）。配布は `package.json` の `bin.jpaper = dist/cli.js`。
 - **`--model` / `--context-window` は `--provider ollama` 専用**。claude と併用したら黙って捨てず入力エラー（終了コード 2）にする（「指定したのに効かない」を作らない）。片方だけ指定した場合、もう片方は `DEFAULT_OLLAMA` の値を使う。どちらも無指定なら `ollama` を渡さず既定に委ねる。

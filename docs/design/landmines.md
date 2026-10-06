@@ -47,3 +47,9 @@
 - **おかしく見える点**: `--tools none` で 1 回しか答えさせないはずなのに、`--max-turns` が `1` ではなく `3`。「1 回きり」なら 1 に締めたくなる。
 - **なぜ意図的か**: claude CLI 2.1.291 は、用語集構築のような長い入力で内部的に 2 ターンを使う（実測: `num_turns: 2`）。`--max-turns 1` だと `subtype: error_max_turns`（「Reached maximum number of turns (1)」）で exit 1 になり、応答が正常でも run が `claude exited 1` で失敗する。`--tools none` でツールは使えないので、ターン上限は安全境界ではない（安全は `--tools none` が担う）。1 に戻すと該当呼び出しが全て落ちる。
 - **正本ポインタ**: [LLM プロバイダ抽象化 ADR](../adr/20260709-llm-provider-abstraction-local-ollama-and-cloud-cli.md)。回帰テストは `src/providers/claude.test.ts`。
+
+## `src/providers/claude.ts` — プロンプト本文を `-p` の引数でなく stdin で渡し、stdin のエラーを捨てる
+
+- **おかしく見える点**: `claude -p` は位置引数でプロンプトを受け取れるのに、本文（`req.user`）を stdin へ書いている。さらに `child.stdin` の `error` を空のハンドラで捨てている。
+- **なぜ意図的か**: 本文を引数で渡すと、論文によっては引数長の上限を超えて起動できない（実測: PATH 上の `claude` が cmux のシムで `cmux: argument too large (maximum 122880 bytes)` → exit 2、UNI 2308.15474 の用語集構築）。stdin なら上限は無い（80KB で確認）。stdin へ書く以上、子プロセスが本文を読まずに終了すると書き込みが `EPIPE` になり、`error` を聞いていないと未処理例外で JPaper のプロセスごと落ちる（実測: 読まずに `exit 3` する子へ 5MB を書くと Node が `write EPIPE` で終了）。失敗は `close` の終了コードで provider エラーとして返るので、stdin 側のエラーは捨ててよい。ハンドラを外すと、claude が起動直後に失敗しただけで run 全体がクラッシュする。
+- **正本ポインタ**: 契約付録 §5（claude CLI の呼び出し）。回帰テストは `src/providers/claude.test.ts`（既定の run の節）。

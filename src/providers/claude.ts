@@ -8,7 +8,7 @@ import { MAX_RESPONSE_CHARS } from "../runtime/llm-client.js";
 export const MAX_TURNS = 3;
 
 export interface ClaudeDeps {
-  run?: (args: string[], signal?: AbortSignal) => Promise<string>;
+  run?: (args: string[], input: string, signal?: AbortSignal) => Promise<string>;
   trace?: TraceSink; // LLM トレース ADR。成功呼び出しの usage/コストを emit する副作用チャネル。
   now?: () => number; // latency 計測（テスト用に注入可能）。
 }
@@ -41,7 +41,7 @@ function toEvent(raw: string, latencyMs: number, meta?: LlmCallMeta): LlmCallEve
   };
 }
 
-async function defaultRun(args: string[], signal?: AbortSignal): Promise<string> {
+async function defaultRun(args: string[], input: string, signal?: AbortSignal): Promise<string> {
   if (signal?.aborted === true) throw canceledError("claude 起動前");
   return new Promise((resolve, reject) => {
     const child = spawn("claude", args, { stdio: ["pipe", "pipe", "pipe"] });
@@ -87,7 +87,9 @@ async function defaultRun(args: string[], signal?: AbortSignal): Promise<string>
         reject(Object.assign(new Error(`claude exited ${code}: ${detail}`), { code }));
       }
     });
-    child.stdin.end(); // stdin を即 EOF にして -p 位置引数のプロンプトを使わせる（3秒待機回避）。
+    // ⚠ landmines.md
+    child.stdin.on("error", () => {});
+    child.stdin.end(input);
   });
 }
 
@@ -103,7 +105,6 @@ export function makeClaudeClient(deps: ClaudeDeps = {}): LlmClient {
         stdout = await run(
           [
             "-p",
-            req.user,
             "--output-format",
             "json",
             "--append-system-prompt",
@@ -114,6 +115,7 @@ export function makeClaudeClient(deps: ClaudeDeps = {}): LlmClient {
             "--tools",
             "none",
           ],
+          req.user,
           req.signal,
         );
       } catch (e) {
