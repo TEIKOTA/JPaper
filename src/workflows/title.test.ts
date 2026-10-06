@@ -305,7 +305,47 @@ describe("論文タイトルの翻訳（契約付録 §8）", () => {
     });
     expect(r.exitCode).toBe(4);
     expect(r.summary.segments.failed).toBe(3);
+    // translated は「訳を得て組版へ渡した」。PDF に入ったかは buildOk で判断する（契約付録 §8）。
+    expect(r.summary.buildOk).toBeNull();
     expect(r.summary.title).toBe("translated");
+    db.close();
+  });
+
+  it("組版が失敗した run（buildOk=false）でも訳を得ていれば translated", async () => {
+    const outDir = path.join(tmp(), "out");
+    const db = new GlossaryDb();
+    const seen: string[] = [];
+    const runner = recordingRunner(seen, () => "! LaTeX Error: File `a.cls' not found.");
+    const r = await translatePaper({ kind: "path", path: paperTar() }, { provider: "claude", outDir }, {
+      client: client(),
+      db,
+      latexRunner: runner,
+    });
+    expect(r.exitCode).toBe(5);
+    expect(r.summary.buildOk).toBe(false);
+    expect(r.summary.title).toBe("translated");
+    expect(seen.every((t) => t.includes("甲の研究"))).toBe(true);
+    db.close();
+  });
+
+  it("本文の翻訳中の例外で終わった run は、タイトルを訳し終えていても title が null", async () => {
+    const outDir = path.join(tmp(), "out");
+    const db = new GlossaryDb();
+    const base = client();
+    const c = new FakeLlmClient((req) => {
+      if (!isTitle(req) && req.meta?.segmentId !== undefined && req.meta.role === "translator") {
+        throw new Error("body provider down");
+      }
+      return base.complete(req);
+    });
+    const r = await translatePaper(
+      { kind: "path", path: paperTar() },
+      { provider: "claude", outDir, concurrency: 1 },
+      { client: c, db, latexRunner: recordingRunner([]) },
+    );
+    expect(r.exitCode).not.toBe(0);
+    expect(c.calls.some((q) => isTitle(q) && q.meta?.role === "evaluator")).toBe(true);
+    expect(r.summary.title).toBeNull();
     db.close();
   });
 
