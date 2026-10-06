@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # PR body に issue close keyword（Closes/Fixes/Resolves #<番号>）か、
-# 明示的な「例外理由: <理由>」があるかを検査する。CI の pr-checks から呼ばれる。
+# 明示的な「例外理由: <理由>」があるかを検査する。scripts/check-pr.sh と
+# pr-checks CI（既定オフ: .github/workflows-disabled/）から呼ばれる。
 # 使い方: check-pr-body-close.sh [--title "<PR title>"] [--print-issues] [<body-file>]
 #   body はファイル引数か stdin で渡す。
 #   --title の type が chore の場合、issue 連結を免除する（chore は issue なしレーン）。

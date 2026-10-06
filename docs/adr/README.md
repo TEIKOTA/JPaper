@@ -16,7 +16,9 @@
 - ファイル名は **`YYYYMMDD-title.md`**（例: `20260701-adopt-adr-format.md`）。`title` は内容がわかる kebab-case。
 - 仕様書ではなく「決定のログ」として、小さくモジュール化して書く。
 - フォーマットは [`template.md`](./template.md) に従う。
-- 一度 accepted にした ADR は原則として書き換えない。決定が変わった場合は新しい ADR を追加し、古い方の Status を `deprecated` または `superseded`（後継 ADR を明記）に更新する。
+- 過去 ADR で変更してよいのは `Status` セクションだけとする。supersede の有無にかかわらず `Situation` 以降の本文は書き換えず、過去 ADR を削除しない。過去の内容を現在の理解で書き直さず、判断の変遷自体を資産として扱う。
+- 決定が変わった場合は新しい ADR を追加し、古い方の Status を `deprecated` または `superseded`（後継 ADR を明記）に更新する。
+- 部分 supersede（旧 ADR の一部の決定だけを置き換える場合）は、旧 ADR を `accepted` のまま残し、`Status` に 1 行で「置換された条項 / 存続する条項 / 後継 ADR」を追記する。索引には何が上書きされたかを 1 行注記する。
 
 ## セクション構成
 
@@ -35,9 +37,9 @@
 |---|---|---|
 | 2026-07-01 | [ADRフォーマットの採用](./20260701-adopt-adr-format.md) | accepted |
 | 2026-07-06 | [issue 駆動・PR 必須の開発ワークフローの採用](./20260706-adopt-issue-driven-pr-workflow.md) | accepted |
-| 2026-07-06 | [日本語 Conventional Commits を commit と PR タイトルに適用](./20260706-adopt-commit-and-pr-message-convention.md) | accepted |
+| 2026-07-06 | [日本語 Conventional Commits を commit と PR タイトルに適用](./20260706-adopt-commit-and-pr-message-convention.md) | accepted（CI 検査条項のみ 2026-09-01 に部分 supersede） |
 | 2026-07-06 | [GitHub デフォルトラベルを廃止しカスタムラベル体系を採用](./20260706-adopt-custom-github-labels.md) | accepted |
-| 2026-07-06 | [server-side branch protection の導入を見送る](./20260706-defer-server-side-branch-protection.md) | accepted |
+| 2026-07-06 | [server-side branch protection の導入を見送る](./20260706-defer-server-side-branch-protection.md) | accepted（CI 強制手段の条項のみ 2026-09-01 に部分 supersede） |
 | 2026-07-06 | [テンプレート版数の記録と手動更新戦略の採用](./20260706-adopt-template-versioning-and-update-strategy.md) | accepted |
 | 2026-07-06 | [ラベル同期の削除を --prune オプトインに限定する](./20260706-clarify-label-sync-prune-behavior.md) | accepted |
 | 2026-07-08 | [エージェント基盤: 素の TS ワークフロー＋薄い自作ランタイム（Flue 設計準拠）](./20260708-adopt-deterministic-agent-architecture.md) | accepted |
@@ -54,6 +56,7 @@
 | 2026-07-22 | [LLM 呼び出しトレースは local-first JSONL・メタのみ（Langfuse は将来の opt-in exporter）](./20260722-llm-call-trace-local-jsonl.md) | accepted |
 | 2026-07-22 | [プロンプトキャッシュ再利用: system prompt を role ごとに安定化し用語スライスを user へ移す](./20260722-prompt-cache-reuse-stable-system-prompt.md) | accepted |
 | 2026-07-23 | [構造化出力をプロバイダ能力で分岐（Ollama ネイティブ JSON モード・claude プロンプト維持）](./20260723-provider-branched-structured-output.md) | superseded |
+| 2026-07-29 | [AI セッション運用ガード（重複確認・失敗ログ・worktree/待機規律）の採用](./20260729-adopt-ai-session-operational-guards.md) | accepted |
 | 2026-08-09 | [組版の堅牢化: LuaTeX 互換 shim の注入と共通テンプレによる原前文の吸収](./20260809-typesetting-shims-luatex-compat-and-class-absorption.md) | accepted |
 | 2026-08-11 | [組版サンドボックス: shell escape 明示禁止と同梱パッケージの探索順後置](./20260811-typesetting-sandbox-and-package-precedence.md) | accepted |
 | 2026-08-11 | [プロンプト注入対策: 論文・LLM 由来のテキストを指示面へ載せない](./20260811-untrusted-text-never-becomes-instructions.md) | accepted |
@@ -73,3 +76,5 @@
 | 2026-08-15 | [訳文は JSON 文字列で運ばない（区切り付きの平文で返す）](./20260815-translator-returns-plain-text.md) | accepted |
 | 2026-08-15 | [検証の往復を縮めるために OpenRouter を第 3 のプロバイダにする](./20260815-openrouter-provider-for-fast-iteration.md) | accepted |
 | 2026-08-16 | [保護区間の要否はモデルの能力で決まる（26B では既定へ戻す）](./20260816-protection-depends-on-model-capability.md) | accepted |
+| 2026-09-01 | [セッション横断監査に基づく運用ガード第 2 弾の採用](./20260901-adopt-session-audit-guards-v2.md) | accepted |
+| 2026-09-01 | [GitHub Actions を既定オフにしローカル検証を正とする](./20260901-disable-github-actions-by-default.md) | accepted |

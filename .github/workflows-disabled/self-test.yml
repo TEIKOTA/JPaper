@@ -1,3 +1,7 @@
+# 【既定オフ】このディレクトリ（workflows-disabled/）にある限り GitHub は workflow として
+# 認識しない。同等の検査はローカルの `bash tests/run-tests.sh` が正本。CI を有効化する手順は
+# README「CI を有効化する場合」を参照（ADR: docs/adr/20260901-disable-github-actions-by-default.md）。
+#
 # scripts/ の検査スクリプト群の self-test。macOS(bash 3.2) / Linux の両方で退行を検出する。
 name: self-test
 
