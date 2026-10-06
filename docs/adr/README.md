@@ -78,3 +78,4 @@
 | 2026-08-16 | [保護区間の要否はモデルの能力で決まる（26B では既定へ戻す）](./20260816-protection-depends-on-model-capability.md) | accepted |
 | 2026-09-01 | [セッション横断監査に基づく運用ガード第 2 弾の採用](./20260901-adopt-session-audit-guards-v2.md) | accepted |
 | 2026-09-01 | [GitHub Actions を既定オフにしローカル検証を正とする](./20260901-disable-github-actions-by-default.md) | accepted |
+| 2026-10-06 | [横長の対訳 PDF（A4 縦 2 枚分・左=原文／右=和訳）を標準の出力にする](./20261006-bilingual-side-by-side-pdf.md) | proposed |
