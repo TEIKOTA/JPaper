@@ -5,6 +5,7 @@ import {
   paragraphsOf,
   pairSegments,
   provideCommands,
+  dropLabels,
   titleOf,
   bilingualPreamble,
   renderPairs,
@@ -131,6 +132,19 @@ describe("段落ペア", () => {
       left: "",
       right: "\\section*{訳注一覧}\n\n\\begin{itemize}\n\\item x\n\\end{itemize}",
     });
+  });
+});
+
+describe("訳文側の \\label 削除", () => {
+  it("ラベルだけの行は行ごと消し、align* の中に空行を作らない", () => {
+    const src = "\\begin{align*}\n    a &= b,\n    \\label{eq:dann}\n\\end{align*}";
+    expect(dropLabels(src)).toBe("\\begin{align*}\n    a &= b,\n\\end{align*}");
+  });
+
+  it("行内のラベルは命令だけ消し、\\ref は残す", () => {
+    expect(dropLabels("\\section{序論}\\label{sec:intro} 式~\\ref{eq:a} を見よ。")).toBe(
+      "\\section{序論} 式~\\ref{eq:a} を見よ。",
+    );
   });
 });
 

@@ -54,6 +54,12 @@
 - **なぜ意図的か**: 本文中の `\newcommand` は左（原文）と右（和訳）の両方の列で実行されるので、そのままだと右で「定義済み」エラーになって落ちる（PoC で実測）。訳文は原文の定義をそのまま持ち越しているので、右では再定義を省いてよい。左は原文のまま残す。
 - **正本ポインタ**: [対訳 PDF ADR](../adr/20261006-bilingual-side-by-side-pdf.md)（「マクロ定義の重複」）。
 
+## `src/tools/bilingual-latex.ts` — `dropLabels` が訳文側の `\label` を消す
+
+- **おかしく見える点**: 右（和訳）の列だけ `\label{…}` を消している。ラベルだけの行は行ごと消す。
+- **なぜ意図的か**: 同じ `\label` が左右の両方の列で実行される。番号の無い `align*` の中の `\label` は amsmath が消費せずに持ち越すため、右の列で 2 回目が来ると `Multiple \label's: label '…' will be lost` の致命エラーになる（実測: PathoROB 2507.17845 の `eq:dann`）。左右の番号は paracol で一致するので、右の `\ref` は左のラベルで正しく解決する。`\label` だけを消すと行が空白だけになり、`align*` の中で段落区切りになって `Paragraph ended before \align* was complete` で落ちるので、行ごと消す。
+- **正本ポインタ**: [対訳 PDF ADR](../adr/20261006-bilingual-side-by-side-pdf.md)（「マクロ定義の重複」。`\label` の二重定義）。
+
 ## `src/tools/bilingual-latex.ts` — `SETUP` が `figure` / `table`（`*` 付き含む）を非フロートの環境に差し替える
 
 - **おかしく見える点**: 対訳の前文で、標準のフロート環境を `\def\@captype{...}` を設定しただけの `center` ブロックに `\renewenvironment` で置き換えている。位置指定（`[t]` 等）も捨てる。

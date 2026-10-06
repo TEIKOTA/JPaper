@@ -130,6 +130,11 @@ export function provideCommands(tex: string): string {
   return tex.replace(/\\newcommand(?![A-Za-z@])/g, "\\providecommand");
 }
 
+// ⚠ landmines.md
+export function dropLabels(tex: string): string {
+  return tex.replace(/^[ \t]*\\label\{[^{}]*\}[ \t]*\n/gm, "").replace(/\\label\{[^{}]*\}/g, "");
+}
+
 function braceBody(s: string, open: number): string | undefined {
   let depth = 1;
   for (let j = open; j < s.length; j++) {
@@ -223,7 +228,7 @@ export function renderPairs(
   const blocks: string[] = [];
   const push = (left: string, right: string): void => {
     if (left.trim() === "" && right.trim() === "") return;
-    blocks.push(`${left}\n\\switchcolumn\n${provideCommands(right)}\n\\switchcolumn*`);
+    blocks.push(`${left}\n\\switchcolumn\n${dropLabels(provideCommands(right))}\n\\switchcolumn*`);
   };
   let seenLeft = preambles.left;
   let seenRight = preambles.right;
