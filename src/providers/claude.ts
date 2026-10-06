@@ -5,6 +5,8 @@ import { JpaperError } from "../types/errors.js";
 import { canceledError } from "../runtime/cancellation.js";
 import { MAX_RESPONSE_CHARS } from "../runtime/llm-client.js";
 
+export const MAX_TURNS = 3;
+
 export interface ClaudeDeps {
   run?: (args: string[], signal?: AbortSignal) => Promise<string>;
   trace?: TraceSink; // LLM トレース ADR。成功呼び出しの usage/コストを emit する副作用チャネル。
@@ -106,8 +108,9 @@ export function makeClaudeClient(deps: ClaudeDeps = {}): LlmClient {
             "json",
             "--append-system-prompt",
             req.system,
+            // ⚠ landmines.md
             "--max-turns",
-            "1",
+            String(MAX_TURNS),
             "--tools",
             "none",
           ],
