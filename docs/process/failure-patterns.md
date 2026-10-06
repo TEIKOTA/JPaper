@@ -1,29 +1,49 @@
-# Failure Patterns（失敗の記録ログ）
+# Failure Patterns（プロジェクト失敗ログ）
 
 ## 目的
 
-この repo で実際に起きた想定外の失敗を「症状 → ありがちな間違い → 正しい一手」の 3 列で記録する append-only のログ。**作業前に読むカタログではない**。作業時の失敗回避は昇華先（scripts / 設定への自動化、各 skill の手順行、`AGENTS.md` のガードレール）が担い、このログは分析と昇華の入力になる。
+この repo で実際に起きた**プロセス・ツール運用上の**想定外の失敗を「症状 → ありがちな間違い → 正しい一手」と発火日で記録する、プロジェクト所有・append-only のログ。**作業前に読むカタログではない**。作業時の失敗回避は昇華先（scripts / 設定への自動化、各 skill の手順行、`AGENTS.md` のガードレール）が担い、このログは分析と昇華の入力になる。
+
+汎用的な既知失敗は、テンプレート所有で同期時に上書きできる [`failure-patterns.seed.md`](./failure-patterns.seed.md) に分離する。ドメイン固有の知見・実験結果・製品仕様はこのログへ蓄積せず、そのドメインの正本へ昇華する。
 
 採用判断は [`docs/adr/20260729-adopt-ai-session-operational-guards.md`](../adr/20260729-adopt-ai-session-operational-guards.md) を参照。
 
 ## 使い方
 
 - 想定外の失敗に遭遇したら、その場で下の表へ 1 行追記する。事前の承認は不要。根拠（エラー出力、exit code、commit / issue / PR）を必ず添える。one-off の教訓も記録してよい。
-- **昇華トリガー**: 同型の想定外事象を 2 回目に観測したら（遅くとも 3 回目）、その場で issue 化か昇華先への反映を判定する。回数を数えられるのはこのログだけなので、追記時に既存行と同型かを見る。
+- **昇華トリガー**: このログと seed を通じて同型の想定外事象を 2 回目に観測したら（遅くとも 3 回目）、その場で issue 化か昇華先への反映を判定する。
 - 対策が固まったら昇華する。優先順: ① scripts / 設定への自動化（読まなくても効く） ② その作業で必ず通る skill / 手順文書 ③ repo 全域に効くなら `AGENTS.md`。昇華後も行は削除せず、昇華先を行に追記して履歴として残す。
-- 定期的な分析（このログとセッション記録から、繰り返す失敗・使われない資産・導線の欠落を洗う）は `sync-docs` skill の監査とあわせて行う。
-- 下表の初期シード行は、テンプレ母体・派生プロジェクト群のセッション実測から「どのプロジェクトでも起こりうるもの」だけを移植したもの（2026-09-01 の横断監査）。生成先プロジェクトで無関係なら削らず残してよい（同型の再発判定に使う）。
+- 表は数十行を目安とする。超過は削除条件ではなく、ドメイン知識の混入や未昇華の同型行を監査するトリガーとする。
+- 日付を日単位で特定できない履歴は、根拠が示す上限日を `YYYY-MM-DD以前` と記録する。推測で日付を補わない。
+- 定期的な分析は `sync-docs` skill の監査とあわせて行う。
 
 ## ログ
 
-| 症状 | ありがちな間違い | 正しい一手（根拠・昇華先） |
-|---|---|---|
-| git worktree が未 push commit ごと消えた | `/tmp`・`$TMPDIR` 配下に worktree を作った | home 配下に作る（実発生・復旧作業あり。昇華済み: AGENTS.md ガードレール + `scripts/hooks/guard-bash.sh`、ADR 20260729） |
-| 長時間ジョブ待ちでモデル往復を浪費 | `until grep … sleep` の即興ポーリングを再発行し続けた | `scripts/wait-for-marker.sh` 1 回に集約（母体実測 341 回・約 118 分。昇華済み: scripts + ガードレール） |
-| 同一テーマの issue・実装が重複した | 起票・着手前に既存 issue / PR を検索しなかった | `--state all` で検索し重複確認節へ記録（母体で起票 50 分後に別セッションが同テーマ実装。昇華済み: issue テンプレ） |
-| CI がすべて止まり PR が未検証で滞留 | Actions 無料枠の billing 枯渇を障害と誤診して待った | billing 起因かを確認し、検証はローカル（`tests/run-tests.sh`・`scripts/check-pr.sh`）で完結（5 プロジェクトで実害。昇華済み: ADR 20260901-disable-github-actions） |
-| 完了 marker が即誤発火して待機が素通り | 否定形・前回実行の残骸・プロンプトにエコーされる文字列を marker にした | 今回の実行が新規に作る肯定的 marker のみ使う（実測 2026-08-26。昇華済み: `wait-for-marker.sh` ヘッダの投入チェックリスト） |
-| GPU ジョブが CPU で黙走し丸 1 日損失 | 資源取得失敗時の劣化フォールバックを許し、進捗計装も無かった | 必須資源は取得失敗で即死＋進捗・ETA の計装（実測 2026-08-04。昇華済み: 同上） |
-| 完了・送信の報告が実体と食い違う | ログ末尾・進捗表示・記憶から「できた」と報告した | 集計の正本と実体（プロセス・URL・出力）を確認してから報告（5 プロジェクトで同型再発。昇華済み: AGENTS.md ガードレール） |
-| `-` 始まりのファイル名で grep が常に 0 件 | パス・パターンがオプションと誤解釈されるのに気づかない | パスに `./` を付けるか `--` で区切る（本 repo の横断監査作業で実発生 2026-09-01） |
-| hook・検査の文字列判定が散文に誤発火 | コマンド文字列全体を正規表現で走査した | コマンド位置アンカー＋行単位で判定し、散文の回帰テストを添える（`guard-bash.sh` 導入時に PR 作成を自己ブロック 2026-09-01。昇華済み: 同 hook）。2 回目（2026-09-02、同一行の別パイプライン区間にある `.env` リテラルで誤拒否）→ 区間単位の判定へ昇華（#44） |
+| 症状 | ありがちな間違い | 正しい一手（根拠・昇華先） | 初回発火日 | 最終発火日 |
+|---|---|---|---|---|
+| GitHub GraphQL の古い状態を最新と誤認しかけた | push 直後の GraphQL 応答だけで branch / PR 状態を確定した | 同じ対象を REST API と git remote で再確認する（#61 の監査記録。GraphQL の反映遅延を観測） | 2026-09-02 | 2026-09-02 |
+| 安全分類器に拒否された複合コマンドを分割実行した | 拒否を、同じ外部変更を細分化して続行する許可と解釈した | 既存の明示権限を再確認し、検証と許可済みの変更操作を分ける。権限不足を分割で迂回しない（#61 の監査記録） | 2026-09-02 | 2026-09-02 |
+| 並列 worker が共有 scratchpad を上書きした | 複数 worker に同じ `pr-body.md` / `issue-body.md` を使わせた | worker ごとのサブディレクトリへ出力を分離する（#61 の監査記録） | 2026-09-02 | 2026-09-02 |
+| usage limit 到達で複数 worker が未完了のまま停止した | 長い委譲を一括投入し、再開可能な checkpoint を残さなかった | 小さい batch、永続 worktree、issue / commit による checkpoint を使う（#61 の監査記録。追跡: #57） | 2026-09-02 | 2026-09-02 |
+| worktree の path casing 不一致で再開先を誤った | 記憶上の `Nowflo-worktrees` と実在する `nowflo-worktrees` を同一視した | `pwd -P` と実ディレクトリ一覧で物理 path を確認し、正確な casing を引き継ぐ（#61 の監査記録） | 2026-09-02 | 2026-09-02 |
+| 即興 polling が複数プロジェクトで再発し、自己 match も起きた | `pgrep -f` や sleep loop を都度組み立てて完了判定した | 肯定的 marker と `scripts/wait-for-marker.sh` に待機を集約する（#61 の監査記録。昇華済み: scripts + guard） | 2026-09-02 | 2026-09-02 |
+| 確認なしに削除・履歴変更を実行した | テスト用 repo などを「後始末」とみなし、`rm -rf`・repo 削除・force push を確認対象から外した | 対象・件数・復旧可否を列挙し、明示承認後だけ実行する（#61 の監査記録。昇華済み: AGENTS.md + `guard-bash.sh`） | 2026-09-02 | 2026-09-02 |
+| guard の危険コマンド文字列テスト自体が外側の shell で実行されかけた | `$()` を含む fixture を二重引用符経由で `exec` の argv に組み立てた | 危険文字列は Python driver が JSON 化する test fixture 内だけに置く（2026-09-15、R2/#48 の追加レビュー時に実行環境が拒否。削除は未発生） | 2026-09-15 | 2026-09-15 |
+| merge 済み PR に blocker が後から記録され、follow-up issue が必要になった | merge 後の独立 review 所見を merge 前から存在した blocker と取り違えた | merge と comment の時刻順を一次情報で確認し、merge 後に判明した blocker は follow-up issue で追跡する（PR #69 は 14:17:06Z に merge、comment `issuecomment-5731431879` は 14:26:19Z、追跡: #71） | 2026-09-18 | 2026-09-18 |
+| 古い checkout の `new-branch.sh` が latest main の `--worktree` を受け付けなかった | fetch 済みの `origin/main` と、現在 checkout している古い branch 上の script を同じ版だとみなした | latest `origin/main` の detached bootstrap worktree を home 配下に作り、その checkout の script で専用 worktree を作る（#57 着手時に `不明な引数: --worktree`、exit 1） | 2026-09-20 | 2026-09-20 |
+| Stop hook が main thread の差分を fail-open した | command substitution が空の末尾 JSON field を捨て、`agent_id` を誤って非空として扱った | JSON 末尾に sentinel を出して空 field を保持し、main/subagent の両方を self-test する（#51 実装時の red test: `bash tests/run-tests.sh` で 9 件失敗。昇華済み: `scripts/hooks/guard-stop.sh` + self-test） | 2026-09-20 | 2026-09-20 |
+| 隔離 clone の origin へ push したが GitHub へは送られなかった | ローカル path を clone した際に origin がその path に置き換わることを確認せず、live remote を前提にした | clone 後に origin URL を GitHub URL へ戻し、live fetch / push 前に `git remote -v` を確認する（#51 実装時の事実。昇華先: `scripts/new-branch.sh --worktree` と `.claude/skills/delegate-work/SKILL.md`） | 2026-09-20 | 2026-09-20 |
+| sandbox 内の正本 branch 作成が共通 gitdir の ref lock で失敗した | `scripts/new-branch.sh --worktree` は通常の workspace write だけで完了すると見込んだ | branch/worktree が未作成であることを確認し、同じ正本コマンドを明示許可付きで再実行する（#49 着手時、`refs/heads/fix/49-settings-permission-hardening.lock: Operation not permitted`、再実行で成功） | 2026-09-20 | 2026-09-20 |
+| PR #87 が fixed-SHA review 完了前に merge され、reviewer の blocker が follow-up になった | merge と独立 review の完了順を固定せず、review の最終結果より先に merge を完了した | merge 済みなら履歴を変更せず blocker を follow-up issue で追跡する（#88 の Reproduction、2026-09-21: PR #87 fixed head `9311f1153ba501c960026a6cf42bfbdb39cccfab` の独立 reviewer が `/bin/bash` 3.2.57 で file present / hook rc 0 expected 2 を確認。PR #87 squash merge: `ab4445ff4f6d31ad7e1648a86bd5233fedc7d544`。追跡: #88） | 2026-09-21 | 2026-09-21 |
+| 単独抽出した shell 関数の focused harness が rc=127 で失敗した | macOS Bash 3.2 で process substitution の fd を `source` で再利用できるとみなし、全体 script だけが定義する `ROOT` も単独 harness に引き継いだ | 抽出テキストを同一 shell で評価し、repo path は `pwd -P` から明示定義する（2026-09-22、`/dev/fd/63: Bad file descriptor`と `check_issue63_headless_contracts: command not found`） | 2026-09-22 | 2026-09-22 |
+| PR の例外理由が認識されず、通過記載も先行した | `例外理由:` を箇条書きにし、検査と後続処理を同じ shell に並べて最終 exit だけで判断した | 例外理由は単独行に置き、検査を独立実行して結果確認後に本文へ反映する（PR #106、`check-pr.sh` の「issue 連結がありません」、根拠: `scripts/check-pr-body-close.sh` の行頭規則。修正後は通過） | 2026-10-02 | 2026-10-02 |
+
+| worktree の Python 構文検査で未追跡 cache が生成された | `python3 -m py_compile` が `scripts/{lib,hooks}/__pycache__` を追加し初期空の破棄可設定に抵触した | 2026-10-03 writer の対象2 file を確認して自己生成物のみ除去。実行 wrapper と fixture import は bytecode 出力を無効化し、構文検査は `compile()` を使う（#105、`scripts/worktree.sh`、`tests/worktree-lifecycle.py`） | 2026-10-03 | 2026-10-03 |
+| macOS Bash 3.2 で標準 worktree 作成が失敗した | `set -u` 下で空の管理引数配列を展開し、旧非標準pathの hook fixture を残した | `MANAGER_ARGS[@]` は要素がある時だけ展開し、旧fixtureを標準pathへ更新。短命shell作成→別呼出hold/endを継続fixture化（#105、`worktree-lifecycle-evidence/20261003T005134Z-summary.json`、`tests/worktree-lifecycle.py`） | 2026-10-03 | 2026-10-03 |
+| Git 未追跡列挙に出ない FIFO/socket が初期保護検査を通った | `git ls-files --others` とsymlink検査だけでfile種別を網羅したと扱った | 独立reviewerが fixed `183bf122` で FIFO を実証。全entryを `lstat` で確認し、特殊fileを保護。FIFO/close後Unix socketのfocused fixtureと退行注入red→greenを追加（#105、`tests/worktree-lifecycle.py --case special`、後続validation summary） | 2026-10-03 | 2026-10-03 |
+| home配下の長いfixture pathでUnix socketをbindできなかった | AF_UNIXへabsolute pathを渡し、macOSのpath上限に当たった | run `20261003T010350Z` fixture/setupで `OSError: AF_UNIX path too long`。専用fixture内で短いrelative名にbindし `finally` でcwdを復元する（`tests/worktree-lifecycle.py`） | 2026-10-03 | 2026-10-03 |
+| submodule ignore=allが内側成果物を隠しforce回収の候補となった | superprojectのclean/othersだけでnested成果物とcommit保持を保証した | 独立reviewerがfixed `183bf122` で実証。mode160000とnested `.git` markerを保護し、許可cacheとの併存fixture/退行注入を追加（`worktree-lifecycle-evidence/independent-gitlink-review-183bf122.json`） | 2026-10-03 | 2026-10-03 |
+| nested Git negative fixtureが期待したmessageだけで失敗した | 保護結果ではなく一つのguardの文言をassertし、Gitがdirectoryを列挙した時の先行保護を不具合と扱った | run `20261003T011152Z` は `cache/` を未分類fileとして正しく拒否。拒否と現物維持をassertし、有効/未分類.git markerを両方検査する。redの集計もsetup ERRORでなくassert failureを要求（`tests/worktree-lifecycle.py`、`tests/run-worktree-validation.py`） | 2026-10-03 | 2026-10-03 |
+| Codex が派生 repo で `/private/tmp` に worktree を作り、未コミット成果物が 6 worktree に散った | Bash guard を repo の `.claude/settings.json` に配線しただけで全エージェントに効くとみなした（Codex は `.codex/hooks.json` の PreToolUse 未配線・`/hooks` 未 trust、checkout も古い branch。Claude も user-level 配線前の 2026-09-04 に scratchpad へ 2 本作成） | user-level 配線を Codex にも広げ、未 trust を SessionStart で警告し、ツール非依存の git post-checkout guard で取り消す（postmarket-mri-seg の `git worktree list`、`~/.codex/config.toml` の `[hooks.state]` が `stop` のみ。昇華済み: `scripts/setup-user-hooks.sh --codex/--git`・`scripts/check-codex-hooks.sh`。追跡: #108） | 2026-10-02 | 2026-10-05 |
+| HUMAN 条件に当たる PR を root が AUTO で merge した | `/goal` の「レビュー・merge まで」という事前の指示を、未見の PR 内容に対する人間の承認と読み替え、AUTO 条件 10（権限・セキュリティの信頼境界を含まない）の判定を省いた | merge 前に AUTO 条件 1〜10 と HUMAN 条件を PR ごとに照合して判定表を残す。権限・hook trust・ユーザーレベル設定に触れる PR は HUMAN とし、承認を待つ（PR #109 を 9551cd5 で squash merge。直後の確認コマンドが auto mode 分類器に Self-Approval として拒否され、ユーザーが事後に追認。追跡: #110） | 2026-10-06 | 2026-10-06 |
+| guard の解析修正が review のたびに新しい取りこぼし（旧版からの退行）を生んだ | bash / zsh の option 解釈を逐次再現し、指摘ごとに例外処理を足した。旧版との比較に使う形に、新しい例外の条件に当たる token（`/` や `.` を含む単語、展開で消える `${X#.}`、リダイレクト `< /dev/null` など）を入れていなかった | セキュリティ guard の書き換えでは、旧版の検査候補を例外なしで包含する設計にし、すり抜けうる例外（誤検知の削減）は持たない。旧版との網羅比較・実シェルとの突き合わせ・第三者の fuzz を merge 条件にする（PR #113: 7 回の review すべてで blocking。スクリプト名の例外を廃止した 29fdf1c で各 fuzz の退行 0） | 2026-10-06 | 2026-10-06 |

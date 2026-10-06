@@ -1,0 +1,28 @@
+{
+  "description": "Project-local Codex hooks. Review and trust with /hooks; PreToolUse is a guardrail, not complete tool mediation.",
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$(git rev-parse --show-toplevel)/scripts/hooks/guard-stop.sh\"",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$(git rev-parse --show-toplevel)/scripts/hooks/guard-codex.sh\"",
+            "timeout": 60
+          }
+        ]
+      }
+    ]
+  }
+}
