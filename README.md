@@ -7,7 +7,7 @@
 ## 何をするか
 
 - **入力**: 学術論文の **LaTeX ソース**（arXiv / zip・tar.gz）を最優先。ソースが無い PDF-only 論文は Phase2（Nougat 等の抽出）で対応
-- **出力**: **日本語 PDF**（LuaLaTeX 組版）。per-paper 用語集（`glossary.md`）・実行証跡を併産
+- **出力**: **日本語 PDF**（LuaLaTeX 組版）と、横長（A4 縦 2 枚分）で左=原文／右=和訳の**対訳 PDF**（`translation/bilingual/main.pdf`。`--no-bilingual` で作らない。対訳の組版だけが失敗しても run は成功し、`RunSummary.bilingual` とエラー出力に理由が出る。[対訳 PDF ADR](./docs/adr/20261006-bilingual-side-by-side-pdf.md)）。per-paper 用語集（`glossary.md`）・実行証跡を併産
 - **品質**: 訳出（`translator`）と品質判定（`evaluator`）を分離。**節ごとの軽い形式検査＋evaluator** と、組み上げてからの **全文組版ゲート** の2層。合格でループを抜け、上限（`MAX_REVISIONS`）超過は明示的失敗（[品質ゲート ADR](./docs/adr/20260708-quality-gate-machine-vs-llm-and-explicit-failure.md) / [2層化 ADR](./docs/adr/20260709-quality-gate-two-layer-and-build-error-triage.md)）
 
 ## アーキテクチャ（agent-native / Flue 設計準拠）
@@ -27,6 +27,14 @@
 npm install
 lefthook install   # commit-msg / pre-push フック（未導入なら brew install lefthook）
 ```
+
+## 使い方
+
+```sh
+npm run dev -- <arXiv ID|ファイル|ディレクトリ> --provider {ollama|claude|openrouter} [--out DIR] [--no-bilingual]
+```
+
+和訳 PDF（`translation/build/main.pdf`）と対訳 PDF（`translation/bilingual/main.pdf`）のパスを標準出力に、`RunSummary` を JSON で出す。オプションの正本は [契約付録 §5](./docs/design/contract-appendix.md)。
 
 ## コマンド
 

@@ -455,3 +455,119 @@ describe("本文が空になる入力", () => {
     expect(warnings.some((w) => w.includes("解決できない"))).toBe(true);
   });
 });
+
+describe("対訳 PDF", () => {
+  // main.tex に paracol があれば対訳の組版とみなす。
+  const isBilingual = (dir: string): boolean =>
+    readFileSync(path.join(dir, "main.tex"), "utf8").includes("\\begin{paracol}");
+
+  it("既定で和訳 PDF のあとに対訳 PDF を組み、RunSummary に載せる", async () => {
+    const outDir = path.join(tmp(), "out");
+    const db = new GlossaryDb();
+    const built: string[] = [];
+    const runner: LatexRunner = (dir) => {
+      built.push(isBilingual(dir) ? "bilingual" : "translation");
+      return okRunner(dir);
+    };
+    const r = await tp({ kind: "path", path: makePaperTar() }, { provider: "claude", outDir }, {
+      client: docClient(),
+      db,
+      latexRunner: runner,
+    });
+    expect(r.exitCode).toBe(0);
+    expect(built).toEqual(["translation", "bilingual"]);
+    expect(r.pdfPath).toBe(path.join(outDir, "translation", "build", "main.pdf"));
+    const pdf = path.join(outDir, "translation", "bilingual", "main.pdf");
+    expect(r.summary.bilingual).toEqual({ status: "ok", pdfPath: pdf, pairs: 2, fallbackSegments: 0 });
+    expect(existsSync(pdf)).toBe(true);
+    expect(existsSync(path.join(outDir, "translation", "bilingual.next"))).toBe(false);
+    const tex = readFileSync(path.join(outDir, "translation", "bilingual", "main.tex"), "utf8");
+    expect(tex).toContain("\\section{Intro}Alpha text.\n\\switchcolumn\n訳文\n\\switchcolumn*");
+    db.close();
+  });
+
+  it("bilingual: false では組まず、RunSummary で disabled と区別できる", async () => {
+    const outDir = path.join(tmp(), "out");
+    const db = new GlossaryDb();
+    const built: string[] = [];
+    const runner: LatexRunner = (dir) => {
+      built.push(isBilingual(dir) ? "bilingual" : "translation");
+      return okRunner(dir);
+    };
+    const r = await tp(
+      { kind: "path", path: makePaperTar() },
+      { provider: "claude", outDir, bilingual: false },
+      { client: docClient(), db, latexRunner: runner },
+    );
+    expect(r.exitCode).toBe(0);
+    expect(built).toEqual(["translation"]);
+    expect(r.summary.bilingual).toEqual({ status: "disabled", pairs: 0, fallbackSegments: 0 });
+    expect(existsSync(path.join(outDir, "translation", "bilingual"))).toBe(false);
+    db.close();
+  });
+
+  it("対訳の組版失敗は警告に留め、run は成功・和訳 PDF は出す", async () => {
+    const outDir = path.join(tmp(), "out");
+    const db = new GlossaryDb();
+    const errs: string[] = [];
+    const runner: LatexRunner = (dir) =>
+      isBilingual(dir) ? { code: 1, log: "! LaTeX Error: File `paracol.sty' not found." } : okRunner(dir);
+    const r = await tp({ kind: "path", path: makePaperTar() }, { provider: "claude", outDir }, {
+      client: docClient(),
+      db,
+      latexRunner: runner,
+      onError: (m) => errs.push(m),
+    });
+    expect(r.exitCode).toBe(0);
+    expect(r.status).toBe("ok");
+    expect(r.error).toBeUndefined();
+    expect(r.summary.buildOk).toBe(true);
+    expect(existsSync(path.join(outDir, "translation", "build", "main.pdf"))).toBe(true);
+    expect(r.summary.bilingual.status).toBe("failed");
+    expect(r.summary.bilingual.pdfPath).toBeUndefined();
+    expect(r.summary.bilingual.message).toContain("対訳 PDF の組版に失敗しました");
+    expect(errs.some((e) => e.includes("対訳 PDF の組版に失敗しました"))).toBe(true);
+    expect(existsSync(path.join(outDir, "translation", "bilingual.next"))).toBe(false);
+    expect(existsSync(path.join(outDir, "glossary.md"))).toBe(true);
+    db.close();
+  });
+
+  it("対訳の組版中の例外も警告に留める", async () => {
+    const outDir = path.join(tmp(), "out");
+    const db = new GlossaryDb();
+    const errs: string[] = [];
+    const runner: LatexRunner = (dir) => {
+      if (isBilingual(dir)) throw new Error("latexmk が見つかりません");
+      return okRunner(dir);
+    };
+    const r = await tp({ kind: "path", path: makePaperTar() }, { provider: "claude", outDir }, {
+      client: docClient(),
+      db,
+      latexRunner: runner,
+      onError: (m) => errs.push(m),
+    });
+    expect(r.exitCode).toBe(0);
+    expect(r.summary.bilingual.status).toBe("failed");
+    expect(errs.some((e) => e.includes("対訳"))).toBe(true);
+    db.close();
+  });
+
+  it("和訳 PDF が組めなければ対訳は組まない（skipped）", async () => {
+    const outDir = path.join(tmp(), "out");
+    const db = new GlossaryDb();
+    const built: string[] = [];
+    const runner: LatexRunner = (dir) => {
+      built.push(isBilingual(dir) ? "bilingual" : "translation");
+      return { code: 1, log: "! LaTeX Error: File `x.png' not found." };
+    };
+    const r = await tp({ kind: "path", path: makePaperTar() }, { provider: "claude", outDir }, {
+      client: docClient(),
+      db,
+      latexRunner: runner,
+    });
+    expect(r.exitCode).toBe(5);
+    expect(built).not.toContain("bilingual");
+    expect(r.summary.bilingual.status).toBe("skipped");
+    db.close();
+  });
+});

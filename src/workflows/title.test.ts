@@ -79,7 +79,7 @@ describe("論文タイトルの翻訳（契約付録 §8）", () => {
     const db = new GlossaryDb();
     const seen: string[] = [];
     const c = client();
-    const r = await translatePaper({ kind: "path", path: paperTar() }, { provider: "claude", outDir }, {
+    const r = await translatePaper({ kind: "path", path: paperTar() }, { provider: "claude", outDir, bilingual: false }, {
       client: c,
       db,
       latexRunner: recordingRunner(seen),
@@ -207,7 +207,7 @@ describe("論文タイトルの翻訳（契約付録 §8）", () => {
       const line = tex.split("\n").findIndex((l) => l.includes("訳文")) + 1;
       return `./main.tex:${String(line)}: Undefined control sequence.`;
     });
-    const r = await translatePaper({ kind: "path", path: paperTar() }, { provider: "claude", outDir }, {
+    const r = await translatePaper({ kind: "path", path: paperTar() }, { provider: "claude", outDir, bilingual: false }, {
       client: client(),
       db,
       latexRunner: runner,
@@ -230,7 +230,7 @@ describe("論文タイトルの翻訳（契約付録 §8）", () => {
     const runner = recordingRunner(seen, (tex) =>
       tex.includes("a4paper") ? undefined : "! LaTeX Error: File `a.cls' not found.",
     );
-    const r = await translatePaper({ kind: "path", path: paperTar() }, { provider: "claude", outDir }, {
+    const r = await translatePaper({ kind: "path", path: paperTar() }, { provider: "claude", outDir, bilingual: false }, {
       client: client(),
       db,
       latexRunner: runner,

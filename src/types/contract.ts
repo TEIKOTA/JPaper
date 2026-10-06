@@ -163,6 +163,20 @@ export const JpaperInput = z.discriminatedUnion("kind", [
 ]);
 export type JpaperInput = z.infer<typeof JpaperInput>;
 
+// 契約付録 §8・対訳 PDF ADR(20261006)。
+// ok=組めた／failed=組版に失敗（run の成否・exitCode には影響しない）／disabled=--no-bilingual／
+// skipped=和訳 PDF が組めていないので組んでいない。
+export const BilingualSummary = z.object({
+  status: z.enum(["ok", "failed", "disabled", "skipped"]),
+  pdfPath: z.string().optional(),
+  message: z.string().optional(),
+  // 左右の行（段落ペア・タイトル）の数。
+  pairs: z.number().int().nonnegative().default(0),
+  // 段落数が一致せず、セグメント全体を 1 ペアにしたセグメントの数。
+  fallbackSegments: z.number().int().nonnegative().default(0),
+});
+export type BilingualSummary = z.infer<typeof BilingualSummary>;
+
 export const RunSummary = z.object({
   paperId: z.string(),
   outDir: z.string(),
@@ -179,6 +193,7 @@ export const RunSummary = z.object({
   }),
   layout: z.enum(["original", "template"]).nullable(),
   buildOk: z.boolean().nullable(),
+  bilingual: BilingualSummary.default({ status: "skipped", pairs: 0, fallbackSegments: 0 }),
   // 単一ユーザ既定にフォールバックした資源。マルチテナントでは空でなければ分離できていない。
   sharedDefaults: z.array(z.enum(["db", "cacheKey", "outDir", "limits", "work"])).default([]),
   // run 中に実際に発行した LLM 呼び出し回数（失敗した run でも返す＝課金相当の仕事量）。
