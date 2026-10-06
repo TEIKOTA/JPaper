@@ -45,7 +45,8 @@ describe("translator", () => {
   it("初稿は訳出、改稿は前稿の最小差分修正として指示する", async () => {
     const c = new FakeLlmClient('{"segmentId":"s1","ja":"訳"}');
     await translate(c, { segmentId: "s1", latex: "x", glossarySlice: [] });
-    expect(c.calls[0]!.user).toContain("本文のみを日本語に訳し");
+    expect(c.calls[0]!.user).toContain("本文と図表のキャプション");
+    expect(c.calls[0]!.user).toContain("\\caption の中身");
     expect(c.calls[0]!.user).not.toContain("訳し直さない");
 
     const r = new FakeLlmClient('{"segmentId":"s1","ja":"訳"}');
