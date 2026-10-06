@@ -87,12 +87,77 @@ function readArgs(
   return { arg: { start: j + 1, end: end - 1 }, end };
 }
 
-// 制御綴り name の出現（コメント・エスケープの外）ごとに visit を呼ぶ。visit が返した位置から走査を続ける。
+// \iffalse の読み飛ばしで入れ子として数える条件分岐の綴り（TeX の基本命令。\newif で作った綴りは別途数える）。
+const PRIMITIVE_IFS = new Set([
+  "if",
+  "ifcat",
+  "ifnum",
+  "ifdim",
+  "ifodd",
+  "ifvmode",
+  "ifhmode",
+  "ifmmode",
+  "ifinner",
+  "ifvoid",
+  "ifhbox",
+  "ifvbox",
+  "ifx",
+  "ifeof",
+  "iftrue",
+  "iffalse",
+  "ifcase",
+  "ifdefined",
+  "ifcsname",
+  "iffontchar",
+  "ifincsname",
+]);
+const COMMENT_ENV_BEGIN = /\s*\{comment\}/y;
+const COMMENT_ENV_END = "\\end{comment}";
+
+const newifNames = (tex: string): Set<string> =>
+  new Set([...tex.matchAll(/\\newif\s*\\(if[a-zA-Z]+)/g)].map((m) => m[1]!));
+
+// \iffalse の名前の直後 from から、対応する \else または \fi の直後の位置（閉じなければ末尾）。契約付録 §8
+function skipIffalse(tex: string, from: number, ifs: ReadonlySet<string>): number {
+  let depth = 0;
+  for (let i = from; i < tex.length; i++) {
+    const c = tex[i];
+    if (c === "%") {
+      i = skipComment(tex, i) - 1;
+      continue;
+    }
+    if (c !== "\\") continue;
+    let j = i + 1;
+    while (isLetter(tex[j])) j++;
+    if (j === i + 1) {
+      i++;
+      continue;
+    }
+    const name = tex.slice(i + 1, j);
+    if (PRIMITIVE_IFS.has(name) || ifs.has(name)) depth++;
+    else if (depth === 0 && (name === "fi" || name === "else")) return j;
+    else if (name === "fi") depth--;
+    i = j - 1;
+  }
+  return tex.length;
+}
+
+// \begin の名前の直後 from が {comment} なら、\end{comment} の直後の位置（閉じなければ末尾）。契約付録 §8
+function skipCommentEnv(tex: string, from: number): number | undefined {
+  COMMENT_ENV_BEGIN.lastIndex = from;
+  if (!COMMENT_ENV_BEGIN.test(tex)) return undefined;
+  const end = tex.indexOf(COMMENT_ENV_END, COMMENT_ENV_BEGIN.lastIndex);
+  return end === -1 ? tex.length : end + COMMENT_ENV_END.length;
+}
+
+// 制御綴り name の出現（コメント・エスケープ・\iffalse の偽の枝・comment 環境の外）ごとに visit を呼ぶ。
+// visit が返した位置から走査を続ける。
 function scanCommands(
   tex: string,
   names: ReadonlySet<string>,
   visit: (name: string, start: number, afterName: number) => number | "stop",
 ): void {
+  let ifs: Set<string> | undefined;
   for (let i = 0; i < tex.length; i++) {
     const c = tex[i];
     if (c === "%") {
@@ -107,6 +172,16 @@ function scanCommands(
       continue;
     }
     const name = tex.slice(i + 1, j);
+    if (name === "iffalse") {
+      ifs ??= newifNames(tex);
+      i = skipIffalse(tex, j, ifs) - 1;
+      continue;
+    }
+    const dead = name === "begin" ? skipCommentEnv(tex, j) : undefined;
+    if (dead !== undefined) {
+      i = dead - 1;
+      continue;
+    }
     if (!names.has(name)) {
       i = j - 1;
       continue;

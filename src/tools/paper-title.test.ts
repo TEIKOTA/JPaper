@@ -65,6 +65,59 @@ describe("extractTitle", () => {
     expect(extractTitle(pre("\\title{First}", "\\title{Second}"))?.text).toBe("Second");
   });
 
+  it("\\iffalse の偽の枝・comment 環境の中の \\title は拾わない（AAAI 型の例示ブロック）", () => {
+    const aaai = pre(
+      "\\title{Real Title}",
+      "\\iffalse",
+      "\\title{My Publication Title --- Single Author}",
+      "\\author{Author Name}",
+      "\\fi",
+      "\\iffalse",
+      "\\title{My Publication Title --- Multiple Authors}",
+      "\\fi",
+    );
+    expect(extractTitle(aaai)?.text).toBe("Real Title");
+    expect(replaceTitle(aaai, "訳題")).toBe(aaai.replace("{Real Title}", "{訳題}"));
+    expect(
+      extractTitle(pre("\\title{Real}", "\\begin{comment}", "\\title{Old draft}", "\\end{comment}"))
+        ?.text,
+    ).toBe("Real");
+    // 偽の枝だけなら absent。
+    expect(extractTitle(pre("\\iffalse \\title{Old} \\fi"))).toBeUndefined();
+    expect(extractTitle(pre("\\begin {comment}\\title{Old}\\end{comment}"))).toBeUndefined();
+  });
+
+  it("\\iffalse は入れ子の条件分岐（\\newif の綴りを含む）を数え、\\else 以降は有効として読む", () => {
+    expect(
+      extractTitle(
+        pre(
+          "\\newif\\ifanon",
+          "\\iffalse \\ifanon \\fi \\ifx\\a\\b \\fi \\title{Old} \\fi",
+          "\\title{Real}",
+        ),
+      )?.text,
+    ).toBe("Real");
+    expect(extractTitle(pre("\\iffalse \\title{Old} \\else \\title{Real} \\fi"))?.text).toBe(
+      "Real",
+    );
+    expect(extractTitle(pre("\\title{Real}", "\\iffalse % \\fi", "\\title{Old} \\fi"))?.text).toBe(
+      "Real",
+    );
+    // \begin{comment} 以外の環境・\iftrue は読み飛ばさない。
+    expect(extractTitle(pre("\\begin{center}\\title{Kept}\\end{center}"))?.text).toBe("Kept");
+    expect(extractTitle(pre("\\iftrue \\title{Kept} \\fi"))?.text).toBe("Kept");
+  });
+
+  it("閉じない \\iffalse・\\begin{comment} の羅列でも線形時間で終わる", () => {
+    const t0 = Date.now();
+    expect(extractTitle("\\iffalse".repeat(150_000))).toBeUndefined();
+    expect(extractTitle("\\begin{comment}".repeat(150_000))).toBeUndefined();
+    expect(
+      extractTitle("\\newif\\ifa".repeat(50_000) + "\\iffalse" + "\\ifa".repeat(50_000)),
+    ).toBeUndefined();
+    expect(Date.now() - t0).toBeLessThan(1000);
+  });
+
   it("\\thanks・\\footnote は翻訳対象から外し原文の綴りのまま保持する。\\\\ は本文に残す", () => {
     const t = extractTitle(
       pre("\\title{Failing Loudly:\\\\ An Empirical Study\\thanks{Work {done} at X.}\\footnote[2]{Y}}"),
