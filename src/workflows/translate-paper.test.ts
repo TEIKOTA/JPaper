@@ -586,6 +586,33 @@ describe("対訳 PDF", () => {
     db.close();
   });
 
+  it("対訳の組版中の中断は握らず exit 6 で返し、前回の対訳を残さない", async () => {
+    const outDir = path.join(tmp(), "out");
+    const db = new GlossaryDb();
+    const tar = makePaperTar();
+    await tp({ kind: "path", path: tar }, { provider: "claude", outDir }, { client: docClient(), db });
+    expect(existsSync(path.join(outDir, "translation", "bilingual", "main.pdf"))).toBe(true);
+    const c = new AbortController();
+    const runner: LatexRunner = (dir) => {
+      if (isBilingual(dir)) {
+        c.abort();
+        return { code: 1, log: "killed" };
+      }
+      return okRunner(dir);
+    };
+    const r = await tp({ kind: "path", path: tar }, { provider: "claude", outDir, signal: c.signal }, {
+      client: docClient(),
+      db,
+      latexRunner: runner,
+    });
+    expect(r.exitCode).toBe(6);
+    expect(r.status).toBe("failed");
+    expect(r.error?.kind).toBe("canceled");
+    expect(existsSync(path.join(outDir, "translation", "bilingual"))).toBe(false);
+    expect(existsSync(path.join(outDir, "translation", "bilingual.next"))).toBe(false);
+    db.close();
+  });
+
   it("和訳 PDF が組めなければ対訳は組まない（skipped）", async () => {
     const outDir = path.join(tmp(), "out");
     const db = new GlossaryDb();

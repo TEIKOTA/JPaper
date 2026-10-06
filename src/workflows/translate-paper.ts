@@ -674,7 +674,7 @@ async function typeset(
   return { layout: "template", buildOk: false, exitCode: 5, message: m, titleApplied: titleApplied() };
 }
 
-// 対訳 PDF。和訳 PDF の publish 後に別の staging で組み、結果は戻り値だけで返す（例外を投げない）。
+// 対訳 PDF。和訳 PDF の publish 後に別の staging で組み、結果は戻り値だけで返す（中断だけは投げる）。
 // 組めなければ前回の対訳も消す。契約付録 §8・対訳 PDF ADR(20261006)。
 async function typesetBilingual(
   cleanLatex: string,
@@ -746,6 +746,10 @@ async function typesetBilingual(
     const pdfPath = path.join(finalDir, path.relative(buildDir, g.pdfPath));
     return { status: "ok", pdfPath, pairs, fallbackSegments };
   } catch (e) {
+    if (signal?.aborted) {
+      drop();
+      throw e;
+    }
     return failed(toRunError(e).message);
   }
 }
