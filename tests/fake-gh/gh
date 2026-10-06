@@ -2,6 +2,7 @@
 # self-test 用の gh スタブ。呼び出しを 1 行ずつ $FAKE_GH_LOG に記録する。
 # 模倣する読み取り:
 #   - `gh label list`            … $FAKE_GH_LABELS（改行区切りのラベル名）を出力
+#   - `gh pr list --head ...`     … $FAKE_GH_PR_NUMBER を出力
 #   - `gh pr view ... --json X`  … $FAKE_GH_PR_TITLE / $FAKE_GH_PR_BODY を出力
 #   - `gh api repos/*/issues/N`  … N が $FAKE_GH_ISSUES にあれば "issue"、
 #                                  $FAKE_GH_ISSUE_PRS にあれば "pr" を出力（--jq 適用後を模倣）。
@@ -11,6 +12,19 @@ set -eu
 
 printf '%s\n' "$*" >> "${FAKE_GH_LOG:?FAKE_GH_LOG が未設定です}"
 
+if [ "${FAKE_GH_OFFLINE:-0}" = "1" ]; then
+  printf 'error connecting to api.github.com\n' >&2
+  exit 1
+fi
+
+if [ "${1:-}" = "api" ] && [ "${2:-}" = "rate_limit" ] && [ -n "${FAKE_GH_RATE_LIMIT_FAIL_AFTER:-}" ]; then
+  rate_limit_calls="$(grep -c '^api rate_limit' "$FAKE_GH_LOG" || true)"
+  if [ "$rate_limit_calls" -gt "$FAKE_GH_RATE_LIMIT_FAIL_AFTER" ]; then
+    printf 'error connecting to api.github.com\n' >&2
+    exit 1
+  fi
+fi
+
 if [ "${1:-}" = "label" ] && [ "${2:-}" = "list" ]; then
   if [ -n "${FAKE_GH_LABELS:-}" ]; then
     printf '%s\n' "${FAKE_GH_LABELS}"
@@ -18,14 +32,89 @@ if [ "${1:-}" = "label" ] && [ "${2:-}" = "list" ]; then
 fi
 
 if [ "${1:-}" = "pr" ] && [ "${2:-}" = "view" ]; then
+  if [ "${FAKE_GH_PR_HEAD_FAIL:-0}" = "1" ]; then
+    case "$*" in
+      *"--json headRefName"*)
+        printf 'GraphQL: authentication required\n' >&2
+        exit 1
+        ;;
+    esac
+  fi
   case "$*" in
+    *"--json number"*) printf '%s\n' "${FAKE_GH_PR_NUMBER:-}";;
     *"--json title"*) printf '%s\n' "${FAKE_GH_PR_TITLE:-}";;
     *"--json body"*) printf '%s\n' "${FAKE_GH_PR_BODY:-}";;
+    *"--json headRefName"*) printf '%s\n' "${FAKE_GH_PR_HEAD:-}";;
   esac
+fi
+
+if [ "${1:-}" = "pr" ] && [ "${2:-}" = "list" ]; then
+  case " $* " in
+    *" --author @me "*)
+      # FAKE_GH_BACKLOG: number|createdAt|head|base|draft を改行区切りで渡す。
+      # production の --jq sort_by(.createdAt) を、fixture でも同じ順序で模倣する。
+      backlog_limit=0
+      while [ "$#" -gt 0 ]; do
+        case "$1" in
+          --limit) backlog_limit="${2:-0}"; shift 2 ;;
+          *) shift ;;
+        esac
+      done
+      if [ "${FAKE_GH_EMPTY_RESPONSE:-0}" = "1" ]; then
+        exit 0
+      elif [ -n "${FAKE_GH_BACKLOG:-}" ]; then
+        printf '%s\n' "$FAKE_GH_BACKLOG" | sort -t '|' -k2,2 | awk -F '|' \
+          -v maximum="$backlog_limit" 'maximum == 0 || NR <= maximum { printf "%s\t%s\t%s\t%s\t%s\n", $1, $2, $3, $4, $5 }'
+      elif [ "${FAKE_GH_BACKLOG+x}" = x ]; then
+        printf '__EMPTY__\n'
+      fi
+      exit 0
+      ;;
+  esac
+  # FAKE_GH_TOPOLOGY: head|base|state|number を改行区切りで与える。
+  # --head と --state に一致する行を TSV として返す。
+  topology_head=""
+  topology_state=""
+  shift 2
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --head) topology_head="${2:-}"; shift 2 ;;
+      --state) topology_state="${2:-}"; shift 2 ;;
+      *) shift ;;
+    esac
+  done
+  if [ -n "${FAKE_GH_TOPOLOGY:-}" ]; then
+    printf '%s\n' "$FAKE_GH_TOPOLOGY" | awk -F '|' -v h="$topology_head" -v s="$topology_state" '
+      $1 == h && (s == "all" || tolower($3) == s) { printf "%s\t%s\t%s\t%s\n", $4, $1, $2, toupper($3) }
+    '
+    exit 0
+  fi
+  if [ -n "${FAKE_GH_PR_NUMBER:-}" ]; then
+    printf '%s\n' "$FAKE_GH_PR_NUMBER"
+  fi
+fi
+
+if [ "${1:-}" = "repo" ] && [ "${2:-}" = "view" ]; then
+  printf '%s\n' "${FAKE_GH_REPO:-TEIKOTA/project-template}"
+  exit 0
 fi
 
 if [ "${1:-}" = "api" ]; then
   case "${2:-}" in
+    graphql)
+      if [ "${FAKE_GH_API_ERROR:-0}" = "1" ]; then
+        printf 'GraphQL: authentication required\n' >&2
+        exit 1
+      fi
+      case "${FAKE_GH_REF_RESULT:-}" in
+        exists|missing) printf '%s\n' "$FAKE_GH_REF_RESULT"; exit 0 ;;
+      esac
+      for x in ${FAKE_GH_BRANCHES:-}; do
+        case "$*" in *"qualified=refs/heads/$x"*) printf 'exists\n'; exit 0 ;; esac
+      done
+      printf 'missing\n'
+      exit 0
+      ;;
     repos/*/issues/*)
       n="${2##*/}"
       for x in ${FAKE_GH_ISSUES:-}; do

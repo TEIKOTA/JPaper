@@ -7,6 +7,11 @@
 # 許可 type 一覧はこのファイルが正本。macOS(BSD) / Linux 両対応・pure bash。
 set -euo pipefail
 
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+  printf 'Usage: scripts/check-commit-msg.sh <commit-msg-file> | --subject <text> | --types\n日本語 Conventional Commits の件名を検査する。\n'
+  exit 0
+fi
+
 types='feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert'
 
 if [[ "${1:-}" == "--types" ]]; then
@@ -15,12 +20,20 @@ if [[ "${1:-}" == "--types" ]]; then
 fi
 
 subject=""
+from_commit_file=0
 if [[ "${1:-}" == "--subject" ]]; then
   subject="${2:?--subject には検査する文字列が必要です}"
 else
+  from_commit_file=1
   MSG_FILE="${1:?commit-msg ファイルのパスか --subject \"<text>\" が必要です}"
   # 最初の非コメント・非空行を件名として扱う
   subject="$(grep -vE '^[[:space:]]*#' "$MSG_FILE" | grep -vE '^[[:space:]]*$' | head -n1 || true)"
+fi
+
+# git merge が生成した commit message は Conventional Commits の対象外とする。
+# PR title も通る --subject 経路には適用せず、commit-msg file 経路だけを免除する。
+if [[ "$from_commit_file" -eq 1 && "$subject" =~ ^Merge[[:space:]].+ ]]; then
+  exit 0
 fi
 
 valid_format=1

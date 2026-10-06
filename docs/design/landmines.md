@@ -35,3 +35,9 @@
 - **おかしく見える点**: append/mkdir を囲む `catch {}` が空でエラーを完全に無視する。ログも再送も無く、素直に「握り潰しはバグ」と直したくなる。
 - **なぜ意図的か**: これはコスト観測用の**副作用チャネル**であり、翻訳本体の成否とは独立。トレース書き込みが失敗（書込不可 CWD・パス衝突・容量不足）しても run の主成果物（PDF）を落としてはならない。throw を伝播させると `complete` の純変換器契約を壊し、観測の都合で翻訳が失敗するという本末転倒になる。ゆえにベストエフォートで黙って捨てる。mkdir を初回 emit まで遅延するのも、構築時 throw が `translatePaper` の try/catch を素通りして終了コードを誤分類するのを防ぐため。
 - **正本ポインタ**: [LLM トレース ADR](../adr/20260722-llm-call-trace-local-jsonl.md)、契約付録 §8（トレースは副作用チャネル・`complete` 契約は不変）。
+
+## `src/providers/claude.ts` — `--max-turns` が 1 でなく 3
+
+- **おかしく見える点**: `--tools none` で 1 回しか答えさせないはずなのに、`--max-turns` が `1` ではなく `3`。「1 回きり」なら 1 に締めたくなる。
+- **なぜ意図的か**: claude CLI 2.1.291 は、用語集構築のような長い入力で内部的に 2 ターンを使う（実測: `num_turns: 2`）。`--max-turns 1` だと `subtype: error_max_turns`（「Reached maximum number of turns (1)」）で exit 1 になり、応答が正常でも run が `claude exited 1` で失敗する。`--tools none` でツールは使えないので、ターン上限は安全境界ではない（安全は `--tools none` が担う）。1 に戻すと該当呼び出しが全て落ちる。
+- **正本ポインタ**: [LLM プロバイダ抽象化 ADR](../adr/20260709-llm-provider-abstraction-local-ollama-and-cloud-cli.md)。回帰テストは `src/providers/claude.test.ts`。
