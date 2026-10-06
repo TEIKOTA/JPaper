@@ -271,6 +271,11 @@ export function extractTitle(preamble: string): PaperTitle | undefined {
   return body === "" ? undefined : { text: body, notes };
 }
 
+// 制御綴りを除いて文字・数字が残るか（\title{\papertitle} のようなマクロ参照だけの本題は false）。契約付録 §8
+export function hasProse(text: string): boolean {
+  return /[\p{L}\p{N}]/u.test(text.replace(/\\(?:[a-zA-Z]+|.)/gs, ""));
+}
+
 // 節ループへ通す 1 節。契約付録 §8
 export function titleSegment(title: PaperTitle): Segment {
   const latex = `\\title{${title.text}}`;

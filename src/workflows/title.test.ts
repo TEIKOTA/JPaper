@@ -258,6 +258,30 @@ describe("論文タイトルの翻訳（契約付録 §8）", () => {
     db.close();
   });
 
+  it("本題がマクロ参照だけなら訳さず absent にし、警告して原題のまま組版する", async () => {
+    const outDir = path.join(tmp(), "out");
+    const db = new GlossaryDb();
+    const c = client();
+    const errs: string[] = [];
+    const seen: string[] = [];
+    const paper = PAPER.replace(
+      "\\title{Alpha Study\\thanks{Funded by X.}}",
+      "\\newcommand{\\papertitle}{Alpha Study}\n\\title{\\papertitle}",
+    );
+    const r = await translatePaper({ kind: "path", path: paperTar(paper) }, { provider: "claude", outDir }, {
+      client: c,
+      db,
+      latexRunner: recordingRunner(seen),
+      onError: (m) => errs.push(m),
+    });
+    expect(r.exitCode).toBe(0);
+    expect(r.summary.title).toBe("absent");
+    expect(c.calls.filter(isTitle)).toHaveLength(0);
+    expect(seen[0]).toContain("\\title{\\papertitle}");
+    expect(errs.some((e) => e.includes("地の文を含まない") && e.includes("\\papertitle"))).toBe(true);
+    db.close();
+  });
+
   it("本文の節が落ちた run でもタイトルの結果は summary に出る（exitCode は節だけで決まる）", async () => {
     const outDir = path.join(tmp(), "out");
     const db = new GlossaryDb();

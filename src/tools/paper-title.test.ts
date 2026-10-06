@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   extractTitle,
   findTitleArg,
+  hasProse,
   replaceTitle,
   titleSegment,
   translatedTitle,
@@ -154,6 +155,17 @@ describe("extractTitle", () => {
 describe("stripTexComments", () => {
   it("\\% はコメントにしない", () => {
     expect(stripTexComments("a \\% b % c\n  d")).toBe("a \\% b d");
+  });
+});
+
+describe("hasProse", () => {
+  it("マクロ参照・記号だけなら false、地の文・数字があれば true", () => {
+    expect(hasProse("\\papertitle")).toBe(false);
+    expect(hasProse("{\\papertitle}\\\\ \\& \\%")).toBe(false);
+    expect(hasProse("\\papertitle: A Study")).toBe(true);
+    expect(hasProse("\\textsc{Bert}")).toBe(true);
+    expect(hasProse("$\\alpha$-2")).toBe(true);
+    expect(hasProse("深層学習")).toBe(true);
   });
 });
 

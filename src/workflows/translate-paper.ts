@@ -91,6 +91,7 @@ import {
 import { assembleWithMap, extractPreamble, type Layout } from "../tools/assemble-latex.js";
 import {
   extractTitle,
+  hasProse,
   titleSegment,
   translatedTitle,
   composeTitle,
@@ -936,7 +937,11 @@ export async function translatePaper(
 
     // タイトルは前文にあり segments に含まれない。小さな 1 節として同じ節ループへ通し、
     // 失敗しても原題のまま組版する（run の成否・segments の集計に入れない）。契約付録 §8
-    const title = extractTitle(extractPreamble(ingested.cleanLatex));
+    const found = extractTitle(extractPreamble(ingested.cleanLatex));
+    const title = found !== undefined && hasProse(found.text) ? found : undefined;
+    if (found !== undefined && title === undefined) {
+      notify(`タイトルが地の文を含まない（${found.text}）ため訳さず原題のまま組版します`);
+    }
     let titleStatus: TitleStatus = title === undefined ? "absent" : "failed";
     let titleTex: string | undefined;
     const translateTitle = async (src: PaperTitle): Promise<void> => {
