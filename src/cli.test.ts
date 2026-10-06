@@ -158,22 +158,94 @@ describe("runCli", () => {
     expect(err).toContain("--think");
   });
 
-  it("--provider claude に --model を付けると exit 2（黙って捨てない）", async () => {
-    let called = false;
-    let err = "";
+  it("--provider claude は --model / --effort を claude 設定として渡す", async () => {
+    let got: unknown;
     const code = await runCli(
-      ["node", "jpaper", "1706.03762", "--provider", "claude", "--model", "qwen3.5:9b"],
+      ["node", "jpaper", "1706.03762", "--provider", "claude", "--model", "sonnet", "--effort", "medium"],
       {
-        stderr: (s) => (err += s),
-        translate: async () => {
-          called = true;
+        stdout: () => {},
+        translate: async (_input, opts) => {
+          got = opts;
           return okResult;
         },
       },
     );
+    expect(code).toBe(0);
+    expect(got).toMatchObject({ provider: "claude", claude: { model: "sonnet", effort: "medium" } });
+  });
+
+  it("--provider claude で片方だけ指定したら、その片方だけを渡す", async () => {
+    let got: { claude?: unknown } = {};
+    await runCli(["node", "jpaper", "1706.03762", "--provider", "claude", "--effort", "high"], {
+      stdout: () => {},
+      translate: async (_input, opts) => {
+        got = opts;
+        return okResult;
+      },
+    });
+    expect(got.claude).toEqual({ effort: "high" });
+  });
+
+  it("--provider claude で --model / --effort 未指定なら claude 設定は undefined（ログイン設定の既定）", async () => {
+    let got: { claude?: unknown } = { claude: "unset" };
+    const code = await runCli(["node", "jpaper", "1706.03762", "--provider", "claude"], {
+      stdout: () => {},
+      translate: async (_input, opts) => {
+        got = opts;
+        return okResult;
+      },
+    });
+    expect(code).toBe(0);
+    expect(got.claude).toBeUndefined();
+  });
+
+  it.each(["ollama", "openrouter"])("--provider %s に --effort を付けると exit 2", async (provider) => {
+    let called = false;
+    let err = "";
+    const code = await runCli(["node", "jpaper", "1706.03762", "--provider", provider, "--effort", "high"], {
+      stderr: (s) => (err += s),
+      translate: async () => {
+        called = true;
+        return okResult;
+      },
+    });
     expect(code).toBe(2);
     expect(called).toBe(false);
-    expect(err).toContain("--model");
+    expect(err).toContain("--effort");
+  });
+
+  it.each([
+    ["大文字", "Medium"],
+    ["数字", "high2"],
+    ["空白入り", "high -c x"],
+    ["空文字", ""],
+  ])("--effort が%sなら exit 2", async (_name, raw) => {
+    let called = false;
+    const code = await runCli(["node", "jpaper", "1706.03762", "--provider", "claude", "--effort", raw], {
+      stderr: () => {},
+      translate: async () => {
+        called = true;
+        return okResult;
+      },
+    });
+    expect(code).toBe(2);
+    expect(called).toBe(false);
+  });
+
+  it.each([
+    ["空白のみ", " "],
+    ["先頭が -", "-x"],
+  ])("--provider claude の --model が%sなら exit 2", async (_name, raw) => {
+    let called = false;
+    const code = await runCli(["node", "jpaper", "1706.03762", "--provider", "claude", "--model", raw], {
+      stderr: () => {},
+      translate: async () => {
+        called = true;
+        return okResult;
+      },
+    });
+    expect(code).toBe(2);
+    expect(called).toBe(false);
   });
 
   it("--provider claude に --context-window を付けても exit 2", async () => {

@@ -48,6 +48,9 @@ import {
   requestTimeoutMsFor,
   MAX_CONTEXT_WINDOW,
   MIN_CONTEXT_WINDOW,
+  CLAUDE_EFFORT_PATTERN,
+  isClaudeModelId,
+  type ClaudeConfig,
   type OllamaConfig,
   type OpenRouterConfig,
 } from "../config.js";
@@ -137,6 +140,7 @@ export interface TranslateOptions {
   outDir?: string;
   ollama?: OllamaConfig;
   openrouter?: OpenRouterConfig;
+  claude?: ClaudeConfig;
   concurrency?: number;
   // 呼び出し側の中断。LLM 呼び出し・組版・arXiv 取得へ伝播し、exitCode 6 で返る。
   signal?: AbortSignal;
@@ -717,6 +721,19 @@ function entryError(input: JpaperInput, opts: TranslateOptions): string | undefi
       return `openrouter.requestTimeoutMs が不正です: ${outwardMessage(String(rt))}`;
     }
   }
+  const cl = opts.claude;
+  if (cl !== undefined) {
+    if (typeof cl !== "object" || cl === null) {
+      return `claude が不正です: ${outwardMessage(String(cl))}`;
+    }
+    if (cl.model !== undefined && !isClaudeModelId(cl.model)) {
+      return `claude.model が不正です: ${outwardMessage(String(cl.model))}`;
+    }
+    const ef = cl.effort;
+    if (ef !== undefined && (typeof ef !== "string" || !CLAUDE_EFFORT_PATTERN.test(ef))) {
+      return `claude.effort が不正です: ${outwardMessage(String(ef))}`;
+    }
+  }
   return undefined;
 }
 
@@ -761,7 +778,12 @@ export async function translatePaper(
   // プロバイダ生成側にだけ配線すると課金の記録が構造的に消える。
   const client0 =
     deps.client === undefined
-      ? makeLlmClient(opts.provider, { ollama: opts.ollama, openrouter: opts.openrouter, trace })
+      ? makeLlmClient(opts.provider, {
+          ollama: opts.ollama,
+          openrouter: opts.openrouter,
+          claude: opts.claude,
+          trace,
+        })
       : withTrace(deps.client, trace, opts.provider);
   // 中断は境界 1 箇所（client ラッパ）で効かせる。各エージェントの引数は増やさない。
   // ゲートを外側に置くのは、枠を取ってから中断を見るため（待ち行列に中断済みが居座らない）。

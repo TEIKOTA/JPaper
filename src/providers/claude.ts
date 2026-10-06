@@ -1,5 +1,6 @@
 // 契約付録 §5・§8。claude プロバイダ（純変換器化した公式 CLI subprocess）。
 import { spawn } from "node:child_process";
+import type { ClaudeConfig } from "../config.js";
 import type { LlmClient, LlmCallEvent, LlmCallMeta, TraceSink } from "../types/contract.js";
 import { JpaperError } from "../types/errors.js";
 import { canceledError } from "../runtime/cancellation.js";
@@ -93,12 +94,11 @@ async function defaultRun(args: string[], input: string, signal?: AbortSignal): 
   });
 }
 
-export function makeClaudeClient(deps: ClaudeDeps = {}): LlmClient {
+export function makeClaudeClient(cfg: ClaudeConfig = {}, deps: ClaudeDeps = {}): LlmClient {
   const run = deps.run ?? defaultRun;
   const now = deps.now ?? Date.now;
   return {
     async complete(req) {
-      // model は渡さない（CLI ログインセッションのモデルを使う）。
       let stdout: string;
       const started = now();
       try {
@@ -114,6 +114,8 @@ export function makeClaudeClient(deps: ClaudeDeps = {}): LlmClient {
             String(MAX_TURNS),
             "--tools",
             "none",
+            ...(cfg.model === undefined ? [] : ["--model", cfg.model]),
+            ...(cfg.effort === undefined ? [] : ["--effort", cfg.effort]),
           ],
           req.user,
           req.signal,
