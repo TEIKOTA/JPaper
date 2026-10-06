@@ -68,7 +68,7 @@ import {
 } from "../terminology/glossary-io.js";
 import { buildFirstOccurrenceIndex } from "../terminology/first-occurrence.js";
 import { findKatakanaDrift, describeDrift } from "../terminology/consistency.js";
-import { segment, segmentBudgetFor } from "../segment/segmenter.js";
+import { segment, segmentBudgetFor, type Segment } from "../segment/segmenter.js";
 import { runSectionLoop } from "./section-loop.js";
 import { buildNotes } from "./notes.js";
 import { untranslatedHeadings } from "./quality-gate.js";
@@ -88,7 +88,15 @@ import {
   createCallBudget,
   type WorkLimits,
 } from "../runtime/work-budget.js";
-import { assembleWithMap, type Layout } from "../tools/assemble-latex.js";
+import { assembleWithMap, extractPreamble, type Layout } from "../tools/assemble-latex.js";
+import {
+  extractTitle,
+  titleSegment,
+  translatedTitle,
+  composeTitle,
+  TITLE_SEGMENT_ID,
+  type PaperTitle,
+} from "../tools/paper-title.js";
 import {
   runBuildGate,
   unsafeSupportFiles,
@@ -117,6 +125,8 @@ const SectionLoopCache = z.object({
   maxRevisions: z.number().int(),
   warnIssues: z.array(EvalIssue),
 });
+type SectionLoopCache = z.infer<typeof SectionLoopCache>;
+type TitleStatus = NonNullable<RunSummary["title"]>;
 
 export interface TranslateOptions {
   provider: Provider;
@@ -448,6 +458,8 @@ interface TypesetOutcome {
   pdfPath?: string;
   exitCode: number;
   message?: string;
+  // 訳したタイトルを入れたまま組めたか（原題で組み直した・タイトルを渡していないなら false）。
+  titleApplied: boolean;
 }
 
 // 節ループ・組版ゲートの失敗は例外ではなく戻り値で来るので、ここで構造化エラーに写す。
@@ -546,7 +558,7 @@ function summarizeGateFailure(g: BuildGateResult): string {
 async function typeset(
   cleanLatex: string,
   segments: { id: string; tex: string }[],
-  opts: { outDir: string; sourceDir: string; mainDir: string; figures: string[] },
+  opts: { outDir: string; sourceDir: string; mainDir: string; figures: string[]; title?: string },
   runner: LatexRunner | undefined,
   surface: (m: string) => void,
   signal?: AbortSignal,
@@ -567,8 +579,9 @@ async function typeset(
   const discard = (): void => {
     rmSync(buildDir, { recursive: true, force: true });
   };
-  const run = (mode: Layout): Promise<BuildGateResult> => {
-    const { mainTex, sourceMap } = assembleWithMap({ cleanLatex, segments, mode });
+  let title = opts.title;
+  const build = (mode: Layout, withTitle: string | undefined): Promise<BuildGateResult> => {
+    const { mainTex, sourceMap } = assembleWithMap({ cleanLatex, segments, mode, title: withTitle });
     return runBuildGate(
       {
         buildDir,
@@ -583,6 +596,17 @@ async function typeset(
       runner,
     );
   };
+  // 訳したタイトルで翻訳起因の失敗になったときだけ、同じレイアウトを原題で組み直す。契約付録 §8
+  const run = async (mode: Layout): Promise<BuildGateResult> => {
+    const g = await build(mode, title);
+    if (g.buildOk || title === undefined || g.failedSegments.length === 0) return g;
+    const plain = await build(mode, undefined);
+    if (!plain.buildOk) return g;
+    title = undefined;
+    surface("訳したタイトルでは組版できなかったため原題のまま組版します");
+    return plain;
+  };
+  const titleApplied = (): boolean => title !== undefined;
   // 成否に関わらず、無効化した同梱パッケージは体裁差の原因になるので surface する。
   const noteShadowed = (g: BuildGateResult): void => {
     if (g.shadowedPackages.length)
@@ -592,24 +616,36 @@ async function typeset(
   const orig = await run("original");
   noteShadowed(orig);
   if (orig.buildOk) {
-    return { layout: "original", buildOk: true, pdfPath: publish(orig.pdfPath), exitCode: 0 };
+    return {
+      layout: "original",
+      buildOk: true,
+      pdfPath: publish(orig.pdfPath),
+      exitCode: 0,
+      titleApplied: titleApplied(),
+    };
   }
   if (orig.failedSegments.length > 0) {
     // 翻訳起因のビルド失敗。再訳ループ(WP10)未実装のため明示的失敗として surface する。
     const m = `組版失敗(翻訳起因・要再訳): ${summarizeGateFailure(orig)}`;
     surface(m);
     discard();
-    return { layout: "original", buildOk: false, exitCode: 5, message: m };
+    return { layout: "original", buildOk: false, exitCode: 5, message: m, titleApplied: titleApplied() };
   }
   surface(`原プリアンブルで組めず共通テンプレへフォールバック: ${summarizeGateFailure(orig)}`);
   const tmpl = await run("template");
   if (tmpl.buildOk) {
-    return { layout: "template", buildOk: true, pdfPath: publish(tmpl.pdfPath), exitCode: 0 };
+    return {
+      layout: "template",
+      buildOk: true,
+      pdfPath: publish(tmpl.pdfPath),
+      exitCode: 0,
+      titleApplied: titleApplied(),
+    };
   }
   const m = `組版失敗(テンプレでも不可): ${summarizeGateFailure(tmpl)}`;
   surface(m);
   discard();
-  return { layout: "template", buildOk: false, exitCode: 5, message: m };
+  return { layout: "template", buildOk: false, exitCode: 5, message: m, titleApplied: titleApplied() };
 }
 
 // 入口の検証。web は文字列由来の値（Number(req.query.x)）をそのまま渡してくるので、
@@ -862,7 +898,7 @@ export async function translatePaper(
     let doneFailed = 0;
     progress({ phase: "context", done: 1, total: 1 });
     progress({ phase: "translate", done: 0, total: segments.length });
-    const results = await mapLimit(segments, opts.concurrency ?? defaultConcurrencyFor(opts.provider), (seg) => {
+    const translateSegment = (seg: Segment): Promise<SectionLoopCache> => {
       const slice = ctx.resolved
         .filter((t) => seg.latex.includes(t.src))
         .map((t) => ({ ...t, firstOccurrence: firstOcc.get(t.src) === seg.id })) as ResolvedTerm[];
@@ -896,7 +932,74 @@ export async function translatePaper(
         });
         return r;
       });
-    }, signal);
+    };
+
+    // タイトルは前文にあり segments に含まれない。小さな 1 節として同じ節ループへ通し、
+    // 失敗しても原題のまま組版する（run の成否・segments の集計に入れない）。契約付録 §8
+    const title = extractTitle(extractPreamble(ingested.cleanLatex));
+    let titleStatus: TitleStatus = title === undefined ? "absent" : "failed";
+    let titleTex: string | undefined;
+    const translateTitle = async (src: PaperTitle): Promise<void> => {
+      const seg = titleSegment(src);
+      // 契約付録 §8（タイトルでは併記しない）
+      const slice = ctx.resolved
+        .filter((t) => seg.latex.includes(t.src))
+        .map((t) => ({ ...t, firstOccurrence: false })) as ResolvedTerm[];
+      const invalidation = hashContext(
+        seg.latex,
+        JSON.stringify(slice),
+        JSON.stringify(ctx.brief),
+        JSON.stringify(ctx.style),
+      );
+      try {
+        const r = await checkpoint(
+          runDir,
+          TITLE_SEGMENT_ID,
+          SectionLoopCache,
+          () => runSectionLoop(client, seg, slice, { brief: ctx.brief, style: ctx.style }),
+          {
+            invalidation,
+            cacheable: (x) => x.passed && translatedTitle(x.ja) !== undefined,
+            key: deps.cacheKey,
+          },
+        );
+        const ja = r.passed ? translatedTitle(r.ja) : undefined;
+        if (ja === undefined) {
+          if (contaminatedSegments([r]).length > 0) {
+            notify("タイトルの訳文が危険コマンド・文書構造の破壊を持ち込みました（汚染の疑い）。原題のまま組版します");
+            return;
+          }
+          const why = r.passed
+            ? "訳文に \\title が無い"
+            : r.failCode === 4
+              ? "品質基準に達しない"
+              : `形式検査を通過しない: ${[...new Set(r.failedKinds)].sort().join(", ")}`;
+          notify(`タイトルを訳せなかったため原題のまま組版します（${why}）`);
+          return;
+        }
+        titleTex = composeTitle(ja, src);
+        titleStatus = "translated";
+      } catch (e) {
+        // ⚠ landmines.md
+        if (signal?.aborted === true) throw e;
+        notify(`タイトルの翻訳に失敗したため原題のまま組版します: ${toRunError(e).message}`);
+      }
+    };
+
+    // タイトルも run 内の並列度の枠を使う（先頭に積む）。
+    const results = new Array<SectionLoopCache>(segments.length);
+    const jobs: (() => Promise<void>)[] = [
+      ...(title === undefined ? [] : [() => translateTitle(title)]),
+      ...segments.map((seg, i) => async () => {
+        results[i] = await translateSegment(seg);
+      }),
+    ];
+    await mapLimit(
+      jobs,
+      opts.concurrency ?? defaultConcurrencyFor(opts.provider),
+      (job) => job(),
+      signal,
+    );
 
     // 見出し未訳の非ブロッキング lint。keep-original 確定語は除外して訳注へ流す（ビルドは壊さない）。
     const keepOriginal = ctx.resolved
@@ -964,6 +1067,7 @@ export async function translatePaper(
           sourceDir: ingested.sourceDir,
           mainDir: ingested.mainDir ?? ingested.sourceDir,
           figures: ingested.figures,
+          title: titleTex,
         },
         deps.latexRunner,
         (m) => notify(m),
@@ -971,6 +1075,7 @@ export async function translatePaper(
       );
       ({ layout, buildOk, pdfPath, exitCode } = outcome);
       typesetMessage = outcome.message;
+      if (titleTex !== undefined && !outcome.titleApplied && outcome.buildOk) titleStatus = "failed";
       progress({ phase: "typeset", done: 1, total: 1 });
     }
 
@@ -983,7 +1088,10 @@ export async function translatePaper(
     if (buildOk !== false) {
       // 今回使わなかった step の checkpoint を掃除する（節が減った再実行の孤児が
       // 残ると、前の論文の訳文がそのまま出力先に居座る）。
-      pruneSteps(runDir, new Set(["ingest", "glossary", ...segments.map((s) => s.id)]));
+      pruneSteps(
+        runDir,
+        new Set(["ingest", "glossary", TITLE_SEGMENT_ID, ...segments.map((s) => s.id)]),
+      );
       promoteContext(outDir, ingested.paperId, sourceDigestOf(ingested.cleanLatex), ctx.pending);
     }
 
@@ -1001,6 +1109,7 @@ export async function translatePaper(
       buildOk,
       sharedDefaults,
       llmCalls: llmCalls(),
+      title: titleStatus,
       exitCode,
     });
     if (exitCode === 0) return { status: "ok", exitCode, pdfPath, summary };
