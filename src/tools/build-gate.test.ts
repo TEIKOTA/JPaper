@@ -367,4 +367,3 @@ describe("配布パッケージの解決", () => {
     expect(bad.map((b) => b.file)).toEqual(["mine.sty"]);
   });
 });
-

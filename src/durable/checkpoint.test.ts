@@ -214,4 +214,3 @@ describe("pruneSteps", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 });
-

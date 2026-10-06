@@ -361,4 +361,3 @@ describe("応答サイズの上限", () => {
     await expect(c.complete({ system: "s", user: "u" })).rejects.toThrow(/上限/);
   });
 });
-

@@ -221,4 +221,3 @@ describe("sanitizeMath のコスト", () => {
     expect(sanitizeMath("\\begin{align*}a\n\nb\\end{align*}")).toBe("\\begin{align*}a\nb\\end{align*}");
   });
 });
-

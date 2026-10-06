@@ -9,4 +9,3 @@ describe("makeLlmClient", () => {
     expect(typeof ollama.complete).toBe("function");
   });
 });
-
