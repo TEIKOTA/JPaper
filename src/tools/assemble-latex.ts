@@ -1,4 +1,6 @@
 // 契約付録 §7・組版レイアウト ADR(20260710)。訳文→main.tex 生成（原前文温存ハイブリッド）。
+import { replaceTitle } from "./paper-title.js";
+
 export type Layout = "original" | "template";
 
 export interface AssembleInput {
@@ -170,8 +172,10 @@ function assembleBody(chapters: string[]): string {
     .join("\n\n");
 }
 
-export function buildPreamble(cleanLatex: string, mode: Layout): string {
-  const original = extractPreamble(cleanLatex);
+// title を渡すと前文の \title の主引数だけを差し替える（契約付録 §8）。
+export function buildPreamble(cleanLatex: string, mode: Layout, title?: string): string {
+  const preamble = extractPreamble(cleanLatex);
+  const original = title === undefined ? preamble : replaceTitle(preamble, title);
   return mode === "original"
     ? injectShared(neutralizePreamble(original))
     : `${templatePreamble(original)}\n`;
@@ -205,9 +209,10 @@ export function assembleWithMap(input: {
   cleanLatex: string;
   segments: Segment[];
   mode?: Layout;
+  title?: string;
 }): AssembledWithMap {
   const layout: Layout = input.mode ?? "original";
-  let out = `${buildPreamble(input.cleanLatex, layout)}${BEGIN_DOC}\n`;
+  let out = `${buildPreamble(input.cleanLatex, layout, input.title)}${BEGIN_DOC}\n`;
   const parts = input.segments
     .map((s) => ({ id: s.id, tex: sanitizeMath(s.tex).trim() }))
     .filter((p) => p.tex !== "");
