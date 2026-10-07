@@ -70,7 +70,8 @@ import {
   parseStyleMd,
   type ResolvedRow,
 } from "../terminology/glossary-io.js";
-import { buildFirstOccurrenceIndex } from "../terminology/first-occurrence.js";
+import { firstCoveringSegment, uncoveredTerms, withoutPluralVariants } from "../terminology/term-coverage.js";
+import { isMacroDefinitionsOnly } from "../segment/macro-only.js";
 import { findKatakanaDrift, describeDrift } from "../terminology/consistency.js";
 import { segment, segmentBudgetFor, type Segment } from "../segment/segmenter.js";
 import { runSectionLoop } from "./section-loop.js";
@@ -1038,10 +1039,8 @@ export async function translatePaper(
       deps.cacheKey,
       (m) => notify(m),
     );
-    const firstOcc = buildFirstOccurrenceIndex(
-      segments,
-      ctx.resolved.map((r) => r.src),
-    );
+    const segmentTerms = withoutPluralVariants(ctx.resolved);
+    const firstOcc = firstCoveringSegment(segments, segmentTerms);
 
     let doneSegments = 0;
     let donePassed = 0;
@@ -1049,8 +1048,31 @@ export async function translatePaper(
     progress({ phase: "context", done: 1, total: 1 });
     progress({ phase: "translate", done: 0, total: segments.length });
     const translateSegment = (seg: Segment): Promise<SectionLoopCache> => {
-      const slice = ctx.resolved
-        .filter((t) => seg.latex.includes(t.src))
+      // 契約付録 §1: 訳す地の文が無い節は LLM へ送らない。
+      if (isMacroDefinitionsOnly(seg.latex)) {
+        doneSegments++;
+        donePassed++;
+        reached = { total: segments.length, passed: donePassed, failed: doneFailed };
+        progress({
+          phase: "translate",
+          segmentId: seg.id,
+          done: doneSegments,
+          total: segments.length,
+          passed: true,
+          usedRevisions: 0,
+          maxRevisions: 0,
+        });
+        return Promise.resolve({
+          segmentId: seg.id,
+          ja: seg.latex,
+          passed: true,
+          failedKinds: [],
+          usedRevisions: 0,
+          maxRevisions: 0,
+          warnIssues: [],
+        });
+      }
+      const slice = uncoveredTerms(seg.latex, segmentTerms)
         .map((t) => ({ ...t, firstOccurrence: firstOcc.get(t.src) === seg.id })) as ResolvedTerm[];
       // 無効化は原文＋注入コンテキスト（slice＋brief＋style）のハッシュ。失敗結果は永続しない。
       const invalidation = hashContext(
