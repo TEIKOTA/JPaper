@@ -2,6 +2,7 @@
 
 # Status
 - accepted
+- 2026-10-07 に部分 supersede: 置換された条項＝決定「cloud = 公式 CLI を subprocess として叩く」のうち、claude で使うモデルをログインセッションの設定にそのまま委ねる点（→ 指定されたときだけ `--model` / `--effort` を claude CLI へ渡す）／存続する条項＝公式 CLI の subprocess 方式、ログインセッションでの認証、OAuth トークン抽出の不採用、`LlmClient` 境界、Ollama のオンデマンド管理／後継 ADR＝[20261007-pass-claude-model-and-effort-via-cli-args](./20261007-pass-claude-model-and-effort-via-cli-args.md)
 
 # Situation
 - JPaper は学術論文の和訳エージェント。基盤は [エージェント基盤 ADR](./20260708-adopt-deterministic-agent-architecture.md)（素の TS ワークフロー＋薄い自作ランタイム）で確定。同 ADR は cloud プロバイダとして OpenRouter を既定に置いていた。

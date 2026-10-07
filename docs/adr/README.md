@@ -46,7 +46,7 @@
 | 2026-07-08 | [翻訳パイプライン: ソース優先取り込み・図はベクタ優先・決定的処理のツール化](./20260708-translation-pipeline-ingestion-and-figures.md) | accepted |
 | 2026-07-08 | [品質ゲートの二層分離（形式=機械判定 / 品質=LLM）と明示的失敗](./20260708-quality-gate-machine-vs-llm-and-explicit-failure.md) | accepted |
 | 2026-07-09 | [品質ゲートの2層化・再訳契約・組版エラー分類](./20260709-quality-gate-two-layer-and-build-error-triage.md) | accepted |
-| 2026-07-09 | [LLM プロバイダ抽象化: ローカル(Ollama) と cloud(公式 CLI subprocess) を使い分け](./20260709-llm-provider-abstraction-local-ollama-and-cloud-cli.md) | accepted |
+| 2026-07-09 | [LLM プロバイダ抽象化: ローカル(Ollama) と cloud(公式 CLI subprocess) を使い分け](./20260709-llm-provider-abstraction-local-ollama-and-cloud-cli.md) | accepted（claude のモデルをログインセッションに委ねる点のみ 2026-10-07 に部分 supersede） |
 | 2026-07-09 | [用語アーキテクチャ: 2層辞書・4クラス分類・表記方針・proposed 書き戻し](./20260709-terminology-architecture-two-tier-classified-glossary.md) | accepted |
 | 2026-07-09 | [ユーザーインターフェース: ファイル配置・jpaper CLI・GUI は core の薄い皮](./20260709-user-interface-file-layout-and-cli.md) | accepted（論文ごと成果物の既定の置き場所と成果物名 `main.pdf` のみ 2026-10-07 に部分 supersede） |
 | 2026-07-10 | [翻訳一貫性: 文書ブリーフ＋文体契約・evaluator 軸の明文化・訳注 surface](./20260710-translation-consistency-brief-style-and-annotations.md) | accepted |
@@ -87,4 +87,5 @@
 | 2026-10-06 | [横長の対訳 PDF（A4 縦 2 枚分・左=原文／右=和訳）を標準の出力にする](./20261006-bilingual-side-by-side-pdf.md) | accepted |
 | 2026-10-07 | [図表のキャプションは全プロバイダの翻訳指示で訳す](./20261007-translate-captions-in-all-prompt-profiles.md) | accepted |
 | 2026-10-07 | [論文ごとの既定の出力先を CWD 配下の article/ にまとめる](./20261007-default-output-under-article-dir.md) | accepted |
+| 2026-10-07 | [claude のモデルと推論強度を CLI 引数で渡す（JPaper は既定値を持たない）](./20261007-pass-claude-model-and-effort-via-cli-args.md) | accepted |
 | 2026-10-07 | [成果物 PDF の名前を「ID＋短い英語名」にし、短い英語名はタイトルの翻訳と同時に決めさせる](./20261007-name-deliverable-pdfs-by-id-and-slug.md) | accepted |

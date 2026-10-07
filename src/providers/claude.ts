@@ -1,5 +1,7 @@
 // 契約付録 §5・§8。claude プロバイダ（純変換器化した公式 CLI subprocess）。
 import { spawn } from "node:child_process";
+import os from "node:os";
+import type { ClaudeConfig } from "../config.js";
 import type { LlmClient, LlmCallEvent, LlmCallMeta, TraceSink } from "../types/contract.js";
 import { JpaperError } from "../types/errors.js";
 import { canceledError } from "../runtime/cancellation.js";
@@ -8,7 +10,7 @@ import { MAX_RESPONSE_CHARS } from "../runtime/llm-client.js";
 export const MAX_TURNS = 3;
 
 export interface ClaudeDeps {
-  run?: (args: string[], signal?: AbortSignal) => Promise<string>;
+  run?: (args: string[], input: string, signal?: AbortSignal) => Promise<string>;
   trace?: TraceSink; // LLM トレース ADR。成功呼び出しの usage/コストを emit する副作用チャネル。
   now?: () => number; // latency 計測（テスト用に注入可能）。
 }
@@ -41,10 +43,11 @@ function toEvent(raw: string, latencyMs: number, meta?: LlmCallMeta): LlmCallEve
   };
 }
 
-async function defaultRun(args: string[], signal?: AbortSignal): Promise<string> {
+async function defaultRun(args: string[], input: string, signal?: AbortSignal): Promise<string> {
   if (signal?.aborted === true) throw canceledError("claude 起動前");
   return new Promise((resolve, reject) => {
-    const child = spawn("claude", args, { stdio: ["pipe", "pipe", "pipe"] });
+    // ⚠ landmines.md
+    const child = spawn("claude", args, { cwd: os.tmpdir(), stdio: ["pipe", "pipe", "pipe"] });
     let out = "";
     let err = "";
     let canceled = false;
@@ -87,23 +90,23 @@ async function defaultRun(args: string[], signal?: AbortSignal): Promise<string>
         reject(Object.assign(new Error(`claude exited ${code}: ${detail}`), { code }));
       }
     });
-    child.stdin.end(); // stdin を即 EOF にして -p 位置引数のプロンプトを使わせる（3秒待機回避）。
+    // ⚠ landmines.md
+    child.stdin.on("error", () => {});
+    child.stdin.end(input);
   });
 }
 
-export function makeClaudeClient(deps: ClaudeDeps = {}): LlmClient {
+export function makeClaudeClient(cfg: ClaudeConfig = {}, deps: ClaudeDeps = {}): LlmClient {
   const run = deps.run ?? defaultRun;
   const now = deps.now ?? Date.now;
   return {
     async complete(req) {
-      // model は渡さない（CLI ログインセッションのモデルを使う）。
       let stdout: string;
       const started = now();
       try {
         stdout = await run(
           [
             "-p",
-            req.user,
             "--output-format",
             "json",
             "--append-system-prompt",
@@ -113,7 +116,12 @@ export function makeClaudeClient(deps: ClaudeDeps = {}): LlmClient {
             String(MAX_TURNS),
             "--tools",
             "none",
+            // ⚠ landmines.md
+            "--safe-mode",
+            ...(cfg.model === undefined ? [] : ["--model", cfg.model]),
+            ...(cfg.effort === undefined ? [] : ["--effort", cfg.effort]),
           ],
+          req.user,
           req.signal,
         );
       } catch (e) {

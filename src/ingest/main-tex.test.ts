@@ -69,6 +69,17 @@ describe("expandInputs", () => {
     expect(out).toContain("50\\% 完了");
   });
 
+  it("コメントだけの行は改行ごと消し、引数の中に空行を作らない", () => {
+    const d = tmp({
+      "main.tex":
+        "\\documentclass{a}\n\\author{\n    %Authors\n    % note\n    A. Author\n}\n\\begin{document}\n50\\% 完了 % 行末\n\\end{document}\n",
+    });
+    const out = expandInputs(d, "main.tex");
+    expect(out).toContain("\\author{\n    A. Author\n}");
+    expect(out).not.toMatch(/\\author\{\n[ \t]*\n/);
+    expect(out).toContain("50\\% 完了 \n");
+  });
+
   it("\\@@input も畳む（scanner だけに頼らない多層防御）", () => {
     const d = tmp({
       "main.tex":
