@@ -66,6 +66,21 @@ describe("makeClaudeClient", () => {
     expect(args).not.toContain("USR");
   });
 
+  it("プロンプト本文は引数に入れず stdin で渡す", async () => {
+    let args: string[] = [];
+    let input = "";
+    const c = makeClaudeClient({
+      run: async (a, i) => {
+        args = a;
+        input = i;
+        return JSON.stringify({ result: "訳文" });
+      },
+    });
+    await c.complete({ system: "SYS", user: "USR" });
+    expect(input).toBe("USR");
+    expect(args).not.toContain("USR");
+  });
+
   it("--max-turns は 2 ターン以上（CLI が内部で 2 ターン使っても error_max_turns で落とさない）", async () => {
     let args: string[] = [];
     const c = makeClaudeClient({}, { run: async (a) => ((args = a), JSON.stringify({ result: "r" })) });

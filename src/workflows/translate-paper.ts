@@ -27,6 +27,7 @@ import {
   EvalIssue,
   RunSummary,
   JpaperInput as JpaperInputSchema,
+  type BilingualSummary,
   Provider as ProviderSchema,
   type Result,
   type TraceSink,
@@ -112,6 +113,7 @@ import {
 } from "../tools/build-gate.js";
 import { injectFootnotes, renderBackmatter } from "../tools/render-notes.js";
 import { findUnsafeTexCommands } from "../tools/tex-safety.js";
+import { assembleBilingual } from "../tools/bilingual-latex.js";
 
 const IngestCache = z.object({
   cleanLatex: z.string(),
@@ -146,6 +148,8 @@ export interface TranslateOptions {
   signal?: AbortSignal;
   // run 全体の期限（ms）。超過すると中断と同じ経路で exitCode 6 で返る。
   timeoutMs?: number;
+  // 対訳 PDF（左=原文／右=和訳）を組むか。既定 true。契約付録 §8。
+  bilingual?: boolean;
 }
 
 // subprocess プロバイダは無制限並列に耐えないため翻訳の同時実行数を制限する。
@@ -339,6 +343,7 @@ function clearForeignContext(outDir: string, paperId: string): void {
     rmSync(path.join(outDir, f), { force: true });
   }
   rmSync(path.join(outDir, "translation", "build"), { recursive: true, force: true });
+  rmSync(path.join(outDir, "translation", "bilingual"), { recursive: true, force: true });
 }
 
 // run が最後まで到達したときだけ md を確定する。
@@ -431,10 +436,15 @@ function sharedDefaultsOf(opts: TranslateOptions, deps: TranslateDeps): SharedDe
   return shared;
 }
 
+function idleBilingual(opts: TranslateOptions): BilingualSummary {
+  return { status: opts.bilingual === false ? "disabled" : "skipped", pairs: 0, fallbackSegments: 0 };
+}
+
 function failResult(
   paperId: string,
   outDir: string,
   error: RunError,
+  bilingual: BilingualSummary,
   sharedDefaults: SharedDefault[] = [],
   llmCalls = 0,
   segments = { total: 0, passed: 0, failed: 0 },
@@ -453,6 +463,7 @@ function failResult(
       notes: { total: 0, byTrigger: {} },
       layout: null,
       buildOk: null,
+      bilingual,
       sharedDefaults,
       llmCalls,
       exitCode,
@@ -667,6 +678,86 @@ async function typeset(
   return { layout: "template", buildOk: false, exitCode: 5, message: m, titleApplied: titleApplied() };
 }
 
+// 対訳 PDF。和訳 PDF の publish 後に別の staging で組み、結果は戻り値だけで返す（中断だけは投げる）。
+// 組めなければ前回の対訳も消す。契約付録 §8・対訳 PDF ADR(20261006)。
+async function typesetBilingual(
+  cleanLatex: string,
+  source: { id: string; tex: string }[],
+  translated: { id: string; tex: string }[],
+  layout: Layout,
+  opts: { outDir: string; sourceDir: string; mainDir: string; figures: string[]; title?: string },
+  runner: LatexRunner | undefined,
+  surface: (m: string) => void,
+  signal?: AbortSignal,
+): Promise<BilingualSummary> {
+  const finalDir = path.join(opts.outDir, "translation", "bilingual");
+  const buildDir = `${finalDir}.next`;
+  let pairs = 0;
+  let fallbackSegments = 0;
+  const drop = (): void => {
+    rmSync(buildDir, { recursive: true, force: true });
+    rmSync(finalDir, { recursive: true, force: true });
+  };
+  const failed = (m: string): BilingualSummary => {
+    drop();
+    const message = `対訳 PDF の組版に失敗しました（和訳 PDF は出力済み）: ${m}`;
+    surface(message);
+    return { status: "failed", message: outwardMessage(message), pairs, fallbackSegments };
+  };
+  const assemble = (mode: Layout) =>
+    assembleBilingual({
+      cleanLatex,
+      translatedMainTex: assembleWithMap({ cleanLatex, segments: translated, mode, title: opts.title }).mainTex,
+      source,
+      translated,
+    });
+  const gate = (mainTex: string): Promise<BuildGateResult> =>
+    runBuildGate(
+      {
+        buildDir,
+        mainTex,
+        sourceDir: opts.sourceDir,
+        mainDir: opts.mainDir,
+        figures: opts.figures,
+        sourceMap: [],
+        originalTex: cleanLatex,
+        signal,
+      },
+      runner,
+    );
+  try {
+    const b = assemble(layout);
+    pairs = b.pairs;
+    fallbackSegments = b.fallbackSegments.length;
+    if (fallbackSegments > 0) {
+      surface(
+        `対訳: 段落数が一致せずセグメント全体を 1 ペアにしました: ${b.fallbackSegments.slice(0, 10).join(", ")}`,
+      );
+    }
+    if (b.titleUnplaced) {
+      surface(
+        "対訳: タイトルを左右のタイトルブロックに置き換えられませんでした（環境の中の \\maketitle など）。タイトル周りの体裁が崩れている可能性があります",
+      );
+    }
+    let g = await gate(b.mainTex);
+    if (!g.buildOk && layout === "original") {
+      surface(`対訳: 原プリアンブルで組めず共通テンプレで組み直します: ${summarizeGateFailure(g)}`);
+      g = await gate(assemble("template").mainTex);
+    }
+    if (!g.buildOk || g.pdfPath === undefined) return failed(summarizeGateFailure(g));
+    rmSync(finalDir, { recursive: true, force: true });
+    renameSync(buildDir, finalDir);
+    const pdfPath = path.join(finalDir, path.relative(buildDir, g.pdfPath));
+    return { status: "ok", pdfPath, pairs, fallbackSegments };
+  } catch (e) {
+    if (signal?.aborted) {
+      drop();
+      throw e;
+    }
+    return failed(toRunError(e).message);
+  }
+}
+
 // 入口の検証。web は文字列由来の値（Number(req.query.x)）をそのまま渡してくるので、
 // 形が違うものは黙って既定へ倒さず input で拒否する（timeoutMs と同じ扱いに揃える）。
 function entryError(input: JpaperInput, opts: TranslateOptions): string | undefined {
@@ -701,6 +792,9 @@ function entryError(input: JpaperInput, opts: TranslateOptions): string | undefi
     if (rt !== undefined && (typeof rt !== "number" || !Number.isFinite(rt) || rt < 1)) {
       return `ollama.requestTimeoutMs が不正です: ${outwardMessage(String(rt))}`;
     }
+  }
+  if (opts.bilingual !== undefined && typeof opts.bilingual !== "boolean") {
+    return `bilingual が不正です: ${outwardMessage(String(opts.bilingual))}`;
   }
   const r = opts.openrouter;
   if (r !== undefined) {
@@ -747,7 +841,7 @@ export async function translatePaper(
   if (badInput !== undefined) {
     // outDir 自体が不正な場合もあるので、サマリには文字列として安全な値だけ載せる。
     const shown = typeof opts.outDir === "string" ? opts.outDir : "";
-    return failResult("unknown", shown, { kind: "input", code: 2, message: badInput });
+    return failResult("unknown", shown, { kind: "input", code: 2, message: badInput }, idleBilingual(opts));
   }
   let paperId: string;
   let outDir: string;
@@ -759,7 +853,12 @@ export async function translatePaper(
     runDir = path.join(outDir, ".run");
     sharedDefaults = sharedDefaultsOf(opts, deps);
   } catch (e) {
-    return failResult("unknown", typeof opts.outDir === "string" ? opts.outDir : "", toRunError(e));
+    return failResult(
+      "unknown",
+      typeof opts.outDir === "string" ? opts.outDir : "",
+      toRunError(e),
+      idleBilingual(opts),
+    );
   }
   if (sharedDefaults.length > 0) {
     // ここはまだ notify を組み立てる前。通知の失敗で run を落とさない。
@@ -1101,6 +1200,7 @@ export async function translatePaper(
     let buildOk: boolean | null = null;
     let pdfPath: string | undefined;
     let typesetMessage: string | undefined;
+    let bilingual: BilingualSummary = idleBilingual(opts);
     let exitCode = resolveExitCode(results.filter((r) => !r.passed).map((r) => r.failCode ?? 4));
     if (failed === 0) {
       // 訳注を本文へ反映（初出脚注＋巻末一覧）してから組版する。
@@ -1145,6 +1245,26 @@ export async function translatePaper(
       ({ layout, buildOk, pdfPath, exitCode } = outcome);
       typesetMessage = outcome.message;
       if (titled !== undefined && !outcome.titleApplied && outcome.buildOk) titleStatus = "failed";
+      if (buildOk === true && layout !== null && opts.bilingual !== false) {
+        // 和訳 PDF に訳題が入った run だけ、右側にも同じ訳題（前文の \title・本文の \title）を使う。
+        const applied = outcome.titleApplied ? titled : undefined;
+        bilingual = await typesetBilingual(
+          ingested.cleanLatex,
+          segments.map((s) => ({ id: s.id, tex: s.latex })),
+          applied?.segments ?? rendered,
+          layout,
+          {
+            outDir,
+            sourceDir: ingested.sourceDir,
+            mainDir: ingested.mainDir ?? ingested.sourceDir,
+            figures: ingested.figures,
+            title: applied?.title,
+          },
+          deps.latexRunner,
+          (m) => notify(m),
+          signal,
+        );
+      }
       progress({ phase: "typeset", done: 1, total: 1 });
     }
 
@@ -1176,6 +1296,7 @@ export async function translatePaper(
       notes: { total: notes.length, byTrigger: countByTrigger(notes) },
       layout,
       buildOk,
+      bilingual,
       sharedDefaults,
       llmCalls: llmCalls(),
       title: titleStatus,
@@ -1186,7 +1307,7 @@ export async function translatePaper(
   } catch (e) {
     const error = toRunError(e);
     notify(error.message);
-    return failResult(paperId, outDir, error, sharedDefaults, llmCalls(), reached);
+    return failResult(paperId, outDir, error, idleBilingual(opts), sharedDefaults, llmCalls(), reached);
   } finally {
     deadline.dispose();
     if (!deps.db) db?.close();

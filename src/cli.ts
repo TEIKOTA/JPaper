@@ -22,7 +22,7 @@ export interface CliDeps {
 }
 
 const VALUE_FLAGS = ["--provider", "--out", "--model", "--context-window", "--effort", "--concurrency"];
-const BOOL_FLAGS = ["--think", "--no-think"];
+const BOOL_FLAGS = ["--think", "--no-think", "--no-bilingual"];
 
 function parseConcurrency(raw: string): number {
   if (!/^[0-9]+$/.test(raw)) {
@@ -213,6 +213,7 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number
         outDir: outArg,
         ...modelCfg,
         ...(concurrencyArg === undefined ? {} : { concurrency: parseConcurrency(concurrencyArg) }),
+        ...(flags.has("--no-bilingual") ? { bilingual: false } : {}),
       },
       {
         onError: (m) => stderr(`エラー: ${m}\n`),
@@ -224,6 +225,8 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number
     );
     stdout(`${JSON.stringify(result.summary, null, 2)}\n`);
     if (result.pdfPath) stdout(`PDF: ${result.pdfPath}\n`);
+    const bilingualPdf = result.summary.bilingual.pdfPath;
+    if (bilingualPdf !== undefined) stdout(`対訳 PDF: ${bilingualPdf}\n`);
     if (result.error) stderr(`失敗[${result.error.kind}]: ${result.error.message}\n`);
     return result.exitCode;
   } catch (e) {

@@ -118,6 +118,22 @@ describe("concurrency の検証", () => {
   });
 });
 
+describe("bilingual の検証", () => {
+  it("真偽値でない bilingual は input で返り、RunSummary では組んでいない", async () => {
+    const { translatePaper } = await import("./translate-paper.js");
+    for (const bad of ["false", 0, null]) {
+      const r = await translatePaper({ kind: "path", path: "/tmp/x.tar" }, {
+        provider: "ollama",
+        outDir: path.join(tmp(), "o"),
+        bilingual: bad as unknown as boolean,
+      });
+      expect(r.error?.kind).toBe("input");
+      expect(r.error?.message).toContain("bilingual");
+      expect(r.summary.bilingual.status).toBe("skipped");
+    }
+  });
+});
+
 describe("ollama 設定の検証", () => {
   it("空のモデル ID は input で返る（provider に届く前に落とす）", async () => {
     const { translatePaper } = await import("./translate-paper.js");

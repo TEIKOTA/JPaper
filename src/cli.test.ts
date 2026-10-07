@@ -14,6 +14,7 @@ const okResult: Result = {
     notes: { total: 0, byTrigger: {} },
     layout: null,
     buildOk: null,
+    bilingual: { status: "skipped", pairs: 0, fallbackSegments: 0 },
     llmCalls: 0,
     sharedDefaults: [],
     title: null,
@@ -61,6 +62,41 @@ describe("runCli", () => {
       translate: async () => ({ ...okResult, pdfPath: "/out/translation/build/main.pdf" }),
     });
     expect(out).toContain("PDF: /out/translation/build/main.pdf");
+  });
+
+  it("対訳 PDF があれば標準出力に表示する", async () => {
+    let out = "";
+    await runCli(["node", "jpaper", "1706.03762", "--provider", "claude"], {
+      stdout: (s) => (out += s),
+      translate: async () => ({
+        ...okResult,
+        summary: {
+          ...okResult.summary,
+          bilingual: {
+            status: "ok",
+            pdfPath: "/out/translation/bilingual/main.pdf",
+            pairs: 3,
+            fallbackSegments: 0,
+          },
+        },
+      }),
+    });
+    expect(out).toContain("対訳 PDF: /out/translation/bilingual/main.pdf");
+  });
+
+  it("--no-bilingual は bilingual: false を渡し、無指定なら渡さない", async () => {
+    const got: unknown[] = [];
+    for (const extra of [["--no-bilingual"], []]) {
+      const code = await runCli(["node", "jpaper", "1706.03762", "--provider", "claude", ...extra], {
+        stdout: () => {},
+        translate: async (_input, opts) => {
+          got.push(opts.bilingual);
+          return okResult;
+        },
+      });
+      expect(code).toBe(0);
+    }
+    expect(got).toEqual([false, undefined]);
   });
 
   it("--model と --context-window を ollama 設定として渡す", async () => {
