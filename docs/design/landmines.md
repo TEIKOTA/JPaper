@@ -143,3 +143,9 @@
 - **おかしく見える点**: 候補をそのまま渡さず、`The` / `While` / `In` などの文頭の語を外し、`Figure` / `Sec` などの参照語だけの句を捨てている。
 - **なぜ意図的か**: 大文字始まりの連語パターンは文頭の語も拾う（`The PanNuke`、`While DCAN`、`In Figure`）。用語集の LLM がこれを keep-original に分類すると、形式検査が訳文にその句が原文どおり現れることを要求し、ほぼ全節が落ちる（実測: CellViT 2306.15350 を claude sonnet / effort medium で 27/29 節が keep-original で失敗、128 呼び出し）。
 - **正本ポインタ**: issue #314。回帰テストは `src/terminology/collect.test.ts`。
+
+## `src/segment/segmenter.ts` — 節の予算を 0.30×CW に加えて 8,000 トークンで頭打ちにする
+
+- **おかしく見える点**: 契約付録 §4 の予算は文脈長から逆算するのに、claude（CW 20 万）でも 8,000 で止めている。
+- **なぜ意図的か**: `\section` を使わない論文は全文が 1 節になり、訳文の生成が呼び出し期限 300 秒を超えて run ごと落ちる（実測: UNI 2308.15474、1 節 59,825 トークン）。完了した論文の最大節は 7,442 トークン・最長 180 秒なので、8,000 なら既存の分割は変わらない。
+- **正本ポインタ**: [節の予算の上限 ADR](../adr/20261007-cap-segment-budget-by-output-time.md)、契約付録 §4。回帰テストは `src/segment/segmenter.test.ts`。
