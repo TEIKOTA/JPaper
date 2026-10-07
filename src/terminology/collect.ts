@@ -37,9 +37,18 @@ const PATTERNS: { re: RegExp; def: boolean }[] = [
   { re: /\b([A-Z][a-zA-Z]{1,200}(?:\s{1,20}[A-Z][a-zA-Z]{1,200}){1,20})\b/g, def: false },
 ];
 
+// 大文字始まりの句の先頭に付いた文頭の機能語。⚠ landmines.md
+const LEADING_FUNCTION_WORD =
+  /^(?:The|A|An|This|These|That|Those|Our|We|While|Unlike|In|On|For|See|Both|Each|All|Its|Their|With|As|By|From|To|If|When|Although|However|Moreover|Furthermore|Since|Because|After|Before|Using|Then|Thus|Here|There|Compared|Similarly|Finally|First|Second|Third|Next)\s+/;
+const REFERENCE_WORD = /^(?:Figure|Figures|Fig|Table|Tables|Section|Sections|Sec|Eq|Equation|Equations|Appendix|Algorithm|Supplementary)$/;
+
 // 候補は論文本文そのもの。\emph{...} は改行を跨げるため、1 行化と長さ上限で指示文の注入を潰す。
 function add(map: Map<string, Acc>, raw: string, def: boolean, pos: number): void {
-  const src = oneLine(raw, MAX_TERM_CHARS);
+  let src = oneLine(raw, MAX_TERM_CHARS);
+  if (!src.startsWith("\\")) {
+    while (LEADING_FUNCTION_WORD.test(src)) src = src.replace(LEADING_FUNCTION_WORD, "");
+    if (REFERENCE_WORD.test(src)) return;
+  }
   if (src === "") return;
   const cur = map.get(src);
   if (cur) {
