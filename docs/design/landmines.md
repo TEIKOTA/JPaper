@@ -179,3 +179,9 @@
 - **おかしく見える点**: 訳文の `\oursの` を `\ours{}の` に書き換えている。
 - **なぜ意図的か**: luatexja の下では和文字も英字と同じ扱いなので、`\oursの能力を評価する` 全体が 1 つの命令名として読まれ `Undefined control sequence` で落ちる（実測: UNI 2308.15474 seg-0001）。translator は英文の `\ours's` を自然に `\oursの` と訳す。
 - **正本ポインタ**: 契約付録 §7、issue #322。回帰テストは `src/tools/assemble-latex.test.ts`。
+
+## `src/tools/bilingual-latex.ts` — 対訳のタイトルブロックで `\and` / `\And` / `\AND` を区切りの空白にする
+
+- **おかしく見える点**: タイトルブロックの著者欄でだけ、クラスが定義した `\and` を `\unskip\quad` に置き換えている。
+- **なぜ意図的か**: `\and` はタイトルの表組み（`\maketitle` の中の tabular）で使う前提の命令で、`\end{tabular}…\begin{tabular}` に展開される。対訳のタイトルブロックは著者を表の外で組むので、そのままだと `Misplaced \crcr` で対訳 PDF が落ちる（実測: llncs の 2606.22649・2605.18329 ほか 4 本）。
+- **正本ポインタ**: 契約付録 §8（対訳 PDF）、issue #324。回帰テストは `src/tools/bilingual-latex.test.ts`。
