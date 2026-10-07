@@ -59,7 +59,7 @@ export function deliverableName(paperId: string, slug: string | undefined, kind:
 
 const DELIVERABLE = /^[A-Za-z0-9._-]+-(ja|bilingual)\.pdf$/;
 
-function listDeliverables(outDir: string, kind?: DeliverableKind): string[] {
+export function listDeliverables(outDir: string, kind?: DeliverableKind): string[] {
   try {
     return readdirSync(outDir, { withFileTypes: true })
       .filter((e) => e.isFile())

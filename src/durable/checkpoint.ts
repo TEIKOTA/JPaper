@@ -7,6 +7,7 @@ import {
   readFileSync,
   renameSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import path from "node:path";
@@ -76,14 +77,73 @@ export async function checkpoint<S extends z.ZodTypeAny>(
 
   const result = await fn();
   if (opts.cacheable === undefined || opts.cacheable(result)) {
-    mkdirSync(dir, { recursive: true });
-    const env: Envelope = { v: 1, sig: sign(key, stepId, invalidation, result), value: result };
-    const tmp = `${file}.tmp`;
-    writeFileSync(tmp, JSON.stringify(env));
-    renameSync(tmp, file);
-    dropOldGenerations(dir, stepId, path.basename(file));
+    writeStep(runDir, stepId, result, { invalidation: opts.invalidation, key });
   }
   return result;
+}
+
+export interface StoredStep {
+  file: string;
+  // ファイル名の無効化キー（無効化なしの step は ""）。
+  invalidation: string;
+  value: unknown;
+}
+
+// 契約付録 §9。stepId の checkpoint のうち、ファイル名の無効化キーで署名が合うものを返す。
+// 複数あれば更新の新しいもの。無ければ undefined。
+export function readStep(runDir: string, stepId: string, key?: Buffer): StoredStep | undefined {
+  const dir = path.join(runDir, "steps");
+  const k = key ?? loadCacheKey();
+  let names: string[] = [];
+  try {
+    names = readdirSync(dir);
+  } catch {
+    return undefined;
+  }
+  let found: (StoredStep & { mtime: number }) | undefined;
+  for (const name of names) {
+    const invalidation = stepInvalidationOf(name, stepId);
+    if (invalidation === undefined) continue;
+    const file = path.join(dir, name);
+    try {
+      const env = JSON.parse(readFileSync(file, "utf8")) as Envelope;
+      if (!signatureMatches(sign(k, stepId, invalidation, env?.value), env?.sig)) continue;
+      const mtime = statSync(file).mtimeMs;
+      if (found === undefined || mtime > found.mtime) found = { file, invalidation, value: env.value, mtime };
+    } catch {
+      // 破損した checkpoint は無いものとして扱う。
+    }
+  }
+  if (found === undefined) return undefined;
+  return { file: found.file, invalidation: found.invalidation, value: found.value };
+}
+
+// 契約付録 §9。value を invalidation で署名して書き、同じ step の旧世代を消す。書いたパスを返す。
+export function writeStep(
+  runDir: string,
+  stepId: string,
+  value: unknown,
+  opts: { invalidation?: string; key?: Buffer } = {},
+): string {
+  const dir = path.join(runDir, "steps");
+  const suffix = opts.invalidation ? `.${opts.invalidation}` : "";
+  const file = path.join(dir, `${stepId}${suffix}.json`);
+  const key = opts.key ?? loadCacheKey();
+  mkdirSync(dir, { recursive: true });
+  const env: Envelope = { v: 1, sig: sign(key, stepId, opts.invalidation ?? "", value), value };
+  const tmp = `${file}.tmp`;
+  writeFileSync(tmp, JSON.stringify(env));
+  renameSync(tmp, file);
+  dropOldGenerations(dir, stepId, path.basename(file));
+  return file;
+}
+
+// "<stepId>.<hash>.json" なら hash、"<stepId>.json" なら ""、それ以外は undefined。
+function stepInvalidationOf(name: string, stepId: string): string | undefined {
+  if (name === `${stepId}.json`) return "";
+  if (!name.startsWith(`${stepId}.`) || !name.endsWith(".json")) return undefined;
+  const middle = name.slice(stepId.length + 1, -".json".length);
+  return /^[0-9a-f]+$/.test(middle) ? middle : undefined;
 }
 
 // 同じ step の旧世代（無効化ハッシュ違い）を消す。残すと、論文を直して再投入するたびに
