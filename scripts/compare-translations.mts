@@ -1,6 +1,6 @@
 #!/usr/bin/env tsx
 // 2 つの翻訳成果物（translation/chapters/*.tex）を構造の観点で突き合わせる。
-// 使い方: npx tsx scripts/compare-translations.mts <A の outDir> <B の outDir>
+// 使い方: pnpm exec tsx scripts/compare-translations.mts <A の outDir> <B の outDir>
 // 判定は決定的な指標だけ（LLM を使わない）。意味の良し悪しは人が見る。
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
