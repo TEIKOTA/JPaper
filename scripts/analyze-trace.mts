@@ -1,6 +1,6 @@
 #!/usr/bin/env tsx
 // llm-trace.jsonl を読んでコスト内訳を表示する（LLM トレース ADR 20260722）。
-// 使い方: npx tsx scripts/analyze-trace.mts <path/to/llm-trace.jsonl>
+// 使い方: pnpm exec tsx scripts/analyze-trace.mts <path/to/llm-trace.jsonl>
 import { existsSync, readFileSync } from "node:fs";
 import { summarizeTrace } from "../src/tools/analyze-trace.js";
 import type { LlmCallRecord } from "../src/types/contract.js";

@@ -25,7 +25,7 @@
 
 ### 前提ツール
 
-- Node.js（22.5 以上）と npm — 本体の実行・テスト
+- Node.js（22.5 以上）と pnpm（10 以上。`brew install pnpm` か `corepack enable`）— 本体の実行・テスト
 - LaTeX（`latexmk`・LuaLaTeX）— 組版
 - `gh`（GitHub CLI）— issue / PR の確認・初期設定
 - Python 3（`python3`）— hook 設定と一部の self-test
@@ -33,14 +33,14 @@
 - lefthook — commit-msg / pre-push のローカル hook
 
 ```sh
-npm install
+pnpm install
 lefthook install   # commit-msg / pre-push フック（未導入なら brew install lefthook）
 ```
 
 ## 使い方
 
 ```sh
-npm run dev -- <arXiv ID|ファイル|ディレクトリ> --provider {ollama|claude|openrouter} [--out DIR] [--no-bilingual]
+pnpm dev <arXiv ID|ファイル|ディレクトリ> --provider {ollama|claude|openrouter} [--out DIR] [--no-bilingual]
 ```
 
 和訳 PDF（例 `article/2507.17845-ja/2507.17845_pathorob-ja.pdf`）と対訳 PDF（例 `article/2507.17845-ja/2507.17845_pathorob-bilingual.pdf`）のパスを標準出力に、`RunSummary` を JSON で出す。オプションの正本は [契約付録 §5](./docs/design/contract-appendix.md)。
@@ -49,10 +49,10 @@ npm run dev -- <arXiv ID|ファイル|ディレクトリ> --provider {ollama|cla
 
 | コマンド | 用途 |
 |---|---|
-| `npm run dev` | エントリ（`src/index.ts`）を tsx で実行 |
-| `npm run build` | `tsc` で `dist/` へビルド |
-| `npm run typecheck` | 型チェックのみ（emit しない） |
-| `npm test` | vitest で単体テスト（決定的な検査＝LLM 非含有） |
+| `pnpm dev` | エントリ（`src/index.ts`）を tsx で実行 |
+| `pnpm build` | `tsc` で `dist/` へビルド |
+| `pnpm typecheck` | 型チェックのみ（emit しない） |
+| `pnpm test` | vitest で単体テスト（決定的な検査＝LLM 非含有） |
 | `bash tests/run-tests.sh` | 規約検査スクリプトの self-test（`scripts/` を変更したら実行） |
 | `scripts/new-branch.sh <type> <issue番号> <slug>` | 規約検証付きで topic branch を作成 |
 | `scripts/check-pr.sh [<PR番号>]` | PR タイトル・body・issue 連結のローカル検査（PR 作成・編集後） |

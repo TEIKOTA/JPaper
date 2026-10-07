@@ -163,7 +163,7 @@ async function checkpoint<T>(runDir, stepId, schema, fn: () => Promise<T>): Prom
 - 理由: cloud=公式 CLI subprocess では LLM のツール制御が難しく、事前注入なら local/cloud 両対応で同一 IF。将来 tool-calling が要れば足す。
 
 ### C. 決定性回帰テスト — FakeLlmClient で配線を検証
-`LlmClient` を差し替え可能にした恩恵で、テストは **`FakeLlmClient`（固定/スクリプト応答）を注入**して配線を LLM 抜きで決定的に vitest（CLAUDE.md「`npm test`=LLM 非含有」を実現）。
+`LlmClient` を差し替え可能にした恩恵で、テストは **`FakeLlmClient`（固定/スクリプト応答）を注入**して配線を LLM 抜きで決定的に vitest（CLAUDE.md「`pnpm test`=LLM 非含有」を実現）。
 
 - **決定的にテスト**: セグメント分割 / アセンブル(訳文+manifest→tex) / 用語 DB クエリ・write-back / zod 検証 / `\ref`・全図の形式検査 / checkpoint の idempotent-skip（`brief.md`/`style.md`/`glossary.md` 編集で下流のみ無効化）/ system prompt ビルダー出力（brief/style 注入込み）/ 品質ゲートのループ回数・`MAX_REVISIONS` 超過で failed / **rendering 適用（`bilingual` は文書初出セグメントのみ `値(Value)`・以降は `値`／`keep-original` は全出現原形。契約付録 §8）** / **訳注の採否（trigger の決定的規則: paper-defined preserve・低確信=DB に confirmed 無し・warn）・文書初出のみ脚注**。
 - **テストしない**: 翻訳品質・evaluator 判定・**文書ブリーフ／文体契約／訳注の文面**（いずれも LLM 生成で非決定的。実行時の品質ゲートに委ねる）。

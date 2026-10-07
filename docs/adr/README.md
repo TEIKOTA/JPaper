@@ -89,3 +89,4 @@
 | 2026-10-07 | [論文ごとの既定の出力先を CWD 配下の article/ にまとめる](./20261007-default-output-under-article-dir.md) | accepted |
 | 2026-10-07 | [claude のモデルと推論強度を CLI 引数で渡す（JPaper は既定値を持たない）](./20261007-pass-claude-model-and-effort-via-cli-args.md) | accepted |
 | 2026-10-07 | [成果物 PDF の名前を「ID＋短い英語名」にし、短い英語名はタイトルの翻訳と同時に決めさせる](./20261007-name-deliverable-pdfs-by-id-and-slug.md) | accepted |
+| 2026-10-07 | [パッケージ管理を npm から pnpm に移す](./20261007-adopt-pnpm-for-package-management.md) | accepted |
