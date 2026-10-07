@@ -1,5 +1,6 @@
 // 契約付録 §5・§8。claude プロバイダ（純変換器化した公式 CLI subprocess）。
 import { spawn } from "node:child_process";
+import os from "node:os";
 import type { ClaudeConfig } from "../config.js";
 import type { LlmClient, LlmCallEvent, LlmCallMeta, TraceSink } from "../types/contract.js";
 import { JpaperError } from "../types/errors.js";
@@ -45,7 +46,8 @@ function toEvent(raw: string, latencyMs: number, meta?: LlmCallMeta): LlmCallEve
 async function defaultRun(args: string[], input: string, signal?: AbortSignal): Promise<string> {
   if (signal?.aborted === true) throw canceledError("claude 起動前");
   return new Promise((resolve, reject) => {
-    const child = spawn("claude", args, { stdio: ["pipe", "pipe", "pipe"] });
+    // ⚠ landmines.md
+    const child = spawn("claude", args, { cwd: os.tmpdir(), stdio: ["pipe", "pipe", "pipe"] });
     let out = "";
     let err = "";
     let canceled = false;
@@ -114,6 +116,8 @@ export function makeClaudeClient(cfg: ClaudeConfig = {}, deps: ClaudeDeps = {}):
             String(MAX_TURNS),
             "--tools",
             "none",
+            // ⚠ landmines.md
+            "--safe-mode",
             ...(cfg.model === undefined ? [] : ["--model", cfg.model]),
             ...(cfg.effort === undefined ? [] : ["--effort", cfg.effort]),
           ],
