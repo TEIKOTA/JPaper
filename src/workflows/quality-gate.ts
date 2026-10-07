@@ -1,4 +1,5 @@
 // 契約付録 §3・§8。節ループの形式検査（決定的・LLM 非依存）。
+import { termOccurrences } from "../terminology/term-coverage.js";
 import type { ResolvedTerm } from "../types/contract.js";
 
 export interface FormalIssue {
@@ -573,8 +574,8 @@ export function formalCheck(
 
   for (const t of terms) {
     if (t.rendering === "keep-original") {
-      const srcN = countOccurrences(srcLatex, t.src);
-      const jaN = countOccurrences(ja, t.src);
+      const srcN = termOccurrences(srcLatex, t.src).length;
+      const jaN = termOccurrences(ja, t.src).length;
       if (jaN < srcN) {
         issues.push({
           kind: "keep-original",
