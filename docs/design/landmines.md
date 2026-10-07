@@ -107,3 +107,9 @@
 - **おかしく見える点**: `--tools none` で 1 回しか答えさせないはずなのに、`--max-turns` が `1` ではなく `3`。「1 回きり」なら 1 に締めたくなる。
 - **なぜ意図的か**: claude CLI 2.1.291 は、用語集構築のような長い入力で内部的に 2 ターンを使う（実測: `num_turns: 2`）。`--max-turns 1` だと `subtype: error_max_turns`（「Reached maximum number of turns (1)」）で exit 1 になり、応答が正常でも run が `claude exited 1` で失敗する。`--tools none` でツールは使えないので、ターン上限は安全境界ではない（安全は `--tools none` が担う）。1 に戻すと該当呼び出しが全て落ちる。
 - **正本ポインタ**: [LLM プロバイダ抽象化 ADR](../adr/20260709-llm-provider-abstraction-local-ollama-and-cloud-cli.md)。回帰テストは `src/providers/claude.test.ts`。
+
+## `src/ingest/main-tex.ts` — `stripComments` がコメントだけの行を改行ごと消す
+
+- **おかしく見える点**: `%` から行末を消すだけでなく、空白と `%` だけで始まる行は行そのもの（改行を含む）を消している。行番号が原文とずれる。
+- **なぜ意図的か**: TeX では `%` が行末の改行まで食うので、コメントだけの行は何も生まない。`%` 以降だけ消して改行を残すと、空白だけの行＝段落区切りになり、`\author{…}` のような段落を許さない引数の中で `Paragraph ended before \author was complete` で組版が落ちる（実測: AAAI 2026 テンプレートの 2510.17897）。
+- **正本ポインタ**: issue #303。

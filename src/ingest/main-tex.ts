@@ -63,8 +63,11 @@ export function detectMainTex(dir: string, maxFiles = 10_000): string {
   throw new JpaperError(2, "input", `main.tex を一意に決定できません: ${pool.join(", ")}`);
 }
 
+// ⚠ landmines.md
 function stripComments(s: string): string {
-  return s.replace(/((?:^|[^\\])(?:\\\\)*)%.*$/gm, "$1");
+  return s
+    .replace(/^[ \t]*%.*(?:\r?\n|$)/gm, "")
+    .replace(/((?:^|[^\\])(?:\\\\)*)%.*$/gm, "$1");
 }
 
 function resolveTexPath(dir: string, fromRel: string, target: string): string | null {
