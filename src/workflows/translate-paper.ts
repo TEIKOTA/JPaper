@@ -14,7 +14,6 @@ import {
 } from "node:fs";
 import { createHash, type Hash } from "node:crypto";
 import path from "node:path";
-import { z } from "zod";
 import type {
   JpaperInput,
   LlmClient,
@@ -24,7 +23,6 @@ import type {
 } from "../types/contract.js";
 import {
   GlossaryBuilderOut,
-  EvalIssue,
   RunSummary,
   JpaperInput as JpaperInputSchema,
   type BilingualSummary,
@@ -72,8 +70,18 @@ import {
 } from "../terminology/glossary-io.js";
 import { buildFirstOccurrenceIndex } from "../terminology/first-occurrence.js";
 import { findKatakanaDrift, describeDrift } from "../terminology/consistency.js";
-import { segment, segmentBudgetFor, type Segment } from "../segment/segmenter.js";
+import { segmentBudgetFor, type Segment } from "../segment/segmenter.js";
 import { runSectionLoop } from "./section-loop.js";
+import {
+  IngestCache,
+  SectionLoopCache,
+  planSegments,
+  foundTitle,
+  segmentSlice,
+  segmentInvalidation,
+  titleSlice,
+  titleInvalidation,
+} from "./step-keys.js";
 import { buildNotes } from "./notes.js";
 import { untranslatedHeadings } from "./quality-gate.js";
 import { checkpoint, hashContext, pruneSteps } from "../durable/checkpoint.js";
@@ -92,10 +100,8 @@ import {
   createCallBudget,
   type WorkLimits,
 } from "../runtime/work-budget.js";
-import { assembleWithMap, extractPreamble, type Layout } from "../tools/assemble-latex.js";
+import { assembleWithMap, type Layout } from "../tools/assemble-latex.js";
 import {
-  extractTitle,
-  findBodyTitle,
   locateBodyTitle,
   placeBodyTitle,
   hasProse,
@@ -116,29 +122,6 @@ import { findUnsafeTexCommands } from "../tools/tex-safety.js";
 import { assembleBilingual } from "../tools/bilingual-latex.js";
 import { deliverableName, dropDeliverables, publishDeliverable } from "../tools/pdf-name.js";
 
-const IngestCache = z.object({
-  cleanLatex: z.string(),
-  figures: z.array(z.string()),
-  paperId: z.string(),
-  sourceDir: z.string(),
-  mainDir: z.string(), // 旧キャッシュは mainDir 欠落で無効化され再取り込みされる（入れ子 main の図配置に必須）
-  // 旧キャッシュには無いので既定 0（未解決件数を知らない＝警告を出さない側へ倒す）。
-  unresolvedInputs: z.number().int().default(0),
-});
-const SectionLoopCache = z.object({
-  segmentId: z.string(),
-  ja: z.string(),
-  passed: z.boolean(),
-  failCode: z.union([z.literal(3), z.literal(4)]).optional(),
-  failedKinds: z.array(z.string()).default([]),
-  usedRevisions: z.number().int(),
-  maxRevisions: z.number().int(),
-  warnIssues: z.array(EvalIssue),
-  pdfName: z.string().optional(),
-});
-type SectionLoopCache = z.infer<typeof SectionLoopCache>;
-// title 節の checkpoint の無効化キーに足す版。名前を持たない旧 checkpoint を使わない。契約付録 §8
-const TITLE_STEP_VERSION = "pdf-name-v1";
 type TitleStatus = NonNullable<RunSummary["title"]>;
 
 export interface TranslateOptions {
@@ -994,16 +977,8 @@ export async function translatePaper(
 
     progress({ phase: "ingest", done: 1, total: 1 });
     const budget = segmentBudgetFor(contextWindowFor(opts.provider, opts.ollama, opts.openrouter));
-    // 本文で最初にタイトルを組む位置より前の \title は前文の \title より後に効く。その節では
-    // \title 命令を原文のまま残し（keep）、タイトルは title 節で 1 回だけ訳す。契約付録 §8
-    const plainSegments = segment(ingested.cleanLatex, budget);
-    const bodyTitle = findBodyTitle(plainSegments);
-    const keepsTitle = bodyTitle?.title !== undefined && hasProse(bodyTitle.title.text);
-    const segments: Segment[] = plainSegments.map((s) =>
-      keepsTitle && s.id === bodyTitle!.segmentId
-        ? { ...s, keep: { start: bodyTitle!.start, end: bodyTitle!.end } }
-        : s,
-    );
+    const plan = planSegments(ingested.cleanLatex, budget);
+    const segments: Segment[] = plan.segments;
     // LLM を 1 回も呼ぶ前に判定する（超過が確定した入力に課金しない。契約付録 §8）。
     // glossary は run 中で最大コンテキストの呼び出しなので、この順序が逆だと
     // 落ちると分かっている入力に一番高い 1 回を払うことになる。
@@ -1049,17 +1024,9 @@ export async function translatePaper(
     progress({ phase: "context", done: 1, total: 1 });
     progress({ phase: "translate", done: 0, total: segments.length });
     const translateSegment = (seg: Segment): Promise<SectionLoopCache> => {
-      const slice = ctx.resolved
-        .filter((t) => seg.latex.includes(t.src))
-        .map((t) => ({ ...t, firstOccurrence: firstOcc.get(t.src) === seg.id })) as ResolvedTerm[];
-      // 無効化は原文＋注入コンテキスト（slice＋brief＋style）のハッシュ。失敗結果は永続しない。
-      const invalidation = hashContext(
-        seg.latex,
-        JSON.stringify(slice),
-        JSON.stringify(ctx.brief),
-        JSON.stringify(ctx.style),
-        ...(seg.keep === undefined ? [] : [JSON.stringify(seg.keep)]),
-      );
+      const slice = segmentSlice(seg, ctx.resolved, firstOcc);
+      // 失敗結果は永続しない。
+      const invalidation = segmentInvalidation(seg, slice, ctx);
       return checkpoint(
         runDir,
         seg.id,
@@ -1088,8 +1055,7 @@ export async function translatePaper(
     // タイトルは前文（または本文で原文のまま残した \title）にあり、翻訳する節に含まれない。
     // 小さな 1 節として同じ節ループへ通し、失敗しても原題のまま組版する（run の成否・segments の
     // 集計に入れない）。本文の \title があればそちらが効くので前文は見ない。契約付録 §8
-    const found =
-      bodyTitle !== undefined ? bodyTitle.title : extractTitle(extractPreamble(ingested.cleanLatex));
+    const found = foundTitle(ingested.cleanLatex, plan);
     const title = found !== undefined && hasProse(found.text) ? found : undefined;
     if (found !== undefined && title === undefined) {
       notify(`タイトルが地の文を含まない（${found.text}）ため訳さず原題のまま組版します`);
@@ -1100,17 +1066,8 @@ export async function translatePaper(
     let titleSlug: string | undefined;
     const translateTitle = async (src: PaperTitle): Promise<void> => {
       const seg = titleSegment(src);
-      // 契約付録 §8（タイトルでは併記しない）
-      const slice = ctx.resolved
-        .filter((t) => seg.latex.includes(t.src))
-        .map((t) => ({ ...t, firstOccurrence: false })) as ResolvedTerm[];
-      const invalidation = hashContext(
-        seg.latex,
-        JSON.stringify(slice),
-        JSON.stringify(ctx.brief),
-        JSON.stringify(ctx.style),
-        TITLE_STEP_VERSION,
-      );
+      const slice = titleSlice(seg, ctx.resolved);
+      const invalidation = titleInvalidation(seg, slice, ctx);
       try {
         const r = await checkpoint(
           runDir,
