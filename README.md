@@ -45,13 +45,22 @@ pnpm dev <arXiv ID|ファイル|ディレクトリ> --provider {ollama|claude|op
 
 和訳 PDF（例 `article/2507.17845-ja/2507.17845_pathorob-ja.pdf`）と対訳 PDF（例 `article/2507.17845-ja/2507.17845_pathorob-bilingual.pdf`）のパスを標準出力に、`RunSummary` を JSON で出す。オプションの正本は [契約付録 §5](./docs/design/contract-appendix.md)。
 
+### 用語集の Web アプリ
+
+```sh
+pnpm dev:web
+```
+
+ブラウザで `http://127.0.0.1:5173` を開くと、`article/` の論文と用語集、全体の用語 DB を見られる。用語の行から訳語を直すと、訳文での出現箇所（原文の対応箇所つき）を確かめてから置換し、和訳 PDF と対訳 PDF を組み直す（LLM は使わない。直前の 1 回は元に戻せる）。データの場所は CLI と同じ既定（CWD の `article/` と `~/.jpaper/glossary.db`）で、`JPAPER_ARTICLE_DIR`・`JPAPER_GLOSSARY_DB` で変えられる。`127.0.0.1` だけで待ち受け、認証は持たない。仕様の正本は [契約付録 §9](./docs/design/contract-appendix.md)。
+
 ## コマンド
 
 | コマンド | 用途 |
 |---|---|
 | `pnpm dev` | エントリ（`src/index.ts`）を tsx で実行 |
-| `pnpm build` | `tsc` で `dist/` へビルド |
-| `pnpm typecheck` | 型チェックのみ（emit しない） |
+| `pnpm dev:web` | 用語集の Web アプリ（API と画面）を立ち上げる |
+| `pnpm build` | `tsc` で `dist/` へビルドし、Web アプリの画面を `apps/web/dist/` へビルド |
+| `pnpm typecheck` | 型チェックのみ（emit しない。Web アプリも含む） |
 | `pnpm test` | vitest で単体テスト（決定的な検査＝LLM 非含有） |
 | `bash tests/run-tests.sh` | 規約検査スクリプトの self-test（`scripts/` を変更したら実行） |
 | `scripts/new-branch.sh <type> <issue番号> <slug>` | 規約検証付きで topic branch を作成 |
