@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { makeClaudeClient, MAX_TURNS } from "./claude.js";
@@ -238,7 +238,17 @@ describe("makeClaudeClient（既定の run: PATH 上の claude を起動）", ()
     useFakeClaude("echo", `n=$(wc -c | tr -d ' ')\nprintf '{"result":"stdin=%s argc=%s"}' "$n" "$#"`);
     const user = "x".repeat(200_000);
     const c = makeClaudeClient();
-    expect(await c.complete({ system: "SYS", user })).toBe("stdin=200000 argc=9");
+    expect(await c.complete({ system: "SYS", user })).toBe("stdin=200000 argc=10");
+  });
+
+  it("repo の外（os.tmpdir()）で --safe-mode 付きで起動し、利用者・プロジェクトの設定や hook を読ませない", async () => {
+    useFakeClaude(
+      "where",
+      `cat >/dev/null\nsafe=no\nfor a in "$@"; do [ "$a" = "--safe-mode" ] && safe=yes; done\nprintf '{"result":"cwd=%s safe=%s"}' "$(pwd -P)" "$safe"`,
+    );
+    const c = makeClaudeClient();
+    const tmp = realpathSync(os.tmpdir());
+    expect(await c.complete({ system: "SYS", user: "USR" })).toBe(`cwd=${tmp} safe=yes`);
   });
 
   it("stdin を読まずに終了しても親プロセスを落とさず provider 失敗にする", async () => {

@@ -119,3 +119,9 @@
 - **おかしく見える点**: `claude -p` は位置引数でプロンプトを受け取れるのに、本文（`req.user`）を stdin へ書いている。さらに `child.stdin` の `error` を空のハンドラで捨てている。
 - **なぜ意図的か**: 本文を引数で渡すと、論文によっては引数長の上限を超えて起動できない（実測: PATH 上の `claude` が cmux のシムで `cmux: argument too large (maximum 122880 bytes)` → exit 2、UNI 2308.15474 の用語集構築）。stdin なら上限は無い（80KB で確認）。stdin へ書く以上、子プロセスが本文を読まずに終了すると書き込みが `EPIPE` になり、`error` を聞いていないと未処理例外で JPaper のプロセスごと落ちる（実測: 読まずに `exit 3` する子へ 5MB を書くと Node が `write EPIPE` で終了）。失敗は `close` の終了コードで provider エラーとして返るので、stdin 側のエラーは捨ててよい。ハンドラを外すと、claude が起動直後に失敗しただけで run 全体がクラッシュする。
 - **正本ポインタ**: 契約付録 §5（claude CLI の呼び出し）。回帰テストは `src/providers/claude.test.ts`（既定の run の節）。
+
+## `src/providers/claude.ts` — claude を `--safe-mode` 付き・作業ディレクトリ `os.tmpdir()` で起動する
+
+- **おかしく見える点**: 1 回答えさせるだけの呼び出しに `--safe-mode` を付け、作業ディレクトリを JPaper の実行場所でなく一時ディレクトリにしている。
+- **なぜ意図的か**: 既定の claude CLI は、利用者の `~/.claude/CLAUDE.md`、作業ディレクトリのプロジェクト `CLAUDE.md`、SessionStart hook の出力、git status を毎回の文脈に載せる（実測: repo の中で約 15,400 入力トークン、「読み込んでいる指示」を尋ねるとそれらの見出しを答える）。訳文が repo の運用ルールや作業状況に引きずられ、呼び出しごとに約 13,000 トークンが無駄になる。`--safe-mode` で CLAUDE.md・hook などを止め、repo の外で起動して git status などを消す（実測: 約 2,100 トークン、「なし」）。`--bare` は OAuth を読まずサブスクリプション認証で使えないので採らない。
+- **正本ポインタ**: issue #306、契約付録 §5。
