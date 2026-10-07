@@ -167,3 +167,15 @@
 - **おかしく見える点**: 原文の `\newcommand` を、名前が `\mc` / `\gt` のときだけ書き換えている。
 - **なぜ意図的か**: luatexja はこの 2 つを和文書体の切り替えとして定義済みなので、論文が同じ名前を `\newcommand` すると `Command \mc already defined` で組版が落ちる（実測: 2011.03395 seg-0059 の `\newcommand{\mc}[1]{\mathcal{#1}}`）。`\DeclareRobustCommand` は定義済みでも上書きでき、論文の意味が勝つ。
 - **正本ポインタ**: 契約付録 §7、issue #320。回帰テストは `src/tools/assemble-latex.test.ts`。
+
+## `src/tools/build-gate.ts` — サブディレクトリの支援ファイルを `srcpkg/` と main からの相対位置の両方に置く
+
+- **おかしく見える点**: 同梱の `.cls` / `.sty` などは `srcpkg/` へ基底名で置くのに、サブディレクトリにあるものだけ組版ディレクトリの同じ相対位置にも複製している。
+- **なぜ意図的か**: `\documentclass{style/naturep}` のようにディレクトリ付きで読む論文は、`srcpkg/naturep.cls` では解決できず `Emergency stop` で落ちる（実測: UNI 2308.15474）。ディレクトリ付きの名前は配布パッケージと衝突しないので、相対位置に置いても配布版を上書きしない。
+- **正本ポインタ**: 契約付録 §7、issue #322。
+
+## `src/tools/assemble-latex.ts` — 命令語の直後の和文字の前に `{}` を挟む
+
+- **おかしく見える点**: 訳文の `\oursの` を `\ours{}の` に書き換えている。
+- **なぜ意図的か**: luatexja の下では和文字も英字と同じ扱いなので、`\oursの能力を評価する` 全体が 1 つの命令名として読まれ `Undefined control sequence` で落ちる（実測: UNI 2308.15474 seg-0001）。translator は英文の `\ours's` を自然に `\oursの` と訳す。
+- **正本ポインタ**: 契約付録 §7、issue #322。回帰テストは `src/tools/assemble-latex.test.ts`。

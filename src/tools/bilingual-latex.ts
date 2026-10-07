@@ -1,5 +1,5 @@
 // 契約付録 §7・対訳 PDF ADR(20261006)。原文と訳文を段落ペアにして paracol の対訳 main.tex を組み立てる。
-import { extractPreamble, releaseLuatexjaNames, sanitizeMath } from "./assemble-latex.js";
+import { extractPreamble, releaseLuatexjaNames, sanitizeMath, separateCjkAfterControlWords } from "./assemble-latex.js";
 
 export interface BilingualSegment {
   id: string;
@@ -96,7 +96,7 @@ export function balanceParagraphs(paras: string[]): string[] {
 }
 
 export function paragraphsOf(tex: string): string[] {
-  return balanceParagraphs(splitParagraphs(sanitizeMath(tex)));
+  return balanceParagraphs(splitParagraphs(sanitizeMath(separateCjkAfterControlWords(tex))));
 }
 
 // 訳文セグメントの順に並べる。原文に同じ id が無いもの（訳注一覧）は左を空にする。

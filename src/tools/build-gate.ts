@@ -220,6 +220,12 @@ export function stageBuild(
     const base = path.basename(sty);
     cpSync(sty, path.join(pkgDir, base));
     bases.push(base);
+    // \documentclass{style/naturep} のようにディレクトリ付きで読む支援ファイルは、main からの相対位置にも置く。⚠ landmines.md
+    const rel = path.relative(opts.mainDir, sty);
+    if (rel.includes(path.sep) && !rel.startsWith("..") && !path.isAbsolute(rel)) {
+      mkdirSync(path.dirname(path.join(buildDir, rel)), { recursive: true });
+      cpSync(sty, path.join(buildDir, rel));
+    }
   }
   const distributed = resolver(bases);
   const shadowed = bases.filter((b) => distributed.has(b));
