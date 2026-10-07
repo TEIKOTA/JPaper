@@ -9,6 +9,8 @@ export interface Segment {
   tokens: number;
   // 翻訳へ送らず原文のまま残す区間（本文中の \title 命令）。契約付録 §8
   keep?: { start: number; end: number };
+  // translator に成果物 PDF の短い英語名も出させる（title 節）。契約付録 §8
+  askPdfName?: boolean;
 }
 
 export function sizeClassFor(tokens: number): SizeClass {

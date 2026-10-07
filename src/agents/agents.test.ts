@@ -29,6 +29,30 @@ describe("translator", () => {
     expect(c.calls[0]!.user).toContain("\\section{x}");
   });
 
+  it("askPdfName のときだけ名前の行を指示し、訳文から取り外して pdfName で返す（契約付録 §8）", async () => {
+    const c = new FakeLlmClient("```tex\n\\title{甲の研究}\n% pdf-name: PathoROB\n```");
+    const out = await translate(c, { segmentId: "title", latex: "\\title{A}", glossarySlice: [], askPdfName: true });
+    expect(out).toEqual({ segmentId: "title", ja: "\\title{甲の研究}", pdfName: "PathoROB" });
+    expect(c.calls[0]!.user).toContain("% pdf-name: <name>");
+    // 改稿の指示にも載せる。
+    const r = new FakeLlmClient("```tex\n\\title{甲}\n```");
+    const revised = await translate(r, {
+      segmentId: "title",
+      latex: "\\title{A}",
+      glossarySlice: [],
+      priorJa: "\\title{甲}",
+      issues: ["x"],
+      askPdfName: true,
+    });
+    expect(revised).toEqual({ segmentId: "title", ja: "\\title{甲}" });
+    expect(r.calls[0]!.user).toContain("% pdf-name: <name>");
+    // askPdfName でなければ指示もせず、行も取り外さない。
+    const plain = new FakeLlmClient("```tex\n訳文\n% pdf-name: x\n```");
+    const p = await translate(plain, { segmentId: "s1", latex: "x", glossarySlice: [] });
+    expect(p).toEqual({ segmentId: "s1", ja: "訳文\n% pdf-name: x" });
+    expect(plain.calls[0]!.user).not.toContain("pdf-name");
+  });
+
   it("再訳時は priorJa/issues を user に載せる", async () => {
     const c = new FakeLlmClient('{"segmentId":"s1","ja":"改稿"}');
     await translate(c, {
