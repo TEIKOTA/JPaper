@@ -10,8 +10,10 @@ import {
   MAX_CONCURRENCY,
   MAX_CONTEXT_WINDOW,
   MIN_CONTEXT_WINDOW,
+  CLAUDE_EFFORT_PATTERN,
+  isClaudeModelId,
 } from "./config.js";
-import type { OllamaConfig, OpenRouterConfig } from "./config.js";
+import type { ClaudeConfig, OllamaConfig, OpenRouterConfig } from "./config.js";
 
 export interface CliDeps {
   translate?: typeof translatePaper;
@@ -19,7 +21,7 @@ export interface CliDeps {
   stderr?: (s: string) => void;
 }
 
-const VALUE_FLAGS = ["--provider", "--out", "--model", "--context-window", "--concurrency"];
+const VALUE_FLAGS = ["--provider", "--out", "--model", "--context-window", "--effort", "--concurrency"];
 const BOOL_FLAGS = ["--think", "--no-think", "--no-bilingual"];
 
 function parseConcurrency(raw: string): number {
@@ -52,25 +54,43 @@ function parseContextWindow(raw: string): number {
   return n;
 }
 
-// 契約付録 §5。claude(subprocess) はログインセッションのモデルで動くため、モデル系の
-// 指定を受け取れない。黙って捨てると「指定したのに効かない」になるので入口で落とす。
-// --think は ollama だけの口（OpenRouter はモデル側の既定に委ねる）。
+// 契約付録 §5。provider が受け取れない指定は、黙って捨てると「指定したのに効かない」に
+// なるので入口で落とす。
 function modelConfigFrom(
   provider: Provider,
   model: string | undefined,
   contextWindow: string | undefined,
   think: boolean | undefined,
-): { ollama?: OllamaConfig; openrouter?: OpenRouterConfig } {
+  effort: string | undefined,
+): { ollama?: OllamaConfig; openrouter?: OpenRouterConfig; claude?: ClaudeConfig } {
   const givenModelFlag =
     model !== undefined ? "--model" : contextWindow !== undefined ? "--context-window" : undefined;
   const givenThinkFlag = think === undefined ? undefined : think ? "--think" : "--no-think";
 
+  if (provider !== "claude" && effort !== undefined) {
+    throw new JpaperError(2, "input", "--effort は --provider claude のときだけ指定できます");
+  }
+
   if (provider === "claude") {
-    const given = givenModelFlag ?? givenThinkFlag;
-    if (given !== undefined) {
-      throw new JpaperError(2, "input", `${given} は --provider ollama|openrouter のときだけ指定できます`);
+    if (contextWindow !== undefined) {
+      throw new JpaperError(2, "input", "--context-window は --provider ollama|openrouter のときだけ指定できます");
     }
-    return {};
+    if (givenThinkFlag !== undefined) {
+      throw new JpaperError(2, "input", `${givenThinkFlag} は --provider ollama のときだけ指定できます`);
+    }
+    if (model !== undefined && !isClaudeModelId(model)) {
+      throw new JpaperError(2, "input", `--model の値が不正です: ${model}`);
+    }
+    if (effort !== undefined && !CLAUDE_EFFORT_PATTERN.test(effort)) {
+      throw new JpaperError(2, "input", `--effort は英小文字の水準名で指定してください: ${effort}`);
+    }
+    if (model === undefined && effort === undefined) return {};
+    return {
+      claude: {
+        ...(model === undefined ? {} : { model: model.trim() }),
+        ...(effort === undefined ? {} : { effort }),
+      },
+    };
   }
 
   if (provider === "openrouter") {
@@ -182,6 +202,7 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number
       flags.get("--model"),
       flags.get("--context-window"),
       wantThink ? true : wantNoThink ? false : undefined,
+      flags.get("--effort"),
     );
     const concurrencyArg = flags.get("--concurrency");
     const input = detectInput(inputStr);

@@ -1,6 +1,12 @@
 // 契約付録 §5。プロバイダ選択。
 import type { LlmClient, Provider, TraceSink } from "../types/contract.js";
-import { DEFAULT_OLLAMA, DEFAULT_OPENROUTER, type OllamaConfig, type OpenRouterConfig } from "../config.js";
+import {
+  DEFAULT_OLLAMA,
+  DEFAULT_OPENROUTER,
+  type ClaudeConfig,
+  type OllamaConfig,
+  type OpenRouterConfig,
+} from "../config.js";
 import { makeOllamaClient, type OllamaDeps } from "./ollama.js";
 import { makeClaudeClient, type ClaudeDeps } from "./claude.js";
 import { makeOpenRouterClient, type OpenRouterDeps } from "./openrouter.js";
@@ -8,6 +14,7 @@ import { makeOpenRouterClient, type OpenRouterDeps } from "./openrouter.js";
 export interface MakeLlmClientOptions {
   ollama?: OllamaConfig;
   openrouter?: OpenRouterConfig;
+  claude?: ClaudeConfig;
   ollamaDeps?: OllamaDeps;
   claudeDeps?: ClaudeDeps;
   openrouterDeps?: OpenRouterDeps;
@@ -29,5 +36,5 @@ export function makeLlmClient(
       ...opts.openrouterDeps,
     });
   }
-  return makeClaudeClient({ trace: opts.trace, ...opts.claudeDeps });
+  return makeClaudeClient(opts.claude ?? {}, { trace: opts.trace, ...opts.claudeDeps });
 }

@@ -25,6 +25,19 @@ export function paperOutDir(paperId: string, outOpt?: string): string {
 
 export const DEFAULT_CLAUDE_CW = 200_000; // 契約付録 §4
 
+// 契約付録 §5。未指定の項目は claude CLI に渡さない（JPaper は既定値を持たない）。
+export interface ClaudeConfig {
+  model?: string;
+  effort?: string;
+}
+
+// 契約付録 §5。推論強度は英小文字の水準名だけを受け付ける（水準の列挙はしない）。
+export const CLAUDE_EFFORT_PATTERN = /^[a-z]+$/;
+
+export function isClaudeModelId(v: unknown): v is string {
+  return typeof v === "string" && v.trim() !== "" && !v.trim().startsWith("-");
+}
+
 // 契約付録 §5。OpenRouter（OpenAI 互換）。同一モデルを Ollama とどちらでも回せる
 // 組み合わせを既定に置く。ADR 20260815-openrouter-for-fast-iteration。
 export interface OpenRouterConfig {

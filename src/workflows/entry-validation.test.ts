@@ -163,6 +163,44 @@ describe("ollama 設定の検証", () => {
   });
 });
 
+describe("claude 設定の検証", () => {
+  it("空・空白のみ・先頭が - ・文字列でないモデル ID は input で返る", async () => {
+    const { translatePaper } = await import("./translate-paper.js");
+    for (const bad of ["", "   ", "-x", null, 42]) {
+      const r = await translatePaper({ kind: "path", path: "/tmp/x.tar" }, {
+        provider: "claude",
+        claude: { model: bad as unknown as string },
+      });
+      expect(r.error?.kind).toBe("input");
+      expect(r.error?.message).toContain("claude.model");
+    }
+  });
+
+  it("英小文字の水準名でない effort は input で返る", async () => {
+    const { translatePaper } = await import("./translate-paper.js");
+    for (const bad of ["", "Medium", "high2", "high -c x", null, 1]) {
+      const r = await translatePaper({ kind: "path", path: "/tmp/x.tar" }, {
+        provider: "claude",
+        claude: { effort: bad as unknown as string },
+      });
+      expect(r.error?.kind).toBe("input");
+      expect(r.error?.message).toContain("claude.effort");
+    }
+  });
+
+  it("オブジェクトでない claude 設定は input で返る", async () => {
+    const { translatePaper } = await import("./translate-paper.js");
+    for (const bad of [null, "sonnet"]) {
+      const r = await translatePaper({ kind: "path", path: "/tmp/x.tar" }, {
+        provider: "claude",
+        claude: bad as unknown as { model?: string },
+      });
+      expect(r.error?.kind).toBe("input");
+      expect(r.error?.message).toContain("claude");
+    }
+  });
+});
+
 describe("outDir の検証", () => {
   it("null / 空文字 / 数値は input で返る（JSON body の null が 500 にならない）", async () => {
     const { translatePaper } = await import("./translate-paper.js");
