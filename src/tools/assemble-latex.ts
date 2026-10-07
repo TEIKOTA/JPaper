@@ -20,9 +20,11 @@ const END_DOC = "\\end{document}";
 // LuaTeX ネイティブ UTF-8＋luatexja がフォントを担うため原前文から外す。
 const DROP_PACKAGES = /^[ \t]*\\usepackage(?:\[[^\]]*\])?\{(?:inputenc|fontenc)\}[ \t]*\r?\n?/gm;
 
+const JP_FONT = "\\usepackage[ipaex]{luatexja-preset} % JPaper 注入: 日本語組版 (契約付録 §7)";
+const DOCUMENTCLASS_LINE = /\\documentclass\s*(?:\[[^\]]*\])?\s*\{[^}]*\}[^\n]*\n?/;
+
 const JP_INJECTION = [
-  "% --- JPaper 注入: 日本語組版・共有引用 (契約付録 §7) ---",
-  "\\usepackage[ipaex]{luatexja-preset}",
+  "% --- JPaper 注入: 共有引用 (契約付録 §7) ---",
   "\\providecommand{\\citep}{\\cite}",
   "\\providecommand{\\citet}{\\cite}",
   "% --- JPaper 注入ここまで ---",
@@ -53,7 +55,52 @@ export function prependLuatexCompat(preamble: string): string {
 // 原前文へ共有部品（luatexja・引用フォールバック・graphicx 保証）を注入する。
 export function injectShared(preamble: string): string {
   const graphicx = hasPackage(preamble, "graphicx") ? "" : "\n\\usepackage{graphicx}";
-  return `${prependLuatexCompat(preamble).replace(/\s*$/, "")}\n${JP_INJECTION}${graphicx}\n`;
+  return `${injectJapaneseFont(prependLuatexCompat(preamble)).replace(/\s*$/, "")}\n${JP_INJECTION}${graphicx}\n`;
+}
+
+// luatexja は \documentclass の直後に読む。⚠ landmines.md
+function injectJapaneseFont(preamble: string): string {
+  const m = DOCUMENTCLASS_LINE.exec(preamble);
+  if (m === null) return `${preamble.replace(/\s*$/, "")}\n${JP_FONT}\n`;
+  const at = m.index + m[0].length;
+  const sep = m[0].endsWith("\n") ? "" : "\n";
+  return `${preamble.slice(0, at)}${sep}${JP_FONT}\n${preamble.slice(at)}`;
+}
+
+// luatexja が定義済みの命令名（和文書体の切り替え）。
+const LUATEXJA_NAMES = ["mc", "gt"];
+
+// 論文が \newcommand で定義し直す luatexja の命令名を、定義済みでも通る \DeclareRobustCommand に替える。⚠ landmines.md
+export function releaseLuatexjaNames(tex: string): string {
+  const names = LUATEXJA_NAMES.join("|");
+  return tex.replace(
+    new RegExp(`\\\\newcommand(\\*?)\\s*(\\{\\s*\\\\(?:${names})\\s*\\}|\\\\(?:${names})(?![A-Za-z@]))`, "g"),
+    "\\DeclareRobustCommand$1$2",
+  );
+}
+
+// \caption の引数の中の空行を、行数を変えずに段落区切りでなくする。⚠ landmines.md
+export function fuseCaptionParagraphs(tex: string): string {
+  let out = "";
+  let from = 0;
+  const re = /\\caption\*?\s*(?:\[[^\]]*\])?\s*\{/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(tex)) !== null) {
+    const open = m.index + m[0].length;
+    let depth = 1;
+    let i = open;
+    for (; i < tex.length && depth > 0; i++) {
+      const c = tex[i];
+      if (c === "\\") i++;
+      else if (c === "{") depth++;
+      else if (c === "}") depth--;
+    }
+    if (depth !== 0) break;
+    out += tex.slice(from, open) + tex.slice(open, i).replace(/\n[ \t]*(?=\n)/g, "\n%");
+    from = i;
+    re.lastIndex = i;
+  }
+  return out + tex.slice(from);
 }
 
 // 契約付録 §7・組版 shim ADR(20260809)。原 class 固有のマークアップを article 上で吸収する。
@@ -214,7 +261,7 @@ export function assembleWithMap(input: {
   const layout: Layout = input.mode ?? "original";
   let out = `${buildPreamble(input.cleanLatex, layout, input.title)}${BEGIN_DOC}\n`;
   const parts = input.segments
-    .map((s) => ({ id: s.id, tex: sanitizeMath(s.tex).trim() }))
+    .map((s) => ({ id: s.id, tex: sanitizeMath(fuseCaptionParagraphs(s.tex)).trim() }))
     .filter((p) => p.tex !== "");
   const sourceMap: SourceSpan[] = [];
   parts.forEach((p, i) => {
@@ -224,7 +271,7 @@ export function assembleWithMap(input: {
     if (i < parts.length - 1) out += "\n\n";
   });
   out += `\n${END_DOC}\n`;
-  return { mainTex: out, layout, sourceMap };
+  return { mainTex: releaseLuatexjaNames(out), layout, sourceMap };
 }
 
 export function segmentAtLine(sourceMap: SourceSpan[], line: number): string | undefined {

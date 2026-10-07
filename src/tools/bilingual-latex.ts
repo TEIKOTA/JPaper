@@ -1,5 +1,5 @@
 // 契約付録 §7・対訳 PDF ADR(20261006)。原文と訳文を段落ペアにして paracol の対訳 main.tex を組み立てる。
-import { extractPreamble, sanitizeMath } from "./assemble-latex.js";
+import { extractPreamble, releaseLuatexjaNames, sanitizeMath } from "./assemble-latex.js";
 
 export interface BilingualSegment {
   id: string;
@@ -322,7 +322,7 @@ export function assembleBilingual(input: {
   const preamble = extractPreamble(input.translatedMainTex);
   const { pairs, fallbackSegments } = pairSegments(input.source, input.translated);
   const { blocks, titled } = renderPairs(pairs, { left: extractPreamble(input.cleanLatex), right: preamble });
-  const mainTex = `${bilingualPreamble(preamble)}${BEGIN}\n${paracolBody(blocks)}\\end{document}\n`;
+  const mainTex = releaseLuatexjaNames(`${bilingualPreamble(preamble)}${BEGIN}\n${paracolBody(blocks)}\\end{document}\n`);
   const titleUnplaced = !titled && input.source.some((s) => TITLE_COMMANDS.test(stripComments(s.tex)));
   return { mainTex, pairs: blocks.length, fallbackSegments, titleUnplaced };
 }

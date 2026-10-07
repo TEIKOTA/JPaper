@@ -149,3 +149,21 @@
 - **おかしく見える点**: 契約付録 §4 の予算は文脈長から逆算するのに、claude（CW 20 万）でも 8,000 で止めている。
 - **なぜ意図的か**: `\section` を使わない論文は全文が 1 節になり、訳文の生成が呼び出し期限 300 秒を超えて run ごと落ちる（実測: UNI 2308.15474、1 節 59,825 トークン）。完了した論文の最大節は 7,442 トークン・最長 180 秒なので、8,000 なら既存の分割は変わらない。
 - **正本ポインタ**: [節の予算の上限 ADR](../adr/20261007-cap-segment-budget-by-output-time.md)、契約付録 §4。回帰テストは `src/segment/segmenter.test.ts`。
+
+## `src/tools/assemble-latex.ts` — luatexja を前文の末尾でなく `\documentclass` の直後で読む
+
+- **おかしく見える点**: 日本語組版のパッケージだけを共有部品の注入（前文の末尾）から外し、原論文のパッケージより前に差し込んでいる。
+- **なぜ意図的か**: 前文の末尾で読むと、原論文の独自スタイルが先に済ませたフォント設定とかみ合わず、和文フォントが `Missing font identifier` で落ちる（実測: CellViT 2306.15350 の `preprint.sty`、`\twocolumn[…]` の閉じ括弧で致命的エラー。原文のままでも同じ）。`\documentclass` の直後に移すと組版が通る。
+- **正本ポインタ**: 契約付録 §7、issue #320。回帰テストは `src/tools/assemble-latex.test.ts`。
+
+## `src/tools/assemble-latex.ts` — `\caption` の引数の中の空行を `%` だけの行に置き換える
+
+- **おかしく見える点**: 訳文を組み立てるとき、`\caption{…}` の中の空行に `%` を入れている。原文にも訳文にも無い文字を足している。
+- **なぜ意図的か**: `\caption` の引数は段落区切りを許さず、空行があると `Paragraph ended before \caption@prepareanchor was complete` で組版が落ちる。原文にこの空行がある論文は、現在の TeX Live では原文のままでも組めない（実測: 2011.03395 seg-0042 の表キャプション）。`%` 行にすれば段落区切りでなくなり、行数は変わらないのでエラー行から節への逆引きもずれない。
+- **正本ポインタ**: 契約付録 §7、issue #320。回帰テストは `src/tools/assemble-latex.test.ts`。
+
+## `src/tools/assemble-latex.ts` — 論文の `\newcommand{\mc}` / `\newcommand{\gt}` を `\DeclareRobustCommand` に替える
+
+- **おかしく見える点**: 原文の `\newcommand` を、名前が `\mc` / `\gt` のときだけ書き換えている。
+- **なぜ意図的か**: luatexja はこの 2 つを和文書体の切り替えとして定義済みなので、論文が同じ名前を `\newcommand` すると `Command \mc already defined` で組版が落ちる（実測: 2011.03395 seg-0059 の `\newcommand{\mc}[1]{\mathcal{#1}}`）。`\DeclareRobustCommand` は定義済みでも上書きでき、論文の意味が勝つ。
+- **正本ポインタ**: 契約付録 §7、issue #320。回帰テストは `src/tools/assemble-latex.test.ts`。
