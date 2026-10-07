@@ -56,7 +56,9 @@ import {
 } from "../terminology/replace.js";
 import {
   sentencePreviews,
+  simpleMacros,
   sourceSentences,
+  type Macros,
   type Piece,
   type SentencePreview,
 } from "../terminology/replace-preview.js";
@@ -328,10 +330,17 @@ function sectionLabels(segments: readonly Segment[]): Map<string, string> {
   return labels;
 }
 
-function textItems(where: string, label: string, text: string, r: TermRewrite, source?: Piece[][]): PreviewItem[] {
+function textItems(
+  where: string,
+  label: string,
+  text: string,
+  r: TermRewrite,
+  macros: Macros,
+  source?: Piece[][],
+): PreviewItem[] {
   const occs = findOccurrences(text, r.oldJa, r.shields);
   if (occs.length === 0) return [];
-  return sentencePreviews(text, occs, r.newJa).map((p, i) => {
+  return sentencePreviews(text, occs, r.newJa, macros).map((p, i) => {
     const src = source === undefined || source.length === 0 ? undefined : source[Math.min(i, source.length - 1)];
     return { where, label, ...p, ...(src === undefined ? {} : { source: src }) };
   });
@@ -370,6 +379,7 @@ export function planTermEdit(state: PaperState, src: string, input: string): Edi
   const sources = state.segments.map((e) => e.source);
   const firstOcc = buildFirstOccurrenceIndex(sources, ctx.resolved.map((x) => x.src));
   const labels = sectionLabels(sources);
+  const macros = simpleMacros(state.ingest.cleanLatex);
 
   const items: PreviewItem[] = [];
   const contextItems: PreviewItem[] = [];
@@ -383,10 +393,17 @@ export function planTermEdit(state: PaperState, src: string, input: string): Edi
     shielded += occs.filter((o) => o.shieldedBy !== undefined).length;
     const isTitle = e.id === TITLE_SEGMENT_ID;
     items.push(
-      ...textItems(e.id, isTitle ? "タイトル" : labels.get(e.id) ?? "", e.value.ja, r, sourceSentences(e.source.latex, src)),
+      ...textItems(
+        e.id,
+        isTitle ? "タイトル" : labels.get(e.id) ?? "",
+        e.value.ja,
+        r,
+        macros,
+        sourceSentences(e.source.latex, src, macros),
+      ),
     );
     e.value.warnIssues.forEach((w, i) =>
-      contextItems.push(...textItems(e.id, `評価の訳注 ${String(i + 1)}`, w.message, r)),
+      contextItems.push(...textItems(e.id, `評価の訳注 ${String(i + 1)}`, w.message, r, macros)),
     );
     const value = SectionLoopCache.parse({
       ...e.value,
@@ -400,10 +417,10 @@ export function planTermEdit(state: PaperState, src: string, input: string): Edi
   }
 
   for (const old of state.ctx.resolved) {
-    if (old.note !== undefined) contextItems.push(...textItems("glossary.md", `${old.src} の訳注`, old.note, r));
+    if (old.note !== undefined) contextItems.push(...textItems("glossary.md", `${old.src} の訳注`, old.note, r, macros));
   }
-  contextItems.push(...textItems("brief.md", "文書ブリーフ", state.md.brief, r));
-  contextItems.push(...textItems("style.md", "文体契約", state.md.style, r));
+  contextItems.push(...textItems("brief.md", "文書ブリーフ", state.md.brief, r, macros));
+  contextItems.push(...textItems("style.md", "文体契約", state.md.style, r, macros));
 
   const g = state.glossaryStep.value;
   const glossaryValue = GlossaryBuilderOut.parse({

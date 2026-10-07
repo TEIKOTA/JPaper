@@ -66,9 +66,28 @@ function plainProse(tex: string): string {
     .replace(/~/g, " ");
 }
 
+export type Macros = ReadonlyMap<string, string>;
+
+// 引数を取らない \newcommand の名前→中身（\newcommand{\diverse}{\textsc{DIVERSE}}）。表示専用。
+export function simpleMacros(latex: string): Macros {
+  const defs = new Map<string, string>();
+  const re = /\\(?:re)?newcommand\*?\s*\{?\\([A-Za-z@]+)\}?\s*\{((?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*)\}/g;
+  for (const m of latex.matchAll(re)) defs.set(m[1]!, m[2]!);
+  return defs;
+}
+
+export function expandMacros(tex: string, macros: Macros | undefined): string {
+  if (macros === undefined || macros.size === 0) return tex;
+  let out = tex;
+  for (let i = 0; i < 3; i++) {
+    out = out.replace(/\\([A-Za-z@]+)(?![A-Za-z@])/g, (all, name: string) => macros.get(name) ?? all);
+  }
+  return out;
+}
+
 // TeX を読める程度に整える（表示専用）。行内の数式は原文のまま、別行立ての数式は［数式］にする。
-export function plainText(tex: string, trim = true): string {
-  const t = tex.replace(/(^|[^\\])%[^\n]*/g, "$1").replace(DISPLAY_MATH, " ［数式］ ");
+export function plainText(tex: string, trim = true, macros?: Macros): string {
+  const t = expandMacros(tex, macros).replace(/(^|[^\\])%[^\n]*/g, "$1").replace(DISPLAY_MATH, " ［数式］ ");
   let out = "";
   let at = 0;
   for (const m of t.matchAll(INLINE_MATH)) {
@@ -79,15 +98,19 @@ export function plainText(tex: string, trim = true): string {
   return trim ? s.trim() : s;
 }
 
-function pieces(text: string, cuts: { start: number; end: number; mark: PieceMark; replacement?: string }[]): Piece[] {
+function pieces(
+  text: string,
+  cuts: { start: number; end: number; mark: PieceMark; replacement?: string }[],
+  macros?: Macros,
+): Piece[] {
   const out: Piece[] = [];
   let at = 0;
   for (const c of cuts) {
-    out.push({ text: plainText(text.slice(at, c.start), false) });
+    out.push({ text: plainText(text.slice(at, c.start), false, macros) });
     out.push({ text: c.replacement ?? text.slice(c.start, c.end), mark: c.mark });
     at = c.end;
   }
-  out.push({ text: plainText(text.slice(at), false) });
+  out.push({ text: plainText(text.slice(at), false, macros) });
   const first = out[0]!;
   const last = out[out.length - 1]!;
   if (first.mark === undefined) first.text = first.text.trimStart();
@@ -100,6 +123,7 @@ export function sentencePreviews(
   text: string,
   occs: readonly Occurrence[],
   newJa: string,
+  macros?: Macros,
 ): SentencePreview[] {
   const groups: { start: number; end: number; cutStart: boolean; cutEnd: boolean; occs: Occurrence[] }[] = [];
   for (const o of occs) {
@@ -118,6 +142,7 @@ export function sentencePreviews(
     const before = pieces(
       sentence,
       local.map((o) => ({ ...o, mark: o.shieldedBy === undefined ? ("old" as const) : ("shield" as const) })),
+      macros,
     );
     const after = pieces(
       sentence,
@@ -126,6 +151,7 @@ export function sentencePreviews(
           ? { ...o, mark: "new" as const, replacement: newJa }
           : { ...o, mark: "shield" as const },
       ),
+      macros,
     );
     const ellipsis = (ps: Piece[]): Piece[] => [
       ...(g.cutStart ? [{ text: "…" }] : []),
@@ -136,11 +162,11 @@ export function sentencePreviews(
     const nextRange = g.end < text.length ? jaSentenceAt(text, Math.min(text.length - 1, g.end + 1)) : undefined;
     const prev =
       prevRange && prevRange.end <= g.start
-        ? `${prevRange.cutStart ? "…" : ""}${plainText(text.slice(prevRange.start, prevRange.end))}`
+        ? `${prevRange.cutStart ? "…" : ""}${plainText(text.slice(prevRange.start, prevRange.end), true, macros)}`
         : undefined;
     const next =
       nextRange && nextRange.start >= g.end
-        ? `${plainText(text.slice(nextRange.start, nextRange.end))}${nextRange.cutEnd ? "…" : ""}`
+        ? `${plainText(text.slice(nextRange.start, nextRange.end), true, macros)}${nextRange.cutEnd ? "…" : ""}`
         : undefined;
     return {
       before: ellipsis(before),
@@ -158,7 +184,7 @@ function escapeRegExp(s: string): string {
 }
 
 // 原文で src が出る文（出現順）。src は太字の印を付ける。
-export function sourceSentences(latex: string, src: string): Piece[][] {
+export function sourceSentences(latex: string, src: string, macros?: Macros): Piece[][] {
   const re = new RegExp(`(?<![A-Za-z])${escapeRegExp(src)}(?![A-Za-z])`, "gi");
   const out: Piece[][] = [];
   let lastEnd = -1;
@@ -187,7 +213,7 @@ export function sourceSentences(latex: string, src: string): Piece[][] {
       end: x.index + x[0].length,
       mark: "src" as const,
     }));
-    out.push(pieces(sentence, cuts));
+    out.push(pieces(sentence, cuts, macros));
   }
   return out;
 }

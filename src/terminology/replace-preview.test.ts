@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { plainText, sentencePreviews, sourceSentences } from "./replace-preview.js";
+import { expandMacros, plainText, sentencePreviews, simpleMacros, sourceSentences } from "./replace-preview.js";
 import { findOccurrences } from "./replace.js";
 
 const shields = [{ src: "empirical Rashomon set", ja: "経験的ラショモン集合" }];
@@ -48,5 +48,11 @@ describe("確認画面の断片（契約付録 §9）", () => {
     expect(plainText("集合 $R_\\epsilon$ は \\cite{a} と \\ref{b}。\\[x=1\\]")).toBe(
       "集合 $R_\\epsilon$ は [引用] と [参照]。 ［数式］",
     );
+  });
+
+  it("引数を取らない \\newcommand だけを展開する", () => {
+    const m = simpleMacros("\\newcommand{\\diverse}{\\textsc{DIVERSE}\\xspace}\n\\newcommand{\\f}[1]{#1}");
+    expect([...m.keys()]).toEqual(["diverse"]);
+    expect(plainText(expandMacros("\\diverse: 集合 \\f{x}", m))).toBe("DIVERSE: 集合 x");
   });
 });
