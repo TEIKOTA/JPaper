@@ -125,3 +125,9 @@
 - **おかしく見える点**: 1 回答えさせるだけの呼び出しに `--safe-mode` を付け、作業ディレクトリを JPaper の実行場所でなく一時ディレクトリにしている。
 - **なぜ意図的か**: 既定の claude CLI は、利用者の `~/.claude/CLAUDE.md`、作業ディレクトリのプロジェクト `CLAUDE.md`、SessionStart hook の出力、git status を毎回の文脈に載せる（実測: repo の中で約 15,400 入力トークン、「読み込んでいる指示」を尋ねるとそれらの見出しを答える）。訳文が repo の運用ルールや作業状況に引きずられ、呼び出しごとに約 13,000 トークンが無駄になる。`--safe-mode` で CLAUDE.md・hook などを止め、repo の外で起動して git status などを消す（実測: 約 2,100 トークン、「なし」）。`--bare` は OAuth を読まずサブスクリプション認証で使えないので採らない。
 - **正本ポインタ**: issue #306、契約付録 §5。
+
+## `src/terminology/collect.ts` — `add` が大文字句の先頭の機能語を外し、参照語だけの句を捨てる
+
+- **おかしく見える点**: 候補をそのまま渡さず、`The` / `While` / `In` などの文頭の語を外し、`Figure` / `Sec` などの参照語だけの句を捨てている。
+- **なぜ意図的か**: 大文字始まりの連語パターンは文頭の語も拾う（`The PanNuke`、`While DCAN`、`In Figure`）。用語集の LLM がこれを keep-original に分類すると、形式検査が訳文にその句が原文どおり現れることを要求し、ほぼ全節が落ちる（実測: CellViT 2306.15350 を claude sonnet / effort medium で 27/29 節が keep-original で失敗、128 呼び出し）。
+- **正本ポインタ**: issue #314。回帰テストは `src/terminology/collect.test.ts`。

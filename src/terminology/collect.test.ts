@@ -68,3 +68,19 @@ describe("定義句パターンのコスト", () => {
     expect(got("We refer to it as self-attention.")).toContain("self-attention");
   });
 });
+
+describe("文頭の機能語と参照語", () => {
+  it("大文字句の先頭の機能語を外し、図表・節の参照語だけの句は候補にしない", () => {
+    const srcs = collectCandidates(
+      "The PanNuke dataset is used. While DCAN works, Unlike CNNs it fails. In Figure 3 we show. See Sec 2.",
+    ).map((c) => c.src);
+    expect(srcs).toContain("PanNuke");
+    expect(srcs).toContain("DCAN");
+    expect(srcs).toContain("CNNs");
+    expect(srcs).not.toContain("The PanNuke");
+    expect(srcs).not.toContain("While DCAN");
+    expect(srcs).not.toContain("Figure");
+    expect(srcs).not.toContain("In Figure");
+    expect(srcs).not.toContain("Sec");
+  });
+});
