@@ -228,8 +228,11 @@ const SETUP = [
   "% --- JPaper 注入ここまで ---",
 ].join("\n");
 
+// 対訳ではリンクを作らない（hyperref の draft）。⚠ landmines.md
+const NO_LINKS = "\\PassOptionsToPackage{draft}{hyperref} % JPaper 注入: 対訳はリンクを作らない";
+
 export function bilingualPreamble(preamble: string): string {
-  return `${preamble.replace(/\s*$/, "")}\n${SETUP}\n`;
+  return `${NO_LINKS}\n${preamble.replace(/\s*$/, "")}\n${SETUP}\n`;
 }
 
 const BEGIN = [
@@ -310,7 +313,10 @@ export function renderPairs(
 }
 
 export function paracolBody(blocks: string[]): string {
-  return blocks.length === 0 ? "" : `\\begin{paracol}{2}\n\\jpRobustNotes\n${blocks.join("\n\n")}\n\\end{paracol}\n`;
+  // 段の中の \\textwidth は段の幅にする（原文の width=\\textwidth の図が隣の段へはみ出さない）。⚠ landmines.md
+  return blocks.length === 0
+    ? ""
+    : `\\begin{paracol}{2}\n\\setlength{\\textwidth}{\\columnwidth}\n\\jpRobustNotes\n${blocks.join("\n\n")}\n\\end{paracol}\n`;
 }
 
 // translatedMainTex は採用されたレイアウトで組んだ和訳 main.tex（前文をそのまま使う）。
