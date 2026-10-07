@@ -176,7 +176,7 @@ CREATE INDEX idx_term_src ON term(src);
 新B レビューを受け、v1 を2段で発注する。
 
 - **(A) 固定価格 = コア**: 用語 DB（`node:sqlite`）／薄いランタイム＋エージェント配線／節ループ品質ゲート（形式検査＋evaluator＋再訳）／durable checkpoint／CLI・プロバイダ。§1–6・§8 の契約で確定。
-- **(B) 上限付き T&M = 組版・図・引用レイヤ**: `assemble-latex`（訳文＋manifest→`main.tex`/chapters。**既定は原プリアンブル温存＝レイアウト忠実、日本語で組めない論文は共通 luatexja テンプレへ明示的フォールバックし `RunSummary.layout` に記録**。[組版レイアウト ADR](../adr/20260710-typesetting-layout-original-first-hybrid.md)）／共通プリアンブル・引用マクロ・日本語フォント設定は原プリアンブルへ注入する共有部品／全文組版ゲートのビルドエラー分類＋エラー行→セグメント逆引き／`.bbl` 番号順パース＋`\cite`→番号対応表／図 manifest／**言語整合 lint（[翻訳一貫性 ADR](../adr/20260710-translation-consistency-brief-style-and-annotations.md) 決定4: 単位 SI 表記・略語初出定義・glossary 外の訳語表記ゆれ・数字表記を決定的に検査。PerfectIt 相当まで許容）**／**訳注レンダリング（決定3: `notes.json`→本文の文書初出のみ `\footnote`＋巻末「訳注一覧」）**。工数の幅が大きいため実費上限方式。
+- **(B) 上限付き T&M = 組版・図・引用レイヤ**: `assemble-latex`（訳文＋manifest→`main.tex`/chapters。**既定は原プリアンブル温存＝レイアウト忠実、日本語で組めない論文は共通 luatexja テンプレへ明示的フォールバックし `RunSummary.layout` に記録**。[組版レイアウト ADR](../adr/20260710-typesetting-layout-original-first-hybrid.md)）／共通プリアンブル・引用マクロ・日本語フォント設定は原プリアンブルへ注入する共有部品（luatexja は `\documentclass` の直後、ほかは前文の末尾。組立時に `\caption` 内の空行を `%` 行にし、論文の `\newcommand{\mc}` / `{\gt}` を `\DeclareRobustCommand` に替える。issue #320）／全文組版ゲートのビルドエラー分類＋エラー行→セグメント逆引き／`.bbl` 番号順パース＋`\cite`→番号対応表／図 manifest／**言語整合 lint（[翻訳一貫性 ADR](../adr/20260710-translation-consistency-brief-style-and-annotations.md) 決定4: 単位 SI 表記・略語初出定義・glossary 外の訳語表記ゆれ・数字表記を決定的に検査。PerfectIt 相当まで許容）**／**訳注レンダリング（決定3: `notes.json`→本文の文書初出のみ `\footnote`＋巻末「訳注一覧」）**。工数の幅が大きいため実費上限方式。
 - **Phase2（別フェーズ）**: PDF-only 抽出（Nougat/GPU/Docker/`nougat-ocr`/`pymupdf`/`pdfplumber`）／`.bbl` 著者年スタイル／`glossary.db` 並行実行。
 
 ## 7.5 (A) コアの受け入れ条件（(B) 非依存で定義）

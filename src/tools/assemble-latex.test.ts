@@ -9,6 +9,8 @@ import {
   prependLuatexCompat,
   stripDocumentClass,
   sanitizeMath,
+  fuseCaptionParagraphs,
+  releaseLuatexjaNames,
 } from "./assemble-latex.js";
 
 const CLEAN = [
@@ -58,6 +60,26 @@ describe("injectShared", () => {
     expect(injectShared("\\documentclass{article}")).toContain("\\usepackage{graphicx}");
     const withGx = injectShared("\\documentclass{article}\n\\usepackage{graphicx}");
     expect(withGx.match(/\\usepackage\{graphicx\}/g)!.length).toBe(1);
+  });  it("luatexja は \\documentclass の直後、ほかのパッケージより前に読む", () => {
+    const out = injectShared("\\documentclass[twocolumn]{article} \n\\usepackage{preprint}\n");
+    expect(out.indexOf("luatexja-preset")).toBeGreaterThan(out.indexOf("\\documentclass"));
+    expect(out.indexOf("luatexja-preset")).toBeLessThan(out.indexOf("\\usepackage{preprint}"));
+  });
+  it("\\documentclass が無ければ末尾に読む", () => {
+    expect(injectShared("\\usepackage{x}")).toMatch(/\\usepackage\{x\}\n\\usepackage\[ipaex\]\{luatexja-preset\}/);
+  });
+});
+
+describe("fuseCaptionParagraphs", () => {
+  it("\\caption の中の空行だけをコメント行にし、行数を保つ", () => {
+    const src = "a\n\n\\caption{x {y}\n\nz}\n\nb";
+    const out = fuseCaptionParagraphs(src);
+    expect(out).toBe("a\n\n\\caption{x {y}\n%\nz}\n\nb");
+    expect(out.split("\n").length).toBe(src.split("\n").length);
+  });
+  it("短い見出し付き・閉じない引数", () => {
+    expect(fuseCaptionParagraphs("\\caption[s]{p\n  \nq}")).toBe("\\caption[s]{p\n%\nq}");
+    expect(fuseCaptionParagraphs("\\caption{p\n\nq")).toBe("\\caption{p\n\nq");
   });
 });
 
@@ -219,5 +241,13 @@ describe("sanitizeMath のコスト", () => {
   it("閉じた環境の空行は従来どおり潰す", () => {
     expect(sanitizeMath("\\begin{align}a\n\nb\\end{align}")).toBe("\\begin{align}a\nb\\end{align}");
     expect(sanitizeMath("\\begin{align*}a\n\nb\\end{align*}")).toBe("\\begin{align*}a\nb\\end{align*}");
+  });
+});
+
+describe("releaseLuatexjaNames", () => {
+  it("\\mc / \\gt の \\newcommand だけを \\DeclareRobustCommand に替える", () => {
+    expect(releaseLuatexjaNames("\\newcommand{\\mc}[1]{\\mathcal{#1}}")).toBe("\\DeclareRobustCommand{\\mc}[1]{\\mathcal{#1}}");
+    expect(releaseLuatexjaNames("\\newcommand*\\gt{x}")).toBe("\\DeclareRobustCommand*\\gt{x}");
+    expect(releaseLuatexjaNames("\\newcommand{\\mcal}{x}\\newcommand\\gtr{y}")).toBe("\\newcommand{\\mcal}{x}\\newcommand\\gtr{y}");
   });
 });
