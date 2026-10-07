@@ -61,6 +61,8 @@ export const TranslatorIn = z.object({
   glossarySlice: z.array(ResolvedTerm),
   priorJa: z.string().optional(),
   issues: z.array(z.string()).optional(),
+  // 訳文の囲みの中に成果物 PDF の短い英語名の行を足させるか（title 節だけ）。契約付録 §8
+  askPdfName: z.boolean().optional(),
 });
 export type TranslatorIn = z.infer<typeof TranslatorIn>;
 
@@ -81,7 +83,8 @@ function foldSingleKeyed(v: unknown): unknown {
 
 export const TranslatorOut = z.preprocess(
   foldSingleKeyed,
-  z.object({ segmentId: z.string(), ja: z.string() }),
+  // pdfName は askPdfName のとき訳文から取り外した名前の行の値（整える前）。契約付録 §8
+  z.object({ segmentId: z.string(), ja: z.string(), pdfName: z.string().optional() }),
 );
 export type TranslatorOut = z.infer<typeof TranslatorOut>;
 

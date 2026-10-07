@@ -3,6 +3,7 @@
 # Status
 - accepted
 - 2026-10-07 に部分 supersede: 置換された条項＝決定 1 の論文ごと成果物の既定の置き場所 `./<paper>-ja/`（→ `./article/<paper>-ja/`）／存続する条項＝グローバル状態 `~/.jpaper/`、論文ごとフォルダの中身、`--out` の扱い、決定 2 以降／後継 ADR＝[20261007-default-output-under-article-dir](./20261007-default-output-under-article-dir.md)
+- 2026-10-07 に部分 supersede: 置換された条項＝決定 1 の既定レイアウトの成果物名 `main.pdf`（→ `<ID>_<slug>-ja.pdf`・`<ID>_<slug>-bilingual.pdf`）／存続する条項＝それ以外の決定 1 と決定 2 以降／後継 ADR＝[20261007-name-deliverable-pdfs-by-id-and-slug](./20261007-name-deliverable-pdfs-by-id-and-slug.md)
 
 # Situation
 - JPaper は学術論文の和訳エージェント。設計（取り込み〜組版・用語・durable・プロバイダ）は先行 ADR 群で確定済み。実装に入る前に、ユーザーが触れる**ファイル配置**と**起動インターフェース**を決める必要が生じた。

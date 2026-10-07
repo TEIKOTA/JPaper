@@ -218,9 +218,13 @@ describe("出力先は 1 つの論文のものに保つ", () => {
     expect((await run("a", "核A", outDir, ok)).status).toBe("ok");
     expect(existsSync(pdf)).toBe(true);
     expect(existsSync(bilingual)).toBe(true);
+    expect(existsSync(path.join(outDir, "a-ja.pdf"))).toBe(true);
+    expect(existsSync(path.join(outDir, "a-bilingual.pdf"))).toBe(true);
     expect((await run("a", "核A", outDir, fail)).status).toBe("failed");
     expect(existsSync(pdf)).toBe(true);
     expect(existsSync(bilingual)).toBe(true);
+    expect(existsSync(path.join(outDir, "a-ja.pdf"))).toBe(true);
+    expect(existsSync(path.join(outDir, "a-bilingual.pdf"))).toBe(true);
   });
 
   it("別の論文が組版で失敗しても、前の論文の正本を名乗ったままにしない", async () => {
@@ -237,6 +241,19 @@ describe("出力先は 1 つの論文のものに保つ", () => {
     expect(existsSync(path.join(outDir, "translation", "chapters", "seg-0000.tex"))).toBe(true);
     expect(existsSync(path.join(outDir, "translation", "build", "main.pdf"))).toBe(false);
     expect(existsSync(path.join(outDir, "translation", "bilingual"))).toBe(false);
+    expect(existsSync(path.join(outDir, "a-ja.pdf"))).toBe(false);
+    expect(existsSync(path.join(outDir, "a-bilingual.pdf"))).toBe(false);
+  });
+
+  it("別の論文が組版に成功したら、前の論文の成果物 PDF を残さない", async () => {
+    const outDir = path.join(tmp(), "out");
+    expect((await run("a", "核A", outDir, ok)).status).toBe("ok");
+    const r = await run("b", "核B", outDir, ok);
+    expect(r.status).toBe("ok");
+    expect(r.pdfPath).toBe(path.join(outDir, "b-ja.pdf"));
+    expect(r.summary.bilingual.pdfPath).toBe(path.join(outDir, "b-bilingual.pdf"));
+    expect(existsSync(path.join(outDir, "a-ja.pdf"))).toBe(false);
+    expect(existsSync(path.join(outDir, "a-bilingual.pdf"))).toBe(false);
   });
 });
 

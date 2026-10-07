@@ -73,7 +73,10 @@ describe("translatePaper（検収①）", () => {
     expect(result.summary.segments).toEqual({ total: 2, passed: 2, failed: 0 });
     expect(result.summary.buildOk).toBe(true);
     expect(result.summary.layout).toBe("original");
-    expect(result.pdfPath).toBe(path.join(outDir, "translation", "build", "main.pdf"));
+    // \title の無い論文は ID だけの名前（契約付録 §8「成果物 PDF の名前」）。
+    expect(result.pdfPath).toBe(path.join(outDir, "p-ja.pdf"));
+    expect(readFileSync(result.pdfPath!, "utf8")).toBe("%PDF");
+    expect(existsSync(path.join(outDir, "translation", "build", "main.pdf"))).toBe(true);
     expect(result.summary.glossary.proposedAdded).toBe(1);
     expect(existsSync(path.join(outDir, "translation", "chapters", "seg-0000.tex"))).toBe(true);
     expect(
@@ -476,10 +479,11 @@ describe("対訳 PDF", () => {
     });
     expect(r.exitCode).toBe(0);
     expect(built).toEqual(["translation", "bilingual"]);
-    expect(r.pdfPath).toBe(path.join(outDir, "translation", "build", "main.pdf"));
-    const pdf = path.join(outDir, "translation", "bilingual", "main.pdf");
+    expect(r.pdfPath).toBe(path.join(outDir, "p-ja.pdf"));
+    const pdf = path.join(outDir, "p-bilingual.pdf");
     expect(r.summary.bilingual).toEqual({ status: "ok", pdfPath: pdf, pairs: 2, fallbackSegments: 0 });
     expect(existsSync(pdf)).toBe(true);
+    expect(existsSync(path.join(outDir, "translation", "bilingual", "main.pdf"))).toBe(true);
     expect(existsSync(path.join(outDir, "translation", "bilingual.next"))).toBe(false);
     const tex = readFileSync(path.join(outDir, "translation", "bilingual", "main.tex"), "utf8");
     expect(tex).toContain("\\section{Intro}Alpha text.\n\\switchcolumn\n訳文\n\\switchcolumn*");
@@ -533,6 +537,8 @@ describe("対訳 PDF", () => {
     expect(existsSync(path.join(outDir, "translation", "bilingual.next"))).toBe(false);
     // 和訳 build は今回の訳に置き換わったので、前回の訳の対訳は残さない。
     expect(existsSync(path.join(outDir, "translation", "bilingual"))).toBe(false);
+    expect(existsSync(path.join(outDir, "p-bilingual.pdf"))).toBe(false);
+    expect(r.pdfPath).toBe(path.join(outDir, "p-ja.pdf"));
     expect(existsSync(path.join(outDir, "glossary.md"))).toBe(true);
     db.close();
   });
@@ -610,6 +616,7 @@ describe("対訳 PDF", () => {
     expect(r.error?.kind).toBe("canceled");
     expect(existsSync(path.join(outDir, "translation", "bilingual"))).toBe(false);
     expect(existsSync(path.join(outDir, "translation", "bilingual.next"))).toBe(false);
+    expect(existsSync(path.join(outDir, "p-bilingual.pdf"))).toBe(false);
     db.close();
   });
 

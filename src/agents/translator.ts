@@ -13,6 +13,7 @@ import {
   renderGlossaryBlock,
   renderDocContextBlock,
 } from "../runtime/system-prompt.js";
+import { PDF_NAME_LINE, takePdfNameLine } from "../tools/pdf-name.js";
 
 export interface DocContext {
   brief?: DocumentBrief;
@@ -37,11 +38,16 @@ function renderUser(input: TranslatorIn, doc: DocContext): string {
   // 語順は逆にできない——「1 文字も変えない」を先に置くと、モデルは指摘箇所ごと
   // 前稿をそのまま返す（実測: 2 稿目が 1 稿目とバイト単位で一致）。契約付録 §1
   const FORMAT = "訳文だけを ```tex と ``` で囲んで返す。JSON にしない。囲みの外に説明を書かない。";
+  // 契約付録 §8（成果物 PDF の名前）
+  const NAME =
+    input.askPdfName === true
+      ? `囲みの中の最後の行に \`${PDF_NAME_LINE} <name>\` を 1 行足す。<name> はこの論文を表す短い英語名（手法名・モデル名があればそれ、無ければ主題を表す 1〜3 語。英小文字・数字・ハイフンだけ）で、PDF のファイル名に使う。`
+      : "";
   lines.push(
     "## 指示",
     input.priorJa === undefined
-      ? `本文と図表のキャプション（\\caption の中身）を日本語に訳し、LaTeX の構造・制御綴り・参照・数式・図のパスは原文どおり残す。${FORMAT}`
-      : `指摘された箇所を必ず直す。直っていない訳をそのまま返さない。それ以外は前回の訳を土台にして残し、指摘と関係のない文を訳し直さない。直した全文を返し、${FORMAT}`,
+      ? `本文と図表のキャプション（\\caption の中身）を日本語に訳し、LaTeX の構造・制御綴り・参照・数式・図のパスは原文どおり残す。${FORMAT}${NAME}`
+      : `指摘された箇所を必ず直す。直っていない訳をそのまま返さない。それ以外は前回の訳を土台にして残し、指摘と関係のない文を訳し直さない。直した全文を返し、${FORMAT}${NAME}`,
   );
   return lines.join("\n\n");
 }
@@ -67,16 +73,28 @@ export async function translate(
       return undefined;
     }
   };
+  // 名前の行は囲みの中から取り外す。囲みの外に書かれた行も拾う。契約付録 §8
+  let outside: string | undefined;
+  const take =
+    input.askPdfName === true
+      ? (raw: string): string | undefined => {
+          outside = takePdfNameLine(raw).name;
+          return takeJa(raw);
+        }
+      : takeJa;
 
-  const ja = await runText(
+  const raw = await runText(
     client,
     {
       system,
       user: renderUser(input, doc),
       meta: { role: "translator", phase: "translate", segmentId: input.segmentId, pass },
     },
-    takeJa,
+    take,
   );
   // segmentId は呼び出し側が既に知っているので、モデルに書かせない。
-  return { segmentId: input.segmentId, ja };
+  if (input.askPdfName !== true) return { segmentId: input.segmentId, ja: raw };
+  const { text, name } = takePdfNameLine(raw);
+  const pdfName = name ?? outside;
+  return { segmentId: input.segmentId, ja: text, ...(pdfName === undefined ? {} : { pdfName }) };
 }

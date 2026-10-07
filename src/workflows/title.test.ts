@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from "vitest";
-import { mkdtempSync, writeFileSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { mkdtempSync, writeFileSync, readFileSync, readdirSync, rmSync, existsSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { translatePaper } from "./translate-paper.js";
@@ -43,6 +43,7 @@ function client(opts: {
   titleJa?: string;
   titleVerdict?: "pass" | "fail";
   titleThrows?: boolean;
+  titleRaw?: string;
 } = {}): FakeLlmClient {
   return new FakeLlmClient((req) => {
     if (req.system.includes("編纂者")) {
@@ -57,7 +58,9 @@ function client(opts: {
       const v = isTitle(req) ? (opts.titleVerdict ?? "pass") : "pass";
       return `{"verdict":"${v}","issues":[]}`;
     }
-    if (isTitle(req)) return `\`\`\`tex\n${opts.titleJa ?? "\\title{甲の研究}"}\n\`\`\``;
+    if (isTitle(req)) {
+      return opts.titleRaw ?? `\`\`\`tex\n${opts.titleJa ?? "\\title{甲の研究}\n% pdf-name: Alpha Study"}\n\`\`\``;
+    }
     return "```tex\n\\section{節}訳文\n```";
   });
 }
@@ -97,6 +100,17 @@ describe("論文タイトルの翻訳（契約付録 §8）", () => {
     expect(titleCalls[0]!.user).toContain("\\title{Alpha Study}");
     expect(titleCalls[0]!.user).not.toContain("Funded");
     expect(titleCalls[0]!.user).toContain("甲");
+    // 名前の行は訳題と一緒に出させ、形式検査・evaluator・組版には渡さない（契約付録 §8「成果物 PDF の名前」）。
+    expect(titleCalls[0]!.user).toContain("% pdf-name: <name>");
+    const bodyTranslator = c.calls.filter((q) => !isTitle(q) && q.meta?.role === "translator");
+    expect(bodyTranslator.every((q) => !q.user.includes("pdf-name"))).toBe(true);
+    const titleEval = c.calls.filter((q) => isTitle(q) && q.meta?.role === "evaluator");
+    expect(titleEval).toHaveLength(1);
+    expect(titleEval[0]!.user).toContain("甲の研究");
+    expect(titleEval[0]!.user).not.toContain("pdf-name");
+    expect(seen[0]).not.toContain("pdf-name");
+    expect(r.pdfPath).toBe(path.join(outDir, "p_alpha-study-ja.pdf"));
+    expect(readFileSync(r.pdfPath!, "utf8")).toBe("%PDF");
     db.close();
   });
 
@@ -121,6 +135,10 @@ describe("論文タイトルの翻訳（契約付録 §8）", () => {
     expect(second.summary.title).toBe("translated");
     expect(c2.calls.filter(isTitle)).toHaveLength(0);
     expect(seen[0]).toContain("\\title{甲の研究\\thanks{Funded by X.}}");
+    // 名前も checkpoint の title の結果から取る（再実行で変わらない）。
+    expect(first.pdfPath).toBe(path.join(outDir, "p_alpha-study-ja.pdf"));
+    expect(second.pdfPath).toBe(first.pdfPath);
+    expect(second.summary.bilingual.pdfPath).toBe(path.join(outDir, "p_alpha-study-bilingual.pdf"));
     db.close();
   });
 
@@ -151,6 +169,8 @@ describe("論文タイトルの翻訳（契約付録 §8）", () => {
     const warn = errs.find((e) => e.includes("原題のまま"));
     expect(warn).toBeDefined();
     expect(warn).toContain(why);
+    // title=failed の run は ID だけの名前。
+    expect(r.pdfPath).toBe(path.join(outDir, "p-ja.pdf"));
     // 失敗したタイトルは checkpoint しない（次の run で訳し直す）。
     expect(readdirSync(path.join(outDir, ".run", "steps")).some((f) => f.startsWith("title."))).toBe(false);
     db.close();
@@ -220,6 +240,7 @@ describe("論文タイトルの翻訳（契約付録 §8）", () => {
     expect(seen).toHaveLength(2);
     expect(seen[1]).toContain("\\title{Alpha Study\\thanks{Funded by X.}}");
     expect(errs.some((e) => e.includes("訳したタイトルでは組版できなかった"))).toBe(true);
+    expect(r.pdfPath).toBe(path.join(outDir, "p-ja.pdf"));
     db.close();
   });
 
@@ -409,6 +430,8 @@ describe("論文タイトルの翻訳（契約付録 §8）", () => {
     expect(r.exitCode).toBe(0);
     expect(r.summary.title).toBe("absent");
     expect(c.calls.filter(isTitle)).toHaveLength(0);
+    expect(r.pdfPath).toBe(path.join(outDir, "p-ja.pdf"));
+    expect(r.summary.bilingual.pdfPath).toBe(path.join(outDir, "p-bilingual.pdf"));
     db.close();
   });
 
@@ -513,5 +536,104 @@ describe("論文タイトルの翻訳（契約付録 §8）", () => {
     expect(r.exitCode).not.toBe(0);
     expect(r.summary.title).toBeNull();
     db.close();
+  });
+});
+
+describe("成果物 PDF の名前（契約付録 §8）", () => {
+  const run = async (
+    outDir: string,
+    c: FakeLlmClient,
+    opts: { bilingual?: boolean } = {},
+    runner: LatexRunner = recordingRunner([]),
+  ) => {
+    const db = new GlossaryDb();
+    try {
+      return await translatePaper({ kind: "path", path: paperTar() }, { provider: "claude", outDir, ...opts }, {
+        client: c,
+        db,
+        latexRunner: runner,
+      });
+    } finally {
+      db.close();
+    }
+  };
+
+  it("訳題と一緒に出た名前で <ID>_<slug>-ja.pdf / -bilingual.pdf を出力先の直下に置く", async () => {
+    const outDir = path.join(tmp(), "out");
+    const r = await run(outDir, client());
+    expect(r.exitCode).toBe(0);
+    expect(r.pdfPath).toBe(path.join(outDir, "p_alpha-study-ja.pdf"));
+    expect(r.summary.bilingual.status).toBe("ok");
+    expect(r.summary.bilingual.pdfPath).toBe(path.join(outDir, "p_alpha-study-bilingual.pdf"));
+    expect(readFileSync(r.summary.bilingual.pdfPath!, "utf8")).toBe("%PDF");
+    const pdfs = readdirSync(outDir).filter((f) => f.endsWith(".pdf")).sort();
+    expect(pdfs).toEqual(["p_alpha-study-bilingual.pdf", "p_alpha-study-ja.pdf"]);
+  });
+
+  it("囲みの外に書かれた名前の行も拾う", async () => {
+    const outDir = path.join(tmp(), "out");
+    const r = await run(
+      outDir,
+      client({ titleRaw: "```tex\n\\title{甲の研究}\n```\n% pdf-name: cellvit" }),
+      { bilingual: false },
+    );
+    expect(r.summary.title).toBe("translated");
+    expect(r.pdfPath).toBe(path.join(outDir, "p_cellvit-ja.pdf"));
+  });
+
+  it.each([
+    ["名前の行が無い", "\\title{甲の研究}"],
+    ["英数字が残らない名前", "\\title{甲の研究}\n% pdf-name: 甲の研究"],
+    ["空の名前", "\\title{甲の研究}\n% pdf-name:"],
+  ])("%s なら ID だけの名前にする", async (_name, titleJa) => {
+    const outDir = path.join(tmp(), "out");
+    const r = await run(outDir, client({ titleJa }));
+    expect(r.summary.title).toBe("translated");
+    expect(r.pdfPath).toBe(path.join(outDir, "p-ja.pdf"));
+    expect(r.summary.bilingual.pdfPath).toBe(path.join(outDir, "p-bilingual.pdf"));
+  });
+
+  it("前回と名前が変わったら、古い名前の成果物 PDF を残さない", async () => {
+    const outDir = path.join(tmp(), "out");
+    expect((await run(outDir, client({ titleJa: "\\title{甲の研究}\n% pdf-name: old-name" }))).exitCode).toBe(0);
+    expect(existsSync(path.join(outDir, "p_old-name-ja.pdf"))).toBe(true);
+    expect(existsSync(path.join(outDir, "p_old-name-bilingual.pdf"))).toBe(true);
+    // title 節の checkpoint を消して、別の名前で訳し直させる。
+    const steps = path.join(outDir, ".run", "steps");
+    for (const f of readdirSync(steps).filter((x) => x.startsWith("title."))) rmSync(path.join(steps, f));
+    const r = await run(outDir, client({ titleJa: "\\title{甲の研究}\n% pdf-name: new-name" }));
+    expect(r.exitCode).toBe(0);
+    expect(r.pdfPath).toBe(path.join(outDir, "p_new-name-ja.pdf"));
+    const pdfs = readdirSync(outDir).filter((f) => f.endsWith(".pdf")).sort();
+    expect(pdfs).toEqual(["p_new-name-bilingual.pdf", "p_new-name-ja.pdf"]);
+  });
+
+  it("対訳を作らなかった run（--no-bilingual・対訳の組版失敗）では前回の対訳の成果物 PDF を残さない", async () => {
+    const outDir = path.join(tmp(), "out");
+    await run(outDir, client());
+    expect(existsSync(path.join(outDir, "p_alpha-study-bilingual.pdf"))).toBe(true);
+    const disabled = await run(outDir, client(), { bilingual: false });
+    expect(disabled.summary.bilingual.status).toBe("disabled");
+    expect(existsSync(path.join(outDir, "p_alpha-study-ja.pdf"))).toBe(true);
+    expect(existsSync(path.join(outDir, "p_alpha-study-bilingual.pdf"))).toBe(false);
+
+    await run(outDir, client());
+    const bilingualFails = recordingRunner([], (tex) =>
+      tex.includes("\\begin{paracol}") ? "! LaTeX Error: File `paracol.sty' not found." : undefined,
+    );
+    const failed = await run(outDir, client(), {}, bilingualFails);
+    expect(failed.summary.bilingual.status).toBe("failed");
+    expect(failed.summary.bilingual.pdfPath).toBeUndefined();
+    expect(readdirSync(outDir).filter((f) => f.endsWith(".pdf"))).toEqual(["p_alpha-study-ja.pdf"]);
+  });
+
+  it("和訳 PDF を組めなかった run は前回の成果物 PDF を壊さない", async () => {
+    const outDir = path.join(tmp(), "out");
+    await run(outDir, client());
+    const r = await run(outDir, client(), {}, recordingRunner([], () => "! LaTeX Error: File `a.cls' not found."));
+    expect(r.exitCode).toBe(5);
+    expect(r.pdfPath).toBeUndefined();
+    const pdfs = readdirSync(outDir).filter((f) => f.endsWith(".pdf")).sort();
+    expect(pdfs).toEqual(["p_alpha-study-bilingual.pdf", "p_alpha-study-ja.pdf"]);
   });
 });

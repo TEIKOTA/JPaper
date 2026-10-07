@@ -114,6 +114,7 @@ import {
 import { injectFootnotes, renderBackmatter } from "../tools/render-notes.js";
 import { findUnsafeTexCommands } from "../tools/tex-safety.js";
 import { assembleBilingual } from "../tools/bilingual-latex.js";
+import { deliverableName, dropDeliverables, publishDeliverable } from "../tools/pdf-name.js";
 
 const IngestCache = z.object({
   cleanLatex: z.string(),
@@ -133,8 +134,11 @@ const SectionLoopCache = z.object({
   usedRevisions: z.number().int(),
   maxRevisions: z.number().int(),
   warnIssues: z.array(EvalIssue),
+  pdfName: z.string().optional(),
 });
 type SectionLoopCache = z.infer<typeof SectionLoopCache>;
+// title 節の checkpoint の無効化キーに足す版。名前を持たない旧 checkpoint を使わない。契約付録 §8
+const TITLE_STEP_VERSION = "pdf-name-v1";
 type TitleStatus = NonNullable<RunSummary["title"]>;
 
 export interface TranslateOptions {
@@ -344,6 +348,7 @@ function clearForeignContext(outDir: string, paperId: string): void {
   }
   rmSync(path.join(outDir, "translation", "build"), { recursive: true, force: true });
   rmSync(path.join(outDir, "translation", "bilingual"), { recursive: true, force: true });
+  dropDeliverables(outDir);
 }
 
 // run が最後まで到達したときだけ md を確定する。
@@ -1091,6 +1096,8 @@ export async function translatePaper(
     }
     let titleStatus: TitleStatus = title === undefined ? "absent" : "failed";
     let titleTex: string | undefined;
+    // 成果物 PDF の名前に使う短い英語名（title 節の translator が訳題と一緒に出す）。契約付録 §8
+    let titleSlug: string | undefined;
     const translateTitle = async (src: PaperTitle): Promise<void> => {
       const seg = titleSegment(src);
       // 契約付録 §8（タイトルでは併記しない）
@@ -1102,6 +1109,7 @@ export async function translatePaper(
         JSON.stringify(slice),
         JSON.stringify(ctx.brief),
         JSON.stringify(ctx.style),
+        TITLE_STEP_VERSION,
       );
       try {
         const r = await checkpoint(
@@ -1130,6 +1138,7 @@ export async function translatePaper(
           return;
         }
         titleTex = composeTitle(ja, src);
+        titleSlug = r.pdfName;
         titleStatus = "translated";
       } catch (e) {
         // ⚠ landmines.md
@@ -1245,6 +1254,12 @@ export async function translatePaper(
       ({ layout, buildOk, pdfPath, exitCode } = outcome);
       typesetMessage = outcome.message;
       if (titled !== undefined && !outcome.titleApplied && outcome.buildOk) titleStatus = "failed";
+      // 成果物 PDF は出力先の直下に <ID>_<slug>-ja.pdf / -bilingual.pdf で置く。契約付録 §8（成果物 PDF の名前）
+      const slug = (titleStatus as TitleStatus) === "translated" ? titleSlug : undefined;
+      if (buildOk === true && pdfPath !== undefined) {
+        pdfPath = publishDeliverable(outDir, pdfPath, deliverableName(ingested.paperId, slug, "ja"), "ja");
+        dropDeliverables(outDir, "bilingual");
+      }
       if (buildOk === true && layout !== null && opts.bilingual !== false) {
         // 和訳 PDF に訳題が入った run だけ、右側にも同じ訳題（前文の \title・本文の \title）を使う。
         const applied = outcome.titleApplied ? titled : undefined;
@@ -1264,6 +1279,17 @@ export async function translatePaper(
           (m) => notify(m),
           signal,
         );
+      }
+      if (bilingual.status === "ok" && bilingual.pdfPath !== undefined) {
+        bilingual = {
+          ...bilingual,
+          pdfPath: publishDeliverable(
+            outDir,
+            bilingual.pdfPath,
+            deliverableName(ingested.paperId, slug, "bilingual"),
+            "bilingual",
+          ),
+        };
       }
       progress({ phase: "typeset", done: 1, total: 1 });
     }

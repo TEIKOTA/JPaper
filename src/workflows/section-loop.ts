@@ -18,6 +18,7 @@ import {
 } from "../segment/protect.js";
 import { translate } from "../agents/translator.js";
 import { evaluate } from "../agents/evaluator.js";
+import { normalizeSlug } from "../tools/pdf-name.js";
 
 // 数式・記号を印へ差し替えるか。既定は true（ADR 20260816-protection-depends-on-model-capability）。
 // モデル依存の既定で、切り替えはこの 1 行。判断材料は「落ちた節の数」と「1 節あたりの改稿回数」。
@@ -34,6 +35,8 @@ export interface SectionLoopResult {
   usedRevisions: number;
   maxRevisions: number;
   warnIssues: EvalIssue[];
+  // segment.askPdfName のとき、通過した稿の名前を整えたもの（無い・不正なら undefined）。契約付録 §8
+  pdfName?: string;
 }
 
 export interface DocContext {
@@ -72,6 +75,8 @@ export async function runSectionLoop(
   let lastJa = "";
   let lastFailCode: 3 | 4 = 3;
   let lastKinds: FormalIssue["kind"][] = [];
+  // 名前の行を最後に出した稿の値（改稿で行を落としても前の稿の名前を使う）。契約付録 §8
+  let lastName: string | undefined;
 
   while (true) {
     const out = await translate(
@@ -82,10 +87,12 @@ export async function runSectionLoop(
         glossarySlice,
         priorJa,
         issues,
+        ...(segment.askPdfName === true ? { askPdfName: true } : {}),
       },
       doc,
       revisions,
     );
+    if (out.pdfName !== undefined) lastName = out.pdfName;
     const restored = restoreMath(out.ja, guarded.spans);
     lastJa = restored.text;
     const checked = kept === undefined ? restored : restoreMath(out.ja, checkedSpans);
@@ -133,7 +140,9 @@ export async function runSectionLoop(
     // error があれば pass verdict でも通さない（重大問題の素通しを防ぐ）。fail は常に失敗。
     const hasError = ev.issues.some((i) => i.severity === "error");
     if (ev.verdict !== "fail" && !hasError) {
+      const pdfName = lastName === undefined ? undefined : normalizeSlug(lastName);
       return {
+        ...(pdfName === undefined ? {} : { pdfName }),
         segmentId: segment.id,
         ja: restored.text,
         passed: true,

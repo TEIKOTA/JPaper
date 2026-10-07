@@ -369,7 +369,7 @@ export function hasProse(text: string): boolean {
 // 節ループへ通す 1 節。契約付録 §8
 export function titleSegment(title: PaperTitle): Segment {
   const latex = `\\title{${title.text}}`;
-  return { id: TITLE_SEGMENT_ID, latex, tokens: estimateTokens(latex) };
+  return { id: TITLE_SEGMENT_ID, latex, tokens: estimateTokens(latex), askPdfName: true };
 }
 
 // 節ループの訳文から \title の中身を取り出す。無い・空なら undefined。

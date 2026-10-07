@@ -178,6 +178,7 @@ describe("titleSegment / translatedTitle / composeTitle", () => {
     expect(seg.id).toBe(TITLE_SEGMENT_ID);
     expect(seg.latex).toBe("\\title{A Study}");
     expect(seg.tokens).toBeGreaterThan(0);
+    expect(seg.askPdfName).toBe(true);
   });
 
   it("訳文の \\title の中身を取り出す。無い・空なら undefined", () => {
