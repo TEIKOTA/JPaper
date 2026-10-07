@@ -1,4 +1,4 @@
-// 契約付録 §3・§4。\section 境界＋0.30×CW 予算での決定的セグメント分割。
+// 契約付録 §3・§4。\section 境界＋min(0.30×CW, 8000) 予算での決定的セグメント分割。
 import { countChars, estimateTokens, tokensOf, type CharCounts } from "./token-estimator.js";
 
 export type SizeClass = "small" | "medium" | "large";
@@ -25,8 +25,11 @@ export function maxRevisionsFor(tokens: number): number {
   return MAX_REVISIONS[sizeClassFor(tokens)];
 }
 
+// 1 節の訳出が呼び出し期限内に収まる上限（契約付録 §4）。⚠ landmines.md
+const MAX_SEGMENT_TOKENS = 8000;
+
 export function segmentBudgetFor(contextWindow: number): number {
-  return Math.floor(0.3 * contextWindow);
+  return Math.min(Math.floor(0.3 * contextWindow), MAX_SEGMENT_TOKENS);
 }
 
 export function extractDocumentBody(latex: string): string {

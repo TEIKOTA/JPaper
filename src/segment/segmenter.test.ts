@@ -20,8 +20,16 @@ describe("sizeClass / maxRevisions / budget", () => {
     expect(maxRevisionsFor(2000)).toBe(4);
     expect(maxRevisionsFor(5000)).toBe(5);
   });
-  it("segmentBudget = 0.30×CW", () => {
-    expect(segmentBudgetFor(200000)).toBe(60000);
+  it("segmentBudget = min(0.30×CW, 8000)", () => {
+    expect(segmentBudgetFor(20000)).toBe(6000);
+    expect(segmentBudgetFor(200000)).toBe(8000);
+  });
+  it("\\section の無い長い本文は上限で段落ごとに割る", () => {
+    const para = "word ".repeat(2000).trim();
+    const body = Array.from({ length: 12 }, () => para).join("\n\n");
+    const segs = segment(`\\begin{document}\n${body}\n\\end{document}`, segmentBudgetFor(200000));
+    expect(segs.length).toBeGreaterThan(1);
+    expect(Math.max(...segs.map((s) => s.tokens))).toBeLessThanOrEqual(8000);
   });
 });
 
