@@ -248,6 +248,10 @@ describe("タイトル", () => {
 
   it("タイトルブロックは題の \\thanks も潰す", () => {
     expect(bilingualPreamble("")).toContain("\\bfseries\\begingroup\\let\\thanks\\@gobble #1\\endgroup");
+    // 著者欄は表の外で組むので、\and 系を区切りの空白にしてから展開する（issue #324）。
+    expect(bilingualPreamble("")).toContain(
+      "\\begingroup\\let\\thanks\\@gobble\\def\\and{\\unskip\\quad}\\let\\And\\and\\def\\AND{\\unskip\\par}#2\\endgroup",
+    );
   });
 
   it("環境の中の \\maketitle のようにタイトルブロックへ置き換えられなければ titleUnplaced で知らせる", () => {

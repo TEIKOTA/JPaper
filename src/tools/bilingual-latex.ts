@@ -191,7 +191,8 @@ const SETUP = [
   "  \\par\\hrule height 4\\p@\\vskip 0.15in",
   "  {\\centering\\Large\\bfseries\\begingroup\\let\\thanks\\@gobble #1\\endgroup\\par}",
   "  \\vskip 0.2in\\hrule height 1\\p@\\vskip 0.1in",
-  "  {\\centering\\begingroup\\let\\thanks\\@gobble #2\\endgroup\\par}",
+  // 著者の \\and / \\And / \\AND はタイトルの表組みの中でしか使えないので、ここでは区切りの空白にする。⚠ landmines.md
+  "  {\\centering\\begingroup\\let\\thanks\\@gobble\\def\\and{\\unskip\\quad}\\let\\And\\and\\def\\AND{\\unskip\\par}#2\\endgroup\\par}",
   "  \\vskip 0.15in}",
   "\\newcommand{\\jpTitleBlock}[1]{\\jp@titleblock{#1}{\\@author}}",
   // ⚠ landmines.md
