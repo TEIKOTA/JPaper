@@ -11,6 +11,7 @@ import {
   sanitizeMath,
   fuseCaptionParagraphs,
   releaseLuatexjaNames,
+  separateCjkAfterControlWords,
 } from "./assemble-latex.js";
 
 const CLEAN = [
@@ -249,5 +250,15 @@ describe("releaseLuatexjaNames", () => {
     expect(releaseLuatexjaNames("\\newcommand{\\mc}[1]{\\mathcal{#1}}")).toBe("\\DeclareRobustCommand{\\mc}[1]{\\mathcal{#1}}");
     expect(releaseLuatexjaNames("\\newcommand*\\gt{x}")).toBe("\\DeclareRobustCommand*\\gt{x}");
     expect(releaseLuatexjaNames("\\newcommand{\\mcal}{x}\\newcommand\\gtr{y}")).toBe("\\newcommand{\\mcal}{x}\\newcommand\\gtr{y}");
+  });
+});
+
+describe("separateCjkAfterControlWords", () => {
+  it("命令語の直後の和文字の前に {} を挟む", () => {
+    expect(separateCjkAfterControlWords("\\oursの能力、\\LaTeX（注）")).toBe("\\ours{}の能力、\\LaTeX{}（注）");
+  });
+  it("英字・空白・波括弧が続く命令と \\\\ は変えない", () => {
+    const s = "\\ours は\\textbf{太字}\\\\改行";
+    expect(separateCjkAfterControlWords(s)).toBe(s);
   });
 });
