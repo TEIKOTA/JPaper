@@ -137,3 +137,9 @@
 - **おかしく見える点**: `\def` / `\newcommand` などの定義命令だけでできた節は、翻訳もせず原文のまま通す。
 - **なぜ意図的か**: 訳す地の文が無い節を LLM に渡すと、そのまま返した出力が「未翻訳」として形式検査に落ちる（実測: 2011.03395 seg-0061、`\def` だけの節）。
 - **正本ポインタ**: 契約付録 §1、issue #315。回帰テストは `src/segment/macro-only.test.ts`。
+
+## `src/terminology/collect.ts` — `add` が大文字句の先頭の機能語を外し、参照語だけの句を捨てる
+
+- **おかしく見える点**: 候補をそのまま渡さず、`The` / `While` / `In` などの文頭の語を外し、`Figure` / `Sec` などの参照語だけの句を捨てている。
+- **なぜ意図的か**: 大文字始まりの連語パターンは文頭の語も拾う（`The PanNuke`、`While DCAN`、`In Figure`）。用語集の LLM がこれを keep-original に分類すると、形式検査が訳文にその句が原文どおり現れることを要求し、ほぼ全節が落ちる（実測: CellViT 2306.15350 を claude sonnet / effort medium で 27/29 節が keep-original で失敗、128 呼び出し）。
+- **正本ポインタ**: issue #314。回帰テストは `src/terminology/collect.test.ts`。
