@@ -12,6 +12,7 @@ import {
   fuseCaptionParagraphs,
   releaseLuatexjaNames,
   separateCjkAfterControlWords,
+  classPackages,
 } from "./assemble-latex.js";
 
 const CLEAN = [
@@ -260,5 +261,24 @@ describe("separateCjkAfterControlWords", () => {
   it("英字・空白・波括弧が続く命令と \\\\ は変えない", () => {
     const s = "\\ours は\\textbf{太字}\\\\改行";
     expect(separateCjkAfterControlWords(s)).toBe(s);
+  });
+});
+
+describe("classPackages", () => {
+  it("elsarticle は class と同じ設定で natbib を読み直す", () => {
+    expect(classPackages("\\documentclass[preprint,authoryear]{elsarticle}")).toEqual(["\\usepackage[round,authoryear]{natbib}"]);
+    expect(classPackages("\\documentclass{elsarticle}\n\\biboptions{sort&compress}")).toEqual(["\\usepackage[numbers,sort&compress]{natbib}"]);
+    // 本文末尾の \\biboptions も拾う（実測: 1902.06543 は文献リストの直前）。
+    expect(classPackages("\\documentclass{elsarticle}\n\\begin{document}\n\\biboptions{authoryear}\n\\end{document}")).toEqual(["\\usepackage[numbers,authoryear]{natbib}"]);
+  });
+  it("nonatbib・他の class は何も足さない", () => {
+    expect(classPackages("\\documentclass[nonatbib]{elsarticle}")).toEqual([]);
+    expect(classPackages("\\documentclass{article}")).toEqual([]);
+  });
+  it("template レイアウトの前文に入る", () => {
+    const tex = "\\documentclass[authoryear]{elsarticle}\n\\begin{document}\nx\n\\end{document}\n";
+    expect(assembleWithMap({ cleanLatex: tex, segments: [{ id: "s", tex: "x" } as never], mode: "template" }).mainTex).toContain(
+      "\\usepackage[round,authoryear]{natbib}",
+    );
   });
 });

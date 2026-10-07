@@ -185,3 +185,21 @@
 - **おかしく見える点**: タイトルブロックの著者欄でだけ、クラスが定義した `\and` を `\unskip\quad` に置き換えている。
 - **なぜ意図的か**: `\and` はタイトルの表組み（`\maketitle` の中の tabular）で使う前提の命令で、`\end{tabular}…\begin{tabular}` に展開される。対訳のタイトルブロックは著者を表の外で組むので、そのままだと `Misplaced \crcr` で対訳 PDF が落ちる（実測: llncs の 2606.22649・2605.18329 ほか 4 本）。
 - **正本ポインタ**: 契約付録 §8（対訳 PDF）、issue #324。回帰テストは `src/tools/bilingual-latex.test.ts`。
+
+## `src/tools/bilingual-latex.ts` — 対訳 PDF ではリンクを作らない（hyperref の draft）
+
+- **おかしく見える点**: 対訳の main.tex の先頭で `\PassOptionsToPackage{draft}{hyperref}` を渡し、引用・参照・URL をクリックできないようにしている。和訳 PDF はリンクがある。
+- **なぜ意図的か**: paracol は段の中身をページ境界で分割するので、ページをまたぐリンクの開始と終了が別の箱に入り、LuaTeX が `'endlink' ended up in different nesting level than 'startlink'` で組版を止める。原プリアンブルで組めず共通テンプレへ落ち、elsarticle が読んでいた natbib が無くなって引用が生のラベル（`[Tellez et al.(2018)Tellez, Balkenhol, …]`）のまま 1 行に伸び、隣の段へはみ出した（実測: 1902.06543）。どのリンクがページをまたぐかは組版するまで分からないので、リンク自体を作らない。
+- **正本ポインタ**: 契約付録 §8（対訳 PDF）、issue #326。回帰テストは `src/tools/bilingual-latex.test.ts`。
+
+## `src/tools/bilingual-latex.ts` — paracol の段の中で `\textwidth` を段の幅にする
+
+- **おかしく見える点**: `\begin{paracol}{2}` の直後で `\setlength{\textwidth}{\columnwidth}` している。
+- **なぜ意図的か**: paracol の段の中でも `\textwidth` は紙面全体の幅のままなので、原文の `\includegraphics[width=\textwidth]` が隣の段まで伸びる（実測: 1902.06543 の Figure 1）。段は左右同じ幅なので、段の幅に揃えれば原文の比率どおりに収まる。
+- **正本ポインタ**: 契約付録 §8（対訳 PDF）、issue #326。
+
+## `src/tools/assemble-latex.ts` — 共通テンプレで、elsarticle が内部で読む natbib を読み直す
+
+- **おかしく見える点**: 共通テンプレ（article）の前文に、原文に無い `\usepackage[…]{natbib}` を足している。オプションは原 class のオプションと本文中の `\biboptions` から組み立てる。
+- **なぜ意図的か**: elsarticle は `nonatbib` が無ければ natbib を自分で読み、`\biboptions` は本文末尾に書かれることもある（.spl 経由で効く）。class を article に差し替えると natbib が消え、`.bbl` の著者年ラベルが生のまま出る（実測: 1902.06543 の対訳）。
+- **正本ポインタ**: 契約付録 §7（共通テンプレ）、issue #326。回帰テストは `src/tools/assemble-latex.test.ts`。

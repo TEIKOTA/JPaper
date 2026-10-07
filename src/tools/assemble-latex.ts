@@ -166,7 +166,19 @@ export function stripDocumentClass(preamble: string): string {
   return preamble.replace(DOCUMENTCLASS, "");
 }
 
-function templatePreamble(originalPreamble: string): string {
+// 原 class が内部で読むパッケージを article 上で読み直す（elsarticle は natbib を読む）。⚠ landmines.md
+export function classPackages(cleanLatex: string): string[] {
+  const m = /\\documentclass\s*(?:\[([^\]]*)\])?\s*\{\s*([^}]*?)\s*\}/.exec(cleanLatex);
+  if (m === null || m[2] !== "elsarticle") return [];
+  const opts = (m[1] ?? "").split(",").map((o) => o.trim());
+  if (opts.includes("nonatbib")) return [];
+  // \biboptions は本文に書かれることもある（elsarticle は .spl 経由で次回の組版に効かせる）。
+  const bib = [...cleanLatex.matchAll(/\\biboptions\s*\{([^}]*)\}/g)].map((b) => b[1]!.trim()).filter((b) => b !== "").join(",");
+  const base = opts.includes("authoryear") ? "round,authoryear" : "numbers";
+  return [`\\usepackage[${bib ? `${base},${bib}` : base}]{natbib}`];
+}
+
+function templatePreamble(originalPreamble: string, cleanLatex: string): string {
   const carried = stripDocumentClass(neutralizePreamble(originalPreamble)).trim();
   return [
     LUATEX85,
@@ -174,6 +186,7 @@ function templatePreamble(originalPreamble: string): string {
     "\\title{}",
     "\\author{}",
     CLASS_SHIM,
+    ...classPackages(cleanLatex),
     ...(carried === "" ? [] : ["% --- JPaper 注入: 原前文の引き継ぎ（documentclass のみ差し替え）---", carried]),
     "% --- JPaper 注入: 日本語組版・共有引用 ---",
     "\\usepackage[ipaex]{luatexja-preset}",
@@ -230,7 +243,7 @@ export function buildPreamble(cleanLatex: string, mode: Layout, title?: string):
   const original = title === undefined ? preamble : replaceTitle(preamble, title);
   return mode === "original"
     ? injectShared(neutralizePreamble(original))
-    : `${templatePreamble(original)}\n`;
+    : `${templatePreamble(original, cleanLatex)}\n`;
 }
 
 export function assembleLatex(input: AssembleInput): AssembleOutput {
