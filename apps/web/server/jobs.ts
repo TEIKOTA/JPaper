@@ -66,6 +66,9 @@ const FINISHED_KEEP = 50;
 const KILL_GRACE_MS = 5000;
 const CLOSE_GRACE_MS = 2000;
 
+// CLI が「エラー: 」付きで出す通知。失敗理由にしない。
+const SHARED_DEFAULT_NOTICE = "単一ユーザ既定を使用";
+
 const PROGRESS_DONE: Record<string, JobPhase> = { 取り込み: "context", 文脈: "translate", 組版: "typeset" };
 
 export function traceFiles(outDir: string): string[] {
@@ -358,7 +361,7 @@ export class JobQueue {
       return;
     }
     const err = /^(?:エラー|想定外エラー): (.*)$/.exec(line);
-    if (err) job.lastError = err[1]!;
+    if (err && !err[1]!.startsWith(SHARED_DEFAULT_NOTICE)) job.lastError = err[1]!;
   }
 
   private finish(job: Job, exit: ProcessExit): void {

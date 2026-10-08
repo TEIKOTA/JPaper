@@ -193,8 +193,12 @@ function JobRow(props: { job: Job; onChange: () => void }) {
           <span className="job-title">{j.title ?? j.arxivId}</span>
         )}
         <div className="job-meta">
-          <span>{j.arxivId}</span>
-          <span className="sep" aria-hidden="true" />
+          {j.title !== undefined && (
+            <>
+              <span>{j.arxivId}</span>
+              <span className="sep" aria-hidden="true" />
+            </>
+          )}
           <span>{opts}</span>
         </div>
         {j.error !== undefined && <p className="job-error error">{j.error}</p>}

@@ -148,7 +148,7 @@ describe("翻訳ジョブのキュー（契約付録 §9）", () => {
     expect(queue.get(job.id)?.finishedAt).toBeGreaterThanOrEqual(view.startedAt!);
   });
 
-  it("失敗: 「失敗[kind]: …」の行を理由にする。無ければ最後のエラー行・終了コード・シグナル", async () => {
+  it("失敗: 「失敗[kind]: …」の行を理由にする。無ければ最後のエラー行（単一ユーザ既定の通知は除く）・終了コード・シグナル", async () => {
     const { queue, procs } = setup(4);
     const a = queue.enqueue({ arxivId: "2601.00001", options: claude });
     const b = queue.enqueue({ arxivId: "2601.00002", options: claude });
@@ -159,6 +159,7 @@ describe("翻訳ジョブのキュー（契約付録 §9）", () => {
     procs[0]!.exit(2);
     procs[1]!.line("エラー: --model の値が不正です: x");
     procs[1]!.exit(2);
+    procs[2]!.line("エラー: 単一ユーザ既定を使用: db, cacheKey");
     procs[2]!.exit(1);
     procs[3]!.line("エラー: 単一ユーザ既定を使用");
     procs[3]!.exit(null, "SIGKILL");
