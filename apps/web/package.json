@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "用語集を閲覧・編集し、訳文と PDF に置換で反映するローカル Web アプリ",
+  "description": "論文を探して訳し、用語集を閲覧・編集して訳文と PDF に置換で反映するローカル Web アプリ",
   "scripts": {
     "dev": "vite",
     "server": "tsx watch server/main.ts",

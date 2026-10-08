@@ -1,26 +1,43 @@
-import { href, useRoute } from "./router.js";
+import { href, useRoute, type Route } from "./router.js";
 import { PapersPage } from "./pages/PapersPage.js";
 import { PaperPage } from "./pages/PaperPage.js";
 import { TermPage } from "./pages/TermPage.js";
 import { GlossaryPage } from "./pages/GlossaryPage.js";
+import { SearchPage } from "./pages/SearchPage.js";
+import { TranslatePage } from "./pages/TranslatePage.js";
+import { SettingsPage } from "./pages/SettingsPage.js";
+
+type NavKey = "search" | "translate" | "papers" | "glossary" | "settings";
+
+const NAV: { key: NavKey; label: string; href: string }[] = [
+  { key: "search", label: "探す", href: href.search() },
+  { key: "translate", label: "翻訳", href: href.translate() },
+  { key: "papers", label: "論文", href: href.papers() },
+  { key: "glossary", label: "全体の用語 DB", href: href.glossary() },
+  { key: "settings", label: "設定", href: href.settings() },
+];
+
+function navKey(route: Route): NavKey {
+  if (route.page === "paper" || route.page === "term") return "papers";
+  return route.page;
+}
 
 export function App() {
   const route = useRoute();
-  const onGlossary = route.page === "glossary";
+  const current = navKey(route);
   return (
     <>
       <header className="site-header">
         <div className="container header-inner">
           <a className="brand" href={href.papers()}>
-            JPaper 用語集
+            JPaper
           </a>
           <nav className="nav">
-            <a className={onGlossary ? "" : "active"} href={href.papers()}>
-              論文
-            </a>
-            <a className={onGlossary ? "active" : ""} href={href.glossary()}>
-              全体の用語 DB
-            </a>
+            {NAV.map((n) => (
+              <a key={n.key} className={current === n.key ? "active" : ""} href={n.href}>
+                {n.label}
+              </a>
+            ))}
           </nav>
         </div>
       </header>
@@ -31,6 +48,9 @@ export function App() {
           <TermPage key={`${route.id}/${route.src}`} id={route.id} src={route.src} initialJa={route.ja} />
         )}
         {route.page === "glossary" && <GlossaryPage />}
+        {route.page === "search" && <SearchPage key={route.q ?? ""} q={route.q} />}
+        {route.page === "translate" && <TranslatePage id={route.id} title={route.title} />}
+        {route.page === "settings" && <SettingsPage />}
       </main>
     </>
   );

@@ -41,7 +41,15 @@ export function PapersPage() {
                 </div>
               </li>
             ))}
-          {papers.data.length === 0 && <li className="empty">article/ に訳した論文がありません。</li>}
+          {papers.data.length === 0 && (
+            <li className="empty">
+              article/ に訳した論文がありません。
+              <a className="link" href={href.search()}>
+                探す
+              </a>
+              から翻訳を始められます。
+            </li>
+          )}
         </ul>
       )}
     </>

@@ -92,7 +92,7 @@ describe("翻訳ジョブのキュー（契約付録 §9）", () => {
       path.join(articleDir, "2601.00001-ja"),
     ]);
     expect(spec.cwd).toBe(root);
-    expect(spec.env).toMatchObject({ JPAPER_HOME: path.join(root, "home"), NO_COLOR: "1" });
+    expect(spec.env).toEqual({ JPAPER_HOME: path.join(root, "home") });
 
     procs[0]!.exit(0);
     await flush();
@@ -148,21 +148,25 @@ describe("翻訳ジョブのキュー（契約付録 §9）", () => {
     expect(queue.get(job.id)?.finishedAt).toBeGreaterThanOrEqual(view.startedAt!);
   });
 
-  it("失敗: 「失敗[kind]: …」の行を理由にする。無ければ最後のエラー行・終了コード", async () => {
-    const { queue, procs } = setup(3);
+  it("失敗: 「失敗[kind]: …」の行を理由にする。無ければ最後のエラー行・終了コード・シグナル", async () => {
+    const { queue, procs } = setup(4);
     const a = queue.enqueue({ arxivId: "2601.00001", options: claude });
     const b = queue.enqueue({ arxivId: "2601.00002", options: claude });
     const c = queue.enqueue({ arxivId: "2601.00003", options: claude });
+    const d = queue.enqueue({ arxivId: "2601.00004", options: claude });
     procs[0]!.line("エラー: 途中の警告");
     procs[0]!.line("失敗[provider]: claude CLI が見つかりません");
     procs[0]!.exit(2);
     procs[1]!.line("エラー: --model の値が不正です: x");
     procs[1]!.exit(2);
     procs[2]!.exit(1);
+    procs[3]!.line("エラー: 単一ユーザ既定を使用");
+    procs[3]!.exit(null, "SIGKILL");
     await flush();
     expect(queue.get(a.id)).toMatchObject({ state: "failed", exitCode: 2, error: "claude CLI が見つかりません（provider）" });
     expect(queue.get(b.id)).toMatchObject({ state: "failed", error: "--model の値が不正です: x" });
     expect(queue.get(c.id)).toMatchObject({ state: "failed", error: "CLI が終了コード 1 で終わりました" });
+    expect(queue.get(d.id)).toMatchObject({ state: "failed", error: "CLI が止まりました（SIGKILL）" });
   });
 
   it("取り消し: 待機中は起動せずに取り消し、実行中はプロセスを止める。終わったジョブは取り消せない", async () => {

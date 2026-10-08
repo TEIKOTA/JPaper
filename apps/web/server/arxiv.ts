@@ -125,6 +125,7 @@ export class ArxivClient {
   private chain: Promise<unknown> = Promise.resolve();
   private lastAt = Number.NEGATIVE_INFINITY;
   private readonly cache = new Map<string, { at: number; result: ArxivSearchResult }>();
+  private readonly inflight = new Map<string, Promise<ArxivSearchResult>>();
 
   constructor(deps: ArxivClientDeps = {}) {
     this.fetchImpl = deps.fetchImpl ?? fetch;
@@ -139,7 +140,10 @@ export class ArxivClient {
     const key = arxivQuery(q).toString();
     const hit = this.cache.get(key);
     if (hit !== undefined && this.now() - hit.at < CACHE_MS) return Promise.resolve(hit.result);
-    const task = this.chain.then(() => this.request(key));
+    const pending = this.inflight.get(key);
+    if (pending !== undefined) return pending;
+    const task = this.chain.then(() => this.request(key)).finally(() => this.inflight.delete(key));
+    this.inflight.set(key, task);
     this.chain = task.catch(() => undefined);
     return task;
   }

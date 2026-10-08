@@ -72,7 +72,7 @@ function fakeClock() {
 }
 
 describe("arXiv の検索クライアント", () => {
-  it("要求は 1 本ずつ、前の要求から 3 秒空ける。同じ問い合わせはキャッシュから返す", async () => {
+  it("要求は 1 本ずつ、前の要求から 3 秒空ける。同じ問い合わせは実行中の要求とキャッシュから返す", async () => {
     const clock = fakeClock();
     const urls: string[] = [];
     const client = new ArxivClient({
@@ -84,7 +84,8 @@ describe("arXiv の検索クライアント", () => {
         return new Response(ATOM, { status: 200 });
       }) as unknown as typeof fetch,
     });
-    const [a, b] = await Promise.all([client.search("rashomon"), client.search("turing")]);
+    const [a, b, a2] = await Promise.all([client.search("rashomon"), client.search("turing"), client.search("rashomon")]);
+    expect(a2).toBe(a);
     expect(a.entries).toHaveLength(2);
     expect(b.entries).toHaveLength(2);
     expect(urls).toHaveLength(2);

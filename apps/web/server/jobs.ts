@@ -323,7 +323,7 @@ export class JobQueue {
     job.knownRunIds = traceRunIds(job.outDir);
     const args = cliArgs(job.arxivId, job.options, job.outDir);
     const cmd = (this.deps.command ?? ((a) => cliCommand(this.deps.repoRoot, a)))(args);
-    const env = { ...(this.deps.env ?? process.env), NO_COLOR: "1" };
+    const env = { ...(this.deps.env ?? process.env) };
     try {
       job.proc = this.runner({ ...cmd, cwd: this.deps.repoRoot, env }, (stream, line) => this.onLine(job, stream, line));
     } catch (e) {
@@ -375,8 +375,9 @@ export class JobQueue {
     } else {
       job.state = "failed";
       job.error ??=
-        job.lastError ??
-        (exit.code === null ? `CLI が止まりました（${exit.signal ?? "起動失敗"}）` : `CLI が終了コード ${String(exit.code)} で終わりました`);
+        exit.code === null
+          ? `CLI が止まりました（${exit.signal ?? "起動失敗"}）`
+          : (job.lastError ?? `CLI が終了コード ${String(exit.code)} で終わりました`);
     }
     this.trim();
     this.pump();
