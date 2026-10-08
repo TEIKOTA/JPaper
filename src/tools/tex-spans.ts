@@ -214,6 +214,19 @@ export function commandSpans(tex: string, name: string): Span[] {
   return out;
 }
 
+// 区間を取り除く。重なる区間は外側だけ使う。
+export function removeSpans(tex: string, spans: readonly Span[]): string {
+  const sorted = [...spans].sort((a, b) => a[0] - b[0]);
+  let out = "";
+  let at = 0;
+  for (const [s, e] of sorted) {
+    if (s < at) continue;
+    out += tex.slice(at, s);
+    at = e;
+  }
+  return out + tex.slice(at);
+}
+
 // 区間を空白へ潰す（長さは保たない）。地の文の抽出用。
 export function blankSpans(tex: string, spans: Span[]): string {
   if (spans.length === 0) return tex;

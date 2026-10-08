@@ -17,7 +17,7 @@ import {
   MARK_CLOSE,
 } from "../segment/protect.js";
 import { translate } from "../agents/translator.js";
-import { commandSpans, type Span } from "../tools/tex-spans.js";
+import { commandSpans, removeSpans, type Span } from "../tools/tex-spans.js";
 import { evaluate } from "../agents/evaluator.js";
 import { normalizeSlug } from "../tools/pdf-name.js";
 
@@ -72,7 +72,7 @@ export async function runSectionLoop(
   const hidden: Span[] = [
     ...(kept === undefined || keep === undefined ? [] : [[keep.start, keep.end] as Span]),
     ...(frozenMarks.length === 0 ? [] : authors),
-  ].sort((a, b) => a[0] - b[0]);
+  ];
   const hiddenMarks = new Set([...(kept === undefined ? [] : [kept]), ...frozenMarks]);
   const checkedSrc = removeSpans(segment.latex, hidden);
   const checkedSpans = guarded.spans.map((s, i) => (hiddenMarks.has(i + 1) ? "" : s));
@@ -188,13 +188,3 @@ export async function runSectionLoop(
   };
 }
 
-// 昇順・非重複の区間を取り除く。
-function removeSpans(text: string, spans: readonly Span[]): string {
-  let out = "";
-  let at = 0;
-  for (const [s, e] of spans) {
-    out += text.slice(at, s);
-    at = e;
-  }
-  return out + text.slice(at);
-}

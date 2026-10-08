@@ -60,6 +60,7 @@ const GlossaryBuilderOut = z.object({
 // 節に効く用語（slice）と初出の節は src/terminology/term-coverage.ts で決める:
 //   ラテン文字端の語は語の一部に当たらない（末尾 s / es は同じ語）／同じ rendering の複数形の語は除く／
 //   節での出現がすべてより長い用語の中にある語はその節では除く。keep-original の出現数も同じ数え方。
+//   数えるのは translator が訳す本文だけ（keep の \title と \author 命令の中は数えない。src/workflows/step-keys.ts の translatedLatex）。
 // \def / \newcommand などの定義命令だけの節は LLM へ送らず原文のまま通す（src/segment/macro-only.ts）。
 
 // 文書ブリーフ（brief.md の正本。可視・編集可）
