@@ -35,6 +35,7 @@ export function isAcceptableTerm(src: string): boolean {
   if (s.length < 3 || s.length > MAX_TERM_CHARS) return false;
   if (s !== oneLine(s, MAX_TERM_CHARS)) return false; // 改行・制御文字を含む
   if (!/[A-Za-z\u3040-\u30ff\u4e00-\u9fff]/.test(s)) return false; // 文字を含まない
+  if (s.startsWith("\\")) return false; // 論文のマクロ（契約付録 §2）
   return !STOPWORDS.has(s.toLowerCase());
 }
 
