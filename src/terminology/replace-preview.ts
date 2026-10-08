@@ -55,6 +55,7 @@ const INLINE_MATH = /\$[^$]*\$|\\\([\s\S]*?\\\)/g;
 function plainProse(tex: string): string {
   return tex
     .replace(/\\(?:label|index)\{[^{}]*\}/g, "")
+    .replace(/\\(?:[vh]space|[hv]?phantom|thanks|footnote|rule)\*?(?:\[[^\]]*\])*\{[^{}]*\}/g, "")
     .replace(/\\(?:cite[a-zA-Z]*)\*?(?:\[[^\]]*\])*\{[^{}]*\}/g, "[引用]")
     .replace(/\\(?:eqref|ref|autoref|cref|Cref)\{[^{}]*\}/g, "[参照]")
     .replace(/\\(?:begin|end)\{[^{}]*\}/g, " ")

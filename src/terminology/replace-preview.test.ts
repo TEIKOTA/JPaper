@@ -50,6 +50,10 @@ describe("確認画面の断片（契約付録 §9）", () => {
     );
   });
 
+  it("空白調整・脚注・謝辞の命令は引数ごと落とす（タイトルに -.5em が残らない）", () => {
+    expect(plainText("\\vspace{-.5em}過少指定\\thanks{助成}は\\hspace*{1em}課題")).toBe("過少指定は課題");
+  });
+
   it("引数を取らない \\newcommand だけを展開する", () => {
     const m = simpleMacros("\\newcommand{\\diverse}{\\textsc{DIVERSE}\\xspace}\n\\newcommand{\\f}[1]{#1}");
     expect([...m.keys()]).toEqual(["diverse"]);
