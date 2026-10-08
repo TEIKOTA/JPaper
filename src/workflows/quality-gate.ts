@@ -417,7 +417,7 @@ function countOccurrences(hay: string, needle: string): number {
 const IF_RE = /\\if[a-zA-Z@]*/g;
 const FI_RE = /\\fi(?![a-zA-Z@])/g;
 
-// 条件分岐の開始（\if…）と終了（\fi）の個数が原文と違えば差し戻し文を返す。契約付録 §3
+// 条件分岐の開始（\if…）と終了（\fi）の個数が原文と違えば差し戻し文を返す。契約付録 §8
 function conditionalCounts(srcLatex: string, ja: string): string | undefined {
   const count = (s: string, re: RegExp) => s.match(re)?.length ?? 0;
   const ifs = [count(srcLatex, IF_RE), count(ja, IF_RE)] as const;

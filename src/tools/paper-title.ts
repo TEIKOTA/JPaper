@@ -88,7 +88,7 @@ function readArgs(
 }
 
 // \iffalse の読み飛ばしで入れ子として数える条件分岐の綴り（TeX の基本命令。\newif で作った綴りは別途数える）。
-const PRIMITIVE_IFS = new Set([
+export const PRIMITIVE_IFS = new Set([
   "if",
   "ifcat",
   "ifnum",

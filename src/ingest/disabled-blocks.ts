@@ -1,9 +1,31 @@
-// 契約付録 §4。本文の無効ブロック（\iffalse … \fi・\if 0 … \fi）を取り除く。
-import { newifNames, skipComment, skipIffalse } from "../tools/paper-title.js";
+// 契約付録 §4。本文の無効ブロック（\iffalse … \fi・\if 0 … \fi）を取り除く。走査は 1 回。⚠ landmines.md
+import { maskChars, verbatimSpans } from "../tools/tex-spans.js";
+import { newifNames, PRIMITIVE_IFS, skipComment } from "../tools/paper-title.js";
 
 const BEGIN_DOCUMENT = "\\begin{document}";
+const END_DOCUMENT = "\\end{document}";
 // \if の後の空白を飛ばした「0 と空白」。0 と空白（字句）を比べるので常に偽。
 const IF_ZERO = /[ \t]*0[ \t\r\n]/y;
+
+interface Open {
+  start: number;
+  disabled: boolean;
+  // \else の直後の位置。
+  elseEnd?: number;
+}
+
+interface Block {
+  start: number;
+  end: number;
+  // \else の枝（残す中身）の範囲。
+  keep?: [number, number];
+}
+
+// \if の名前の直後 from が「0 と空白」なら 0 の直後の位置。
+function ifZeroEnd(tex: string, from: number): number | undefined {
+  IF_ZERO.lastIndex = from;
+  return IF_ZERO.test(tex) ? IF_ZERO.lastIndex - 1 : undefined;
+}
 
 function balancedBraces(s: string): boolean {
   let depth = 0;
@@ -18,71 +40,61 @@ function balancedBraces(s: string): boolean {
   return depth === 0;
 }
 
-// \begin{document} より後の無効ブロックを、\else の枝があればその中身に、無ければ空に置き換える。
-// 閉じない・波括弧の釣り合わない・\end{document} をまたぐブロックは残す。
+// \begin{document} より後の閉じた無効ブロック（入れ子なら外側）を、\else の枝があればその中身に、
+// 無ければ空に置き換える。verbatim・\verb・コメントの中の綴りは数えない。偽の枝の波括弧が
+// 釣り合わない・\end{document} をまたぐブロックは残す。
 export function dropDisabledBlocks(tex: string): string {
   const begin = tex.indexOf(BEGIN_DOCUMENT);
   if (begin === -1) return tex;
-  let ifs: Set<string> | undefined;
-  let out = "";
-  let at = 0;
-  for (let i = begin + BEGIN_DOCUMENT.length; i < tex.length; i++) {
-    const c = tex[i];
+  const scan = maskChars(tex, verbatimSpans(tex));
+  const ifs = newifNames(scan);
+  const stack: Open[] = [];
+  const blocks: Block[] = [];
+  for (let i = begin + BEGIN_DOCUMENT.length; i < scan.length; i++) {
+    const c = scan[i];
     if (c === "%") {
-      i = skipComment(tex, i) - 1;
+      i = skipComment(scan, i) - 1;
       continue;
     }
     if (c !== "\\") continue;
     let j = i + 1;
-    while (j < tex.length && /[a-zA-Z]/.test(tex[j]!)) j++;
+    while (j < scan.length && /[a-zA-Z]/.test(scan[j]!)) j++;
     if (j === i + 1) {
       i++;
       continue;
     }
-    const name = tex.slice(i + 1, j);
-    let from: number | undefined;
-    if (name === "iffalse") from = j;
-    else if (name === "if") {
-      IF_ZERO.lastIndex = j;
-      if (IF_ZERO.test(tex)) from = IF_ZERO.lastIndex - 1;
+    const name = scan.slice(i + 1, j);
+    if (name === "iffalse") {
+      stack.push({ start: i, disabled: true });
+    } else if (name === "if" && ifZeroEnd(scan, j) !== undefined) {
+      stack.push({ start: i, disabled: true });
+      j = ifZeroEnd(scan, j)!;
+    } else if (PRIMITIVE_IFS.has(name) || ifs.has(name)) {
+      stack.push({ start: i, disabled: false });
+    } else if (name === "else") {
+      const top = stack[stack.length - 1];
+      if (top !== undefined && top.elseEnd === undefined) top.elseEnd = j;
+    } else if (name === "fi") {
+      const top = stack.pop();
+      if (top?.disabled === true) {
+        blocks.push({
+          start: top.start,
+          end: j,
+          ...(top.elseEnd === undefined ? {} : { keep: [top.elseEnd, i] as [number, number] }),
+        });
+      }
     }
-    if (from === undefined) {
-      i = j - 1;
-      continue;
-    }
-    ifs ??= newifNames(tex);
-    const block = disabledBlock(tex, i, from, ifs);
-    if (block === undefined) {
-      i = j - 1;
-      continue;
-    }
-    out += tex.slice(at, i) + block.keep;
-    at = block.end;
-    i = block.end - 1;
+    i = j - 1;
+  }
+  blocks.sort((a, b) => a.start - b.start);
+  let out = "";
+  let at = 0;
+  for (const b of blocks) {
+    if (b.start < at) continue;
+    const falseBranch = scan.slice(b.start, b.keep === undefined ? b.end : b.keep[0]);
+    if (tex.slice(b.start, b.end).includes(END_DOCUMENT) || !balancedBraces(falseBranch)) continue;
+    out += tex.slice(at, b.start) + (b.keep === undefined ? "" : tex.slice(b.keep[0], b.keep[1]));
+    at = b.end;
   }
   return out + tex.slice(at);
-}
-
-const endsAt = (tex: string, at: number, word: string): boolean => tex.startsWith(word, at - word.length);
-
-function disabledBlock(
-  tex: string,
-  start: number,
-  from: number,
-  ifs: ReadonlySet<string>,
-): { end: number; keep: string } | undefined {
-  const first = skipIffalse(tex, from, ifs);
-  let end = first;
-  let keep = "";
-  if (endsAt(tex, first, "\\else")) {
-    end = skipIffalse(tex, first, ifs);
-    if (!endsAt(tex, end, "\\fi")) return undefined;
-    keep = tex.slice(first, end - "\\fi".length);
-  } else if (!endsAt(tex, first, "\\fi")) {
-    return undefined;
-  }
-  if (tex.slice(start, end).includes("\\end{document}")) return undefined;
-  // 偽の枝（\else まで）の波括弧が釣り合わないブロックは残す。
-  if (!balancedBraces(tex.slice(start, first))) return undefined;
-  return { end, keep };
 }
