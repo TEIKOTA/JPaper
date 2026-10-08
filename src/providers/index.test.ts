@@ -24,4 +24,20 @@ describe("makeLlmClient", () => {
     expect(args[args.indexOf("--model") + 1]).toBe("sonnet");
     expect(args[args.indexOf("--effort") + 1]).toBe("medium");
   });
+
+  it("codex 設定を codex クライアントの引数へ渡す", async () => {
+    let args: string[] = [];
+    const codex = makeLlmClient("codex", {
+      codex: { model: "gpt-6.1-sol", effort: "low" },
+      codexDeps: {
+        run: async (a) => {
+          args = a;
+          return "r";
+        },
+      },
+    });
+    expect(await codex.complete({ system: "s", user: "u" })).toBe("r");
+    expect(args[args.indexOf("--model") + 1]).toBe("gpt-6.1-sol");
+    expect(args).toContain('model_reasoning_effort="low"');
+  });
 });

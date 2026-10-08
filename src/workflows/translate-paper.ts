@@ -50,6 +50,7 @@ import {
   CLAUDE_EFFORT_PATTERN,
   isClaudeModelId,
   type ClaudeConfig,
+  type CodexConfig,
   type OllamaConfig,
   type OpenRouterConfig,
 } from "../config.js";
@@ -131,6 +132,7 @@ export interface TranslateOptions {
   ollama?: OllamaConfig;
   openrouter?: OpenRouterConfig;
   claude?: ClaudeConfig;
+  codex?: CodexConfig;
   concurrency?: number;
   // 呼び出し側の中断。LLM 呼び出し・組版・arXiv 取得へ伝播し、exitCode 6 で返る。
   signal?: AbortSignal;
@@ -807,17 +809,18 @@ function entryError(input: JpaperInput, opts: TranslateOptions): string | undefi
       return `openrouter.requestTimeoutMs が不正です: ${outwardMessage(String(rt))}`;
     }
   }
-  const cl = opts.claude;
-  if (cl !== undefined) {
+  for (const name of ["claude", "codex"] as const) {
+    const cl = opts[name];
+    if (cl === undefined) continue;
     if (typeof cl !== "object" || cl === null) {
-      return `claude が不正です: ${outwardMessage(String(cl))}`;
+      return `${name} が不正です: ${outwardMessage(String(cl))}`;
     }
     if (cl.model !== undefined && !isClaudeModelId(cl.model)) {
-      return `claude.model が不正です: ${outwardMessage(String(cl.model))}`;
+      return `${name}.model が不正です: ${outwardMessage(String(cl.model))}`;
     }
     const ef = cl.effort;
     if (ef !== undefined && (typeof ef !== "string" || !CLAUDE_EFFORT_PATTERN.test(ef))) {
-      return `claude.effort が不正です: ${outwardMessage(String(ef))}`;
+      return `${name}.effort が不正です: ${outwardMessage(String(ef))}`;
     }
   }
   return undefined;
@@ -873,6 +876,7 @@ export async function translatePaper(
           ollama: opts.ollama,
           openrouter: opts.openrouter,
           claude: opts.claude,
+          codex: opts.codex,
           trace,
         })
       : withTrace(deps.client, trace, opts.provider);

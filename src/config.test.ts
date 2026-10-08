@@ -49,6 +49,9 @@ describe("paperOutDir", () => {
 });
 
 describe("contextWindowFor", () => {
+  it("codex は既定 200_000", () => {
+    expect(contextWindowFor("codex")).toBe(200_000);
+  });
   it("claude は既定 200_000", () => {
     expect(contextWindowFor("claude")).toBe(DEFAULT_CLAUDE_CW);
     expect(DEFAULT_CLAUDE_CW).toBe(200_000);

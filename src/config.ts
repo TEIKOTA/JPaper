@@ -34,6 +34,14 @@ export interface ClaudeConfig {
 // 契約付録 §5。推論強度は英小文字の水準名だけを受け付ける（水準の列挙はしない）。
 export const CLAUDE_EFFORT_PATTERN = /^[a-z]+$/;
 
+export const DEFAULT_CODEX_CW = 200_000; // 契約付録 §4
+
+// 契約付録 §5。未指定の項目は codex CLI に渡さない（JPaper は既定値を持たない）。
+export interface CodexConfig {
+  model?: string;
+  effort?: string;
+}
+
 export function isClaudeModelId(v: unknown): v is string {
   return typeof v === "string" && v.trim() !== "" && !v.trim().startsWith("-");
 }
@@ -68,6 +76,7 @@ export interface OllamaConfig {
 // 正常な生成を切ってしまう。逆に無期限だと、返らない 1 本で run が黙って止まる。
 export const DEFAULT_OLLAMA_REQUEST_TIMEOUT_MS = 600_000;
 export const DEFAULT_CLAUDE_REQUEST_TIMEOUT_MS = 300_000;
+export const DEFAULT_CODEX_REQUEST_TIMEOUT_MS = 300_000;
 // 同じモデルでもリモートは桁で速い（実測: 26b-a4b の 1 呼び出しが 623ms）。
 // ローカルの物差しを当てると、詰まった呼び出しを何分も待つことになる。
 export const DEFAULT_OPENROUTER_REQUEST_TIMEOUT_MS = 180_000;
@@ -78,6 +87,7 @@ export function requestTimeoutMsFor(
   openrouter: OpenRouterConfig = DEFAULT_OPENROUTER,
 ): number {
   if (provider === "claude") return DEFAULT_CLAUDE_REQUEST_TIMEOUT_MS;
+  if (provider === "codex") return DEFAULT_CODEX_REQUEST_TIMEOUT_MS;
   if (provider === "openrouter") {
     return openrouter.requestTimeoutMs ?? DEFAULT_OPENROUTER_REQUEST_TIMEOUT_MS;
   }
@@ -112,6 +122,7 @@ export function contextWindowFor(
   openrouter: OpenRouterConfig = DEFAULT_OPENROUTER,
 ): number {
   if (provider === "claude") return DEFAULT_CLAUDE_CW;
+  if (provider === "codex") return DEFAULT_CODEX_CW;
   if (provider === "openrouter") return openrouter.contextWindow;
   return ollama.contextWindow;
 }

@@ -40,7 +40,7 @@ lefthook install   # commit-msg / pre-push フック（未導入なら brew inst
 ## 使い方
 
 ```sh
-pnpm dev <arXiv ID|ファイル|ディレクトリ> --provider {ollama|claude|openrouter} [--out DIR] [--no-bilingual]
+pnpm dev <arXiv ID|ファイル|ディレクトリ> --provider {ollama|claude|codex|openrouter} [--out DIR] [--no-bilingual]
 ```
 
 和訳 PDF（例 `article/2507.17845-ja/2507.17845_pathorob-ja.pdf`）と対訳 PDF（例 `article/2507.17845-ja/2507.17845_pathorob-bilingual.pdf`）のパスを標準出力に、`RunSummary` を JSON で出す。オプションの正本は [契約付録 §5](./docs/design/contract-appendix.md)。
@@ -66,7 +66,7 @@ pnpm dev:web
 | `scripts/new-branch.sh <type> <issue番号> <slug>` | 規約検証付きで topic branch を作成 |
 | `scripts/check-pr.sh [<PR番号>]` | PR タイトル・body・issue 連結のローカル検査（PR 作成・編集後） |
 
-LLM プロバイダは `LlmClient` 境界で差し替え可能。v1 は **local=Ollama** と **cloud=公式 CLI subprocess（`claude -p`）** の2実装で、`--provider {ollama|claude}` は**必須（既定なし）**。OpenRouter / API キーは将来の実装オプション。LLM クライアントは薄い自作ランタイム内に閉じ込める（[プロバイダ ADR](./docs/adr/20260709-llm-provider-abstraction-local-ollama-and-cloud-cli.md)）。
+LLM プロバイダは `LlmClient` 境界で差し替え可能。**local=Ollama**、**cloud=公式 CLI subprocess（`claude -p` / `codex exec`）**、**OpenRouter（OpenAI 互換 API）** の 4 実装で、`--provider {ollama|claude|codex|openrouter}` は**必須（既定なし）**。claude と codex は `--model` / `--effort` を指定したときだけ CLI に渡す（JPaper は既定値を持たない）。LLM クライアントは薄い自作ランタイム内に閉じ込める（[プロバイダ ADR](./docs/adr/20260709-llm-provider-abstraction-local-ollama-and-cloud-cli.md)）。
 
 ## 開発ルール
 

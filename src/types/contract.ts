@@ -157,7 +157,7 @@ export const TranslatorNote = z.object({
 export type TranslatorNote = z.infer<typeof TranslatorNote>;
 
 // ── §5/§8 プロバイダ・入力・サマリ・結果 ──────────────────
-export const Provider = z.enum(["ollama", "claude", "openrouter"]);
+export const Provider = z.enum(["ollama", "claude", "codex", "openrouter"]);
 export type Provider = z.infer<typeof Provider>;
 
 export const JpaperInput = z.discriminatedUnion("kind", [

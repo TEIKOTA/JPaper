@@ -4,19 +4,23 @@ import {
   DEFAULT_OLLAMA,
   DEFAULT_OPENROUTER,
   type ClaudeConfig,
+  type CodexConfig,
   type OllamaConfig,
   type OpenRouterConfig,
 } from "../config.js";
 import { makeOllamaClient, type OllamaDeps } from "./ollama.js";
 import { makeClaudeClient, type ClaudeDeps } from "./claude.js";
+import { makeCodexClient, type CodexDeps } from "./codex.js";
 import { makeOpenRouterClient, type OpenRouterDeps } from "./openrouter.js";
 
 export interface MakeLlmClientOptions {
   ollama?: OllamaConfig;
   openrouter?: OpenRouterConfig;
   claude?: ClaudeConfig;
+  codex?: CodexConfig;
   ollamaDeps?: OllamaDeps;
   claudeDeps?: ClaudeDeps;
+  codexDeps?: CodexDeps;
   openrouterDeps?: OpenRouterDeps;
   trace?: TraceSink; // LLM トレース ADR。選択したプロバイダの deps に注入する。
 }
@@ -35,6 +39,9 @@ export function makeLlmClient(
       trace: opts.trace,
       ...opts.openrouterDeps,
     });
+  }
+  if (provider === "codex") {
+    return makeCodexClient(opts.codex ?? {}, { trace: opts.trace, ...opts.codexDeps });
   }
   return makeClaudeClient(opts.claude ?? {}, { trace: opts.trace, ...opts.claudeDeps });
 }
