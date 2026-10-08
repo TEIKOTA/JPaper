@@ -253,7 +253,7 @@ describe("runSectionLoop: 改稿予算の配分", () => {
       const c = new FakeLlmClient((req) => {
         users.push(req.user);
         if (req.system.includes("審査者")) return '{"verdict":"pass","issues":[]}';
-        return "```tex\n〔1〕\n\\author{A}\n\n甲の本文がここにある。\n```";
+        return "```tex\n〔1〕\n〔2〕\n\n甲の本文がここにある。\n```";
       });
       const r = await runSectionLoop(c, titleSeg, []);
       expect(r.passed).toBe(true);
@@ -268,8 +268,8 @@ describe("runSectionLoop: 改稿予算の配分", () => {
         if (req.system.includes("審査者")) return '{"verdict":"pass","issues":[]}';
         translatorUsers.push(req.user);
         return n++ === 0
-          ? "```tex\n\\author{A}\n\n甲の本文がここにある。\n```"
-          : "```tex\n〔1〕\n\\author{A}\n\n甲の本文がここにある。\n```";
+          ? "```tex\n〔2〕\n\n甲の本文がここにある。\n```"
+          : "```tex\n〔1〕\n〔2〕\n\n甲の本文がここにある。\n```";
       });
       const r = await runSectionLoop(c, titleSeg, []);
       expect(r.passed).toBe(true);
@@ -282,11 +282,43 @@ describe("runSectionLoop: 改稿予算の配分", () => {
       const c = new FakeLlmClient((req) =>
         req.system.includes("審査者")
           ? '{"verdict":"pass","issues":[]}'
-          : "```tex\n\\author{A}\n\n甲の本文がここにある。\n```",
+          : "```tex\n〔2〕\n\n甲の本文がここにある。\n```",
       );
       const r = await runSectionLoop(c, titleSeg, []);
       expect(r.passed).toBe(false);
       expect(r.failedKinds).toEqual(["title"]);
+    });
+  });
+
+  describe("\\author（著者・所属を原文のまま残す。契約付録 §3）", () => {
+    const latex = "\\author{Ann Lee \\\\ Nankai University\\\\ Bo Li \\\\ Berkeley Lab\\\\ }\n\nAlpha text is here.";
+    const authorSeg: Segment = { id: "seg-0000", latex, tokens: 100 };
+    const block = latex.slice(0, latex.indexOf("\n"));
+
+    it("\\author を印で伏せて送り、原文のまま復元する。translator・evaluator には著者を見せない", async () => {
+      const users: string[] = [];
+      const c = new FakeLlmClient((req) => {
+        users.push(req.user);
+        if (req.system.includes("審査者")) return '{"verdict":"pass","issues":[]}';
+        return "```tex\n〔1〕\n\n甲の本文がここにある。\n```";
+      });
+      const r = await runSectionLoop(c, authorSeg, []);
+      expect(r.passed).toBe(true);
+      expect(r.ja).toBe(`${block}\n\n甲の本文がここにある。`);
+      expect(users.every((u) => !u.includes("Nankai"))).toBe(true);
+    });
+
+    it("印を落とした訳は author で差し戻し、最後まで落とせば author で失敗する", async () => {
+      const translatorUsers: string[] = [];
+      const c = new FakeLlmClient((req) => {
+        if (req.system.includes("審査者")) return '{"verdict":"pass","issues":[]}';
+        translatorUsers.push(req.user);
+        return "```tex\n甲の本文がここにある。\n```";
+      });
+      const r = await runSectionLoop(c, authorSeg, []);
+      expect(r.passed).toBe(false);
+      expect(r.failedKinds).toEqual(["author"]);
+      expect(translatorUsers[1]).toContain("著者・所属の差し替え");
     });
   });
 });

@@ -175,6 +175,45 @@ export function mathSpans(tex: string, envs: readonly string[] = []): Span[] {
   ];
 }
 
+// 波括弧・角括弧の閉じ（open の位置から数える）。エスケープした括弧は数えない。閉じなければ -1。
+function closingOf(tex: string, at: number, open: string, close: string): number {
+  let depth = 0;
+  let braces = 0;
+  for (let i = at; i < tex.length; i++) {
+    const c = tex[i];
+    if ((c === "{" || c === "}" || c === open || c === close) && escapedAt(tex, i)) continue;
+    if (open !== "{" && c === "{") braces++;
+    else if (open !== "{" && c === "}") braces--;
+    else if (c === open && braces === 0) depth++;
+    else if (c === close && braces === 0 && --depth === 0) return i;
+  }
+  return -1;
+}
+
+// 命令と引数（任意の [..] と必須の {..} 1 つ）を含む区間。\name の直後が英字の命令
+// （\authorrunning など）は別物。引数が閉じなければ区間にしない。
+export function commandSpans(tex: string, name: string): Span[] {
+  const out: Span[] = [];
+  const needle = `\\${name}`;
+  for (let i = tex.indexOf(needle); i !== -1; i = tex.indexOf(needle, i + 1)) {
+    if (escapedAt(tex, i) || /[A-Za-z@]/.test(tex[i + needle.length] ?? "")) continue;
+    let j = i + needle.length;
+    while (/\s/.test(tex[j] ?? "")) j++;
+    while (tex[j] === "[") {
+      const e = closingOf(tex, j, "[", "]");
+      if (e === -1) break;
+      j = e + 1;
+      while (/\s/.test(tex[j] ?? "")) j++;
+    }
+    if (tex[j] !== "{") continue;
+    const e = closingOf(tex, j, "{", "}");
+    if (e === -1) continue;
+    out.push([i, e + 1]);
+    i = e;
+  }
+  return out;
+}
+
 // 区間を空白へ潰す（長さは保たない）。地の文の抽出用。
 export function blankSpans(tex: string, spans: Span[]): string {
   if (spans.length === 0) return tex;

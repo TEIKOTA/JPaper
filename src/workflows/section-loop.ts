@@ -17,6 +17,7 @@ import {
   MARK_CLOSE,
 } from "../segment/protect.js";
 import { translate } from "../agents/translator.js";
+import { commandSpans, type Span } from "../tools/tex-spans.js";
 import { evaluate } from "../agents/evaluator.js";
 import { normalizeSlug } from "../tools/pdf-name.js";
 
@@ -58,17 +59,23 @@ export async function runSectionLoop(
   let qualityLeft = perChecker;
   // 保護区間は既定で入れる。ADR 20260816-protection-depends-on-model-capability。
   const keep = segment.keep;
+  // 著者・所属は訳さず原文のまま残す。契約付録 §3
+  const authors = commandSpans(segment.latex, "author");
   const guarded = protectMath(segment.latex, {
     off: !PROTECT_SPANS,
     ...(keep === undefined ? {} : { keep: [keep.start, keep.end] as [number, number] }),
+    ...(authors.length === 0 ? {} : { frozen: authors }),
   });
-  // 原文のまま残した \title は形式検査・evaluator に見せない（訳されていないのが正しい）。契約付録 §8
+  // 原文のまま残した \title・\author は形式検査・evaluator に見せない（訳されていないのが正しい）。契約付録 §3・§8
   const kept = guarded.keepMark;
-  const checkedSrc =
-    kept === undefined || keep === undefined
-      ? segment.latex
-      : segment.latex.slice(0, keep.start) + segment.latex.slice(keep.end);
-  const checkedSpans = guarded.spans.map((s, i) => (i + 1 === kept ? "" : s));
+  const frozenMarks = guarded.frozenMarks ?? [];
+  const hidden: Span[] = [
+    ...(kept === undefined || keep === undefined ? [] : [[keep.start, keep.end] as Span]),
+    ...(frozenMarks.length === 0 ? [] : authors),
+  ].sort((a, b) => a[0] - b[0]);
+  const hiddenMarks = new Set([...(kept === undefined ? [] : [kept]), ...frozenMarks]);
+  const checkedSrc = removeSpans(segment.latex, hidden);
+  const checkedSpans = guarded.spans.map((s, i) => (hiddenMarks.has(i + 1) ? "" : s));
   let revisions = 0;
   let priorJa: string | undefined;
   let issues: string[] | undefined;
@@ -95,13 +102,13 @@ export async function runSectionLoop(
     if (out.pdfName !== undefined) lastName = out.pdfName;
     const restored = restoreMath(out.ja, guarded.spans);
     lastJa = restored.text;
-    const checked = kept === undefined ? restored : restoreMath(out.ja, checkedSpans);
+    const checked = hiddenMarks.size === 0 ? restored : restoreMath(out.ja, checkedSpans);
 
     // 印の欠落は formalCheck では「数式個数不一致」としか出ない。どの印かを名指しする。
     const markIssues = describeMarkIssues({
       ...restored,
-      missing: restored.missing.filter((n) => n !== kept),
-      duplicated: restored.duplicated.filter((n) => n !== kept),
+      missing: restored.missing.filter((n) => !hiddenMarks.has(n)),
+      duplicated: restored.duplicated.filter((n) => !hiddenMarks.has(n)),
     });
     const keptIssues: FormalIssue[] =
       kept !== undefined && (restored.missing.includes(kept) || restored.duplicated.includes(kept))
@@ -112,7 +119,13 @@ export async function runSectionLoop(
             },
           ]
         : [];
-    const formal = [...keptIssues, ...formalCheck(checkedSrc, checked.text, glossarySlice)];
+    const frozenIssues: FormalIssue[] = frozenMarks
+      .filter((m) => restored.missing.includes(m) || restored.duplicated.includes(m))
+      .map((m) => ({
+        kind: "author",
+        message: `印 ${MARK_OPEN}${String(m)}${MARK_CLOSE} は著者・所属の差し替えです。訳さず消さず、原文と同じ位置にちょうど 1 回置いてください。`,
+      }));
+    const formal = [...keptIssues, ...frozenIssues, ...formalCheck(checkedSrc, checked.text, glossarySlice)];
     // 危険コマンドと文書構造の破壊は再訳の対象にしない（直せる誤りではなく、汚染の兆候
     // として即失敗させる）。\end{document} は組版が正常終了するぶん、素通しの害が大きい。
     lastKinds = [...new Set(formal.map((f) => f.kind))];
@@ -173,4 +186,15 @@ export async function runSectionLoop(
     maxRevisions,
     warnIssues: [],
   };
+}
+
+// 昇順・非重複の区間を取り除く。
+function removeSpans(text: string, spans: readonly Span[]): string {
+  let out = "";
+  let at = 0;
+  for (const [s, e] of spans) {
+    out += text.slice(at, s);
+    at = e;
+  }
+  return out + text.slice(at);
 }

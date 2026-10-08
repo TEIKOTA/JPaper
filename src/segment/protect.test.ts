@@ -189,3 +189,32 @@ describe("protectMath: keep（本文中の \\title。契約付録 §8）", () =>
     expect(p.keepMark).toBeUndefined();
   });
 });
+
+describe("protectMath: frozen（本文中の \\author。契約付録 §3）", () => {
+  const author = "\\author{A $^1$ \\\\ Univ.\\ \\& Lab}";
+  const src = `\\title{T}\n${author}\n\nWe set $y$ at 5\\%.`;
+  const keep: [number, number] = [0, "\\title{T}".length];
+  const frozen: [number, number][] = [[src.indexOf(author), src.indexOf(author) + author.length]];
+
+  it("frozen を丸ごと 1 つの印で伏せ、中の数式・記号は二重に伏せない。keep と並べて番号を振る", () => {
+    const p = protectMath(src, { keep, frozen });
+    expect(p.text).toBe("〔1〕\n〔2〕\n\nWe set 〔3〕 at 5〔4〕.");
+    expect(p.keepMark).toBe(1);
+    expect(p.frozenMarks).toEqual([2]);
+    expect(restoreMath(p.text, p.spans).text).toBe(src);
+  });
+
+  it("保護を切っても frozen は伏せる", () => {
+    const p = protectMath(src, { frozen, off: true });
+    expect(p.text).toBe("\\title{T}\n〔1〕\n\nWe set $y$ at 5\\%.");
+    expect(p.frozenMarks).toEqual([1]);
+  });
+
+  it("keep の中の frozen は keep に含める", () => {
+    const inner = "\\title{T \\author{X}}";
+    const p = protectMath(inner, { keep: [0, inner.length], frozen: [[9, 19]] });
+    expect(p.text).toBe("〔1〕");
+    expect(p.frozenMarks).toBeUndefined();
+  });
+});
+
