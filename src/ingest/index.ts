@@ -8,6 +8,7 @@ import { fetchArxivSource, type ArxivDeps } from "./arxiv.js";
 import { isArxivId } from "./detect-input.js";
 import { extractArchive, writeFileMap, isArchive } from "./extract.js";
 import { detectMainTex, expandInputs, type ExpandBudget } from "./main-tex.js";
+import { dropDisabledBlocks } from "./disabled-blocks.js";
 import { collectFigures } from "./resolve.js";
 import { DEFAULT_LIMITS, type IngestLimits } from "./limits.js";
 
@@ -124,7 +125,7 @@ export async function ingest(
   const { sourceDir, mainRel, limited } = await materialize(input, workDir, deps);
   const main = mainRel ?? detectMainTex(sourceDir, limits.maxEntries);
   const expand: ExpandBudget = { maxBytes: limits.maxLatexBytes };
-  const cleanLatex = expandInputs(sourceDir, main, expand);
+  const cleanLatex = dropDisabledBlocks(expandInputs(sourceDir, main, expand));
   // 展開経路（アーカイブ）は Budget が累積を見ているが、素の .tex とディレクトリは
   // ここが唯一の関門。checkpoint へ書く前に判定する（拒否した入力にディスクを使わない）。
   if (Buffer.byteLength(cleanLatex) > limits.maxLatexBytes) {

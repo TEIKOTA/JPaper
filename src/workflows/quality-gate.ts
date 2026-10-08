@@ -15,7 +15,8 @@ export interface FormalIssue {
     | "symbol-command"
     | "unsafe-command"
     | "structure"
-    | "title";
+    | "title"
+    | "conditional";
   message: string;
 }
 
@@ -413,6 +414,18 @@ function countOccurrences(hay: string, needle: string): number {
   return n;
 }
 
+const IF_RE = /\\if[a-zA-Z@]*/g;
+const FI_RE = /\\fi(?![a-zA-Z@])/g;
+
+// 条件分岐の開始（\if…）と終了（\fi）の個数が原文と違えば差し戻し文を返す。契約付録 §3
+function conditionalCounts(srcLatex: string, ja: string): string | undefined {
+  const count = (s: string, re: RegExp) => s.match(re)?.length ?? 0;
+  const ifs = [count(srcLatex, IF_RE), count(ja, IF_RE)] as const;
+  const fis = [count(srcLatex, FI_RE), count(ja, FI_RE)] as const;
+  if (ifs[0] === ifs[1] && fis[0] === fis[1]) return undefined;
+  return `条件分岐の命令の数が原文と違います（\\if… src=${String(ifs[0])} ja=${String(ifs[1])}、\\fi src=${String(fis[0])} ja=${String(fis[1])}）。節の端に単独で残った \\if… や \\fi も原文どおりの位置に残してください。`;
+}
+
 export function formalCheck(
   srcLatex: string,
   ja: string,
@@ -435,6 +448,11 @@ export function formalCheck(
       kind: "structure",
       message: `訳文が原文に無い文書構造コマンドを持ち込んだ: ${breaks.join(", ")}`,
     });
+  }
+
+  const conditional = conditionalCounts(srcLatex, ja);
+  if (conditional !== undefined) {
+    issues.push({ kind: "conditional", message: conditional });
   }
 
   // 地の文が十分ある節でのみ判定する（数式・図だけの節は原文と一致しても正常）。

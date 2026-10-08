@@ -558,14 +558,17 @@ function gateError(
 // ログ由来の断片は長さを切る（1 行 4000 文字のログで message が上限を無視して膨らむ）。
 const clip = (s: string, n = 120): string => (s.length > n ? `${s.slice(0, n)}…` : s);
 
-function summarizeGateFailure(g: BuildGateResult): string {
+export function summarizeGateFailure(g: BuildGateResult): string {
   const parts: string[] = [];
   if (g.failedSegments.length)
     parts.push(`翻訳起因: ${g.failedSegments.map((f) => `${f.id}(${f.line})`).join(", ")}`);
   if (g.structuralErrors.length) parts.push(`構造: ${g.structuralErrors.slice(0, 3).map((e) => clip(e)).join(" / ")}`);
   if (g.missingFigures.length) parts.push(`欠図: ${g.missingFigures.map((f) => clip(f, 60)).join(", ")}`);
   if (g.droppedFigures.length) parts.push(`図欠落: ${g.droppedFigures.map((f) => clip(f, 60)).join(", ")}`);
-  if (g.unresolvedRefs.length) parts.push(`未解決参照: ${g.unresolvedRefs.slice(0, 5).map((r) => clip(r, 60)).join(", ")}`);
+  // 翻訳起因・構造の誤りで組版が止まったときは未解決参照を出さない。契約付録 §6
+  const halted = g.failedSegments.length > 0 || g.structuralErrors.length > 0;
+  if (g.unresolvedRefs.length && !halted)
+    parts.push(`未解決参照: ${g.unresolvedRefs.slice(0, 5).map((r) => clip(r, 60)).join(", ")}`);
   if (g.shadowedPackages.length)
     parts.push(`同梱パッケージを無効化: ${g.shadowedPackages.join(", ")}`);
   return parts.join(" | ") || "不明なビルド失敗";

@@ -22,6 +22,18 @@ describe("formalCheck: 数式", () => {
   });
 });
 
+describe("formalCheck: 条件分岐（\\if… / \\fi）", () => {
+  it("個数が一致すれば pass。節の端に単独で残った \\if… を落とせば conditional", () => {
+    expect(kinds("Text.\n\\if 0", "本文。\n\\if 0")).not.toContain("conditional");
+    expect(kinds("Text.\n\\if 0", "本文。")).toContain("conditional");
+    expect(kinds("old\n\\fi\nText.", "本文。")).toContain("conditional");
+  });
+  it("\\ifx・\\ifthenelse も数え、\\fig などは \\fi と数えない", () => {
+    expect(kinds("\\ifx\\a\\b A\\fi \\fig", "\\ifx\\a\\b 甲\\fi \\fig")).not.toContain("conditional");
+    expect(kinds("\\ifthenelse{\\boolean{a}}{A}{B}", "甲")).toContain("conditional");
+  });
+});
+
 describe("formalCheck: 図(\\includegraphics)", () => {
   const FIG_SRC =
     "\\begin{figure}\\includegraphics[scale=0.6]{Figures/ModalNet-21}\\caption{The Transformer}\\end{figure}";

@@ -1,8 +1,9 @@
+import type { BuildGateResult } from "../tools/build-gate.js";
 import { describe, it, expect, afterEach } from "vitest";
 import { mkdtempSync, writeFileSync, existsSync, readFileSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { translatePaper, type TranslateDeps, type TranslateOptions } from "./translate-paper.js";
+import { summarizeGateFailure, translatePaper, type TranslateDeps, type TranslateOptions } from "./translate-paper.js";
 import { GlossaryDb } from "../terminology/db.js";
 import { FakeLlmClient } from "../testing/fake-llm.js";
 import { makeTar } from "../ingest/archive.fixtures.js";
@@ -661,5 +662,28 @@ describe("対訳 PDF", () => {
     expect(built).not.toContain("bilingual");
     expect(r.summary.bilingual.status).toBe("skipped");
     db.close();
+  });
+});
+
+describe("summarizeGateFailure（契約付録 §6）", () => {
+  const gate = (over: Partial<BuildGateResult>): BuildGateResult => ({
+    buildOk: false,
+    failedSegments: [],
+    structuralErrors: [],
+    unresolvedRefs: ["a2020", "b2021"],
+    missingFigures: [],
+    droppedFigures: [],
+    shadowedPackages: [],
+    ...over,
+  });
+
+  it("組版が翻訳起因・構造の誤りで止まったときは未解決参照を並べない", () => {
+    expect(summarizeGateFailure(gate({ failedSegments: [{ id: "seg-0040", line: 1666 } as never] }))).toBe(
+      "翻訳起因: seg-0040(1666)",
+    );
+    expect(summarizeGateFailure(gate({ structuralErrors: ["main.tex:3: Undefined control sequence."] }))).not.toContain(
+      "未解決参照",
+    );
+    expect(summarizeGateFailure(gate({}))).toBe("未解決参照: a2020, b2021");
   });
 });
