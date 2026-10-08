@@ -53,6 +53,16 @@ describe("arXiv の問い合わせ", () => {
     expect(q.get("max_results")).toBe("20");
     expect(() => arxivQuery('  "" ')).toThrow(ArxivQueryError);
   });
+
+  it("停止語を除く（arXiv の all: は停止語を含むと 0 件になる）", () => {
+    expect(arxivQuery("Deep Ensembles Work, But Are They Necessary?").get("search_query")).toBe(
+      "all:Deep AND all:Ensembles AND all:Work AND all:Necessary",
+    );
+    expect(arxivQuery("Approximations of Neural Network").get("search_query")).toBe(
+      "all:Approximations AND all:Neural AND all:Network",
+    );
+    expect(() => arxivQuery("The Of a")).toThrow(ArxivQueryError);
+  });
 });
 
 function fakeClock() {
@@ -113,9 +123,9 @@ describe("arXiv の検索クライアント", () => {
       timeoutMs: 20_000,
       fetchImpl: (async () => responses.shift()!()) as unknown as typeof fetch,
     });
-    await expect(client.search("a")).rejects.toThrow("HTTP 503");
-    await expect(client.search("b")).rejects.toThrow("20 秒以内に応答しませんでした");
-    await expect(client.search("c")).rejects.toThrow("arXiv に接続できませんでした: fetch failed");
-    expect((await client.search("d")).entries).toHaveLength(2);
+    await expect(client.search("w")).rejects.toThrow("HTTP 503");
+    await expect(client.search("x")).rejects.toThrow("20 秒以内に応答しませんでした");
+    await expect(client.search("y")).rejects.toThrow("arXiv に接続できませんでした: fetch failed");
+    expect((await client.search("z")).entries).toHaveLength(2);
   });
 });

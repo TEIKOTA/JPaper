@@ -8,6 +8,11 @@ export const ARXIV_MAX_RESULTS = 20;
 const CACHE_MS = 10 * 60_000;
 const CACHE_MAX = 50;
 const MAX_TERMS = 8;
+// arXiv の all: が 0 件を返す英語の停止語（Lucene 既定の英語の停止語）。
+const STOP_WORDS = new Set([
+  "a", "an", "and", "are", "as", "at", "be", "but", "by", "for", "if", "in", "into", "is", "it", "no", "not", "of",
+  "on", "or", "such", "that", "the", "their", "then", "there", "these", "they", "this", "to", "was", "will", "with",
+]);
 
 export interface ArxivEntry {
   // 版を除いた ID（例 2401.12345、hep-th/9901001）。
@@ -88,14 +93,14 @@ export function parseArxivAtom(xml: string): ArxivSearchResult {
   return { ...(total === undefined || !Number.isFinite(total) ? {} : { total }), entries };
 }
 
-// 検索語を API の問い合わせにする。arXiv ID なら id_list、それ以外は語ごとの all: の AND。
+// 検索語を API の問い合わせにする。arXiv ID なら id_list、それ以外は停止語を除いた語ごとの all: の AND。
 export function arxivQuery(q: string, maxResults = ARXIV_MAX_RESULTS): URLSearchParams {
   const s = q.trim().replace(/^arxiv:/i, "");
   if (isArxivId(s)) return new URLSearchParams({ id_list: s, max_results: String(maxResults) });
   const terms = s
     .split(/\s+/)
     .map((t) => t.replace(/[^\p{L}\p{N}.\-]/gu, ""))
-    .filter((t) => t !== "" && !/^(AND|OR|ANDNOT)$/.test(t))
+    .filter((t) => t !== "" && !/^(AND|OR|ANDNOT)$/.test(t) && !STOP_WORDS.has(t.toLowerCase()))
     .slice(0, MAX_TERMS);
   if (terms.length === 0) throw new ArxivQueryError("検索語を入力してください");
   return new URLSearchParams({
