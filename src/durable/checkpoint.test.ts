@@ -10,7 +10,7 @@ import {
 import os from "node:os";
 import path from "node:path";
 import { z } from "zod";
-import { checkpoint, hashContext, pruneSteps } from "./checkpoint.js";
+import { checkpoint, hashContext, pruneSteps, readStep, writeStep } from "./checkpoint.js";
 
 const dirs: string[] = [];
 const tmp = () => {
@@ -212,5 +212,44 @@ describe("pruneSteps", () => {
     const dir = mkdtempSync(path.join(os.tmpdir(), "jpaper-prune-"));
     expect(pruneSteps(dir, new Set(["ingest"]))).toBe(0);
     rmSync(dir, { recursive: true, force: true });
+  });
+});
+
+describe("readStep / writeStep（契約付録 §9）", () => {
+  it("writeStep で署名し直した値を checkpoint が新しい無効化キーで採用する", async () => {
+    const dir = tmp();
+    await checkpoint(dir, "seg-0000", S, async () => ({ v: 1 }), { invalidation: "aa", key: KEY });
+    const read = readStep(dir, "seg-0000", KEY);
+    expect(read).toMatchObject({ invalidation: "aa", value: { v: 1 } });
+    writeStep(dir, "seg-0000", { v: 2 }, { invalidation: "bb", key: KEY });
+    expect(readdirSync(path.join(dir, "steps"))).toEqual(["seg-0000.bb.json"]);
+    let calls = 0;
+    const got = await checkpoint(dir, "seg-0000", S, async () => ({ v: ++calls + 10 }), {
+      invalidation: "bb",
+      key: KEY,
+    });
+    expect(got).toEqual({ v: 2 });
+    expect(calls).toBe(0);
+  });
+
+  it("別の鍵・改竄・別の step の checkpoint は読まない", async () => {
+    const dir = tmp();
+    writeStep(dir, "seg-0001", { v: 1 }, { invalidation: "aa", key: KEY });
+    expect(readStep(dir, "seg-0001", Buffer.alloc(32, 8))).toBeUndefined();
+    expect(readStep(dir, "seg-0000", KEY)).toBeUndefined();
+    const file = path.join(dir, "steps", "seg-0001.aa.json");
+    const env = JSON.parse(readFileSync(file, "utf8")) as { value: { v: number } };
+    env.value.v = 9;
+    writeFileSync(file, JSON.stringify(env));
+    expect(readStep(dir, "seg-0001", KEY)).toBeUndefined();
+  });
+
+  it("ファイル名の無効化キーの差し替えも署名で弾く", () => {
+    const dir = tmp();
+    writeStep(dir, "seg-0002", { v: 1 }, { invalidation: "aa", key: KEY });
+    const steps = path.join(dir, "steps");
+    writeFileSync(path.join(steps, "seg-0002.bb.json"), readFileSync(path.join(steps, "seg-0002.aa.json")));
+    rmSync(path.join(steps, "seg-0002.aa.json"));
+    expect(readStep(dir, "seg-0002", KEY)).toBeUndefined();
   });
 });

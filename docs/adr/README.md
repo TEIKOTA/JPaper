@@ -91,3 +91,4 @@
 | 2026-10-07 | [成果物 PDF の名前を「ID＋短い英語名」にし、短い英語名はタイトルの翻訳と同時に決めさせる](./20261007-name-deliverable-pdfs-by-id-and-slug.md) | accepted |
 | 2026-10-07 | [パッケージ管理を npm から pnpm に移す](./20261007-adopt-pnpm-for-package-management.md) | accepted |
 | 2026-10-07 | [節の予算を 0.30×CW に加えて 8,000 トークンで頭打ちにする](./20261007-cap-segment-budget-by-output-time.md) | accepted |
+| 2026-10-07 | [用語集の Web アプリ: 訳語の編集はコードの置換で反映し、checkpoint を署名し直して LLM なしで組み直す](./20261007-glossary-web-app-replace-and-retypeset-without-llm.md) | accepted |

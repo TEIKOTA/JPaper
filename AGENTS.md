@@ -14,6 +14,7 @@
 - `src/workflows/` — ワークフロー（素の TS 関数。`Promise.all` / `for` / `if` で配線）
 - `src/tools/` — エージェントが使うツール（TS 関数）
 - `src/index.ts` — エントリポイント（ワークフロー起動 CLI）
+- `apps/web/` — 用語集の Web アプリ（`server/`=core を呼ぶ Hono API、`src/`=Vite＋React の画面）。pnpm workspace のパッケージ
 - `input/` — 用語集・スタイルガイド等の知識 SSOT（コミット対象）
 - `output/` — 実行証跡（`runs/`）と作業領域（`workspace/`）。runtime 生成物で gitignore
 - `docs/` — 設計ドキュメント・運用メモ（ビルド対象外）。実装契約の正本は [`docs/design/contract-appendix.md`](./docs/design/contract-appendix.md)
@@ -91,6 +92,7 @@
 - `pnpm test` — vitest 単体テスト（決定的な検査。LLM を含めない）
 - `pnpm build` / `pnpm typecheck` — tsc ビルド / 型チェック（emit なし）
 - `pnpm dev` — `src/cli.ts`（jpaper CLI）を tsx で実行
+- `pnpm dev:web` — 用語集の Web アプリ（API と画面）を立ち上げる（仕様の正本は契約付録 §9）
 - `bash tests/run-tests.sh` — 規約検査スクリプト群の self-test（scripts/ を変更したら必ず実行。`scripts/` `tests/` の編集後は PostToolUse hook が自動実行する）
 - `scripts/new-branch.sh <type> <issue番号> <slug> [--worktree <標準配置のdir>]` — 規約検証付きで topic branch を作成する（既定は fetch 後の `origin/main`。取得失敗時は local main へ fallback。`--from` で変更可）
 - `scripts/worktree.sh -h` — repo 単位の作成・一覧・保留・終了・候補確認・回収（仕様・承認・保護条件は [`docs/process/worktree-lifecycle.md`](./docs/process/worktree-lifecycle.md)）。

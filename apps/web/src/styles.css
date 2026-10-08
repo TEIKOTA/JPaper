@@ -1,0 +1,536 @@
+/* 契約付録 §9（Web アプリ）。白基調・1px の罫線・アクセントは #1f4e79 の 1 色。影・グラデーションは使わない。 */
+:root {
+  --ink: #1a1a1a;
+  --text: #2b2b2b;
+  --sub: #6e6e6e;
+  --faint: #9a9a9a;
+  --line: #e2e2e2;
+  --line-strong: #cfcfcf;
+  --hover: #f5f6f7;
+  --accent: #1f4e79;
+  --error: #9b2c2c;
+  --gutter: 48px;
+  font-family: "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Noto Sans JP", "Yu Gothic", "Meiryo", sans-serif;
+  color: var(--text);
+  background: #fff;
+  font-size: 15px;
+  line-height: 1.8;
+  -webkit-font-smoothing: antialiased;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: #fff;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+button,
+input {
+  font: inherit;
+  color: inherit;
+}
+
+.container {
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 0 var(--gutter);
+}
+
+/* ヘッダー */
+.site-header {
+  border-bottom: 1px solid var(--line);
+  background: #fff;
+}
+.header-inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 72px;
+}
+.brand {
+  font-size: 22px;
+  letter-spacing: 0.02em;
+  color: var(--ink);
+}
+.nav {
+  display: flex;
+  gap: 48px;
+  height: 100%;
+}
+.nav a {
+  display: flex;
+  align-items: center;
+  height: 100%;
+  font-size: 16px;
+  color: var(--ink);
+  border-bottom: 2px solid transparent;
+  padding-top: 2px;
+}
+.nav a.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+.page {
+  padding-top: 64px;
+  padding-bottom: 96px;
+}
+
+.page-title {
+  font-size: 64px;
+  font-weight: 400;
+  letter-spacing: 0.04em;
+  line-height: 1.2;
+  color: var(--ink);
+  margin: 0 0 40px;
+}
+
+/* 検索 */
+.search,
+.text-input {
+  border: 1px solid var(--line-strong);
+  border-radius: 2px;
+  background: #fff;
+  outline: none;
+}
+.search:focus,
+.text-input:focus {
+  border-color: var(--accent);
+}
+.search-wide {
+  width: 100%;
+  font-size: 18px;
+  padding: 14px 20px;
+  margin-bottom: 48px;
+}
+.search-narrow {
+  width: 360px;
+  max-width: 100%;
+  font-size: 14px;
+  padding: 10px 16px;
+}
+
+/* 論文一覧 */
+.paper-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border-top: 1px solid var(--line);
+}
+.paper-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 40px;
+  padding: 30px 0;
+  border-bottom: 1px solid var(--line);
+}
+.paper-titles {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.paper-title-ja {
+  font-size: 22px;
+  color: var(--ink);
+  line-height: 1.6;
+}
+.paper-titles:hover .paper-title-ja {
+  color: var(--accent);
+}
+.paper-title-en {
+  font-size: 15px;
+  color: var(--sub);
+}
+.paper-meta,
+.paper-links {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  font-size: 15px;
+  white-space: nowrap;
+}
+.paper-meta {
+  color: var(--text);
+}
+.sep {
+  display: inline-block;
+  width: 1px;
+  height: 18px;
+  background: var(--line-strong);
+}
+.link,
+.paper-links a {
+  color: var(--accent);
+}
+.link:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.muted {
+  color: var(--sub);
+}
+.empty {
+  color: var(--sub);
+  padding: 32px 0;
+}
+
+/* 論文の用語集 */
+.breadcrumb {
+  display: flex;
+  gap: 12px;
+  font-size: 14px;
+  color: var(--sub);
+  margin-bottom: 20px;
+}
+.breadcrumb a:hover {
+  color: var(--accent);
+}
+.paper-heading {
+  font-size: 44px;
+  font-weight: 400;
+  line-height: 1.4;
+  color: var(--ink);
+  margin: 0;
+}
+.paper-subtitle {
+  font-size: 19px;
+  color: var(--sub);
+  margin: 4px 0 0;
+}
+.paper-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  margin: 40px 0 24px;
+}
+
+.paper-actions-end {
+  justify-content: flex-end;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 15px;
+}
+.table th {
+  text-align: left;
+  font-weight: 500;
+  color: var(--ink);
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--line-strong);
+}
+.table td {
+  padding: 20px 16px;
+  border-bottom: 1px solid var(--line);
+  vertical-align: top;
+}
+.table .num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  width: 7em;
+}
+.terms tr.clickable {
+  cursor: pointer;
+}
+.terms tr.clickable:hover td {
+  background: var(--hover);
+}
+.terms tr.fixed td {
+  color: var(--text);
+}
+.affected-link {
+  display: block;
+}
+
+.notice {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 16px;
+  border: 1px solid var(--line);
+  padding: 12px 16px;
+  margin-bottom: 24px;
+  font-size: 14px;
+}
+.text-button {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--accent);
+  cursor: pointer;
+}
+.text-button:disabled {
+  color: var(--faint);
+  cursor: default;
+}
+
+/* 訳語の編集 */
+.term-page {
+  max-width: 1120px;
+}
+.term-heading {
+  font-size: 56px;
+  font-weight: 400;
+  line-height: 1.25;
+  color: var(--ink);
+  margin: 0;
+}
+.term-current {
+  font-size: 20px;
+  margin: 8px 0 40px;
+  color: var(--text);
+}
+.field-label {
+  display: block;
+  font-size: 15px;
+  margin-bottom: 8px;
+}
+.edit-row {
+  display: flex;
+  align-items: center;
+  gap: 32px;
+  flex-wrap: wrap;
+}
+.text-input {
+  width: 720px;
+  max-width: 100%;
+  font-size: 20px;
+  padding: 10px 16px;
+}
+.check {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 15px;
+  cursor: pointer;
+}
+.check input {
+  appearance: none;
+  width: 22px;
+  height: 22px;
+  margin: 0;
+  border: 1.5px solid var(--accent);
+  border-radius: 2px;
+  background: #fff;
+  display: grid;
+  place-content: center;
+  cursor: pointer;
+}
+.check input:checked::before {
+  content: "";
+  width: 12px;
+  height: 12px;
+  background: var(--accent);
+}
+.field-error,
+.error {
+  color: var(--error);
+}
+.field-error {
+  margin: 8px 0 0;
+}
+.preview-notes {
+  margin: 20px 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: 14px;
+  color: var(--sub);
+}
+.section-title {
+  font-size: 34px;
+  font-weight: 400;
+  color: var(--ink);
+  margin: 48px 0 0;
+  padding-bottom: 20px;
+  border-bottom: 1px solid var(--line-strong);
+}
+.occurrences {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.occurrence {
+  padding: 22px 0;
+  border-bottom: 1px solid var(--line);
+}
+.occ-meta {
+  font-size: 14px;
+  color: var(--sub);
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.occ-shield {
+  color: var(--text);
+}
+.occ-source {
+  font-size: 17px;
+  margin: 6px 0 8px;
+  color: var(--ink);
+}
+.occ-context {
+  font-size: 14px;
+  color: var(--faint);
+  margin: 0;
+}
+.occ-line {
+  font-size: 17px;
+  margin: 2px 0;
+  color: var(--ink);
+}
+.mark-src {
+  font-weight: 700;
+}
+.mark-old {
+  text-decoration: line-through;
+  text-decoration-thickness: 1px;
+}
+.mark-new {
+  color: var(--accent);
+  font-weight: 700;
+}
+.mark-shield {
+  text-decoration: underline dotted;
+  text-underline-offset: 4px;
+}
+.context {
+  margin-top: 32px;
+}
+.context summary {
+  cursor: pointer;
+  font-size: 15px;
+  color: var(--accent);
+  padding: 8px 0;
+}
+
+.footer-spacer {
+  height: 120px;
+}
+.action-bar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: #fff;
+  border-top: 1px solid var(--line-strong);
+}
+.action-inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  height: 80px;
+  font-size: 15px;
+}
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 48px;
+}
+.primary,
+.secondary {
+  border-radius: 2px;
+  padding: 12px 28px;
+  font-size: 15px;
+  cursor: pointer;
+}
+.primary {
+  background: var(--accent);
+  color: #fff;
+  border: 1px solid var(--accent);
+}
+.primary:disabled {
+  background: var(--faint);
+  border-color: var(--faint);
+  cursor: default;
+}
+.secondary {
+  background: #fff;
+  color: var(--accent);
+  border: 1px solid var(--accent);
+}
+.secondary:disabled {
+  color: var(--faint);
+  border-color: var(--faint);
+  cursor: default;
+}
+
+/* 適用の結果 */
+.result-lead {
+  font-size: 18px;
+  margin: 24px 0;
+}
+.result-links {
+  margin-bottom: 24px;
+}
+.affected {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.affected li {
+  display: flex;
+  gap: 24px;
+  align-items: baseline;
+  flex-wrap: wrap;
+  padding: 16px 0;
+  border-bottom: 1px solid var(--line);
+}
+.affected-title {
+  color: var(--ink);
+  font-size: 17px;
+}
+.result-actions {
+  display: flex;
+  align-items: center;
+  gap: 40px;
+  margin-top: 48px;
+}
+
+.status {
+  color: var(--sub);
+}
+
+@media (max-width: 760px) {
+  :root {
+    --gutter: 16px;
+  }
+  .page-title {
+    font-size: 40px;
+  }
+  .paper-row {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+  .nav {
+    gap: 20px;
+  }
+  .term-heading {
+    font-size: 36px;
+  }
+  .paper-heading {
+    font-size: 30px;
+  }
+  .paper-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .search-narrow {
+    width: 100%;
+  }
+  .table th,
+  .table td {
+    padding: 12px 8px;
+  }
+}
