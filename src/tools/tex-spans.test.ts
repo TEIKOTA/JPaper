@@ -115,6 +115,15 @@ describe("走査コストは入力長に対して線形", () => {
     expect(fastestMs(2, () => void verbatimSpans(body))).toBeLessThan(1_000);
   });
 
+  it.each([
+    ["未閉じ \\author{", "\\author{"],
+    ["未閉じ \\author[", "\\author["],
+    ["閉じた \\author[x] と未閉じの {", "\\author[x]{"],
+  ])("commandSpans: %s の羅列 1MiB を秒未満で走る", (_label, unit) => {
+    const body = rep(unit, 1024 * 1024);
+    expect(fastestMs(2, () => void commandSpans(body, "author"))).toBeLessThan(1_000);
+  });
+
   it("倍化しても 4 倍にならない（二次でない）", () => {
     const small = rep("\\lstinline{", 512 * 1024);
     const large = rep("\\lstinline{", 1024 * 1024);

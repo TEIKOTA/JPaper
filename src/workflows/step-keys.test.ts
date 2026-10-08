@@ -13,7 +13,7 @@ const seg1 = { id: "seg-0001", latex: "A flat ensemble is robust." };
 
 describe("訳す本文で用語を数える（契約付録 §1・§3）", () => {
   it("keep の \\title と \\author 命令を除く", () => {
-    expect(translatedLatex(seg0)).toBe("\n\n\\maketitle\nWe study sharpness.");
+    expect(translatedLatex(seg0)).toBe(" \n \n\\maketitle\nWe study sharpness.");
   });
 
   it("伏せた区間にだけ出る用語はその節のスライスに入れず、初出は次に本文へ出る節にする", () => {

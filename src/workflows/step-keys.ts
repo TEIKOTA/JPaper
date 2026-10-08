@@ -81,7 +81,7 @@ export function translatedLatex(seg: Pick<Segment, "latex" | "keep">): string {
     ...(seg.keep === undefined ? [] : [[seg.keep.start, seg.keep.end] as Span]),
     ...commandSpans(seg.latex, "author"),
   ];
-  return removeSpans(seg.latex, hidden);
+  return removeSpans(seg.latex, hidden, " ");
 }
 
 export function segmentSlice(
