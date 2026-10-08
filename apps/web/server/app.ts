@@ -22,7 +22,7 @@ import {
   pdfPath,
   type PdfKind,
 } from "./catalog.js";
-import type { WebConfig } from "./config.js";
+import { DEFAULT_API_PORT, DEFAULT_WEB_PORT, localOrigins, type WebConfig } from "./config.js";
 
 const LOCAL_HOSTS = new Set(["127.0.0.1", "localhost", "[::1]"]);
 
@@ -49,13 +49,18 @@ function errorResponse(c: Context, e: unknown): Response {
 export function createApp(config: WebConfig): Hono {
   const app = new Hono();
 
-  // Host・Origin が 127.0.0.1・localhost 以外の要求は 403。契約付録 §9
+  // Host が 127.0.0.1・localhost 以外、Origin が画面・API のポート以外の要求は 403。
+  // 書き込み（POST）は JSON だけを受け付け、別オリジンからの単純リクエスト（プリフライトなし）を通さない。契約付録 §9
+  const origins = new Set(config.origins ?? localOrigins(DEFAULT_WEB_PORT, DEFAULT_API_PORT));
   app.use("/api/*", async (c, next) => {
     const host = hostnameOf(c.req.header("host"));
     if (host !== undefined && !LOCAL_HOSTS.has(host)) return c.json({ error: "許可されていないホストです" }, 403);
     const origin = c.req.header("origin");
-    if (origin !== undefined && !LOCAL_HOSTS.has(hostnameOf(origin) ?? "")) {
+    if (origin !== undefined && !origins.has(origin)) {
       return c.json({ error: "許可されていないオリジンです" }, 403);
+    }
+    if (c.req.method === "POST" && !/^application\/json(\s*;|$)/i.test(c.req.header("content-type") ?? "")) {
+      return c.json({ error: "content-type: application/json で送ってください" }, 415);
     }
     await next();
   });

@@ -234,7 +234,8 @@ function Done(props: { id: string; src: string; result: ApplyResult }) {
       ) : (
         <>
           <p className="result-lead">
-            「{r.oldForm}」を「{r.newForm}」に直し、訳文の {r.replaced} 件を置換して和訳 PDF と対訳 PDF を組み直しました。
+            「{r.oldForm}」を「{r.newForm}」に直し、訳文の {r.replaced} 件を置換して
+            {r.bilingualStatus === "ok" ? "和訳 PDF と対訳 PDF を組み直しました。" : "和訳 PDF を組み直しました。対訳 PDF は組めませんでした。"}
           </p>
           <div className="paper-links result-links">
             <PdfLink id={props.id} kind="ja" on={r.pdf.ja} label="和訳 PDF" />

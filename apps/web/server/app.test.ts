@@ -191,13 +191,33 @@ describe("用語集 Web API（契約付録 §9）", () => {
     expect(
       (await app.request("/api/papers", { headers: { host: "localhost:5173", origin: "http://localhost:5173" } })).status,
     ).toBe(200);
+    // 同じ手元でも、画面・API 以外のポートのページからは受け付けない。
+    expect(
+      (await app.request("/api/papers", { headers: { host: "127.0.0.1:5174", origin: "http://127.0.0.1:3000" } })).status,
+    ).toBe(403);
+  });
+
+  it("書き込みは JSON だけを受け付ける（プリフライトの無い単純リクエストを通さない）", async () => {
+    const { app } = await setup();
+    const res = await app.request("/api/papers/2601.00001/undo", {
+      method: "POST",
+      headers: { host: "127.0.0.1:5174", origin: "http://127.0.0.1:5173", "content-type": "text/plain" },
+      body: "{}",
+    });
+    expect(res.status).toBe(415);
   });
 
   it("データの場所は CLI と同じ既定（CWD の article/）で、環境変数で変えられる", () => {
     expect(configFromEnv({}, "/w").articleDir).toBe("/w/article");
-    expect(configFromEnv({ JPAPER_ARTICLE_DIR: "x/y", JPAPER_GLOSSARY_DB: "/t/g.db" }, "/w")).toEqual({
+    expect(configFromEnv({ JPAPER_ARTICLE_DIR: "x/y", JPAPER_GLOSSARY_DB: "/t/g.db" }, "/w")).toMatchObject({
       articleDir: "/w/x/y",
       dbPath: "/t/g.db",
     });
+    expect(configFromEnv({ JPAPER_WEB_PORT: "6000", JPAPER_WEB_API_PORT: "6001" }, "/w").origins).toEqual([
+      "http://127.0.0.1:6000",
+      "http://localhost:6000",
+      "http://127.0.0.1:6001",
+      "http://localhost:6001",
+    ]);
   });
 });

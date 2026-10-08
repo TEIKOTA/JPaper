@@ -225,6 +225,16 @@ describe("用語集の編集（契約付録 §9）", () => {
     db.close();
   });
 
+  it("全体の用語 DB に登録しないなら、適用しても元に戻しても全体 DB は変わらない", async () => {
+    const { outDir, db } = await translated();
+    const before = db.allFor("Rashomon set").map((e) => `${e.ja}/${e.status}`);
+    await applyTermEdit(outDir, "Rashomon set", "羅生門集合", {}, { db, cacheKey: KEY, latexRunner: okRunner });
+    expect(db.allFor("Rashomon set").map((e) => `${e.ja}/${e.status}`)).toEqual(before);
+    undoTermEdit(outDir);
+    expect(db.allFor("Rashomon set").map((e) => `${e.ja}/${e.status}`)).toEqual(before);
+    db.close();
+  });
+
   it("全体の用語 DB に承認済みとして登録する", async () => {
     const { outDir, db } = await translated();
     const out = await applyTermEdit(outDir, "Rashomon set", "羅生門集合", { registerGlobal: true }, {
@@ -235,6 +245,58 @@ describe("用語集の編集（契約付録 §9）", () => {
     expect(out.registered).toBe(true);
     expect(db.confirmedFor("Rashomon set").map((e) => e.ja)).toEqual(["羅生門集合(Rashomon set)"]);
     expect(readBackupInfo(outDir)?.registerGlobal).toBe(true);
+    db.close();
+  });
+
+  it("失敗した適用は、その前に成功した適用の「元に戻す」を消さない", async () => {
+    const { outDir, db } = await translated();
+    const md0 = readFileSync(path.join(outDir, "glossary.md"), "utf8");
+    await applyTermEdit(outDir, "Rashomon set", "羅生門集合", {}, { db, cacheKey: KEY, latexRunner: okRunner });
+    const md1 = readFileSync(path.join(outDir, "glossary.md"), "utf8");
+    await expect(
+      applyTermEdit(outDir, "Rashomon set", "羅生門の集合", {}, { db, cacheKey: KEY, latexRunner: failRunner }),
+    ).rejects.toThrow(/元に戻しました/);
+    expect(readFileSync(path.join(outDir, "glossary.md"), "utf8")).toBe(md1);
+    expect(readBackupInfo(outDir)?.newForm).toBe("羅生門集合(Rashomon set)");
+    undoTermEdit(outDir);
+    expect(readFileSync(path.join(outDir, "glossary.md"), "utf8")).toBe(md0);
+    db.close();
+  });
+
+  it("適用のあとに md や訳文が変わっていたら、元に戻すを拒んで今の状態を残す", async () => {
+    const { outDir, db } = await translated();
+    await applyTermEdit(outDir, "Rashomon set", "羅生門集合", {}, { db, cacheKey: KEY, latexRunner: okRunner });
+    const edited = readFileSync(path.join(outDir, "glossary.md"), "utf8").replace("経験的ラショモン集合", "実証的ラショモン集合");
+    writeFileSync(path.join(outDir, "glossary.md"), edited);
+    expect(() => undoTermEdit(outDir)).toThrow(/元に戻せません/);
+    expect(readFileSync(path.join(outDir, "glossary.md"), "utf8")).toBe(edited);
+    expect(readBackupInfo(outDir)).toBeDefined();
+    db.close();
+  });
+
+  it("適用のあとの CLI 再実行が何も変えなければ、元に戻せる", async () => {
+    const { outDir, db } = await translated();
+    const md0 = readFileSync(path.join(outDir, "glossary.md"), "utf8");
+    await applyTermEdit(outDir, "Rashomon set", "羅生門集合", {}, { db, cacheKey: KEY, latexRunner: okRunner });
+    const { calls } = await rerun(outDir, db);
+    expect(calls).toEqual([]);
+    undoTermEdit(outDir);
+    expect(readFileSync(path.join(outDir, "glossary.md"), "utf8")).toBe(md0);
+    db.close();
+  });
+
+  it("対訳 PDF があった論文で対訳だけ組めなくなったら、変更を戻して投げる", async () => {
+    const { outDir, db } = await translated();
+    const md0 = readFileSync(path.join(outDir, "glossary.md"), "utf8");
+    const pdfs0 = deliverables(outDir);
+    expect(pdfs0.some((f) => f.endsWith("-bilingual.pdf"))).toBe(true);
+    const bilingualFails: LatexRunner = (dir) =>
+      readFileSync(path.join(dir, "main.tex"), "utf8").includes("paracol") ? failRunner(dir) : okRunner(dir);
+    await expect(
+      applyTermEdit(outDir, "Rashomon set", "羅生門集合", {}, { db, cacheKey: KEY, latexRunner: bilingualFails }),
+    ).rejects.toThrow(/対訳 PDF が組めなくなった/);
+    expect(readFileSync(path.join(outDir, "glossary.md"), "utf8")).toBe(md0);
+    expect(deliverables(outDir)).toEqual(pdfs0);
     db.close();
   });
 

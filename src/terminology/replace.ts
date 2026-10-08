@@ -106,6 +106,19 @@ export function rewriteText(text: string, r: TermRewrite): string {
   return replaceOccurrences(text, findOccurrences(text, r.oldJa, r.shields), r.newJa);
 }
 
+// brief.md・style.md の本文だけを書き換える。見出し行と「- キー:」のキーは parseBriefMd / parseStyleMd が
+// 節や項目を探す目印なので書き換えない（書き換えると主張の核や数字・単位の規約が読めなくなる）。
+export function rewriteMdBody(md: string, r: TermRewrite, keyed: boolean): string {
+  return md
+    .split("\n")
+    .map((line) => {
+      if (line.trimStart().startsWith("#")) return line;
+      const m = keyed ? /^(\s*-\s+[^:]+:\s?)(.*)$/.exec(line) : null;
+      return m === null ? rewriteText(line, r) : m[1]! + rewriteText(m[2]!, r);
+    })
+    .join("\n");
+}
+
 // 値の中の文字列をすべて書き換える（キーは書き換えない）。
 export function rewriteStrings<T>(value: T, r: TermRewrite): T {
   if (typeof value === "string") return rewriteText(value, r) as T;

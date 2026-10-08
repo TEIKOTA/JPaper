@@ -194,6 +194,8 @@ export interface TranslateDeps {
   // 進捗。web の UI が「12/35 節完了」を出せるようにする副作用チャネル。
   onProgress?: (e: RunProgress) => void;
   latexRunner?: LatexRunner;
+  // false なら用語集の結果を全体 DB へ書き戻さない（用語集の編集の組み直し。契約付録 §9）。既定 true。
+  writeBackGlossary?: boolean;
 }
 
 export interface RunProgress {
@@ -263,6 +265,7 @@ async function loadOrBuildContext(
   cleanLatex: string,
   cacheKey?: Buffer,
   warn?: (m: string) => void,
+  writeBack = true,
 ): Promise<PaperContext> {
   const built = await checkpoint(
     runDir,
@@ -271,7 +274,7 @@ async function loadOrBuildContext(
     () => buildPaperGlossary(client, db, paperId, cleanLatex),
     { invalidation: hashContext(cleanLatex), key: cacheKey },
   );
-  const proposedAdded = writeBackResolved(db, built, paperId);
+  const proposedAdded = writeBack ? writeBackResolved(db, built, paperId) : 0;
   const glossaryMd = path.join(outDir, "glossary.md");
   const briefMd = path.join(outDir, "brief.md");
   const styleMd = path.join(outDir, "style.md");
@@ -1013,6 +1016,7 @@ export async function translatePaper(
       ingested.cleanLatex,
       deps.cacheKey,
       (m) => notify(m),
+      deps.writeBackGlossary !== false,
     );
     const firstOcc = segmentFirstOccurrence(segments, ctx.resolved);
 

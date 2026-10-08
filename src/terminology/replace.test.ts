@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
+  rewriteMdBody,
   editedForm,
   findOccurrences,
   isEditable,
@@ -13,7 +14,7 @@ import {
   validateTermJa,
   type TermRewrite,
 } from "./replace.js";
-import { parseGlossaryMd, renderGlossaryMd, type ResolvedRow } from "./glossary-io.js";
+import { parseBriefMd, parseGlossaryMd, parseStyleMd, renderBriefMd, renderGlossaryMd, renderStyleMd, type ResolvedRow } from "./glossary-io.js";
 
 const rows: ResolvedRow[] = [
   { src: "Rashomon set", form: "ラショモン集合(Rashomon set)", class: "established", rendering: "bilingual", note: "以降は「ラショモン集合」" },
@@ -99,5 +100,24 @@ describe("glossary.md の書き換え", () => {
 
   it("対象の行が無ければ投げる", () => {
     expect(() => rewriteGlossaryMd(renderGlossaryMd(rows), "nope", "x", rw())).toThrow();
+  });
+});
+
+describe("brief.md・style.md の書き換え", () => {
+  it("見出しと「- キー:」のキーは書き換えず、本文だけを置換する", () => {
+    const brief = renderBriefMd({
+      thesis: "主張は単純である",
+      sectionRoles: [{ id: "序論", role: "主張を述べる" }],
+      notationConventions: [],
+      claimStrengthNotes: ["主張を弱める"],
+    });
+    const style = renderStyleMd({ register: "plain", tensePolicy: "現在形", headingStyle: "体言止め", numberStyle: "単位は SI", notes: [] });
+    const toClaim = { oldJa: "主張", newJa: "クレーム", shields: [] };
+    const toUnit = { oldJa: "単位", newJa: "ユニット", shields: [] };
+    const b = parseBriefMd(rewriteMdBody(brief, toClaim, false));
+    expect(b.thesis).toBe("クレームは単純である");
+    expect(b.sectionRoles).toEqual([{ id: "序論", role: "クレームを述べる" }]);
+    expect(b.claimStrengthNotes).toEqual(["クレームを弱める"]);
+    expect(parseStyleMd(rewriteMdBody(style, toUnit, true)).numberStyle).toBe("ユニットは SI");
   });
 });

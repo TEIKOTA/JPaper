@@ -10,6 +10,7 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
+import { createHash } from "node:crypto";
 import path from "node:path";
 import {
   GlossaryBuilderOut,
@@ -51,6 +52,7 @@ import {
   shieldsFor,
   termJa,
   validateTermJa,
+  rewriteMdBody,
   type Shield,
   type TermRewrite,
 } from "../terminology/replace.js";
@@ -385,8 +387,8 @@ export function planTermEdit(state: PaperState, src: string, input: string): Edi
 
   const md = {
     glossary: rewriteGlossaryMd(state.md.glossary, src, next.form, r),
-    brief: rewriteText(state.md.brief, r),
-    style: rewriteText(state.md.style, r),
+    brief: rewriteMdBody(state.md.brief, r, false),
+    style: rewriteMdBody(state.md.style, r, true),
   };
   const ctx: StepContext = {
     resolved: parseGlossaryMd(md.glossary),
@@ -489,6 +491,8 @@ export interface BackupInfo {
 interface Manifest extends BackupInfo {
   version: 1;
   entries: string[];
+  // 適用が終わった直後の状態の指紋。元に戻す前に今の状態と比べる（その後の CLI 実行や手での編集を捨てない）。
+  after?: string;
 }
 
 function editDir(outDir: string): string {
@@ -505,9 +509,13 @@ function managedPaths(outDir: string): string[] {
   );
 }
 
-function writeBackup(outDir: string, info: BackupInfo): void {
-  const dir = backupDir(outDir);
-  const next = `${dir}.next`;
+function stagedBackupDir(outDir: string): string {
+  return `${backupDir(outDir)}.next`;
+}
+
+// 適用前の状態を backup.next に写す。適用が成功したときだけ commitBackup で前の世代と入れ替える。
+function stageBackup(outDir: string, info: BackupInfo): void {
+  const next = stagedBackupDir(outDir);
   rmSync(next, { recursive: true, force: true });
   mkdirSync(path.join(next, "files"), { recursive: true });
   const entries = managedPaths(outDir);
@@ -516,8 +524,31 @@ function writeBackup(outDir: string, info: BackupInfo): void {
   }
   const manifest: Manifest = { version: 1, ...info, entries };
   writeFileSync(path.join(next, "manifest.json"), JSON.stringify(manifest, null, 2));
-  rmSync(dir, { recursive: true, force: true });
-  renameSync(next, dir);
+}
+
+function commitBackup(outDir: string): void {
+  const next = stagedBackupDir(outDir);
+  const m = JSON.parse(readFileSync(path.join(next, "manifest.json"), "utf8")) as Manifest;
+  writeFileSync(path.join(next, "manifest.json"), JSON.stringify({ ...m, after: stateFingerprint(outDir) }, null, 2));
+  rmSync(backupDir(outDir), { recursive: true, force: true });
+  renameSync(next, backupDir(outDir));
+}
+
+// md・notes と訳文の中身、checkpoint のファイル名（名前に無効化キーが入る）から作る指紋。PDF は組版のたびに変わるので含めない。
+function stateFingerprint(outDir: string): string {
+  const h = createHash("sha256");
+  for (const rel of MANAGED_FILES) {
+    const f = path.join(outDir, rel);
+    h.update(`${rel}\0${existsSync(f) ? readFileSync(f) : ""}\0`);
+  }
+  const steps = path.join(outDir, ".run", "steps");
+  for (const name of existsSync(steps) ? readdirSync(steps).sort() : []) h.update(`step\0${name}\0`);
+  const chapters = path.join(outDir, "translation", "chapters");
+  for (const name of existsSync(chapters) ? readdirSync(chapters).sort() : []) {
+    h.update(`chapter\0${name}\0`);
+    h.update(readFileSync(path.join(chapters, name)));
+  }
+  return h.digest("hex");
 }
 
 function readManifest(outDir: string): Manifest | undefined {
@@ -537,16 +568,34 @@ export function readBackupInfo(outDir: string): BackupInfo | undefined {
   return { paperId, src, oldForm, newForm, registerGlobal, createdAt };
 }
 
-function restoreBackup(outDir: string): Manifest {
-  const m = readManifest(outDir);
-  if (m === undefined) throw inputError("元に戻せる適用がありません");
-  const files = path.join(backupDir(outDir), "files");
+function restoreFrom(outDir: string, dir: string): void {
+  const m = JSON.parse(readFileSync(path.join(dir, "manifest.json"), "utf8")) as Manifest;
+  const files = path.join(dir, "files");
   for (const rel of managedPaths(outDir)) rmSync(path.join(outDir, rel), { recursive: true, force: true });
   for (const rel of m.entries) {
     if (path.isAbsolute(rel) || rel.split(/[\\/]/).includes("..")) continue;
     mkdirSync(path.dirname(path.join(outDir, rel)), { recursive: true });
     cpSync(path.join(files, rel), path.join(outDir, rel), { recursive: true });
   }
+}
+
+// 失敗した適用を、その適用の前（backup.next）へ戻す。前の世代のバックアップは残す。
+function rollbackStaged(outDir: string): void {
+  restoreFrom(outDir, stagedBackupDir(outDir));
+  rmSync(stagedBackupDir(outDir), { recursive: true, force: true });
+}
+
+function restoreBackup(outDir: string): Manifest {
+  const m = readManifest(outDir);
+  if (m === undefined) throw inputError("元に戻せる適用がありません");
+  if (m.after !== undefined && m.after !== stateFingerprint(outDir)) {
+    throw new JpaperError(
+      2,
+      "conflict",
+      "適用のあとに CLI での再実行や手での編集があったため元に戻せません（戻すとその結果が失われます）",
+    );
+  }
+  restoreFrom(outDir, backupDir(outDir));
   rmSync(backupDir(outDir), { recursive: true, force: true });
   return m;
 }
@@ -602,6 +651,8 @@ export async function retypesetWithoutLlm(state: PaperState, deps: EditDeps = {}
       ...(deps.db === undefined ? { dbPath: deps.dbPath ?? defaultDbPath() } : { db: deps.db }),
       trace: () => undefined,
       latexRunner: deps.latexRunner,
+      // 全体 DB への登録は registerGlobal を選んだときだけ（registerTerm）。組み直しでは書き戻さない。
+      writeBackGlossary: false,
       onError: (m) => {
         if (!m.startsWith(SHARED_DEFAULT_NOTICE)) notices.push(m);
       },
@@ -656,10 +707,11 @@ export async function applyTermEdit(
   const key = deps.cacheKey ?? loadCacheKey();
   const editLock = acquireRunLock(editDir(outDir));
   try {
+    const hadBilingual = listDeliverables(outDir).some((f) => f.endsWith("-bilingual.pdf"));
     const { state, plan } = withRunLock(runDir, () => {
       const state = loadPaperState(outDir, key);
       const plan = planTermEdit(state, src, input);
-      writeBackup(outDir, {
+      stageBackup(outDir, {
         paperId: state.paperId,
         src,
         oldForm: plan.oldForm,
@@ -670,7 +722,7 @@ export async function applyTermEdit(
       try {
         writePlan(state, plan);
       } catch (e) {
-        restoreBackup(outDir);
+        rollbackStaged(outDir);
         throw e;
       }
       return { state, plan };
@@ -690,11 +742,18 @@ export async function applyTermEdit(
               out.result.error?.kind ?? "typeset",
               `組み直しに失敗したため変更を元に戻しました: ${out.result.error?.message ?? "不明な失敗"}`,
             )
-          : undefined;
+          : hadBilingual && out.result.summary.bilingual.status !== "ok"
+            ? new JpaperError(
+                5,
+                "typeset",
+                `対訳 PDF が組めなくなったため変更を元に戻しました: ${out.result.summary.bilingual.message ?? "不明な失敗"}`,
+              )
+            : undefined;
     if (failure !== undefined) {
-      withRunLock(runDir, () => restoreBackup(outDir));
+      withRunLock(runDir, () => rollbackStaged(outDir));
       throw failure;
     }
+    withRunLock(runDir, () => commitBackup(outDir));
 
     const row = findRow(state.ctx.resolved, src);
     const registered = opts.registerGlobal === true ? registerTerm(row, plan.newForm, state.paperId, deps) : false;
