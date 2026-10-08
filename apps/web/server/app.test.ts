@@ -89,7 +89,14 @@ async function setup() {
     expect(r.status).toBe("ok");
   }
   db.close();
-  const app = createApp({ articleDir, dbPath: dbFile, cacheKey: KEY, latexRunner: okRunner });
+  const app = createApp({
+    articleDir,
+    dbPath: dbFile,
+    cacheKey: KEY,
+    latexRunner: okRunner,
+    settingsPath: path.join(root, "home", "web-settings.json"),
+    repoRoot: root,
+  });
   const json = async (url: string, init?: RequestInit) => {
     const res = await app.request(url, { headers: { host: "127.0.0.1:5174", "content-type": "application/json" }, ...init });
     return { status: res.status, body: (await res.json()) as Record<string, unknown> };
