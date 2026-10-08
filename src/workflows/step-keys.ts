@@ -4,6 +4,7 @@ import type { DocumentBrief, ResolvedTerm, StyleContract } from "../types/contra
 import { EvalIssue } from "../types/contract.js";
 import { hashContext } from "../durable/checkpoint.js";
 import { segment, type Segment } from "../segment/segmenter.js";
+import { firstCoveringSegment, uncoveredTerms, withoutPluralVariants } from "../terminology/term-coverage.js";
 import type { ResolvedRow } from "../terminology/glossary-io.js";
 import { extractPreamble } from "../tools/assemble-latex.js";
 import {
@@ -78,9 +79,16 @@ export function segmentSlice(
   resolved: readonly ResolvedRow[],
   firstOcc: ReadonlyMap<string, string>,
 ): ResolvedTerm[] {
-  return resolved
-    .filter((t) => seg.latex.includes(t.src))
+  return uncoveredTerms(seg.latex, withoutPluralVariants([...resolved]))
     .map((t) => ({ ...t, firstOccurrence: firstOcc.get(t.src) === seg.id })) as ResolvedTerm[];
+}
+
+// 各用語が segmentSlice で最初に効く節。契約付録 §1（節に効く用語）
+export function segmentFirstOccurrence(
+  segments: readonly Pick<Segment, "id" | "latex">[],
+  resolved: readonly ResolvedRow[],
+): Map<string, string> {
+  return firstCoveringSegment([...segments], withoutPluralVariants([...resolved]));
 }
 
 // 無効化は原文＋注入コンテキスト（slice＋brief＋style）のハッシュ。

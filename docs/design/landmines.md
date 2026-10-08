@@ -125,3 +125,81 @@
 - **おかしく見える点**: 1 回答えさせるだけの呼び出しに `--safe-mode` を付け、作業ディレクトリを JPaper の実行場所でなく一時ディレクトリにしている。
 - **なぜ意図的か**: 既定の claude CLI は、利用者の `~/.claude/CLAUDE.md`、作業ディレクトリのプロジェクト `CLAUDE.md`、SessionStart hook の出力、git status を毎回の文脈に載せる（実測: repo の中で約 15,400 入力トークン、「読み込んでいる指示」を尋ねるとそれらの見出しを答える）。訳文が repo の運用ルールや作業状況に引きずられ、呼び出しごとに約 13,000 トークンが無駄になる。`--safe-mode` で CLAUDE.md・hook などを止め、repo の外で起動して git status などを消す（実測: 約 2,100 トークン、「なし」）。`--bare` は OAuth を読まずサブスクリプション認証で使えないので採らない。
 - **正本ポインタ**: issue #306、契約付録 §5。
+
+## `src/terminology/term-coverage.ts` — 節に効く用語を、単語境界・複数形・最長一致で絞る
+
+- **おかしく見える点**: 節の用語を `latex.includes(src)` で拾わず、(1) ラテン文字端の語は前後が英数字の位置を数えない（末尾の `s` / `es` だけは同じ語とみなす）、(2) 同じ扱いの語の複数形（`Deep Ensembles` に対する `Deep Ensemble`）は用語ごと外す、(3) 節での出現がすべてより長い用語の中に収まる語は外す。
+- **なぜ意図的か**: 部分一致のままだと形式検査が満たせない要求を出す。(1) keep-original の `lymph` が `lymphocytes` の中でも数えられ、訳文に `lymph` が 2 回要る（実測: 1902.06543 seg-0010 が改稿 5/6 で失敗）。(2) 併記の `ディープアンサンブル(Deep Ensemble)` と `ディープアンサンブル(Deep Ensembles)` の両方を初出として要求する（実測: 2605.18329 seg-0000）。(3) `crc` と `crc-rumc` のように長い語の一部としてしか出ない語にも別の制約がかかる。
+- **正本ポインタ**: 契約付録 §1（節に効く用語）、issue #315。回帰テストは `src/terminology/term-coverage.test.ts`。
+
+## `src/segment/macro-only.ts` — マクロ定義だけの節を LLM へ送らない
+
+- **おかしく見える点**: `\def` / `\newcommand` などの定義命令だけでできた節は、翻訳もせず原文のまま通す。
+- **なぜ意図的か**: 訳す地の文が無い節を LLM に渡すと、そのまま返した出力が「未翻訳」として形式検査に落ちる（実測: 2011.03395 seg-0061、`\def` だけの節）。
+- **正本ポインタ**: 契約付録 §1、issue #315。回帰テストは `src/segment/macro-only.test.ts`。
+
+## `src/terminology/collect.ts` — `add` が大文字句の先頭の機能語を外し、参照語だけの句を捨てる
+
+- **おかしく見える点**: 候補をそのまま渡さず、`The` / `While` / `In` などの文頭の語を外し、`Figure` / `Sec` などの参照語だけの句を捨てている。
+- **なぜ意図的か**: 大文字始まりの連語パターンは文頭の語も拾う（`The PanNuke`、`While DCAN`、`In Figure`）。用語集の LLM がこれを keep-original に分類すると、形式検査が訳文にその句が原文どおり現れることを要求し、ほぼ全節が落ちる（実測: CellViT 2306.15350 を claude sonnet / effort medium で 27/29 節が keep-original で失敗、128 呼び出し）。
+- **正本ポインタ**: issue #314。回帰テストは `src/terminology/collect.test.ts`。
+
+## `src/segment/segmenter.ts` — 節の予算を 0.30×CW に加えて 8,000 トークンで頭打ちにする
+
+- **おかしく見える点**: 契約付録 §4 の予算は文脈長から逆算するのに、claude（CW 20 万）でも 8,000 で止めている。
+- **なぜ意図的か**: `\section` を使わない論文は全文が 1 節になり、訳文の生成が呼び出し期限 300 秒を超えて run ごと落ちる（実測: UNI 2308.15474、1 節 59,825 トークン）。完了した論文の最大節は 7,442 トークン・最長 180 秒なので、8,000 なら既存の分割は変わらない。
+- **正本ポインタ**: [節の予算の上限 ADR](../adr/20261007-cap-segment-budget-by-output-time.md)、契約付録 §4。回帰テストは `src/segment/segmenter.test.ts`。
+
+## `src/tools/assemble-latex.ts` — luatexja を前文の末尾でなく `\documentclass` の直後で読む
+
+- **おかしく見える点**: 日本語組版のパッケージだけを共有部品の注入（前文の末尾）から外し、原論文のパッケージより前に差し込んでいる。
+- **なぜ意図的か**: 前文の末尾で読むと、原論文の独自スタイルが先に済ませたフォント設定とかみ合わず、和文フォントが `Missing font identifier` で落ちる（実測: CellViT 2306.15350 の `preprint.sty`、`\twocolumn[…]` の閉じ括弧で致命的エラー。原文のままでも同じ）。`\documentclass` の直後に移すと組版が通る。
+- **正本ポインタ**: 契約付録 §7、issue #320。回帰テストは `src/tools/assemble-latex.test.ts`。
+
+## `src/tools/assemble-latex.ts` — `\caption` の引数の中の空行を `%` だけの行に置き換える
+
+- **おかしく見える点**: 訳文を組み立てるとき、`\caption{…}` の中の空行に `%` を入れている。原文にも訳文にも無い文字を足している。
+- **なぜ意図的か**: `\caption` の引数は段落区切りを許さず、空行があると `Paragraph ended before \caption@prepareanchor was complete` で組版が落ちる。原文にこの空行がある論文は、現在の TeX Live では原文のままでも組めない（実測: 2011.03395 seg-0042 の表キャプション）。`%` 行にすれば段落区切りでなくなり、行数は変わらないのでエラー行から節への逆引きもずれない。
+- **正本ポインタ**: 契約付録 §7、issue #320。回帰テストは `src/tools/assemble-latex.test.ts`。
+
+## `src/tools/assemble-latex.ts` — 論文の `\newcommand{\mc}` / `\newcommand{\gt}` を `\DeclareRobustCommand` に替える
+
+- **おかしく見える点**: 原文の `\newcommand` を、名前が `\mc` / `\gt` のときだけ書き換えている。
+- **なぜ意図的か**: luatexja はこの 2 つを和文書体の切り替えとして定義済みなので、論文が同じ名前を `\newcommand` すると `Command \mc already defined` で組版が落ちる（実測: 2011.03395 seg-0059 の `\newcommand{\mc}[1]{\mathcal{#1}}`）。`\DeclareRobustCommand` は定義済みでも上書きでき、論文の意味が勝つ。
+- **正本ポインタ**: 契約付録 §7、issue #320。回帰テストは `src/tools/assemble-latex.test.ts`。
+
+## `src/tools/build-gate.ts` — サブディレクトリの支援ファイルを `srcpkg/` と main からの相対位置の両方に置く
+
+- **おかしく見える点**: 同梱の `.cls` / `.sty` などは `srcpkg/` へ基底名で置くのに、サブディレクトリにあるものだけ組版ディレクトリの同じ相対位置にも複製している。
+- **なぜ意図的か**: `\documentclass{style/naturep}` のようにディレクトリ付きで読む論文は、`srcpkg/naturep.cls` では解決できず `Emergency stop` で落ちる（実測: UNI 2308.15474）。ディレクトリ付きの名前は配布パッケージと衝突しないので、相対位置に置いても配布版を上書きしない。
+- **正本ポインタ**: 契約付録 §7、issue #322。
+
+## `src/tools/assemble-latex.ts` — 命令語の直後の和文字の前に `{}` を挟む
+
+- **おかしく見える点**: 訳文の `\oursの` を `\ours{}の` に書き換えている。
+- **なぜ意図的か**: luatexja の下では和文字も英字と同じ扱いなので、`\oursの能力を評価する` 全体が 1 つの命令名として読まれ `Undefined control sequence` で落ちる（実測: UNI 2308.15474 seg-0001）。translator は英文の `\ours's` を自然に `\oursの` と訳す。
+- **正本ポインタ**: 契約付録 §7、issue #322。回帰テストは `src/tools/assemble-latex.test.ts`。
+
+## `src/tools/bilingual-latex.ts` — 対訳のタイトルブロックで `\and` / `\And` / `\AND` を区切りの空白にする
+
+- **おかしく見える点**: タイトルブロックの著者欄でだけ、クラスが定義した `\and` を `\unskip\quad` に置き換えている。
+- **なぜ意図的か**: `\and` はタイトルの表組み（`\maketitle` の中の tabular）で使う前提の命令で、`\end{tabular}…\begin{tabular}` に展開される。対訳のタイトルブロックは著者を表の外で組むので、そのままだと `Misplaced \crcr` で対訳 PDF が落ちる（実測: llncs の 2606.22649・2605.18329 ほか 4 本）。
+- **正本ポインタ**: 契約付録 §8（対訳 PDF）、issue #324。回帰テストは `src/tools/bilingual-latex.test.ts`。
+
+## `src/tools/bilingual-latex.ts` — 対訳 PDF ではリンクを作らない（hyperref の draft）
+
+- **おかしく見える点**: 対訳の main.tex の先頭で `\PassOptionsToPackage{draft}{hyperref}` を渡し、引用・参照・URL をクリックできないようにしている。和訳 PDF はリンクがある。
+- **なぜ意図的か**: paracol は段の中身をページ境界で分割するので、ページをまたぐリンクの開始と終了が別の箱に入り、LuaTeX が `'endlink' ended up in different nesting level than 'startlink'` で組版を止める。原プリアンブルで組めず共通テンプレへ落ち、elsarticle が読んでいた natbib が無くなって引用が生のラベル（`[Tellez et al.(2018)Tellez, Balkenhol, …]`）のまま 1 行に伸び、隣の段へはみ出した（実測: 1902.06543）。どのリンクがページをまたぐかは組版するまで分からないので、リンク自体を作らない。
+- **正本ポインタ**: 契約付録 §8（対訳 PDF）、issue #326。回帰テストは `src/tools/bilingual-latex.test.ts`。
+
+## `src/tools/bilingual-latex.ts` — paracol の段の中で `\textwidth` を段の幅にする
+
+- **おかしく見える点**: `\begin{paracol}{2}` の直後で `\setlength{\textwidth}{\columnwidth}` している。
+- **なぜ意図的か**: paracol の段の中でも `\textwidth` は紙面全体の幅のままなので、原文の `\includegraphics[width=\textwidth]` が隣の段まで伸びる（実測: 1902.06543 の Figure 1）。段は左右同じ幅なので、段の幅に揃えれば原文の比率どおりに収まる。
+- **正本ポインタ**: 契約付録 §8（対訳 PDF）、issue #326。
+
+## `src/tools/assemble-latex.ts` — 共通テンプレで、elsarticle が内部で読む natbib を読み直す
+
+- **おかしく見える点**: 共通テンプレ（article）の前文に、原文に無い `\usepackage[…]{natbib}` を足している。オプションは原 class のオプションと本文中の `\biboptions` から組み立てる。
+- **なぜ意図的か**: elsarticle は `nonatbib` が無ければ natbib を自分で読み、`\biboptions` は本文末尾に書かれることもある（.spl 経由で効く）。class を article に差し替えると natbib が消え、`.bbl` の著者年ラベルが生のまま出る（実測: 1902.06543 の対訳）。
+- **正本ポインタ**: 契約付録 §7（共通テンプレ）、issue #326。回帰テストは `src/tools/assemble-latex.test.ts`。

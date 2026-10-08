@@ -147,6 +147,8 @@ describe("stageBuild", () => {
     expect(existsSync(path.join(pkg, "nips.sty"))).toBe(true);
     expect(existsSync(path.join(pkg, "refs.bib"))).toBe(true);
     expect(existsSync(path.join(pkg, "extra.cls"))).toBe(true); // 再帰
+    expect(existsSync(path.join(build, "sub", "extra.cls"))).toBe(true); // \documentclass{sub/extra} 用
+    expect(existsSync(path.join(build, "nips.sty"))).toBe(false); // main 直下のものは cwd に置かない
     expect(existsSync(path.join(build, "Figures", "a.png"))).toBe(true);
     expect(readdirSync(pkg)).not.toContain("notes.txt");
   });

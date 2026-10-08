@@ -1,5 +1,5 @@
 // 契約付録 §7・対訳 PDF ADR(20261006)。原文と訳文を段落ペアにして paracol の対訳 main.tex を組み立てる。
-import { extractPreamble, sanitizeMath } from "./assemble-latex.js";
+import { extractPreamble, releaseLuatexjaNames, sanitizeMath, separateCjkAfterControlWords } from "./assemble-latex.js";
 
 export interface BilingualSegment {
   id: string;
@@ -96,7 +96,7 @@ export function balanceParagraphs(paras: string[]): string[] {
 }
 
 export function paragraphsOf(tex: string): string[] {
-  return balanceParagraphs(splitParagraphs(sanitizeMath(tex)));
+  return balanceParagraphs(splitParagraphs(sanitizeMath(separateCjkAfterControlWords(tex))));
 }
 
 // 訳文セグメントの順に並べる。原文に同じ id が無いもの（訳注一覧）は左を空にする。
@@ -191,7 +191,8 @@ const SETUP = [
   "  \\par\\hrule height 4\\p@\\vskip 0.15in",
   "  {\\centering\\Large\\bfseries\\begingroup\\let\\thanks\\@gobble #1\\endgroup\\par}",
   "  \\vskip 0.2in\\hrule height 1\\p@\\vskip 0.1in",
-  "  {\\centering\\begingroup\\let\\thanks\\@gobble #2\\endgroup\\par}",
+  // 著者の \\and / \\And / \\AND はタイトルの表組みの中でしか使えないので、ここでは区切りの空白にする。⚠ landmines.md
+  "  {\\centering\\begingroup\\let\\thanks\\@gobble\\def\\and{\\unskip\\quad}\\let\\And\\and\\def\\AND{\\unskip\\par}#2\\endgroup\\par}",
   "  \\vskip 0.15in}",
   "\\newcommand{\\jpTitleBlock}[1]{\\jp@titleblock{#1}{\\@author}}",
   // ⚠ landmines.md
@@ -227,8 +228,11 @@ const SETUP = [
   "% --- JPaper 注入ここまで ---",
 ].join("\n");
 
+// 対訳ではリンクを作らない（hyperref の draft）。⚠ landmines.md
+const NO_LINKS = "\\PassOptionsToPackage{draft}{hyperref} % JPaper 注入: 対訳はリンクを作らない";
+
 export function bilingualPreamble(preamble: string): string {
-  return `${preamble.replace(/\s*$/, "")}\n${SETUP}\n`;
+  return `${NO_LINKS}\n${preamble.replace(/\s*$/, "")}\n${SETUP}\n`;
 }
 
 const BEGIN = [
@@ -309,7 +313,10 @@ export function renderPairs(
 }
 
 export function paracolBody(blocks: string[]): string {
-  return blocks.length === 0 ? "" : `\\begin{paracol}{2}\n\\jpRobustNotes\n${blocks.join("\n\n")}\n\\end{paracol}\n`;
+  // 段の中の \\textwidth は段の幅にする（原文の width=\\textwidth の図が隣の段へはみ出さない）。⚠ landmines.md
+  return blocks.length === 0
+    ? ""
+    : `\\begin{paracol}{2}\n\\setlength{\\textwidth}{\\columnwidth}\n\\jpRobustNotes\n${blocks.join("\n\n")}\n\\end{paracol}\n`;
 }
 
 // translatedMainTex は採用されたレイアウトで組んだ和訳 main.tex（前文をそのまま使う）。
@@ -322,7 +329,7 @@ export function assembleBilingual(input: {
   const preamble = extractPreamble(input.translatedMainTex);
   const { pairs, fallbackSegments } = pairSegments(input.source, input.translated);
   const { blocks, titled } = renderPairs(pairs, { left: extractPreamble(input.cleanLatex), right: preamble });
-  const mainTex = `${bilingualPreamble(preamble)}${BEGIN}\n${paracolBody(blocks)}\\end{document}\n`;
+  const mainTex = releaseLuatexjaNames(`${bilingualPreamble(preamble)}${BEGIN}\n${paracolBody(blocks)}\\end{document}\n`);
   const titleUnplaced = !titled && input.source.some((s) => TITLE_COMMANDS.test(stripComments(s.tex)));
   return { mainTex, pairs: blocks.length, fallbackSegments, titleUnplaced };
 }

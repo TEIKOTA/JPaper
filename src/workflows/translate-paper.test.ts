@@ -89,6 +89,30 @@ describe("translatePaper（検収①）", () => {
     db.close();
   });
 
+  it("マクロ定義だけの節は LLM へ送らず原文のまま残す", async () => {
+    const p = path.join(tmp(), "p.tar");
+    writeFileSync(
+      p,
+      makeTar([
+        {
+          name: "main.tex",
+          content:
+            "\\documentclass{a}\\begin{document}\n\\def\\x{y}\n\\newcommand{\\R}{r}\n\\section{Intro}Alpha text.\\end{document}",
+        },
+      ]),
+    );
+    const outDir = path.join(tmp(), "out");
+    const db = new GlossaryDb();
+    const client = docClient();
+    const result = await tp({ kind: "path", path: p }, { provider: "claude", outDir }, { client, db });
+    expect(result.summary.segments).toEqual({ total: 2, passed: 2, failed: 0 });
+    expect(
+      readFileSync(path.join(outDir, "translation", "chapters", "seg-0000.tex"), "utf8"),
+    ).toContain("\\def\\x{y}");
+    expect(client.calls.some((c) => c.user.includes("\\def\\x{y}"))).toBe(false);
+    db.close();
+  });
+
   it("原プリアンブルが構造起因で組めないとき template へ明示的フォールバックする", async () => {
     const outDir = path.join(tmp(), "out");
     const db = new GlossaryDb();

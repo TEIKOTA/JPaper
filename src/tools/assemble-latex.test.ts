@@ -9,6 +9,10 @@ import {
   prependLuatexCompat,
   stripDocumentClass,
   sanitizeMath,
+  fuseCaptionParagraphs,
+  releaseLuatexjaNames,
+  separateCjkAfterControlWords,
+  classPackages,
 } from "./assemble-latex.js";
 
 const CLEAN = [
@@ -58,6 +62,26 @@ describe("injectShared", () => {
     expect(injectShared("\\documentclass{article}")).toContain("\\usepackage{graphicx}");
     const withGx = injectShared("\\documentclass{article}\n\\usepackage{graphicx}");
     expect(withGx.match(/\\usepackage\{graphicx\}/g)!.length).toBe(1);
+  });  it("luatexja は \\documentclass の直後、ほかのパッケージより前に読む", () => {
+    const out = injectShared("\\documentclass[twocolumn]{article} \n\\usepackage{preprint}\n");
+    expect(out.indexOf("luatexja-preset")).toBeGreaterThan(out.indexOf("\\documentclass"));
+    expect(out.indexOf("luatexja-preset")).toBeLessThan(out.indexOf("\\usepackage{preprint}"));
+  });
+  it("\\documentclass が無ければ末尾に読む", () => {
+    expect(injectShared("\\usepackage{x}")).toMatch(/\\usepackage\{x\}\n\\usepackage\[ipaex\]\{luatexja-preset\}/);
+  });
+});
+
+describe("fuseCaptionParagraphs", () => {
+  it("\\caption の中の空行だけをコメント行にし、行数を保つ", () => {
+    const src = "a\n\n\\caption{x {y}\n\nz}\n\nb";
+    const out = fuseCaptionParagraphs(src);
+    expect(out).toBe("a\n\n\\caption{x {y}\n%\nz}\n\nb");
+    expect(out.split("\n").length).toBe(src.split("\n").length);
+  });
+  it("短い見出し付き・閉じない引数", () => {
+    expect(fuseCaptionParagraphs("\\caption[s]{p\n  \nq}")).toBe("\\caption[s]{p\n%\nq}");
+    expect(fuseCaptionParagraphs("\\caption{p\n\nq")).toBe("\\caption{p\n\nq");
   });
 });
 
@@ -219,5 +243,42 @@ describe("sanitizeMath のコスト", () => {
   it("閉じた環境の空行は従来どおり潰す", () => {
     expect(sanitizeMath("\\begin{align}a\n\nb\\end{align}")).toBe("\\begin{align}a\nb\\end{align}");
     expect(sanitizeMath("\\begin{align*}a\n\nb\\end{align*}")).toBe("\\begin{align*}a\nb\\end{align*}");
+  });
+});
+
+describe("releaseLuatexjaNames", () => {
+  it("\\mc / \\gt の \\newcommand だけを \\DeclareRobustCommand に替える", () => {
+    expect(releaseLuatexjaNames("\\newcommand{\\mc}[1]{\\mathcal{#1}}")).toBe("\\DeclareRobustCommand{\\mc}[1]{\\mathcal{#1}}");
+    expect(releaseLuatexjaNames("\\newcommand*\\gt{x}")).toBe("\\DeclareRobustCommand*\\gt{x}");
+    expect(releaseLuatexjaNames("\\newcommand{\\mcal}{x}\\newcommand\\gtr{y}")).toBe("\\newcommand{\\mcal}{x}\\newcommand\\gtr{y}");
+  });
+});
+
+describe("separateCjkAfterControlWords", () => {
+  it("命令語の直後の和文字の前に {} を挟む", () => {
+    expect(separateCjkAfterControlWords("\\oursの能力、\\LaTeX（注）")).toBe("\\ours{}の能力、\\LaTeX{}（注）");
+  });
+  it("英字・空白・波括弧が続く命令と \\\\ は変えない", () => {
+    const s = "\\ours は\\textbf{太字}\\\\改行";
+    expect(separateCjkAfterControlWords(s)).toBe(s);
+  });
+});
+
+describe("classPackages", () => {
+  it("elsarticle は class と同じ設定で natbib を読み直す", () => {
+    expect(classPackages("\\documentclass[preprint,authoryear]{elsarticle}")).toEqual(["\\usepackage[round,authoryear]{natbib}"]);
+    expect(classPackages("\\documentclass{elsarticle}\n\\biboptions{sort&compress}")).toEqual(["\\usepackage[numbers,sort&compress]{natbib}"]);
+    // 本文末尾の \\biboptions も拾う（実測: 1902.06543 は文献リストの直前）。
+    expect(classPackages("\\documentclass{elsarticle}\n\\begin{document}\n\\biboptions{authoryear}\n\\end{document}")).toEqual(["\\usepackage[numbers,authoryear]{natbib}"]);
+  });
+  it("nonatbib・他の class は何も足さない", () => {
+    expect(classPackages("\\documentclass[nonatbib]{elsarticle}")).toEqual([]);
+    expect(classPackages("\\documentclass{article}")).toEqual([]);
+  });
+  it("template レイアウトの前文に入る", () => {
+    const tex = "\\documentclass[authoryear]{elsarticle}\n\\begin{document}\nx\n\\end{document}\n";
+    expect(assembleWithMap({ cleanLatex: tex, segments: [{ id: "s", tex: "x" } as never], mode: "template" }).mainTex).toContain(
+      "\\usepackage[round,authoryear]{natbib}",
+    );
   });
 });

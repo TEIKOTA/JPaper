@@ -1,4 +1,5 @@
 // 契約付録 §9。用語集の訳語の編集: 置換の計画・適用（checkpoint の署名し直し＋LLM なしの再組版）・元に戻す。
+import { isMacroDefinitionsOnly } from "../segment/macro-only.js";
 import {
   cpSync,
   existsSync,
@@ -39,7 +40,6 @@ import {
   renderStyleMd,
   type ResolvedRow,
 } from "../terminology/glossary-io.js";
-import { buildFirstOccurrenceIndex } from "../terminology/first-occurrence.js";
 import {
   editedForm,
   findOccurrences,
@@ -73,6 +73,7 @@ import {
   planSegments,
   segmentInvalidation,
   segmentSlice,
+  segmentFirstOccurrence,
   titleInvalidation,
   titleSlice,
   type StepContext,
@@ -104,6 +105,20 @@ export interface EditDeps {
   latexRunner?: LatexRunner;
   signal?: AbortSignal;
   now?: () => Date;
+}
+
+// マクロ定義だけの節の、原文のまま通過した checkpoint 相当。
+function passThroughStep(seg: Segment, invalidation: string): StoredStep {
+  const value: SectionLoopCache = {
+    segmentId: seg.id,
+    ja: seg.latex,
+    passed: true,
+    failedKinds: [],
+    usedRevisions: 0,
+    maxRevisions: 0,
+    warnIssues: [],
+  };
+  return { file: "", invalidation, value };
 }
 
 interface StepEntry {
@@ -219,10 +234,12 @@ export function loadPaperState(outDir: string, key: Buffer = loadCacheKey()): Pa
     if (tried.has(budget)) continue;
     tried.add(budget);
     const plan = planSegments(ingest.cleanLatex, budget);
-    if (plan.segments.length !== stored.size || plan.segments.some((s) => !stored.has(s.id))) continue;
-    const firstOcc = buildFirstOccurrenceIndex(plan.segments, ctx.resolved.map((r) => r.src));
+    // マクロ定義だけの節は LLM へ送らず checkpoint も残さない（契約付録 §1）。原文のまま通過した節として扱う。
+    const needed = plan.segments.filter((s) => stored.has(s.id) || !isMacroDefinitionsOnly(s.latex));
+    if (needed.length !== stored.size || needed.some((s) => !stored.has(s.id))) continue;
+    const firstOcc = segmentFirstOccurrence(plan.segments, ctx.resolved);
     const entries = plan.segments.map((seg) => {
-      const st = stored.get(seg.id)!;
+      const st = stored.get(seg.id) ?? passThroughStep(seg, segmentInvalidation(seg, segmentSlice(seg, ctx.resolved, firstOcc), ctx));
       const value = SectionLoopCache.parse(st.value);
       const key0 = segmentInvalidation(seg, segmentSlice(seg, ctx.resolved, firstOcc), ctx);
       return { id: seg.id, source: seg, stored: st, value, current: st.invalidation === key0 };
@@ -377,7 +394,7 @@ export function planTermEdit(state: PaperState, src: string, input: string): Edi
     style: parseStyleMd(md.style),
   };
   const sources = state.segments.map((e) => e.source);
-  const firstOcc = buildFirstOccurrenceIndex(sources, ctx.resolved.map((x) => x.src));
+  const firstOcc = segmentFirstOccurrence(sources, ctx.resolved);
   const labels = sectionLabels(sources);
   const macros = simpleMacros(state.ingest.cleanLatex);
 

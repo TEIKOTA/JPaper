@@ -248,6 +248,10 @@ describe("タイトル", () => {
 
   it("タイトルブロックは題の \\thanks も潰す", () => {
     expect(bilingualPreamble("")).toContain("\\bfseries\\begingroup\\let\\thanks\\@gobble #1\\endgroup");
+    // 著者欄は表の外で組むので、\and 系を区切りの空白にしてから展開する（issue #324）。
+    expect(bilingualPreamble("")).toContain(
+      "\\begingroup\\let\\thanks\\@gobble\\def\\and{\\unskip\\quad}\\let\\And\\and\\def\\AND{\\unskip\\par}#2\\endgroup",
+    );
   });
 
   it("環境の中の \\maketitle のようにタイトルブロックへ置き換えられなければ titleUnplaced で知らせる", () => {
@@ -334,7 +338,7 @@ describe("参考文献と脚注", () => {
   });
 
   it("paracol の先頭で脚注命令を頑丈にする（見出しの中の訳注脚注のため）", () => {
-    expect(paracolBody(["A"])).toBe("\\begin{paracol}{2}\n\\jpRobustNotes\nA\n\\end{paracol}\n");
+    expect(paracolBody(["A"])).toBe("\\begin{paracol}{2}\n\\setlength{\\textwidth}{\\columnwidth}\n\\jpRobustNotes\nA\n\\end{paracol}\n");
     expect(bilingualPreamble("")).toContain("\\MakeRobust\\footnote\\MakeRobust\\footnotemark\\MakeRobust\\footnotetext");
   });
 });
@@ -353,7 +357,7 @@ describe("paracol 本文", () => {
     });
     expect(out.mainTex).not.toMatch(/\\begin\{paracol\}\{2\}\s*\\end\{paracol\}/);
     expect(out.mainTex.match(/\\begin\{paracol\}/g)).toHaveLength(1);
-    expect(out.mainTex).toContain(`\\begin{paracol}{2}\n\\jpRobustNotes\n${titleBlock("T", "題")}\n\n`);
+    expect(out.mainTex).toContain(`\\begin{paracol}{2}\n\\setlength{\\textwidth}{\\columnwidth}\n\\jpRobustNotes\n${titleBlock("T", "題")}\n\n`);
     expect(out.pairs).toBe(2);
   });
 });
@@ -361,7 +365,7 @@ describe("paracol 本文", () => {
 describe("前文", () => {
   it("和訳の前文に paracol・eso-pic・geometry・タイトルブロック・非フロート差し替えを足す", () => {
     const pre = bilingualPreamble("\\documentclass{article}\n\\usepackage{x}\n\n");
-    expect(pre.startsWith("\\documentclass{article}\n\\usepackage{x}\n")).toBe(true);
+    expect(pre.startsWith("\\PassOptionsToPackage{draft}{hyperref} % JPaper 注入: 対訳はリンクを作らない\n\\documentclass{article}\n\\usepackage{x}\n")).toBe(true);
     for (const s of [
       "\\usepackage{paracol}",
       "\\usepackage{eso-pic}",
@@ -386,7 +390,7 @@ describe("前文", () => {
       source: [{ id: "seg-0000", tex: "A" }],
       translated: [{ id: "seg-0000", tex: "和" }],
     });
-    expect(out.mainTex.startsWith("\\RequirePackage{luatex85}\n\\documentclass{article}\n\\usepackage[ipaex]{luatexja-preset}\n")).toBe(true);
+    expect(out.mainTex.startsWith("\\PassOptionsToPackage{draft}{hyperref} % JPaper 注入: 対訳はリンクを作らない\n\\RequirePackage{luatex85}\n\\documentclass{article}\n\\usepackage[ipaex]{luatexja-preset}\n")).toBe(true);
     const body = out.mainTex.slice(out.mainTex.indexOf("\\begin{document}"));
     expect(body).toContain("\\newgeometry{onecolumn,paperwidth=420mm,paperheight=297mm");
     expect(body).toContain("\\pagestyle{empty}");
@@ -394,7 +398,7 @@ describe("前文", () => {
     expect(body).not.toContain("\\AddToShipoutPictureFG*");
     expect(body).toContain("原文 p.\\thepage");
     expect(body).toContain("和訳 p.\\thepage");
-    expect(body).toContain("\\begin{paracol}{2}\n\\jpRobustNotes\nA\n\\switchcolumn\n和\n\\switchcolumn*\n\\end{paracol}\n\\end{document}\n");
+    expect(body).toContain("\\begin{paracol}{2}\n\\setlength{\\textwidth}{\\columnwidth}\n\\jpRobustNotes\nA\n\\switchcolumn\n和\n\\switchcolumn*\n\\end{paracol}\n\\end{document}\n");
     expect(out.mainTex.match(/\\begin\{document\}/g)).toHaveLength(1);
     expect(out.fallbackSegments).toEqual([]);
   });

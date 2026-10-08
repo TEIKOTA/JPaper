@@ -68,7 +68,7 @@ import {
   parseStyleMd,
   type ResolvedRow,
 } from "../terminology/glossary-io.js";
-import { buildFirstOccurrenceIndex } from "../terminology/first-occurrence.js";
+import { isMacroDefinitionsOnly } from "../segment/macro-only.js";
 import { findKatakanaDrift, describeDrift } from "../terminology/consistency.js";
 import { segmentBudgetFor, type Segment } from "../segment/segmenter.js";
 import { runSectionLoop } from "./section-loop.js";
@@ -79,6 +79,7 @@ import {
   foundTitle,
   segmentSlice,
   segmentInvalidation,
+  segmentFirstOccurrence,
   titleSlice,
   titleInvalidation,
 } from "./step-keys.js";
@@ -1013,10 +1014,7 @@ export async function translatePaper(
       deps.cacheKey,
       (m) => notify(m),
     );
-    const firstOcc = buildFirstOccurrenceIndex(
-      segments,
-      ctx.resolved.map((r) => r.src),
-    );
+    const firstOcc = segmentFirstOccurrence(segments, ctx.resolved);
 
     let doneSegments = 0;
     let donePassed = 0;
@@ -1024,6 +1022,30 @@ export async function translatePaper(
     progress({ phase: "context", done: 1, total: 1 });
     progress({ phase: "translate", done: 0, total: segments.length });
     const translateSegment = (seg: Segment): Promise<SectionLoopCache> => {
+      // 契約付録 §1: 訳す地の文が無い節は LLM へ送らない。
+      if (isMacroDefinitionsOnly(seg.latex)) {
+        doneSegments++;
+        donePassed++;
+        reached = { total: segments.length, passed: donePassed, failed: doneFailed };
+        progress({
+          phase: "translate",
+          segmentId: seg.id,
+          done: doneSegments,
+          total: segments.length,
+          passed: true,
+          usedRevisions: 0,
+          maxRevisions: 0,
+        });
+        return Promise.resolve({
+          segmentId: seg.id,
+          ja: seg.latex,
+          passed: true,
+          failedKinds: [],
+          usedRevisions: 0,
+          maxRevisions: 0,
+          warnIssues: [],
+        });
+      }
       const slice = segmentSlice(seg, ctx.resolved, firstOcc);
       // 失敗結果は永続しない。
       const invalidation = segmentInvalidation(seg, slice, ctx);

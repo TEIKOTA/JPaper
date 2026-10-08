@@ -50,8 +50,8 @@ afterEach(() => {
   for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
 });
 
-function arxivDeps(): TranslateDeps["ingest"] {
-  const bytes = gzipSync(makeTar([{ name: "main.tex", content: LATEX }]));
+function arxivDeps(latex = LATEX): TranslateDeps["ingest"] {
+  const bytes = gzipSync(makeTar([{ name: "main.tex", content: latex }]));
   return {
     arxiv: {
       fetchImpl: (async () =>
@@ -104,7 +104,7 @@ function forbidden(): { client: LlmClient; calls: string[] } {
   };
 }
 
-async function translated(): Promise<{ outDir: string; db: GlossaryDb }> {
+async function translated(latex = LATEX): Promise<{ outDir: string; db: GlossaryDb }> {
   const outDir = path.join(tmp(), `${ID}-ja`);
   const db = new GlossaryDb();
   const r = await translatePaper(INPUT, { provider: "claude", outDir }, {
@@ -112,7 +112,7 @@ async function translated(): Promise<{ outDir: string; db: GlossaryDb }> {
     db,
     cacheKey: KEY,
     latexRunner: okRunner,
-    ingest: arxivDeps(),
+    ingest: arxivDeps(latex),
     trace: () => undefined,
   });
   expect(r.status).toBe("ok");
@@ -295,6 +295,18 @@ describe("用語集の編集（契約付録 §9）", () => {
     const md = path.join(outDir, "glossary.md");
     writeFileSync(md, readFileSync(md, "utf8").replace("| 経験的ラショモン集合 |", "| 経験的な集合 |"));
     expect(() => loadPaperState(outDir, KEY)).toThrow(/編集されています/);
+    db.close();
+  });
+
+  it("マクロ定義だけの節（checkpoint なし）があっても編集でき、その節は原文のまま残る", async () => {
+    const withMacros = LATEX.replace("\\maketitle", "\\def\\x{y}\n\\newcommand{\\R}{r}");
+    const { outDir, db } = await translated(withMacros);
+    expect(steps(outDir).some((f) => f.startsWith("seg-0000."))).toBe(false);
+    const plan = planTermEdit(loadPaperState(outDir, KEY), "Rashomon set", "羅生門集合");
+    expect(plan.replaced).toBe(3);
+    await applyTermEdit(outDir, "Rashomon set", "羅生門集合", {}, { db, cacheKey: KEY, latexRunner: okRunner });
+    expect(chapter(outDir, "seg-0000")).toContain("\\def\\x{y}");
+    expect(chapter(outDir, "seg-0001")).toContain("羅生門集合(Rashomon set)");
     db.close();
   });
 
