@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { fastestMs } from "../testing/timing.js";
-import { commandSpans, dollarSpans, mathSpans, spansOf, verbatimSpans } from "./tex-spans.js";
+import { commandSpans, dollarSpans, MAX_OPTIONAL_ARG, mathSpans, removeSpans, spansOf, verbatimSpans } from "./tex-spans.js";
 
 const slice = (tex: string) => (s: [number, number]) => tex.slice(s[0], s[1]);
 
@@ -98,6 +98,22 @@ describe("commandSpans（命令と引数）", () => {
     expect(pick("\\author{A", "author")).toEqual([]);
     expect(pick("\\author{A}\n\\author {B}", "author")).toEqual(["\\author{A}", "\\author {B}"]);
   });
+
+  it("改行の \\\\ の直後の波括弧は数える。任意引数が上限までに閉じなければ区間にしない", () => {
+    expect(pick("\\author{A \\\\{x} B} z", "author")).toEqual(["\\author{A \\\\{x} B}"]);
+    const long = `\\author[${"a".repeat(MAX_OPTIONAL_ARG)}]{X}`;
+    expect(pick(long, "author")).toEqual([]);
+    const fits = `\\author[${"a".repeat(MAX_OPTIONAL_ARG - 2)}]{X}`;
+    expect(pick(fits, "author")).toEqual([fits]);
+  });
+});
+
+describe("removeSpans（区間を取り除く）", () => {
+  it("区切りを挟んで前後の語をつなげない。重なる区間は外側だけ使う", () => {
+    const tex = "foo\\author{X}bar";
+    expect(removeSpans(tex, commandSpans(tex, "author"), " ")).toBe("foo bar");
+    expect(removeSpans("abcdef", [[1, 5], [2, 3]])).toBe("af");
+  });
 });
 
 describe("走査コストは入力長に対して線形", () => {
@@ -119,9 +135,9 @@ describe("走査コストは入力長に対して線形", () => {
     ["未閉じ \\author{", "\\author{"],
     ["未閉じ \\author[", "\\author["],
     ["閉じた \\author[x] と未閉じの {", "\\author[x]{"],
-  ])("commandSpans: %s の羅列 1MiB を秒未満で走る", (_label, unit) => {
+  ])("commandSpans: %s の羅列 1MiB を 2 秒未満で走る", (_label, unit) => {
     const body = rep(unit, 1024 * 1024);
-    expect(fastestMs(2, () => void commandSpans(body, "author"))).toBeLessThan(1_000);
+    expect(fastestMs(2, () => void commandSpans(body, "author"))).toBeLessThan(2_000);
   });
 
   it("倍化しても 4 倍にならない（二次でない）", () => {

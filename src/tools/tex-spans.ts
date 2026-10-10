@@ -188,8 +188,8 @@ function braceMatches(tex: string): Map<number, number> {
   return out;
 }
 
-// 任意引数 [..] を読む長さの上限（契約付録 §8。本文全体を走る同期パスは走査量を有界にする）。
-const MAX_OPTIONAL_ARG = 1000;
+// 任意引数 [..] を読む長さの上限（契約付録 §3・§8。本文全体を走る同期パスは走査量を有界にする）。
+export const MAX_OPTIONAL_ARG = 1000;
 
 // at の [ に対応する ]（波括弧の中の ] は数えない）。上限までに閉じなければ -1。
 function closingBracket(tex: string, at: number): number {
