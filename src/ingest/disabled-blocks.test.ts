@@ -77,4 +77,3 @@ describe("dropDisabledBlocks（契約付録 §4）", () => {
     expect(fastestMs(2, () => dropDisabledBlocks(doc(body)))).toBeLessThan(2000);
   });
 });
-
