@@ -74,6 +74,17 @@ describe("maskChars は UTF-16 の単位で伏せる", () => {
   });
 });
 
+describe("verbatimSpans は verbatim の中身と引数の中の候補を命令と読まない", () => {
+  it("\\verb の中の \\lstinline{ で後ろの本文を伏せない", () => {
+    const tex = "\\verb|\\lstinline{| $a$ and $b$";
+    expect(mathSpans(tex).map(slice(tex))).toEqual(["$a$", "$b$"]);
+  });
+  it("[..] の中の \\mintinline を読まない", () => {
+    const tex = "\\mintinline[\\mintinline{py}{$x$}]{";
+    expect(verbatimSpans(tex)).toEqual([]);
+  });
+});
+
 describe("mathSpans は verbatim の中の $ に釣られない", () => {
   it("コード片の生の $ でペアリングがずれない", () => {
     const tex = "\\begin{lstlisting}\necho $HOME\n\\end{lstlisting}\n本文。数式は $x$ である。";
@@ -111,6 +122,9 @@ describe("走査コストは入力長に対して線形", () => {
     ["遠くで閉じる \\lstinline[", "\\lstinline[", "]|a|"],
     ["遠くで閉じる \\mintinline{", "\\mintinline{", "}|a|"],
     ["閉じない \\lstinline[ と後ろの \\verb", "\\lstinline[ \\verb|a| ", ""],
+    ["遠くで閉じる \\lstinline[ と長い空白", "\\lstinline[", "]" + " ".repeat(512 * 1024)],
+    ["遠くで閉じる \\mintinline[ と長い空白・閉じない {", "\\mintinline[", "]" + " ".repeat(512 * 1024) + "{"],
+    ["遠くで閉じる \\mintinline{ と長い空白", "\\mintinline{", "}" + " ".repeat(512 * 1024)],
   ])("%s の羅列 1MiB を伏せるまで 2 秒未満で走る", (_label, unit, tail) => {
     const body = rep(unit, 1024 * 1024) + tail;
     expect(fastestMs(2, () => void maskChars(body, verbatimSpans(body)))).toBeLessThan(2_000);

@@ -102,7 +102,7 @@ export function verbatimSpans(tex: string): Span[] {
   const out: Span[] = [];
   for (const env of VERBATIM_ENVS) for (const sp of envSpans(tex, env)) out.push(sp);
   VERB_CMDS.lastIndex = 0;
-  // 直前の \verb 系の区間の終わり。内側の候補は命令ではないので読まない。
+  // 直前の \verb 系の区間（読んだ引数を含む）の終わり。内側の候補は命令ではないので読まない。
   let verbEnd = 0;
   // 候補は前から順に来るので、次の ] / } の位置は前の探索結果を使い回す。⚠ landmines.md
   const next = { "]": -2, "}": -2 };
@@ -123,6 +123,7 @@ export function verbatimSpans(tex: string): Span[] {
       if (close === -1) continue;
       p = close + 1;
       skipSpace();
+      verbEnd = p;
     }
     // 言語引数 {lang} を読み飛ばす（区切り文字ではない）。
     if (LANG_ARG_VERB.has(m[1]!) && tex[p] === "{") {
@@ -130,6 +131,7 @@ export function verbatimSpans(tex: string): Span[] {
       if (close === -1) continue;
       p = close + 1;
       skipSpace();
+      verbEnd = p;
     }
     if (p >= tex.length) continue;
     const open = tex[p]!;
