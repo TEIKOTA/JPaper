@@ -106,6 +106,21 @@ describe("走査コストは入力長に対して線形", () => {
     expect(fastestMs(2, () => void verbatimSpans(body))).toBeLessThan(1_000);
   });
 
+  it.each([
+    ["遠くで閉じる \\lstinline{", "\\lstinline{", "}"],
+    ["遠くで閉じる \\lstinline[", "\\lstinline[", "]|a|"],
+    ["遠くで閉じる \\mintinline{", "\\mintinline{", "}|a|"],
+    ["閉じない \\lstinline[ と後ろの \\verb", "\\lstinline[ \\verb|a| ", ""],
+  ])("%s の羅列 1MiB を伏せるまで 2 秒未満で走る", (_label, unit, tail) => {
+    const body = rep(unit, 1024 * 1024) + tail;
+    expect(fastestMs(2, () => void maskChars(body, verbatimSpans(body)))).toBeLessThan(2_000);
+  });
+
+  it("verbatim 環境が多くても呼び出し引数の上限で落ちない", () => {
+    const body = "\\begin{verbatim}x\\end{verbatim}".repeat(150_000);
+    expect(verbatimSpans(body)).toHaveLength(150_000);
+  });
+
   it("倍化しても 4 倍にならない（二次でない）", () => {
     const small = rep("\\lstinline{", 512 * 1024);
     const large = rep("\\lstinline{", 1024 * 1024);

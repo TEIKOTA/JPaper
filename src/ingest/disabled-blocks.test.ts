@@ -47,12 +47,20 @@ describe("dropDisabledBlocks（契約付録 §4）", () => {
     expect(dropDisabledBlocks(doc("\\iffalse { \\iffalse x \\fi \\fi }"))).toBe(doc("\\iffalse {  \\fi }"));
     expect(dropDisabledBlocks(doc("A \\iffalse x % {\n\\fi B"))).toBe(doc("A  B"));
     expect(dropDisabledBlocks(doc("\\iffalse { \\else } \\fi"))).toBe(doc("\\iffalse { \\else } \\fi"));
+    expect(dropDisabledBlocks(doc("\\iffalse }{ \\fi"))).toBe(doc("\\iffalse }{ \\fi"));
+  });
+
+  it("\\end{document} をまたぐブロックは \\else の枝でも残す。コメントの中の \\end{document} は数えない", () => {
+    const tex = "\\documentclass{article}\n\\begin{document}\nA \\iffalse x \\else \\end{document} \\fi";
+    expect(dropDisabledBlocks(tex)).toBe(tex);
+    expect(dropDisabledBlocks(doc("A \\iffalse x % \\end{document}\n\\fi B"))).toBe(doc("A  B"));
   });
 
   it.each([
     ["入れ子の \\iffalse {", "\\iffalse { ", "\\fi "],
     ["入れ子の \\iffalse { \\else", "\\iffalse { \\else ", "\\fi "],
     ["\\end{document} をまたぐ入れ子", "\\iffalse ", "\\fi ", "\\end{document}"],
+    ["遠くで閉じる \\lstinline{", "\\lstinline{", "}"],
   ])("外側が検査で落ちる入れ子でも走査は入力長に対して線形（%s）", (_label, open, close, middle = "") => {
     const k = Math.ceil((1 << 20) / (open.length + close.length));
     const body = open.repeat(k) + middle + close.repeat(k);
