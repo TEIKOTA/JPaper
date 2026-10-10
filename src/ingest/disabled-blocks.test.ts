@@ -37,6 +37,28 @@ describe("dropDisabledBlocks（契約付録 §4）", () => {
     expect(dropDisabledBlocks(doc(env))).toBe(doc(env));
   });
 
+  it("4 バイト文字があっても、取り除く位置がずれない", () => {
+    const env = "\\begin{verbatim}\n𝑥𝑦𝑧\n\\end{verbatim}\nAB \\iffalse old \\fi CD";
+    expect(dropDisabledBlocks(doc(env))).toBe(doc("\\begin{verbatim}\n𝑥𝑦𝑧\n\\end{verbatim}\nAB  CD"));
+    expect(dropDisabledBlocks(doc("\\verb|😀😀| KEEP1 \\iffalse old \\fi KEEP2"))).toBe(doc("\\verb|😀😀| KEEP1  KEEP2"));
+  });
+
+  it("検査で残した外側のブロックの内側にある無効ブロックは取り除く。コメントの中の波括弧は数えない", () => {
+    expect(dropDisabledBlocks(doc("\\iffalse { \\iffalse x \\fi \\fi }"))).toBe(doc("\\iffalse {  \\fi }"));
+    expect(dropDisabledBlocks(doc("A \\iffalse x % {\n\\fi B"))).toBe(doc("A  B"));
+    expect(dropDisabledBlocks(doc("\\iffalse { \\else } \\fi"))).toBe(doc("\\iffalse { \\else } \\fi"));
+  });
+
+  it.each([
+    ["入れ子の \\iffalse {", "\\iffalse { ", "\\fi "],
+    ["入れ子の \\iffalse { \\else", "\\iffalse { \\else ", "\\fi "],
+    ["\\end{document} をまたぐ入れ子", "\\iffalse ", "\\fi ", "\\end{document}"],
+  ])("外側が検査で落ちる入れ子でも走査は入力長に対して線形（%s）", (_label, open, close, middle = "") => {
+    const k = Math.ceil((1 << 20) / (open.length + close.length));
+    const body = open.repeat(k) + middle + close.repeat(k);
+    expect(fastestMs(2, () => dropDisabledBlocks(doc(body)))).toBeLessThan(2000);
+  });
+
   it.each([
     ["閉じない \\iffalse", "\\iffalse "],
     ["\\fi の無い \\else", "\\iffalse\\else "],

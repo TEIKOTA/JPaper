@@ -141,10 +141,10 @@ export function verbatimSpans(tex: string): Span[] {
   return out;
 }
 
-// 区間を同じ長さの空白へ置き換える（添字は元文字列のまま使える）。
+// 区間を同じ長さ（UTF-16 の単位で数える）の空白へ置き換える（添字は元文字列のまま使える）。⚠ landmines.md
 export function maskChars(tex: string, spans: Span[]): string {
   if (spans.length === 0) return tex;
-  const buf = [...tex];
+  const buf = tex.split("");
   for (const [s, e] of spans) for (let i = s; i < Math.min(e, buf.length); i++) buf[i] = " ";
   return buf.join("");
 }

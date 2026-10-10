@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { fastestMs } from "../testing/timing.js";
-import { dollarSpans, mathSpans, spansOf, verbatimSpans } from "./tex-spans.js";
+import { dollarSpans, maskChars, mathSpans, spansOf, verbatimSpans } from "./tex-spans.js";
 
 const slice = (tex: string) => (s: [number, number]) => tex.slice(s[0], s[1]);
 
@@ -61,6 +61,16 @@ describe("verbatimSpans", () => {
 
   it("\\verbatiminput を \\verb の接頭辞として拾わない", () => {
     expect(verbatimSpans("A \\verbatiminput{data.txt} B")).toEqual([]);
+  });
+});
+
+describe("maskChars は UTF-16 の単位で伏せる", () => {
+  it("4 バイト文字があっても長さと後ろの添字が変わらない", () => {
+    const tex = "\\verb|𝑥| $y$";
+    const masked = maskChars(tex, verbatimSpans(tex));
+    expect(masked.length).toBe(tex.length);
+    expect(masked.indexOf("$y$")).toBe(tex.indexOf("$y$"));
+    expect(mathSpans(tex).map(slice(tex))).toEqual(["$y$"]);
   });
 });
 
