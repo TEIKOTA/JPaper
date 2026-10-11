@@ -74,8 +74,8 @@ export async function runSectionLoop(
     ...(frozenMarks.length === 0 ? [] : authors),
   ];
   const hiddenMarks = new Set([...(kept === undefined ? [] : [kept]), ...frozenMarks]);
-  const checkedSrc = removeSpans(segment.latex, hidden);
-  const checkedSpans = guarded.spans.map((s, i) => (hiddenMarks.has(i + 1) ? "" : s));
+  const checkedSrc = removeSpans(segment.latex, hidden, " ");
+  const checkedSpans = guarded.spans.map((s, i) => (hiddenMarks.has(i + 1) ? " " : s));
   let revisions = 0;
   let priorJa: string | undefined;
   let issues: string[] | undefined;

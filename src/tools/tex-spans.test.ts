@@ -124,6 +124,7 @@ describe("commandSpans（命令と引数）", () => {
     expect(pick("\\author{A \\\\{x} B} z", "author")).toEqual(["\\author{A \\\\{x} B}"]);
     const long = `\\author[${"a".repeat(MAX_OPTIONAL_ARG)}]{X}`;
     expect(pick(long, "author")).toEqual([]);
+    expect(pick(`\\author[${"a".repeat(MAX_OPTIONAL_ARG - 1)}]{X}`, "author")).toEqual([]);
     const fits = `\\author[${"a".repeat(MAX_OPTIONAL_ARG - 2)}]{X}`;
     expect(pick(fits, "author")).toEqual([fits]);
   });

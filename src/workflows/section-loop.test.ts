@@ -320,5 +320,16 @@ describe("runSectionLoop: 改稿予算の配分", () => {
       expect(r.failedKinds).toEqual(["author"]);
       expect(translatorUsers[1]).toContain("著者・所属の差し替え");
     });
+
+    it("伏せた \\author の前後の綴りをつなげて数えない（\\fi の直後に英字が続いても条件分岐の個数がそろう）", async () => {
+      const src = "\\ifanon x\\fi\\author{A}and text.";
+      const c = new FakeLlmClient((req) =>
+        req.system.includes("審査者") ? '{"verdict":"pass","issues":[]}' : "```tex\n\\ifanon x\\fi〔1〕と本文。\n```",
+      );
+      const r = await runSectionLoop(c, { id: "seg-0000", latex: src, tokens: 100 }, []);
+      expect(r.failedKinds).toEqual([]);
+      expect(r.passed).toBe(true);
+      expect(r.ja).toBe("\\ifanon x\\fi\\author{A}と本文。");
+    });
   });
 });
