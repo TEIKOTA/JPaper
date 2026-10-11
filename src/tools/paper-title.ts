@@ -1,6 +1,7 @@
 // 契約付録 §8（論文タイトルの翻訳）。前文・本文の \title の主引数を取り出し・差し替える。
 import type { Segment } from "../segment/segmenter.js";
 import { estimateTokens } from "../segment/token-estimator.js";
+import { MAX_OPTIONAL_ARG } from "./tex-spans.js";
 
 // 主引数の中身（外側の波括弧を含まない）の範囲。
 export interface TitleArg {
@@ -18,8 +19,6 @@ export interface PaperTitle {
 export const TITLE_SEGMENT_ID = "title";
 
 const NOTE_COMMANDS = new Set(["thanks", "footnote"]);
-// 短縮タイトル [..] を読む長さの上限。契約付録 §8（本文全体を走る同期パスは走査量を有界にする）
-const MAX_OPTIONAL_ARG = 1000;
 
 const isLetter = (c: string | undefined): boolean => c !== undefined && /[a-zA-Z]/.test(c);
 

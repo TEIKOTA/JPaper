@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { fastestMs } from "../testing/timing.js";
-import { dollarSpans, maskChars, mathSpans, spansOf, verbatimSpans } from "./tex-spans.js";
+import { commandSpans, dollarSpans, maskChars, MAX_OPTIONAL_ARG, mathSpans, removeSpans, spansOf, verbatimSpans } from "./tex-spans.js";
 
 const slice = (tex: string) => (s: [number, number]) => tex.slice(s[0], s[1]);
 
@@ -102,6 +102,42 @@ describe("mathSpans は verbatim の中の $ に釣られない", () => {
 // このモジュールは「二次を 1 箇所に集約して潰す」ために作った。意味論だけを縛ると、
 // 集約したはずの二次が新しい実装で戻ってくる（実測: #196 で入れた \verb 系の区切り
 // 探索が閉じない \lstinline{ の羅列で二次になり、2.2MB で 99 秒・exit 0 を返した）。
+describe("commandSpans（命令と引数）", () => {
+  const pick = (tex: string, name: string) => commandSpans(tex, name).map(([s, e]) => tex.slice(s, e));
+
+  it("任意引数と入れ子の波括弧を含めて 1 区間にする", () => {
+    const tex = "x \\author[1]{A \\thanks{B}\\\\ C {\\it D}} y";
+    expect(pick(tex, "author")).toEqual(["\\author[1]{A \\thanks{B}\\\\ C {\\it D}}"]);
+  });
+
+  it("エスケープした波括弧は数えない。英字が続く別命令とエスケープされた \\\\author は拾わない", () => {
+    expect(pick("\\author{A \\} B} z", "author")).toEqual(["\\author{A \\} B}"]);
+    expect(pick("\\authorrunning{A} \\\\author{B}", "author")).toEqual([]);
+  });
+
+  it("引数が閉じなければ区間にしない。複数あればすべて拾う", () => {
+    expect(pick("\\author{A", "author")).toEqual([]);
+    expect(pick("\\author{A}\n\\author {B}", "author")).toEqual(["\\author{A}", "\\author {B}"]);
+  });
+
+  it("改行の \\\\ の直後の波括弧は数える。任意引数が上限までに閉じなければ区間にしない", () => {
+    expect(pick("\\author{A \\\\{x} B} z", "author")).toEqual(["\\author{A \\\\{x} B}"]);
+    const long = `\\author[${"a".repeat(MAX_OPTIONAL_ARG)}]{X}`;
+    expect(pick(long, "author")).toEqual([]);
+    expect(pick(`\\author[${"a".repeat(MAX_OPTIONAL_ARG - 1)}]{X}`, "author")).toEqual([]);
+    const fits = `\\author[${"a".repeat(MAX_OPTIONAL_ARG - 2)}]{X}`;
+    expect(pick(fits, "author")).toEqual([fits]);
+  });
+});
+
+describe("removeSpans（区間を取り除く）", () => {
+  it("区切りを挟んで前後の語をつなげない。重なる区間は外側だけ使う", () => {
+    const tex = "foo\\author{X}bar";
+    expect(removeSpans(tex, commandSpans(tex, "author"), " ")).toBe("foo bar");
+    expect(removeSpans("abcdef", [[1, 5], [2, 3]])).toBe("af");
+  });
+});
+
 describe("走査コストは入力長に対して線形", () => {
   const rep = (unit: string, bytes: number): string => unit.repeat(Math.ceil(bytes / unit.length));
 
@@ -115,6 +151,15 @@ describe("走査コストは入力長に対して線形", () => {
     const body = rep(unit, 1024 * 1024);
     expect(fastestMs(2, () => void mathSpans(body, ["equation"]))).toBeLessThan(1_000);
     expect(fastestMs(2, () => void verbatimSpans(body))).toBeLessThan(1_000);
+  });
+
+  it.each([
+    ["未閉じ \\author{", "\\author{"],
+    ["未閉じ \\author[", "\\author["],
+    ["閉じた \\author[x] と未閉じの {", "\\author[x]{"],
+  ])("commandSpans: %s の羅列 1MiB を 2 秒未満で走る", (_label, unit) => {
+    const body = rep(unit, 1024 * 1024);
+    expect(fastestMs(2, () => void commandSpans(body, "author"))).toBeLessThan(2_000);
   });
 
   it.each([

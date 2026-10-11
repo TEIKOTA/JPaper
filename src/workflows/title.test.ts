@@ -278,12 +278,12 @@ describe("論文タイトルの翻訳（契約付録 §8）", () => {
     "\\end{document}",
   ].join("\n");
 
-  // \title を伏せた印を保って返す本文 translator（seg-0000 が \title を含む節）。
+  // \title・\author を伏せた印を保って返す本文 translator（seg-0000 が \title を含む節）。
   function bodyTitleClient(opts: { dropMark?: boolean } = {}): FakeLlmClient {
     const base = client({ titleJa: "\\title{\\textbf{甲の研究}}" });
     return new FakeLlmClient((req) => {
       if (req.meta?.segmentId === "seg-0000" && req.meta.role === "translator") {
-        return `\`\`\`tex\n${opts.dropMark === true ? "" : "〔1〕\n"}\\author{A}\n\\maketitle\n\`\`\``;
+        return `\`\`\`tex\n${opts.dropMark === true ? "" : "〔1〕\n"}〔2〕\n\\maketitle\n\`\`\``;
       }
       return base.complete(req);
     });

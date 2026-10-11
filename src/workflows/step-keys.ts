@@ -7,6 +7,7 @@ import { segment, type Segment } from "../segment/segmenter.js";
 import { firstCoveringSegment, uncoveredTerms, withoutPluralVariants } from "../terminology/term-coverage.js";
 import type { ResolvedRow } from "../terminology/glossary-io.js";
 import { extractPreamble } from "../tools/assemble-latex.js";
+import { commandSpans, removeSpans, type Span } from "../tools/tex-spans.js";
 import {
   extractTitle,
   findBodyTitle,
@@ -74,21 +75,33 @@ export interface StepContext {
   style: StyleContract;
 }
 
+// translator が訳す本文（keep の \title と \author 命令を除く）。契約付録 §1・§3
+export function translatedLatex(seg: Pick<Segment, "latex" | "keep">): string {
+  const hidden: Span[] = [
+    ...(seg.keep === undefined ? [] : [[seg.keep.start, seg.keep.end] as Span]),
+    ...commandSpans(seg.latex, "author"),
+  ];
+  return removeSpans(seg.latex, hidden, " ");
+}
+
 export function segmentSlice(
-  seg: Pick<Segment, "id" | "latex">,
+  seg: Pick<Segment, "id" | "latex" | "keep">,
   resolved: readonly ResolvedRow[],
   firstOcc: ReadonlyMap<string, string>,
 ): ResolvedTerm[] {
-  return uncoveredTerms(seg.latex, withoutPluralVariants([...resolved]))
+  return uncoveredTerms(translatedLatex(seg), withoutPluralVariants([...resolved]))
     .map((t) => ({ ...t, firstOccurrence: firstOcc.get(t.src) === seg.id })) as ResolvedTerm[];
 }
 
 // 各用語が segmentSlice で最初に効く節。契約付録 §1（節に効く用語）
 export function segmentFirstOccurrence(
-  segments: readonly Pick<Segment, "id" | "latex">[],
+  segments: readonly Pick<Segment, "id" | "latex" | "keep">[],
   resolved: readonly ResolvedRow[],
 ): Map<string, string> {
-  return firstCoveringSegment([...segments], withoutPluralVariants([...resolved]));
+  return firstCoveringSegment(
+    segments.map((s) => ({ id: s.id, latex: translatedLatex(s) })),
+    withoutPluralVariants([...resolved]),
+  );
 }
 
 // 無効化は原文＋注入コンテキスト（slice＋brief＋style）のハッシュ。
