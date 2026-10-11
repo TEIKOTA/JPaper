@@ -1,4 +1,5 @@
 // 契約付録 §7・組版レイアウト ADR(20260710)。訳文→main.tex 生成（原前文温存ハイブリッド）。
+import { detectProfile } from "./frontmatter.js";
 import { replaceTitle } from "./paper-title.js";
 
 export type Layout = "original" | "template";
@@ -240,7 +241,7 @@ function assembleBody(chapters: string[]): string {
 // title を渡すと前文の \title の主引数だけを差し替える（契約付録 §8）。
 export function buildPreamble(cleanLatex: string, mode: Layout, title?: string): string {
   const preamble = extractPreamble(cleanLatex);
-  const original = title === undefined ? preamble : replaceTitle(preamble, title);
+  const original = title === undefined ? preamble : replaceTitle(preamble, title, detectProfile(cleanLatex));
   return mode === "original"
     ? injectShared(neutralizePreamble(original))
     : `${templatePreamble(original, cleanLatex)}\n`;
