@@ -217,4 +217,3 @@ describe("protectMath: frozen（本文中の \\author。契約付録 §3）", ()
     expect(p.frozenMarks).toBeUndefined();
   });
 });
-
