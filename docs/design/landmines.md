@@ -227,14 +227,14 @@
 
 ## `src/tools/bilingual-latex.ts` — `unwrapTitleBlock` がタイトルを含む `\twocolumn[…]` を外す
 
-- **おかしく見える点**: 対訳でだけ、原文にも訳文にもある `\twocolumn[` と対応する `]` を消し、中身だけを残している。
-- **なぜ意図的か**: 対訳は段落ペアごとに `\switchcolumn` を挟むが、段落のつなぎ直し（`balanceParagraphs`）は角括弧を数えないので、空行を含む `\twocolumn[…]` がペアの途中で割れ、オプション引数の中に `\switchcolumn` が入って `Argument of \@topnewpage has an extra }` で落ちる（実測: ICML 2302.03519）。paracol の段の中ではもともと全幅の二段組の見出しは組めないので、外して段の中で組む。外すのは型の表でその場でタイトルを組む命令を含むものだけ。
+- **おかしく見える点**: 対訳でだけ、原文にも訳文にもある `\twocolumn[` と対応する `]` を改行に置き換え、中身だけを残している。
+- **なぜ意図的か**: 対訳は段落ペアごとに `\switchcolumn` を挟むが、段落のつなぎ直し（`balanceParagraphs`）は角括弧を数えないので、空行を含む `\twocolumn[…]` がペアの途中で割れ、オプション引数の中に `\switchcolumn` が入って `Argument of \@topnewpage has an extra }` で落ちる（実測: ICML 2302.03519）。paracol の段の中ではもともと全幅の二段組の見出しは組めないので、外して段の中で組む。外すのは型の表でその場でタイトルを組む命令を含むものだけ。空文字でなく改行に置き換えるのは、`\par]abc` のような前後の綴りが 1 つの命令名につながらないようにするため。
 - **正本ポインタ**: 契約付録 §8（対訳 PDF）、issue #330。回帰テストは `src/tools/bilingual-latex.test.ts`。
 
 ## `src/tools/bilingual-latex.ts` — `icmlSetup` が ICML のスタイルの命令を対訳用に包み直す
 
-- **おかしく見える点**: ICML のスタイルを読む論文でだけ、前文の末尾でスタイルの `\begin{document}` のフックを外し、`@affiliationcounter` を paracol の共有の番号にし、`\printAffiliationsAndNotice` と `\icmlcorrespondingauthor` を包み直している。`\icmlcorrespondingauthor` は paracol の内部の段番号 `\pcol@currcol` を見る。
-- **なぜ意図的か**: (1) フックは版面の検査だけで、対訳は紙面を変えるので 1 頁目に「The page layout violates the ICML style」が組まれる。(2) paracol は番号を段ごとに持つので、右の段では所属の番号が 0 のままで、所属が空の脚注になる（実測: 2302.03519）。(3) 共有にすると `\printAffiliationsAndNotice` が呼ぶたびに番号を 1 つ進めるので、右の段で存在しない所属番号を引き `AUTHORERR: Missing \icmlaffiliation` を組む。(4) `\icmlcorrespondingauthor` は呼ぶたびに連絡先を足すので、両方の段で呼ぶと 2 回並ぶ。重複を名前で判定する `\csname` は組版前の安全検査で拒まれるので、左の段（段番号 0。paracol の外も 0）でだけ登録する。
+- **おかしく見える点**: ICML の型の論文でだけ、前文の末尾でスタイルの `\begin{document}` のフックを外し、`\thispagestyle` を何もしない命令にし、`@affiliationcounter` を paracol の共有の番号にし、`\printAffiliationsAndNotice` と `\icmlcorrespondingauthor` を包み直している。`\icmlcorrespondingauthor` は paracol の内部の段番号 `\pcol@currcol` を見る。
+- **なぜ意図的か**: (1) フックは版面の検査だけで、対訳は紙面を変えるので 1 頁目に「The page layout violates the ICML style」が組まれる（フックの名前はパッケージ名なので、`icml\d{4}` のときだけ外せる）。(1') `\icmltitle` は `\thispagestyle{plain}` を呼び、対訳の 1 頁目にだけ頁番号が組まれる（対訳の頁番号は `BEGIN` が左右に組む）。(2) paracol は番号を段ごとに持つので、右の段では所属の番号が 0 のままで、所属が空の脚注になる（実測: 2302.03519）。(3) 共有にすると `\printAffiliationsAndNotice` が呼ぶたびに番号を 1 つ進めるので、右の段で存在しない所属番号を引き `AUTHORERR: Missing \icmlaffiliation` を組む。(4) `\icmlcorrespondingauthor` は呼ぶたびに連絡先を足すので、両方の段で呼ぶと 2 回並ぶ。重複を名前で判定する `\csname` は組版前の安全検査で拒まれるので、左の段（段番号 0。paracol の外も 0）でだけ登録する。
 - **正本ポインタ**: 契約付録 §8（対訳 PDF）、issue #330。回帰テストは `src/tools/bilingual-latex.test.ts`。
 
 ## `src/tools/assemble-latex.ts` — 共通テンプレで、elsarticle が内部で読む natbib を読み直す

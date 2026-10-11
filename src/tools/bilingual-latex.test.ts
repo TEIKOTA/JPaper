@@ -477,8 +477,24 @@ describe("ICML のタイトルブロック（契約付録 §7・§8）", () => {
   it("\\icmltitle を含む \\twocolumn[…] を外し、中身を段の中に残す", () => {
     const out = unwrapTitleBlock(block("Fast Things"), icml);
     expect(out).not.toContain("\\twocolumn");
-    expect(out.startsWith("\n\\icmltitle{Fast Things}")).toBe(true);
-    expect(out).toContain("\\vskip 0.3in\n\n\n\\printAffiliationsAndNotice{}");
+    expect(out.startsWith("\n\n\\icmltitle{Fast Things}")).toBe(true);
+    expect(out).toContain("\\vskip 0.3in\n\n\n\n\\printAffiliationsAndNotice{}");
+    expect(unwrapTitleBlock("\\twocolumn[\\icmltitle{T}\\par]abc", icml)).toBe("\n\\icmltitle{T}\\par\nabc");
+  });
+
+  it.each([
+    ["波括弧の中の対にならない角括弧", "\\twocolumn[\\icmltitle{T}\\icmlkeywords{[0,1)}]X", "\n\\icmltitle{T}\\icmlkeywords{[0,1)}\nX"],
+    ["コメントの中の ]", "\\twocolumn[\\icmltitle{T} % ]\n]X", "\n\\icmltitle{T} % ]\n\nX"],
+    ["\\] と \\[", "\\twocolumn[\\icmltitle{T} \\[x\\] ]X", "\n\\icmltitle{T} \\[x\\] \nX"],
+    ["エスケープした \\% と \\{", "\\twocolumn[\\icmltitle{T} 50\\% \\{]X", "\n\\icmltitle{T} 50\\% \\{\nX"],
+    ["タイトルを含まない先の \\twocolumn[…] は飛ばす", "\\twocolumn[\\section*{N}]\n\\twocolumn[\\icmltitle{T}]", "\\twocolumn[\\section*{N}]\n\n\\icmltitle{T}\n"],
+  ])("角括弧の対応: %s", (_label, tex, want) => {
+    expect(unwrapTitleBlock(tex, icml)).toBe(want);
+  });
+
+  it("コメントの中にだけある \\icmltitle では外さない", () => {
+    const tex = "\\twocolumn[% \\icmltitle{T}\n\\section*{N}]";
+    expect(unwrapTitleBlock(tex, icml)).toBe(tex);
   });
 
   it("既定の型・タイトルを含まない \\twocolumn[…]・コメントの中の \\twocolumn は外さない", () => {
@@ -504,14 +520,19 @@ describe("ICML のタイトルブロック（契約付録 §7・§8）", () => {
   });
 
   it("前文に ICML の版面検査を外す手当てと、段をまたぐ所属・連絡先の手当てを足す。ICML でなければ足さない", () => {
-    const pre = bilingualPreamble(ICML_PRE);
+    const pre = bilingualPreamble(ICML_PRE, icml);
     expect(pre).toContain("\\RemoveFromHook{begindocument}[icml2023]");
+    expect(pre).toContain("\\let\\thispagestyle\\@gobble");
     expect(pre).toContain("\\globalcounter{@affiliationcounter}");
     expect(pre).toContain("\\ifnum\\pcol@currcol=\\z@\\jp@icmlcorr{#1}{#2}\\fi");
     expect(pre).toContain("\\addtocounter{@affiliationcounter}{-1}");
     expect(pre.indexOf("\\RemoveFromHook")).toBeGreaterThan(pre.indexOf("\\usepackage{paracol}"));
     expect(findUnsafeTexCommands(pre)).toEqual([]);
-    expect(bilingualPreamble("\\documentclass{article}\n% \\usepackage{icml2023}\n")).not.toContain("RemoveFromHook");
+    expect(bilingualPreamble(ICML_PRE)).not.toContain("JPaper 注入: 対訳の ICML 手当て");
+    const renamed = "\\documentclass{article}\n\\usepackage{myicml}\n";
+    const renamedPre = bilingualPreamble(renamed, detectProfile(`${renamed}\\begin{document}\n\\twocolumn[\\icmltitle{T}]\n\\end{document}`));
+    expect(renamedPre).toContain("\\globalcounter{@affiliationcounter}");
+    expect(renamedPre).not.toContain("RemoveFromHook");
   });
 
   it("assembleBilingual は型の表を引いて ICML のタイトルブロックを外す", () => {

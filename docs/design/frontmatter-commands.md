@@ -104,7 +104,7 @@
 
 走行タイトル（`\icmltitlerunning`・`\titlerunning`・`\shorttitle` など）は別の綴りなので、タイトルの命令に入れなければ数えない。
 
-対訳 PDF（`src/tools/bilingual-latex.ts`）は、その場で組む命令（ICML・AISTATS・iopart）を含む最初の `\twocolumn[…]` を外して中身を段の中で組む。ICML のスタイル（`icml\d{4}`）を読む論文には、版面の検査と、段をまたぐ所属の番号・連絡先の手当てを前文に足す（issue #330）。
+対訳 PDF（`src/tools/bilingual-latex.ts`）は、節ごとに、その場で組む命令（ICML・AISTATS・iopart）を中身に含む最初の `\twocolumn[…]` を外して中身を段の中で組む。ICML の型の論文には、版面の検査（`icml\d{4}` のときだけ）・頁番号・段をまたぐ所属の番号・連絡先の手当てを前文に足す（issue #330）。
 
 ## (b) 落とし穴
 

@@ -97,7 +97,7 @@ export function balanceParagraphs(paras: string[]): string[] {
   return out;
 }
 
-// 開き角括弧 open に対応する閉じ角括弧の位置。波括弧の中とコメントの中の角括弧は数えない。閉じなければ undefined。
+// open の [ に対応する ] の位置。波括弧・コメントの中と \[ \] は数えない。閉じなければ undefined。
 function closingBracket(tex: string, open: number): number | undefined {
   let brace = 0;
   let depth = 0;
@@ -118,25 +118,28 @@ function closingBracket(tex: string, open: number): number | undefined {
 
 const TWOCOLUMN = /\\twocolumn\s*\[/g;
 
-// その場でタイトルを組む命令（型の表の selfSetting）を含む最初の \twocolumn[…] を外し、中身だけを残す。⚠ landmines.md
+// コメントの外で、型の selfSetting の命令を中身に含む最初の \twocolumn[…] の [ と ] を改行に置き換える。⚠ landmines.md
 export function unwrapTitleBlock(tex: string, profile: FrontMatterProfile = DEFAULT_PROFILE): string {
   if (profile.selfSetting.length === 0) return tex;
   const setter = new RegExp(`\\\\(?:${profile.selfSetting.join("|")})(?![A-Za-z@])`);
-  let commentedUntil = -1;
+  let skipUntil = -1;
   for (const m of tex.matchAll(TWOCOLUMN)) {
-    if (m.index < commentedUntil) continue;
+    if (m.index < skipUntil) continue;
     const prefix = tex.slice(tex.lastIndexOf("\n", m.index) + 1, m.index);
     if (stripComments(prefix) !== prefix) {
       const nl = tex.indexOf("\n", m.index);
-      commentedUntil = nl === -1 ? tex.length : nl;
+      skipUntil = nl === -1 ? tex.length : nl;
       continue;
     }
     const open = m.index + m[0].length - 1;
     const close = closingBracket(tex, open);
     if (close === undefined) return tex;
     const inner = tex.slice(open + 1, close);
-    if (!setter.test(stripComments(inner))) return tex;
-    return `${tex.slice(0, m.index)}${inner}${tex.slice(close + 1)}`;
+    if (!setter.test(stripComments(inner))) {
+      skipUntil = close;
+      continue;
+    }
+    return `${tex.slice(0, m.index)}\n${inner}\n${tex.slice(close + 1)}`;
   }
   return tex;
 }
@@ -263,15 +266,16 @@ const SETUP = [
 // 対訳ではリンクを作らない（hyperref の draft）。⚠ landmines.md
 const NO_LINKS = "\\PassOptionsToPackage{draft}{hyperref} % JPaper 注入: 対訳はリンクを作らない";
 
-// ICML のスタイルへの対訳用の手当て。版面の検査（\begin{document} のフック）を外し、
-// 左右の段で 1 回ずつ通る所属・連絡先の命令が、段ごとの番号や連絡先の重複を作らないようにする。⚠ landmines.md
-function icmlSetup(preamble: string): string {
+// ICML の型の対訳の前文の手当て。icml\d{4} の \begin{document} のフックを外し、\thispagestyle を無効にし、
+// 所属の番号を左右の段で共有し、\printAffiliationsAndNotice が進めた番号を戻し、\icmlcorrespondingauthor は左の段でだけ実行する。⚠ landmines.md
+function icmlSetup(preamble: string, profile: FrontMatterProfile): string {
+  if (profile.id !== "icml") return "";
   const names = [...new Set(packageNames(preamble).filter((p) => /^icml\d{4}$/.test(p)))];
-  if (names.length === 0) return "";
   return [
     "% --- JPaper 注入: 対訳の ICML 手当て ---",
     ...names.map((n) => `\\RemoveFromHook{begindocument}[${n}]`),
     "\\makeatletter",
+    "\\let\\thispagestyle\\@gobble",
     "\\@ifundefined{c@@affiliationcounter}{}{\\globalcounter{@affiliationcounter}}",
     "\\@ifundefined{icmlcorrespondingauthor}{}{\\let\\jp@icmlcorr\\icmlcorrespondingauthor" +
       "\\renewcommand{\\icmlcorrespondingauthor}[2]{\\ifnum\\pcol@currcol=\\z@\\jp@icmlcorr{#1}{#2}\\fi}}",
@@ -282,8 +286,8 @@ function icmlSetup(preamble: string): string {
   ].join("\n");
 }
 
-export function bilingualPreamble(preamble: string): string {
-  return `${NO_LINKS}\n${preamble.replace(/\s*$/, "")}\n${SETUP}\n${icmlSetup(preamble)}`;
+export function bilingualPreamble(preamble: string, profile: FrontMatterProfile = DEFAULT_PROFILE): string {
+  return `${NO_LINKS}\n${preamble.replace(/\s*$/, "")}\n${SETUP}\n${icmlSetup(preamble, profile)}`;
 }
 
 const BEGIN = [
@@ -386,7 +390,7 @@ export function assembleBilingual(input: {
   const profile = detectProfile(input.cleanLatex);
   const { pairs, fallbackSegments } = pairSegments(input.source, input.translated, profile);
   const { blocks, titled } = renderPairs(pairs, { left: extractPreamble(input.cleanLatex), right: preamble }, profile);
-  const mainTex = releaseLuatexjaNames(`${bilingualPreamble(preamble)}${BEGIN}\n${paracolBody(blocks)}\\end{document}\n`);
+  const mainTex = releaseLuatexjaNames(`${bilingualPreamble(preamble, profile)}${BEGIN}\n${paracolBody(blocks)}\\end{document}\n`);
   const titleUnplaced = profile.maketitle && !titled && input.source.some((s) => TITLE_COMMANDS.test(stripComments(s.tex)));
   return { mainTex, pairs: blocks.length, fallbackSegments, titleUnplaced };
 }
