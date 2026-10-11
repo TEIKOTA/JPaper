@@ -7,7 +7,8 @@ import { segment, type Segment } from "../segment/segmenter.js";
 import { firstCoveringSegment, uncoveredTerms, withoutPluralVariants } from "../terminology/term-coverage.js";
 import type { ResolvedRow } from "../terminology/glossary-io.js";
 import { extractPreamble } from "../tools/assemble-latex.js";
-import { commandSpans, removeSpans, type Span } from "../tools/tex-spans.js";
+import { detectProfile, frozenSpansOf, keptSpans } from "../tools/frontmatter.js";
+import { removeSpans, type Span } from "../tools/tex-spans.js";
 import {
   extractTitle,
   findBodyTitle,
@@ -50,15 +51,17 @@ export interface SegmentPlan {
 
 // 本文で最初にタイトルを組む位置より前の \title は前文の \title より後に効く。その節では
 // \title 命令を原文のまま残し（keep）、タイトルは title 節で 1 回だけ訳す。契約付録 §8
+// 著者・所属・注記は前付けの型の表（src/tools/frontmatter.ts）で決めた区間を frozen に入れる。契約付録 §3
 export function planSegments(cleanLatex: string, budget: number): SegmentPlan {
+  const profile = detectProfile(cleanLatex);
   const plain = segment(cleanLatex, budget);
-  const bodyTitle = findBodyTitle(plain);
+  const bodyTitle = findBodyTitle(plain, profile);
   const keepsTitle = bodyTitle?.title !== undefined && hasProse(bodyTitle.title.text);
-  const segments: Segment[] = plain.map((s) =>
-    keepsTitle && s.id === bodyTitle!.segmentId
-      ? { ...s, keep: { start: bodyTitle!.start, end: bodyTitle!.end } }
-      : s,
-  );
+  const segments: Segment[] = plain.map((s) => {
+    const keep = keepsTitle && s.id === bodyTitle!.segmentId ? { start: bodyTitle!.start, end: bodyTitle!.end } : undefined;
+    const frozen = keptSpans(s.latex, profile).filter((f) => keep === undefined || f[1] <= keep.start || f[0] >= keep.end);
+    return { ...s, ...(keep === undefined ? {} : { keep }), ...(frozen.length === 0 ? {} : { frozen }) };
+  });
   return { segments, bodyTitle };
 }
 
@@ -66,7 +69,7 @@ export function planSegments(cleanLatex: string, budget: number): SegmentPlan {
 export function foundTitle(cleanLatex: string, plan: SegmentPlan): PaperTitle | undefined {
   return plan.bodyTitle !== undefined
     ? plan.bodyTitle.title
-    : extractTitle(extractPreamble(cleanLatex));
+    : extractTitle(extractPreamble(cleanLatex), detectProfile(cleanLatex));
 }
 
 export interface StepContext {
@@ -75,17 +78,17 @@ export interface StepContext {
   style: StyleContract;
 }
 
-// translator が訳す本文（keep の \title と \author 命令を除く）。契約付録 §1・§3
-export function translatedLatex(seg: Pick<Segment, "latex" | "keep">): string {
+// translator が訳す本文（keep の \title と frozen の著者・所属・注記を除く）。契約付録 §1・§3
+export function translatedLatex(seg: Pick<Segment, "latex" | "keep" | "frozen">): string {
   const hidden: Span[] = [
     ...(seg.keep === undefined ? [] : [[seg.keep.start, seg.keep.end] as Span]),
-    ...commandSpans(seg.latex, "author"),
+    ...frozenSpansOf(seg),
   ];
   return removeSpans(seg.latex, hidden, " ");
 }
 
 export function segmentSlice(
-  seg: Pick<Segment, "id" | "latex" | "keep">,
+  seg: Pick<Segment, "id" | "latex" | "keep" | "frozen">,
   resolved: readonly ResolvedRow[],
   firstOcc: ReadonlyMap<string, string>,
 ): ResolvedTerm[] {
@@ -95,7 +98,7 @@ export function segmentSlice(
 
 // 各用語が segmentSlice で最初に効く節。契約付録 §1（節に効く用語）
 export function segmentFirstOccurrence(
-  segments: readonly Pick<Segment, "id" | "latex" | "keep">[],
+  segments: readonly Pick<Segment, "id" | "latex" | "keep" | "frozen">[],
   resolved: readonly ResolvedRow[],
 ): Map<string, string> {
   return firstCoveringSegment(

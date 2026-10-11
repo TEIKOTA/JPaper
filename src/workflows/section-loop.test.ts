@@ -318,7 +318,7 @@ describe("runSectionLoop: 改稿予算の配分", () => {
       const r = await runSectionLoop(c, authorSeg, []);
       expect(r.passed).toBe(false);
       expect(r.failedKinds).toEqual(["author"]);
-      expect(translatorUsers[1]).toContain("著者・所属の差し替え");
+      expect(translatorUsers[1]).toContain("著者・所属・注記の差し替え");
     });
 
     it("伏せた \\author の前後の綴りをつなげて数えない（\\fi の直後に英字が続いても条件分岐の個数がそろう）", async () => {
