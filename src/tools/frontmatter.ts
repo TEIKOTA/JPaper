@@ -105,8 +105,8 @@ const RULES: readonly Rule[] = [
   },
 ];
 
-// 任意引数・名前の長さを区切って読む（本文全体を走るので走査量を有界にする）。⚠ landmines.md
-const DOCUMENTCLASS = /\\documentclass\s*(?:\[[^\]]{0,1000}\]\s*)?\{\s*([^}]{0,200}?)\s*\}/;
+// 任意引数・名前の長さを区切り、名前の前後の空白は正規表現でなく trim で落とす。⚠ landmines.md
+const DOCUMENTCLASS = /\\documentclass\s*(?:\[[^\]]{0,1000}\]\s*)?\{([^}]{0,200})\}/;
 const USEPACKAGE = /\\(?:usepackage|RequirePackage)\s*(?:\[[^\]]{0,1000}\]\s*)?\{([^}]{0,1000})\}/g;
 
 // 行コメント（% から行末まで。\% はエスケープ）を落とす。型の判定だけに使う。
@@ -131,7 +131,7 @@ const usesCommand = (tex: string, name: string): boolean => new RegExp(`\\\\${na
 // \documentclass・\usepackage の名前と特徴的な命令から型を選ぶ。契約付録 §8
 export function detectProfile(cleanLatex: string): FrontMatterProfile {
   const tex = uncommented(cleanLatex);
-  const cls = DOCUMENTCLASS.exec(tex)?.[1] ?? "";
+  const cls = (DOCUMENTCLASS.exec(tex)?.[1] ?? "").trim();
   const packages = [...tex.matchAll(USEPACKAGE)].flatMap((m) => m[1]!.split(",").map((p) => p.trim()));
   for (const r of RULES) {
     const hit =
@@ -147,10 +147,10 @@ export function detectProfile(cleanLatex: string): FrontMatterProfile {
 export function keptSpans(tex: string, profile: FrontMatterProfile = DEFAULT_PROFILE): Span[] {
   const all: Span[] = [];
   for (const [name, n] of Object.entries(profile.keepCommands)) {
-    if (tex.includes(`\\${name}`)) all.push(...commandSpans(tex, name, n));
+    if (tex.includes(`\\${name}`)) for (const s of commandSpans(tex, name, n)) all.push(s);
   }
   for (const env of profile.keepEnvs) {
-    if (tex.includes(`\\begin{${env}`)) all.push(...envSpans(tex, env));
+    if (tex.includes(`\\begin{${env}`)) for (const s of envSpans(tex, env)) all.push(s);
   }
   all.sort((a, b) => a[0] - b[0] || b[1] - a[1]);
   const out: Span[] = [];

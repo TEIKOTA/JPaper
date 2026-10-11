@@ -45,4 +45,10 @@ describe("planSegments は前付けの型で keep と frozen を決める（契�
     expect(translatedLatex(s)).not.toContain("Flat Ensemble");
     expect(translatedLatex(s)).toContain("We study sharpness.");
   });
+
+  it("keep（本文の \\title）の中の注記は frozen に入れない", () => {
+    const tex = "\\documentclass{article}\n\\begin{document}\n\\title{Flat\\thanks{Lab}}\n\\author{Ann}\n\\maketitle\nText\n\\end{document}\n";
+    const s = planSegments(tex, 8000).segments.find((x) => x.keep !== undefined)!;
+    expect(s.frozen!.map(([a, b]) => s.latex.slice(a, b))).toEqual(["\\author{Ann}"]);
+  });
 });

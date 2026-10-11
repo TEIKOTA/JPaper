@@ -287,6 +287,13 @@ describe("タイトル", () => {
       translated: [{ id: "seg-0000", tex: "和" }],
     });
     expect(plain.titleUnplaced).toBe(false);
+    const iop = assembleBilingual({
+      cleanLatex: "\\documentclass{iopart}\\begin{document}\\end{document}",
+      translatedMainTex: "\\documentclass{iopart}\n\\begin{document}\n\\end{document}\n",
+      source: [{ id: "seg-0000", tex: "\\title{T}\n\\maketitle\n\nA" }],
+      translated: [{ id: "seg-0000", tex: "\\title{題}\n\\maketitle\n\n和" }],
+    });
+    expect(iop.titleUnplaced).toBe(false);
   });
 });
 

@@ -72,7 +72,6 @@ export function foundTitle(cleanLatex: string, plan: SegmentPlan): PaperTitle | 
     : extractTitle(extractPreamble(cleanLatex), detectProfile(cleanLatex));
 }
 
-
 export interface StepContext {
   resolved: readonly ResolvedRow[];
   brief: DocumentBrief;

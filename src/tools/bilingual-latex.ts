@@ -323,6 +323,6 @@ export function assembleBilingual(input: {
   const profile = detectProfile(input.cleanLatex);
   const { blocks, titled } = renderPairs(pairs, { left: extractPreamble(input.cleanLatex), right: preamble }, profile);
   const mainTex = releaseLuatexjaNames(`${bilingualPreamble(preamble)}${BEGIN}\n${paracolBody(blocks)}\\end{document}\n`);
-  const titleUnplaced = !titled && input.source.some((s) => TITLE_COMMANDS.test(stripComments(s.tex)));
+  const titleUnplaced = profile.maketitle && !titled && input.source.some((s) => TITLE_COMMANDS.test(stripComments(s.tex)));
   return { mainTex, pairs: blocks.length, fallbackSegments, titleUnplaced };
 }

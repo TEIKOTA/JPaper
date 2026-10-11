@@ -224,7 +224,7 @@ function closingBracket(tex: string, at: number): number {
   return -1;
 }
 
-// 命令と引数（任意の [..] と必須の {..} を mandatory 個まで）を含む区間。\name の直後が英字の命令
+// 命令と引数（星 *・任意の [..]・必須の {..} を mandatory 個まで）を含む区間。\name の直後が英字の命令
 // （\authorrunning など）は別物。最初の必須引数が閉じなければ区間にしない。2 つ目以降が無ければ
 // 読めたところまでを区間にする。⚠ landmines.md
 export function commandSpans(tex: string, name: string, mandatory = 1): Span[] {
@@ -234,6 +234,7 @@ export function commandSpans(tex: string, name: string, mandatory = 1): Span[] {
   for (let i = tex.indexOf(needle); i !== -1; i = tex.indexOf(needle, i + 1)) {
     if (escapedAt(tex, i) || /[A-Za-z@]/.test(tex[i + needle.length] ?? "")) continue;
     let j = i + needle.length;
+    if (tex[j] === "*") j++;
     while (/\s/.test(tex[j] ?? "")) j++;
     while (tex[j] === "[") {
       const e = closingBracket(tex, j);

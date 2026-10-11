@@ -32,6 +32,18 @@ describe("detectProfile（前付けの型。契約付録 §8）", () => {
     const body = unit.repeat(Math.ceil((1 << 20) / unit.length));
     expect(fastestMs(2, () => void detectProfile(body))).toBeLessThan(2000);
   });
+
+  it.each([
+    ["空白", " "],
+    ["改行と本文", "\n".repeat(64) + "x".repeat(300)],
+  ])("\\documentclass{ の後の長い%sでも線形", (_label, unit) => {
+    const body = "\\documentclass{" + unit.repeat(Math.ceil((1 << 20) / unit.length));
+    expect(fastestMs(2, () => void detectProfile(body))).toBeLessThan(2000);
+  });
+
+  it("クラス名の前後の空白は落として比べる", () => {
+    expect(detectProfile("\\documentclass[final]{ elsarticle }\n\\begin{document}\n\\end{document}").id).toBe("elsarticle");
+  });
 });
 
 describe("keptSpans（原文のまま残す著者・所属・注記。契約付録 §3）", () => {
@@ -68,6 +80,18 @@ describe("keptSpans（原文のまま残す著者・所属・注記。契約付�
   it("入れ子は外側だけを開始位置の順に返す。走行用の綴りと \\keywords は残さない", () => {
     const tex = "\\institute{Univ \\email{a@x}}\n\\author{A\\inst{1} \\thanks{T}}\n\\authorrunning{A}\n\\keywords{x}";
     expect(pick(tex, keptSpans(tex))).toEqual(["\\institute{Univ \\email{a@x}}", "\\author{A\\inst{1} \\thanks{T}}"]);
+  });
+
+  it("星付きの命令（Springer Nature の \\author*・\\affil*）も残す", () => {
+    const tex = "\\author*[1]{\\fnm{Ann} \\sur{Lee}}\n\\affil*[1]{\\orgname{Univ}}\nText";
+    expect(pick(tex, keptSpans(tex))).toEqual(["\\author*[1]{\\fnm{Ann} \\sur{Lee}}", "\\affil*[1]{\\orgname{Univ}}"]);
+  });
+
+  it("部分的に重なる区間は 1 つに合わせる。同じ命令が多数あってもスタックを使い果たさない", () => {
+    const tex = "\\begin{affiliations}\\item \\address{A\\end{affiliations}} B}";
+    expect(keptSpans(tex)).toEqual([[0, tex.length - 3]]);
+    const many = "\\email{c}".repeat(200_000);
+    expect(keptSpans(many)).toHaveLength(200_000);
   });
 
   it("分割で決めていない節は既定の型で決め、keep の中は除く", () => {
@@ -120,6 +144,9 @@ describe("タイトルの検出が型の表を引く（契約付録 §8）", () 
     expect(findBodyTitle(seg(one), profile)?.title?.text).toBe("A Study");
     expect(findBodyTitle(seg(two), profile)?.title).toBeUndefined();
     expect(findBodyTitle(seg(two), DEFAULT_PROFILE)?.title?.text).toBe("of Things");
+    const preamble = "\\documentclass{elsarticle}\n\\title{A Study}\n\\title{of Things}";
+    expect(extractTitle(preamble, profile)).toBeUndefined();
+    expect(replaceTitle(preamble, "研究", profile)).toBe(preamble);
   });
 
   it("AAAI: \\iffalse の中のダミーの \\title は数えない", () => {

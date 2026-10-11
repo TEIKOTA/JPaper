@@ -245,8 +245,7 @@ function titleCommands(tex: string, names: readonly string[]): TitleCommand[] {
   return found;
 }
 
-// 型に合わせて効くタイトルの命令。連結する型（elsarticle）で 2 つ以上あれば、どれか 1 つを訳すと
-// 題が欠けるので見つからない扱いにする。契約付録 §8
+// 型に合わせて効くタイトルの命令。連結する型（elsarticle）で 2 つ以上あれば undefined。契約付録 §8
 function effectiveTitle(tex: string, profile: FrontMatterProfile): TitleCommand | undefined {
   const all = titleCommands(tex, profile.titleCommands);
   if (profile.accumulates && all.length > 1) return undefined;
