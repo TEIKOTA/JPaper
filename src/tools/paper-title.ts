@@ -23,7 +23,7 @@ const NOTE_COMMANDS = new Set(["thanks", "footnote"]);
 const isLetter = (c: string | undefined): boolean => c !== undefined && /[a-zA-Z]/.test(c);
 
 // tex[i] === "%" のとき、行末の改行と次行の行頭空白まで飛ばした位置を返す。
-function skipComment(tex: string, i: number): number {
+export function skipComment(tex: string, i: number): number {
   const nl = tex.indexOf("\n", i);
   if (nl === -1) return tex.length;
   let j = nl + 1;
@@ -87,7 +87,7 @@ function readArgs(
 }
 
 // \iffalse の読み飛ばしで入れ子として数える条件分岐の綴り（TeX の基本命令。\newif で作った綴りは別途数える）。
-const PRIMITIVE_IFS = new Set([
+export const PRIMITIVE_IFS = new Set([
   "if",
   "ifcat",
   "ifnum",
@@ -113,11 +113,11 @@ const PRIMITIVE_IFS = new Set([
 const COMMENT_ENV_BEGIN = /\s*\{comment\}/y;
 const COMMENT_ENV_END = "\\end{comment}";
 
-const newifNames = (tex: string): Set<string> =>
+export const newifNames = (tex: string): Set<string> =>
   new Set([...tex.matchAll(/\\newif\s*\\(if[a-zA-Z]+)/g)].map((m) => m[1]!));
 
 // \iffalse の名前の直後 from から、対応する \else または \fi の直後の位置（閉じなければ末尾）。契約付録 §8
-function skipIffalse(tex: string, from: number, ifs: ReadonlySet<string>): number {
+export function skipIffalse(tex: string, from: number, ifs: ReadonlySet<string>): number {
   let depth = 0;
   for (let i = from; i < tex.length; i++) {
     const c = tex[i];
