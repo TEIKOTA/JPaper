@@ -184,13 +184,14 @@ function templatePreamble(originalPreamble: string, cleanLatex: string): string 
   return [
     LUATEX85,
     "\\documentclass[a4paper]{article}",
+    // ⚠ landmines.md
+    "\\usepackage[ipaex]{luatexja-preset}",
     "\\title{}",
     "\\author{}",
     CLASS_SHIM,
     ...classPackages(cleanLatex),
     ...(carried === "" ? [] : ["% --- JPaper 注入: 原前文の引き継ぎ（documentclass のみ差し替え）---", carried]),
     "% --- JPaper 注入: 日本語組版・共有引用 ---",
-    "\\usepackage[ipaex]{luatexja-preset}",
     "\\usepackage{amsmath,amsfonts,amssymb}",
     "\\usepackage{graphicx}",
     "\\usepackage{booktabs}",

@@ -128,11 +128,16 @@ function uncommented(tex: string): string {
 
 const usesCommand = (tex: string, name: string): boolean => new RegExp(`\\\\${name}(?![A-Za-z@])`).test(tex);
 
+// コメントの外で \usepackage・\RequirePackage に書かれたパッケージ名（カンマ区切りは分ける）。
+export function packageNames(tex: string): string[] {
+  return [...uncommented(tex).matchAll(USEPACKAGE)].flatMap((m) => m[1]!.split(",").map((p) => p.trim()));
+}
+
 // \documentclass・\usepackage の名前と特徴的な命令から型を選ぶ。契約付録 §8
 export function detectProfile(cleanLatex: string): FrontMatterProfile {
   const tex = uncommented(cleanLatex);
   const cls = (DOCUMENTCLASS.exec(tex)?.[1] ?? "").trim();
-  const packages = [...tex.matchAll(USEPACKAGE)].flatMap((m) => m[1]!.split(",").map((p) => p.trim()));
+  const packages = packageNames(tex);
   for (const r of RULES) {
     const hit =
       (r.classes !== undefined && r.classes.test(cls)) ||

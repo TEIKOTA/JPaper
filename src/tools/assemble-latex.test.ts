@@ -168,6 +168,15 @@ describe("assembleLatex: template フォールバック", () => {
     expect(r.mainTex).toContain("\\author{Ashish Vaswani");
     expect(r.mainTex).toContain("\\maketitle X");
   });
+
+  it("luatexja は \\documentclass の直後、引き継いだ原前文より前に読む", () => {
+    const clean = "\\documentclass{article}\n\\usepackage{icml2023}\n\\begin{document}\nX\n\\end{document}";
+    const r = assembleLatex({ cleanLatex: clean, chapters: ["X"], mode: "template" });
+    const at = r.mainTex.indexOf("luatexja-preset");
+    expect(r.mainTex.slice(r.mainTex.indexOf("\\documentclass[a4paper]{article}"), at).split("\n")).toHaveLength(2);
+    expect(at).toBeLessThan(r.mainTex.indexOf("\\usepackage{icml2023}"));
+    expect(r.mainTex.match(/luatexja-preset/g)).toHaveLength(1);
+  });
 });
 
 describe("prependLuatexCompat", () => {

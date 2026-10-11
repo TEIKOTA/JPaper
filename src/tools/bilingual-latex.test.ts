@@ -15,8 +15,10 @@ import {
   assembleBilingual,
   muteBibliography,
   replaceFrontmatter,
+  unwrapTitleBlock,
 } from "./bilingual-latex.js";
 import { findUnsafeTexCommands } from "./tex-safety.js";
+import { fastestMs } from "../testing/timing.js";
 
 describe("段落分割", () => {
   it("空行（空白だけの行を含む）で割り、空の段落は捨てる", () => {
@@ -447,5 +449,89 @@ describe("前文", () => {
       translated: [{ id: "seg-0000", tex: "和" }],
     });
     expect(findUnsafeTexCommands(out.mainTex)).toEqual([]);
+  });
+});
+
+describe("ICML のタイトルブロック（契約付録 §7・§8）", () => {
+  const ICML_PRE = "\\documentclass{article}\n\\usepackage[accepted]{icml2023}\n";
+  const icml = detectProfile(`${ICML_PRE}\\begin{document}\n\\end{document}`);
+  const block = (title: string) =>
+    [
+      "\\twocolumn[",
+      `\\icmltitle{${title}}`,
+      "",
+      "\\icmlsetsymbol{equal}{*}",
+      "",
+      "\\begin{icmlauthorlist}",
+      "\\icmlauthor{Ann Lee}{tor}",
+      "\\end{icmlauthorlist}",
+      "",
+      "\\icmlaffiliation{tor}{University of Toronto}",
+      "\\icmlkeywords{Machine Learning, [x]}",
+      "\\vskip 0.3in",
+      "]",
+      "",
+      "\\printAffiliationsAndNotice{}",
+    ].join("\n");
+
+  it("\\icmltitle を含む \\twocolumn[…] を外し、中身を段の中に残す", () => {
+    const out = unwrapTitleBlock(block("Fast Things"), icml);
+    expect(out).not.toContain("\\twocolumn");
+    expect(out.startsWith("\n\\icmltitle{Fast Things}")).toBe(true);
+    expect(out).toContain("\\vskip 0.3in\n\n\n\\printAffiliationsAndNotice{}");
+  });
+
+  it("既定の型・タイトルを含まない \\twocolumn[…]・コメントの中の \\twocolumn は外さない", () => {
+    expect(unwrapTitleBlock(block("T"))).toBe(block("T"));
+    const plain = "\\twocolumn[\\section*{Notes}]\nText";
+    expect(unwrapTitleBlock(plain, icml)).toBe(plain);
+    const commented = "% \\twocolumn[\nX\n" + block("T");
+    expect(unwrapTitleBlock(commented, icml)).toBe("% \\twocolumn[\nX\n" + unwrapTitleBlock(block("T"), icml));
+    const unclosed = "\\twocolumn[\\icmltitle{T}";
+    expect(unwrapTitleBlock(unclosed, icml)).toBe(unclosed);
+  });
+
+  it("左右とも 1 段落ずつのペアになり、角括弧の中で段を切り替えない", () => {
+    const { pairs, fallbackSegments } = pairSegments(
+      [{ id: "seg-0000", tex: block("Fast Things") }],
+      [{ id: "seg-0000", tex: block("速いもの") }],
+      icml,
+    );
+    expect(fallbackSegments).toEqual([]);
+    expect(pairs[0]).toEqual({ segmentId: "seg-0000", left: "\\icmltitle{Fast Things}", right: "\\icmltitle{速いもの}" });
+    expect(pairs.map((p) => p.left)).toEqual(paragraphsOf(block("Fast Things"), icml));
+    expect(pairs.some((p) => p.left.includes("]") && !p.left.includes("["))).toBe(false);
+  });
+
+  it("前文に ICML の版面検査を外す手当てと、段をまたぐ所属・連絡先の手当てを足す。ICML でなければ足さない", () => {
+    const pre = bilingualPreamble(ICML_PRE);
+    expect(pre).toContain("\\RemoveFromHook{begindocument}[icml2023]");
+    expect(pre).toContain("\\globalcounter{@affiliationcounter}");
+    expect(pre).toContain("\\ifnum\\pcol@currcol=\\z@\\jp@icmlcorr{#1}{#2}\\fi");
+    expect(pre).toContain("\\addtocounter{@affiliationcounter}{-1}");
+    expect(pre.indexOf("\\RemoveFromHook")).toBeGreaterThan(pre.indexOf("\\usepackage{paracol}"));
+    expect(findUnsafeTexCommands(pre)).toEqual([]);
+    expect(bilingualPreamble("\\documentclass{article}\n% \\usepackage{icml2023}\n")).not.toContain("RemoveFromHook");
+  });
+
+  it("assembleBilingual は型の表を引いて ICML のタイトルブロックを外す", () => {
+    const out = assembleBilingual({
+      cleanLatex: `${ICML_PRE}\\begin{document}\n${block("Fast Things")}\n\\end{document}`,
+      translatedMainTex: `${ICML_PRE}\\begin{document}\n${block("速いもの")}\n\\end{document}\n`,
+      source: [{ id: "seg-0000", tex: block("Fast Things") }],
+      translated: [{ id: "seg-0000", tex: block("速いもの") }],
+    });
+    const body = out.mainTex.slice(out.mainTex.indexOf("\\begin{document}"));
+    expect(body).not.toContain("\\twocolumn");
+    expect(body).toContain("\\icmltitle{Fast Things}\n\\switchcolumn\n\\icmltitle{速いもの}\n\\switchcolumn*");
+    expect(out.titleUnplaced).toBe(false);
+  });
+
+  it.each([
+    ["コメントの中の \\twocolumn[ を 1 行に", "% " + "\\twocolumn[".repeat(90_000)],
+    ["閉じない \\twocolumn[", "\\twocolumn[\\icmltitle{T}" + "x".repeat(1 << 20)],
+    ["閉じないコメントの \\twocolumn[ を各行に", "% \\twocolumn[\n".repeat(70_000)],
+  ])("走査は入力長に対して線形（%s・1MiB）", (_label, tex) => {
+    expect(fastestMs(2, () => void unwrapTitleBlock(tex, icml))).toBeLessThan(2000);
   });
 });

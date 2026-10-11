@@ -181,6 +181,7 @@
 - **おかしく見える点**: 日本語組版のパッケージだけを共有部品の注入（前文の末尾）から外し、原論文のパッケージより前に差し込んでいる。
 - **なぜ意図的か**: 前文の末尾で読むと、原論文の独自スタイルが先に済ませたフォント設定とかみ合わず、和文フォントが `Missing font identifier` で落ちる（実測: CellViT 2306.15350 の `preprint.sty`、`\twocolumn[…]` の閉じ括弧で致命的エラー。原文のままでも同じ）。`\documentclass` の直後に移すと組版が通る。
 - **正本ポインタ**: 契約付録 §7、issue #320。回帰テストは `src/tools/assemble-latex.test.ts`。
+- **共通テンプレも同じ**: `templatePreamble` も luatexja を `\documentclass[a4paper]{article}` の直後で読む。共有部品の注入の位置に置いたままだと、引き継いだ原前文（ICML の `icml2023.sty`）の後で読むことになり、対訳 PDF の共通テンプレでの組み直しが `Missing font identifier` で落ちた（実測: 2302.03519。issue #330）。
 
 ## `src/tools/assemble-latex.ts` — `\caption` の引数の中の空行を `%` だけの行に置き換える
 
@@ -223,6 +224,18 @@
 - **おかしく見える点**: `\begin{paracol}{2}` の直後で `\setlength{\textwidth}{\columnwidth}` している。
 - **なぜ意図的か**: paracol の段の中でも `\textwidth` は紙面全体の幅のままなので、原文の `\includegraphics[width=\textwidth]` が隣の段まで伸びる（実測: 1902.06543 の Figure 1）。段は左右同じ幅なので、段の幅に揃えれば原文の比率どおりに収まる。
 - **正本ポインタ**: 契約付録 §8（対訳 PDF）、issue #326。
+
+## `src/tools/bilingual-latex.ts` — `unwrapTitleBlock` がタイトルを含む `\twocolumn[…]` を外す
+
+- **おかしく見える点**: 対訳でだけ、原文にも訳文にもある `\twocolumn[` と対応する `]` を消し、中身だけを残している。
+- **なぜ意図的か**: 対訳は段落ペアごとに `\switchcolumn` を挟むが、段落のつなぎ直し（`balanceParagraphs`）は角括弧を数えないので、空行を含む `\twocolumn[…]` がペアの途中で割れ、オプション引数の中に `\switchcolumn` が入って `Argument of \@topnewpage has an extra }` で落ちる（実測: ICML 2302.03519）。paracol の段の中ではもともと全幅の二段組の見出しは組めないので、外して段の中で組む。外すのは型の表でその場でタイトルを組む命令を含むものだけ。
+- **正本ポインタ**: 契約付録 §8（対訳 PDF）、issue #330。回帰テストは `src/tools/bilingual-latex.test.ts`。
+
+## `src/tools/bilingual-latex.ts` — `icmlSetup` が ICML のスタイルの命令を対訳用に包み直す
+
+- **おかしく見える点**: ICML のスタイルを読む論文でだけ、前文の末尾でスタイルの `\begin{document}` のフックを外し、`@affiliationcounter` を paracol の共有の番号にし、`\printAffiliationsAndNotice` と `\icmlcorrespondingauthor` を包み直している。`\icmlcorrespondingauthor` は paracol の内部の段番号 `\pcol@currcol` を見る。
+- **なぜ意図的か**: (1) フックは版面の検査だけで、対訳は紙面を変えるので 1 頁目に「The page layout violates the ICML style」が組まれる。(2) paracol は番号を段ごとに持つので、右の段では所属の番号が 0 のままで、所属が空の脚注になる（実測: 2302.03519）。(3) 共有にすると `\printAffiliationsAndNotice` が呼ぶたびに番号を 1 つ進めるので、右の段で存在しない所属番号を引き `AUTHORERR: Missing \icmlaffiliation` を組む。(4) `\icmlcorrespondingauthor` は呼ぶたびに連絡先を足すので、両方の段で呼ぶと 2 回並ぶ。重複を名前で判定する `\csname` は組版前の安全検査で拒まれるので、左の段（段番号 0。paracol の外も 0）でだけ登録する。
+- **正本ポインタ**: 契約付録 §8（対訳 PDF）、issue #330。回帰テストは `src/tools/bilingual-latex.test.ts`。
 
 ## `src/tools/assemble-latex.ts` — 共通テンプレで、elsarticle が内部で読む natbib を読み直す
 
