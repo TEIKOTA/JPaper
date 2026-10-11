@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { detectProfile } from "./frontmatter.js";
 import {
   splitParagraphs,
   balanceParagraphs,
@@ -175,6 +176,22 @@ describe("タイトル", () => {
 
   it("\\titlerunning などは \\title として扱わない", () => {
     expect(titleOf("\\titlerunning{x}")).toBeUndefined();
+  });
+
+  it("型の表のタイトルの命令から取り出し、コメントの中の \\title は数えない", () => {
+    expect(titleOf("\\Title{Deep}\n\\TitleCitation{x}", ["Title"])).toBe("Deep");
+    expect(titleOf("\\title{Real}\n% \\title{Old}")).toBe("Real");
+  });
+
+  it("\\maketitle がタイトルを組まない型（iopart）では \\maketitle をタイトルブロックに置き換えない", () => {
+    const profile = detectProfile("\\documentclass{iopart}\n\\begin{document}\n\\end{document}");
+    const { blocks, titled } = renderPairs(
+      [{ segmentId: "s", left: "\\title{T}\n\\maketitle", right: "\\title{題}\n\\maketitle" }],
+      { left: "", right: "" },
+      profile,
+    );
+    expect(titled).toBe(false);
+    expect(blocks).toEqual(["\\title{T}\n\\maketitle\n\\switchcolumn\n\\title{題}\n\\maketitle\n\\switchcolumn*"]);
   });
 
   it("段落が \\maketitle だけのペアを、前文の \\title から作ったタイトルブロックに置き換える", () => {

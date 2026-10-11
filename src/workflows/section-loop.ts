@@ -17,7 +17,8 @@ import {
   MARK_CLOSE,
 } from "../segment/protect.js";
 import { translate } from "../agents/translator.js";
-import { commandSpans, removeSpans, type Span } from "../tools/tex-spans.js";
+import { frozenSpansOf } from "../tools/frontmatter.js";
+import { removeSpans, type Span } from "../tools/tex-spans.js";
 import { evaluate } from "../agents/evaluator.js";
 import { normalizeSlug } from "../tools/pdf-name.js";
 
@@ -59,19 +60,19 @@ export async function runSectionLoop(
   let qualityLeft = perChecker;
   // 保護区間は既定で入れる。ADR 20260816-protection-depends-on-model-capability。
   const keep = segment.keep;
-  // 著者・所属は訳さず原文のまま残す。契約付録 §3
-  const authors = commandSpans(segment.latex, "author");
+  // 著者・所属・注記は訳さず原文のまま残す。契約付録 §3
+  const frozen = frozenSpansOf(segment);
   const guarded = protectMath(segment.latex, {
     off: !PROTECT_SPANS,
     ...(keep === undefined ? {} : { keep: [keep.start, keep.end] as [number, number] }),
-    ...(authors.length === 0 ? {} : { frozen: authors }),
+    ...(frozen.length === 0 ? {} : { frozen }),
   });
-  // 原文のまま残した \title・\author は形式検査・evaluator に見せない（訳されていないのが正しい）。契約付録 §3・§8
+  // 原文のまま残した \title・著者・所属・注記は形式検査・evaluator に見せない（訳されていないのが正しい）。契約付録 §3・§8
   const kept = guarded.keepMark;
   const frozenMarks = guarded.frozenMarks ?? [];
   const hidden: Span[] = [
     ...(kept === undefined || keep === undefined ? [] : [[keep.start, keep.end] as Span]),
-    ...(frozenMarks.length === 0 ? [] : authors),
+    ...(frozenMarks.length === 0 ? [] : frozen),
   ];
   const hiddenMarks = new Set([...(kept === undefined ? [] : [kept]), ...frozenMarks]);
   const checkedSrc = removeSpans(segment.latex, hidden, " ");
@@ -123,7 +124,7 @@ export async function runSectionLoop(
       .filter((m) => restored.missing.includes(m) || restored.duplicated.includes(m))
       .map((m) => ({
         kind: "author",
-        message: `印 ${MARK_OPEN}${String(m)}${MARK_CLOSE} は著者・所属の差し替えです。訳さず消さず、原文と同じ位置にちょうど 1 回置いてください。`,
+        message: `印 ${MARK_OPEN}${String(m)}${MARK_CLOSE} は著者・所属・注記の差し替えです。訳さず消さず、原文と同じ位置にちょうど 1 回置いてください。`,
       }));
     const formal = [...keptIssues, ...frozenIssues, ...formalCheck(checkedSrc, checked.text, glossarySlice)];
     // 危険コマンドと文書構造の破壊は再訳の対象にしない（直せる誤りではなく、汚染の兆候

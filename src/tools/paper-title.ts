@@ -1,6 +1,7 @@
 // 契約付録 §8（論文タイトルの翻訳）。前文・本文の \title の主引数を取り出し・差し替える。
 import type { Segment } from "../segment/segmenter.js";
 import { estimateTokens } from "../segment/token-estimator.js";
+import { DEFAULT_PROFILE, type FrontMatterProfile } from "./frontmatter.js";
 import { MAX_OPTIONAL_ARG } from "./tex-spans.js";
 
 // 主引数の中身（外側の波括弧を含まない）の範囲。
@@ -202,7 +203,7 @@ const DEFINERS = [
   "edef",
   "xdef",
 ];
-const TITLE_SCAN = new Set(["title", ...DEFINERS]);
+const DEFAULT_TITLES: readonly string[] = DEFAULT_PROFILE.titleCommands;
 
 // \title[短縮]{本題} の命令全体の範囲と、本題の中身の範囲。
 export interface TitleCommand {
@@ -211,18 +212,25 @@ export interface TitleCommand {
   arg: TitleArg;
 }
 
-// 最後の \title[短縮]{本題} の本題の中身の範囲（LaTeX は後の定義が勝つ）。
-export function findTitleArg(tex: string): TitleArg | undefined {
-  return findTitleCommand(tex)?.arg;
+// 最後の \title[短縮]{本題} の本題の中身の範囲（LaTeX は後の定義が勝つ）。names はタイトルの命令名。
+export function findTitleArg(tex: string, names: readonly string[] = DEFAULT_TITLES): TitleArg | undefined {
+  return findTitleCommand(tex, names)?.arg;
 }
 
 // 最後の \title[短縮]{本題} の命令全体（LaTeX は後の定義が勝つ）。
-export function findTitleCommand(tex: string): TitleCommand | undefined {
-  let found: TitleCommand | undefined;
+export function findTitleCommand(tex: string, names: readonly string[] = DEFAULT_TITLES): TitleCommand | undefined {
+  const all = titleCommands(tex, names);
+  return all[all.length - 1];
+}
+
+// タイトルの命令（names）の出現をすべて、出現順に。
+function titleCommands(tex: string, names: readonly string[]): TitleCommand[] {
+  const found: TitleCommand[] = [];
+  const titles = new Set(names);
   // 定義命令（* と空白・コメントを挟んでよい）の直後の \title は拾わない。契約付録 §8
   let definedAt = -1;
-  scanCommands(tex, TITLE_SCAN, (name, start, afterName) => {
-    if (name !== "title") {
+  scanCommands(tex, new Set([...names, ...DEFINERS]), (name, start, afterName) => {
+    if (!titles.has(name)) {
       definedAt = skipSpaceAndComments(tex, afterName);
       if (tex[definedAt] === "*") definedAt = skipSpaceAndComments(tex, definedAt + 1);
       return afterName;
@@ -231,10 +239,18 @@ export function findTitleCommand(tex: string): TitleCommand | undefined {
     const r = readArgs(tex, afterName, true);
     if (r === "unclosed") return "stop";
     if (r === undefined) return afterName;
-    found = { start, end: r.end, arg: r.arg };
+    found.push({ start, end: r.end, arg: r.arg });
     return r.end;
   });
   return found;
+}
+
+// 型に合わせて効くタイトルの命令。連結する型（elsarticle）で 2 つ以上あれば、どれか 1 つを訳すと
+// 題が欠けるので見つからない扱いにする。契約付録 §8
+function effectiveTitle(tex: string, profile: FrontMatterProfile): TitleCommand | undefined {
+  const all = titleCommands(tex, profile.titleCommands);
+  if (profile.accumulates && all.length > 1) return undefined;
+  return all[all.length - 1];
 }
 
 // 行コメントを TeX と同じく「% から次行の行頭空白まで」落とす。
@@ -280,9 +296,9 @@ function titleAt(tex: string, arg: TitleArg): PaperTitle | undefined {
 }
 
 // 前文から翻訳対象のタイトルを取り出す。\title が無い・中身が空なら undefined。
-export function extractTitle(preamble: string): PaperTitle | undefined {
-  const arg = findTitleArg(preamble);
-  return arg === undefined ? undefined : titleAt(preamble, arg);
+export function extractTitle(preamble: string, profile: FrontMatterProfile = DEFAULT_PROFILE): PaperTitle | undefined {
+  const cmd = effectiveTitle(preamble, profile);
+  return cmd === undefined ? undefined : titleAt(preamble, cmd.arg);
 }
 
 // 本文中の \title の在処。start/end は節の原文 latex 上の \title[..]{..} 命令全体の範囲。契約付録 §8
@@ -294,13 +310,20 @@ export interface BodyTitle {
   title: PaperTitle | undefined;
 }
 
-const TITLE_SETTERS = new Set(["maketitle", "end"]);
 const FRONTMATTER_END = /\s*\{frontmatter\}/y;
 
-// 最初の \maketitle・\end{frontmatter}（タイトルを組む位置）の開始位置。無ければ undefined。
-function titleSetterAt(tex: string): number | undefined {
+// 最初のタイトルを組む位置（\maketitle・\end{frontmatter} の開始位置、その場で組む命令なら命令の直後）。
+// 無ければ undefined。型ごとの組む命令は src/tools/frontmatter.ts。
+function titleSetterAt(tex: string, profile: FrontMatterProfile): number | undefined {
+  const self = new Set(profile.selfSetting);
+  const setters = new Set(["end", ...(profile.maketitle ? ["maketitle"] : []), ...self]);
   let at: number | undefined;
-  scanCommands(tex, TITLE_SETTERS, (name, start, afterName) => {
+  scanCommands(tex, setters, (name, start, afterName) => {
+    if (self.has(name)) {
+      const r = readArgs(tex, afterName, true);
+      at = r === undefined || r === "unclosed" ? start : r.end;
+      return "stop";
+    }
     if (name === "end") {
       FRONTMATTER_END.lastIndex = afterName;
       if (!FRONTMATTER_END.test(tex)) return afterName;
@@ -311,19 +334,26 @@ function titleSetterAt(tex: string): number | undefined {
   return at;
 }
 
-// 本文で最初にタイトルを組む位置（\maketitle・\end{frontmatter}）より前にある最後の \title。
-// 組む位置が本文に無ければ undefined（前文の \title を使う）。節は本文の順に並んでいること。契約付録 §8
+// 本文で最初にタイトルを組む位置（\maketitle・\end{frontmatter}・その場で組む命令の直後）までにある
+// 最後のタイトルの命令。組む位置が本文に無ければ undefined（前文の \title を使う）。節は本文の順に
+// 並んでいること。連結する型で 2 つ以上あれば title は undefined。契約付録 §8
 export function findBodyTitle(
   segments: readonly { id: string; latex: string }[],
+  profile: FrontMatterProfile = DEFAULT_PROFILE,
 ): BodyTitle | undefined {
   let found: BodyTitle | undefined;
+  let count = 0;
   for (const seg of segments) {
-    const limit = titleSetterAt(seg.latex);
-    const cmd = findTitleCommand(limit === undefined ? seg.latex : seg.latex.slice(0, limit));
+    const limit = titleSetterAt(seg.latex, profile);
+    const cmds = titleCommands(limit === undefined ? seg.latex : seg.latex.slice(0, limit), profile.titleCommands);
+    const cmd = cmds[cmds.length - 1];
+    count += cmds.length;
     if (cmd !== undefined) {
       found = { segmentId: seg.id, start: cmd.start, end: cmd.end, title: titleAt(seg.latex, cmd.arg) };
     }
-    if (limit !== undefined) return found;
+    if (limit !== undefined) {
+      return found !== undefined && profile.accumulates && count > 1 ? { ...found, title: undefined } : found;
+    }
   }
   return undefined;
 }
@@ -355,7 +385,8 @@ export function placeBodyTitle(
   body: string,
 ): string | undefined {
   const at = locateBodyTitle(tex, source);
-  const arg = findTitleArg(source.latex.slice(source.start, source.end));
+  const command = source.latex.slice(source.start, source.end);
+  const arg = findTitleArg(command, [/^\\([A-Za-z]+)/.exec(command)?.[1] ?? "title"]);
   if (at === undefined || arg === undefined) return undefined;
   return `${tex.slice(0, at.start + arg.start)}${body}${tex.slice(at.start + arg.end)}`;
 }
@@ -384,9 +415,9 @@ export function composeTitle(ja: string, title: PaperTitle): string {
   return `${ja}${title.notes.join("")}`;
 }
 
-// 前文の最後の \title の主引数だけを body に差し替える。\title が無ければそのまま返す。
-export function replaceTitle(preamble: string, body: string): string {
-  const arg = findTitleArg(preamble);
+// 前文の効くタイトルの命令の主引数だけを body に差し替える。無ければそのまま返す。
+export function replaceTitle(preamble: string, body: string, profile: FrontMatterProfile = DEFAULT_PROFILE): string {
+  const arg = effectiveTitle(preamble, profile)?.arg;
   if (arg === undefined) return preamble;
   return `${preamble.slice(0, arg.start)}${body}${preamble.slice(arg.end)}`;
 }

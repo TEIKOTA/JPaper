@@ -1,5 +1,7 @@
 // 契約付録 §7・対訳 PDF ADR(20261006)。原文と訳文を段落ペアにして paracol の対訳 main.tex を組み立てる。
 import { extractPreamble, releaseLuatexjaNames, sanitizeMath, separateCjkAfterControlWords } from "./assemble-latex.js";
+import { DEFAULT_PROFILE, detectProfile, type FrontMatterProfile } from "./frontmatter.js";
+import { findTitleArg } from "./paper-title.js";
 
 export interface BilingualSegment {
   id: string;
@@ -153,25 +155,10 @@ function hasFrontmatter(tex: string): boolean {
   return stripComments(tex).includes("\\begin{frontmatter}");
 }
 
-function braceBody(s: string, open: number): string | undefined {
-  let depth = 1;
-  for (let j = open; j < s.length; j++) {
-    const c = s[j];
-    if (c === "\\") {
-      j++;
-      continue;
-    }
-    if (c === "{") depth++;
-    else if (c === "}" && --depth === 0) return s.slice(open, j);
-  }
-  return undefined;
-}
-
-// 最後の \title{...} の中身。無ければ undefined。
-export function titleOf(preamble: string): string | undefined {
-  let last: number | undefined;
-  for (const m of preamble.matchAll(/\\title\s*(?:\[[^\]]*\]\s*)?\{/g)) last = m.index + m[0].length;
-  return last === undefined ? undefined : braceBody(preamble, last);
+// 最後のタイトルの命令（型の表の命令名。既定は \title）の中身。無ければ undefined。
+export function titleOf(tex: string, names: readonly string[] = DEFAULT_PROFILE.titleCommands): string | undefined {
+  const arg = findTitleArg(tex, names);
+  return arg === undefined ? undefined : tex.slice(arg.start, arg.end);
 }
 
 // ⚠ landmines.md
@@ -271,6 +258,7 @@ function atTopLevel(tex: string): boolean {
 export function renderPairs(
   pairs: ParagraphPair[],
   preambles: { left: string; right: string },
+  profile: FrontMatterProfile = DEFAULT_PROFILE,
 ): { blocks: string[]; titled: boolean } {
   const blocks: string[] = [];
   const push = (left: string, right: string): void => {
@@ -292,8 +280,9 @@ export function renderPairs(
       titled = true;
       continue;
     }
-    const l = findMaketitle(p.left);
-    const r = findMaketitle(p.right);
+    // \maketitle がタイトルを組まない型（iopart）では置き換えない。
+    const l = profile.maketitle ? findMaketitle(p.left) : undefined;
+    const r = profile.maketitle ? findMaketitle(p.right) : undefined;
     const leftBefore = l === undefined ? p.left : p.left.slice(0, l.start);
     const rightBefore = r === undefined ? p.right : p.right.slice(0, r.start);
     if (l === undefined || !atTopLevel(leftBefore) || !atTopLevel(rightBefore)) {
@@ -304,7 +293,10 @@ export function renderPairs(
     }
     push(leftBefore.trimEnd(), rightBefore.trimEnd());
     blocks.push(
-      titleBlock(titleOf(`${seenLeft}\n${leftBefore}`) ?? "", titleOf(`${seenRight}\n${rightBefore}`) ?? ""),
+      titleBlock(
+        titleOf(`${seenLeft}\n${leftBefore}`, profile.titleCommands) ?? "",
+        titleOf(`${seenRight}\n${rightBefore}`, profile.titleCommands) ?? "",
+      ),
     );
     titled = true;
     push(p.left.slice(l.end), r === undefined ? "" : p.right.slice(r.end));
@@ -328,7 +320,8 @@ export function assembleBilingual(input: {
 }): BilingualOutput {
   const preamble = extractPreamble(input.translatedMainTex);
   const { pairs, fallbackSegments } = pairSegments(input.source, input.translated);
-  const { blocks, titled } = renderPairs(pairs, { left: extractPreamble(input.cleanLatex), right: preamble });
+  const profile = detectProfile(input.cleanLatex);
+  const { blocks, titled } = renderPairs(pairs, { left: extractPreamble(input.cleanLatex), right: preamble }, profile);
   const mainTex = releaseLuatexjaNames(`${bilingualPreamble(preamble)}${BEGIN}\n${paracolBody(blocks)}\\end{document}\n`);
   const titleUnplaced = !titled && input.source.some((s) => TITLE_COMMANDS.test(stripComments(s.tex)));
   return { mainTex, pairs: blocks.length, fallbackSegments, titleUnplaced };

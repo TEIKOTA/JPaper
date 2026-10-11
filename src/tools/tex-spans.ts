@@ -224,9 +224,10 @@ function closingBracket(tex: string, at: number): number {
   return -1;
 }
 
-// 命令と引数（任意の [..] と必須の {..} 1 つ）を含む区間。\name の直後が英字の命令
-// （\authorrunning など）は別物。引数が閉じなければ区間にしない。⚠ landmines.md
-export function commandSpans(tex: string, name: string): Span[] {
+// 命令と引数（任意の [..] と必須の {..} を mandatory 個まで）を含む区間。\name の直後が英字の命令
+// （\authorrunning など）は別物。最初の必須引数が閉じなければ区間にしない。2 つ目以降が無ければ
+// 読めたところまでを区間にする。⚠ landmines.md
+export function commandSpans(tex: string, name: string, mandatory = 1): Span[] {
   const out: Span[] = [];
   const needle = `\\${name}`;
   let matches: Map<number, number> | undefined;
@@ -242,8 +243,16 @@ export function commandSpans(tex: string, name: string): Span[] {
     }
     if (tex[j] !== "{") continue;
     matches ??= braceMatches(tex);
-    const e = matches.get(j);
-    if (e === undefined) continue;
+    const first = matches.get(j);
+    if (first === undefined) continue;
+    let e: number = first;
+    for (let k = 1; k < mandatory; k++) {
+      let n: number = e + 1;
+      while (/\s/.test(tex[n] ?? "")) n++;
+      const next: number | undefined = tex[n] === "{" ? matches.get(n) : undefined;
+      if (next === undefined) break;
+      e = next;
+    }
     out.push([i, e + 1]);
     i = e;
   }
