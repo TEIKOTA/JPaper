@@ -100,9 +100,18 @@ const LANG_ARG_VERB = new Set(["mintinline"]);
 
 export function verbatimSpans(tex: string): Span[] {
   const out: Span[] = [];
-  for (const env of VERBATIM_ENVS) out.push(...envSpans(tex, env));
+  for (const env of VERBATIM_ENVS) for (const sp of envSpans(tex, env)) out.push(sp);
   VERB_CMDS.lastIndex = 0;
+  // 直前の \verb 系の区間（読んだ引数を含む）の終わり。内側の候補は命令ではないので読まない。
+  let verbEnd = 0;
+  // 候補は前から順に来るので、次の ] / } の位置は前の探索結果を使い回す。⚠ landmines.md
+  const next = { "]": -2, "}": -2 };
+  const nextOf = (c: "]" | "}", from: number): number => {
+    if (next[c] !== -1 && next[c] < from) next[c] = tex.indexOf(c, from);
+    return next[c];
+  };
   for (const m of tex.matchAll(VERB_CMDS)) {
+    if (m.index < verbEnd) continue;
     let p = m.index + m[0].length;
     const skipSpace = (): void => {
       while (p < tex.length && /\s/.test(tex[p]!)) p++;
@@ -110,17 +119,19 @@ export function verbatimSpans(tex: string): Span[] {
     // オプション引数 [opts] を読み飛ばす。
     skipSpace();
     if (tex[p] === "[") {
-      const close = tex.indexOf("]", p);
+      const close = nextOf("]", p);
       if (close === -1) continue;
       p = close + 1;
       skipSpace();
+      verbEnd = p;
     }
     // 言語引数 {lang} を読み飛ばす（区切り文字ではない）。
     if (LANG_ARG_VERB.has(m[1]!) && tex[p] === "{") {
-      const close = tex.indexOf("}", p);
+      const close = nextOf("}", p);
       if (close === -1) continue;
       p = close + 1;
       skipSpace();
+      verbEnd = p;
     }
     if (p >= tex.length) continue;
     const open = tex[p]!;
@@ -137,15 +148,21 @@ export function verbatimSpans(tex: string): Span[] {
       return out;
     }
     out.push([m.index, e + 1]);
+    verbEnd = e + 1;
   }
   return out;
 }
 
-// 区間を同じ長さの空白へ置き換える（添字は元文字列のまま使える）。
+// 区間を同じ長さ（UTF-16 の単位で数える）の空白へ置き換える（添字は元文字列のまま使える）。⚠ landmines.md
 export function maskChars(tex: string, spans: Span[]): string {
   if (spans.length === 0) return tex;
-  const buf = [...tex];
-  for (const [s, e] of spans) for (let i = s; i < Math.min(e, buf.length); i++) buf[i] = " ";
+  const buf = tex.split("");
+  // 開始位置順に並べ、伏せ終えた位置より手前へは戻らない（重なる区間を伏せ直さない）。
+  let done = 0;
+  for (const [s, e] of [...spans].sort((a, b) => a[0] - b[0])) {
+    for (let i = Math.max(s, done); i < Math.min(e, buf.length); i++) buf[i] = " ";
+    done = Math.max(done, e);
+  }
   return buf.join("");
 }
 

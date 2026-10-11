@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { fastestMs } from "../testing/timing.js";
-import { dollarSpans, mathSpans, spansOf, verbatimSpans } from "./tex-spans.js";
+import { dollarSpans, maskChars, mathSpans, spansOf, verbatimSpans } from "./tex-spans.js";
 
 const slice = (tex: string) => (s: [number, number]) => tex.slice(s[0], s[1]);
 
@@ -64,6 +64,27 @@ describe("verbatimSpans", () => {
   });
 });
 
+describe("maskChars は UTF-16 の単位で伏せる", () => {
+  it("4 バイト文字があっても長さと後ろの添字が変わらない", () => {
+    const tex = "\\verb|𝑥| $y$";
+    const masked = maskChars(tex, verbatimSpans(tex));
+    expect(masked.length).toBe(tex.length);
+    expect(masked.indexOf("$y$")).toBe(tex.indexOf("$y$"));
+    expect(mathSpans(tex).map(slice(tex))).toEqual(["$y$"]);
+  });
+});
+
+describe("verbatimSpans は verbatim の中身と引数の中の候補を命令と読まない", () => {
+  it("\\verb の中の \\lstinline{ で後ろの本文を伏せない", () => {
+    const tex = "\\verb|\\lstinline{| $a$ and $b$";
+    expect(mathSpans(tex).map(slice(tex))).toEqual(["$a$", "$b$"]);
+  });
+  it("[..] の中の \\mintinline を読まない", () => {
+    const tex = "\\mintinline[\\mintinline{py}{$x$}]{";
+    expect(verbatimSpans(tex)).toEqual([]);
+  });
+});
+
 describe("mathSpans は verbatim の中の $ に釣られない", () => {
   it("コード片の生の $ でペアリングがずれない", () => {
     const tex = "\\begin{lstlisting}\necho $HOME\n\\end{lstlisting}\n本文。数式は $x$ である。";
@@ -94,6 +115,24 @@ describe("走査コストは入力長に対して線形", () => {
     const body = rep(unit, 1024 * 1024);
     expect(fastestMs(2, () => void mathSpans(body, ["equation"]))).toBeLessThan(1_000);
     expect(fastestMs(2, () => void verbatimSpans(body))).toBeLessThan(1_000);
+  });
+
+  it.each([
+    ["遠くで閉じる \\lstinline{", "\\lstinline{", "}"],
+    ["遠くで閉じる \\lstinline[", "\\lstinline[", "]|a|"],
+    ["遠くで閉じる \\mintinline{", "\\mintinline{", "}|a|"],
+    ["閉じない \\lstinline[ と後ろの \\verb", "\\lstinline[ \\verb|a| ", ""],
+    ["遠くで閉じる \\lstinline[ と長い空白", "\\lstinline[", "]" + " ".repeat(512 * 1024)],
+    ["遠くで閉じる \\mintinline[ と長い空白・閉じない {", "\\mintinline[", "]" + " ".repeat(512 * 1024) + "{"],
+    ["遠くで閉じる \\mintinline{ と長い空白", "\\mintinline{", "}" + " ".repeat(512 * 1024)],
+  ])("%s の羅列 1MiB を伏せるまで 2 秒未満で走る", (_label, unit, tail) => {
+    const body = rep(unit, 1024 * 1024) + tail;
+    expect(fastestMs(2, () => void maskChars(body, verbatimSpans(body)))).toBeLessThan(2_000);
+  });
+
+  it("verbatim 環境が多くても呼び出し引数の上限で落ちない", () => {
+    const body = "\\begin{verbatim}x\\end{verbatim}".repeat(150_000);
+    expect(verbatimSpans(body)).toHaveLength(150_000);
   });
 
   it("倍化しても 4 倍にならない（二次でない）", () => {

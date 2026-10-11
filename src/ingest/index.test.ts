@@ -143,6 +143,19 @@ describe("ingest", () => {
     expect(out.sourceDir).toBe(d);
   });
 
+  it("\\input 先を含む本文の無効ブロック（\\if 0 … \\fi）を取り除く（契約付録 §4）", async () => {
+    const d = work();
+    writeFileSync(
+      path.join(d, "paper.tex"),
+      "\\documentclass{a}\n\\begin{document}\nA\n\\input{old}\nB\n\\end{document}\n",
+    );
+    writeFileSync(path.join(d, "old.tex"), "\\if 0\n\\subsection{Old}\n旧版の本文\n\\fi\n");
+    const out = await ingest({ kind: "path", path: path.join(d, "paper.tex") }, work());
+    expect(out.cleanLatex).not.toContain("旧版の本文");
+    expect(out.cleanLatex).toContain("A\n");
+    expect(out.cleanLatex).toContain("B\n");
+  });
+
   it("存在しない入力パスは exit 2", async () => {
     await expect(
       ingest({ kind: "path", path: path.join(work(), "nope.tar") }, work()),
