@@ -173,6 +173,15 @@ describe("論文タイトルの翻訳（契約付録 §8）", () => {
     expect(r.pdfPath).toBe(path.join(outDir, "p-ja.pdf"));
     // 失敗したタイトルは checkpoint しない（次の run で訳し直す）。
     expect(readdirSync(path.join(outDir, ".run", "steps")).some((f) => f.startsWith("title."))).toBe(false);
+    // 節ループで落ちたタイトルは最後の指摘を残し、警告に置き場を添える。契約付録 §8
+    const failedFile = path.join(outDir, ".run", "failed-segments.json");
+    if (why === "品質基準に達しない" || why === "symbol-command") {
+      const saved = JSON.parse(readFileSync(failedFile, "utf8")) as { segments: { segmentId: string }[] };
+      expect(saved.segments.map((x) => x.segmentId)).toEqual(["title"]);
+      expect(warn).toContain(".run/failed-segments.json");
+    } else {
+      expect(existsSync(failedFile)).toBe(false);
+    }
     db.close();
   });
 

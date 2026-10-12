@@ -136,8 +136,12 @@ describe("形式と品質の取り違え", () => {
     expect(r.error?.message).toContain("最後の指摘は .run/failed-segments.json");
     const file = path.join(outDir, ".run", "failed-segments.json");
     const saved = JSON.parse(readFileSync(file, "utf8")) as {
+      runId: string;
+      createdAt: string;
       segments: { segmentId: string; failCode: number; lastIssues: unknown }[];
     };
+    expect(saved.runId).toMatch(/^p-\d+$/);
+    expect(Number.isNaN(Date.parse(saved.createdAt))).toBe(false);
     expect(saved.segments.map((x) => [x.segmentId, x.failCode])).toEqual([
       ["seg-0000", 3],
       ["seg-0001", 4],
@@ -169,5 +173,33 @@ describe("形式と品質の取り違え", () => {
     );
     expect(again.exitCode).toBe(0);
     expect(existsSync(file)).toBe(false);
+  });
+
+  it("例外で終わった run は前の run の記録を消さず、書き換えもしない", async () => {
+    const outDir = path.join(tmp(), "out");
+    await translatePaper(
+      { kind: "path", path: mixedPaper() },
+      { provider: "ollama", outDir },
+      { client: mixedClient(), db: new GlossaryDb(), latexRunner: okRunner },
+    );
+    const file = path.join(outDir, ".run", "failed-segments.json");
+    const before = readFileSync(file, "utf8");
+    const down = new FakeLlmClient((req) => {
+      if (req.system.includes("編纂者")) {
+        return JSON.stringify({
+          resolved: [],
+          brief: { thesis: "核", sectionRoles: [], notationConventions: [] },
+          style: { tensePolicy: "a", headingStyle: "b", numberStyle: "c" },
+        });
+      }
+      throw new Error("provider down");
+    });
+    const r = await translatePaper(
+      { kind: "path", path: mixedPaper() },
+      { provider: "ollama", outDir },
+      { client: down, db: new GlossaryDb(), latexRunner: okRunner },
+    );
+    expect(r.exitCode).not.toBe(0);
+    expect(readFileSync(file, "utf8")).toBe(before);
   });
 });

@@ -42,7 +42,11 @@ export const SectionLoopCache = z.object({
   lastIssues: z
     .discriminatedUnion("by", [
       z.object({ by: z.literal("evaluator"), verdict: z.enum(["pass", "revise", "fail"]), issues: z.array(EvalIssue) }),
-      z.object({ by: z.literal("formal"), issues: z.array(z.object({ kind: z.string(), message: z.string() })) }),
+      z.object({
+        by: z.literal("formal"),
+        issues: z.array(z.object({ kind: z.string(), message: z.string() })),
+        marks: z.array(z.string()),
+      }),
     ])
     .optional(),
 });

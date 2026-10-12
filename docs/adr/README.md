@@ -95,3 +95,4 @@
 | 2026-10-08 | [Web アプリで arXiv を検索し、翻訳は CLI の子プロセスをメモリ上のキューで回す](./20261008-web-app-arxiv-search-and-translate-job-queue.md) | accepted |
 | 2026-10-08 | [本文中の \author は訳さず印で伏せ、伏せた区間の用語は節の用語に数えない](./20261008-keep-author-block-untranslated.md) | accepted |
 | 2026-10-11 | [前付け（タイトル・組む位置・原文のまま残す命令）を論文テンプレートの型の表で決める](./20261011-drive-frontmatter-by-template-profile-table.md) | accepted |
+| 2026-10-12 | [落ちた節の最後の指摘を出力先の .run に既定で残す](./20261012-keep-last-issues-of-failed-segments.md) | accepted |

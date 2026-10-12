@@ -46,7 +46,7 @@ export interface SectionLoopResult {
 
 export type LastIssues =
   | { by: "evaluator"; verdict: EvaluatorOut["verdict"]; issues: EvalIssue[] }
-  | { by: "formal"; issues: FormalIssue[] };
+  | { by: "formal"; issues: FormalIssue[]; marks: string[] };
 
 export interface DocContext {
   brief?: DocumentBrief;
@@ -138,7 +138,7 @@ export async function runSectionLoop(
     // 危険コマンドと文書構造の破壊は再訳の対象にしない（直せる誤りではなく、汚染の兆候
     // として即失敗させる）。\end{document} は組版が正常終了するぶん、素通しの害が大きい。
     lastKinds = [...new Set(formal.map((f) => f.kind))];
-    lastIssues = { by: "formal", issues: formal };
+    lastIssues = { by: "formal", issues: formal, marks: markIssues };
     if (formal.some((f) => f.kind === "unsafe-command" || f.kind === "structure")) {
       lastFailCode = 3;
       break;

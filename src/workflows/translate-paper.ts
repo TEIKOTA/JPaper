@@ -531,7 +531,7 @@ function gateError(
       return {
         kind: "formal",
         code: 3,
-        message: `訳文が危険コマンド・文書構造の破壊を持ち込みました（汚染の疑い）: ${tainted.slice(0, 10).join(", ")}`,
+        message: `訳文が危険コマンド・文書構造の破壊を持ち込みました（汚染の疑い）: ${tainted.slice(0, 10).join(", ")}${WHERE_ISSUES}`,
       };
     }
     return {
@@ -560,7 +560,7 @@ function gateError(
 }
 
 // 落ちた節が無い run では前の run の記録を消す。
-function writeFailedSegments(runDir: string, failed: readonly SectionLoopCache[]): void {
+function writeFailedSegments(runDir: string, runId: string, failed: readonly SectionLoopCache[]): void {
   const file = path.join(runDir, FAILED_SEGMENTS_FILE);
   if (failed.length === 0) {
     rmSync(file, { force: true });
@@ -574,7 +574,7 @@ function writeFailedSegments(runDir: string, failed: readonly SectionLoopCache[]
     maxRevisions: r.maxRevisions,
     lastIssues: r.lastIssues ?? null,
   }));
-  writeFileSync(file, `${JSON.stringify({ segments }, null, 2)}\n`);
+  writeFileSync(file, `${JSON.stringify({ runId, createdAt: new Date().toISOString(), segments }, null, 2)}\n`);
 }
 
 // ログ由来の断片は長さを切る（1 行 4000 文字のログで message が上限を無視して膨らむ）。
@@ -1137,7 +1137,7 @@ export async function translatePaper(
         if (!r.passed) titleFailure = r;
         if (ja === undefined) {
           if (contaminatedSegments([r]).length > 0) {
-            notify("タイトルの訳文が危険コマンド・文書構造の破壊を持ち込みました（汚染の疑い）。原題のまま組版します");
+            notify(`タイトルの訳文が危険コマンド・文書構造の破壊を持ち込みました（汚染の疑い）。原題のまま組版します${WHERE_ISSUES}`);
             return;
           }
           const why = r.passed
@@ -1145,7 +1145,7 @@ export async function translatePaper(
             : r.failCode === 4
               ? "品質基準に達しない"
               : `形式検査を通過しない: ${[...new Set(r.failedKinds)].sort().join(", ")}`;
-          notify(`タイトルを訳せなかったため原題のまま組版します（${why}）`);
+          notify(`タイトルを訳せなかったため原題のまま組版します（${why}${WHERE_ISSUES}）`);
           return;
         }
         titleTex = composeTitle(ja, src);
@@ -1201,10 +1201,14 @@ export async function translatePaper(
       writeFileSync(path.join(chaptersDir, `${r.segmentId}.tex`), r.ja);
     }
     writeFileSync(path.join(outDir, "notes.json"), JSON.stringify(notes, null, 2));
-    writeFailedSegments(runDir, [
-      ...(titleFailure === undefined ? [] : [titleFailure]),
-      ...results.filter((r) => !r.passed),
-    ]);
+    try {
+      writeFailedSegments(runDir, runId, [
+        ...(titleFailure === undefined ? [] : [titleFailure]),
+        ...results.filter((r) => !r.passed),
+      ]);
+    } catch (e) {
+      notify(`落ちた節の指摘を書き出せませんでした: ${toRunError(e).message}`);
+    }
 
     const passed = results.filter((r) => r.passed).length;
     const failed = results.length - passed;

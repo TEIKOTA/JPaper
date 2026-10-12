@@ -91,6 +91,7 @@ describe("runSectionLoop", () => {
     const failed = await runSectionLoop(new FakeLlmClient('{"segmentId":"seg","ja":"数式なしの訳"}'), withMath, []);
     expect(failed.lastIssues?.by).toBe("formal");
     expect(failed.lastIssues?.issues.map((i) => ("kind" in i ? i.kind : undefined))).toContain("math");
+    expect(failed.lastIssues?.by === "formal" ? failed.lastIssues.marks.join("") : "").toContain("〔1〕");
     const ok = await runSectionLoop(
       new FakeLlmClient((req) =>
         req.system.includes("審査者") ? '{"verdict":"pass","issues":[]}' : '{"segmentId":"seg-0000","ja":"訳文"}',
