@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api, JOB_PHASE_LABEL, JOB_STATE_LABEL, type Job, type SettingsResponse } from "../api.js";
+import { api, JOB_PHASE_LABEL, JOB_STATE_LABEL, providerLabel, type Job, type SettingsResponse } from "../api.js";
 import { errorText, useLoad, usePoll } from "../load.js";
 import { href } from "../router.js";
 import { Status } from "./Status.js";
@@ -105,7 +105,7 @@ function TranslateForm(props: {
             <option value="">選んでください</option>
             {providers.map((p) => (
               <option key={p.name} value={p.name}>
-                {p.name}
+                {providerLabel(p.name)}
               </option>
             ))}
           </select>
@@ -181,7 +181,7 @@ function JobRow(props: { job: Job; onChange: () => void }) {
     j.state === "running" && j.phase !== undefined
       ? `${JOB_STATE_LABEL[j.state]}・${JOB_PHASE_LABEL[j.phase]}`
       : JOB_STATE_LABEL[j.state];
-  const opts = [j.options.provider, j.options.model, j.options.effort].filter((s) => s !== undefined).join(" / ");
+  const opts = [providerLabel(j.options.provider), j.options.model, j.options.effort].filter((s) => s !== undefined).join(" / ");
   return (
     <li className={`job-row job-${j.state}`}>
       <div className="job-main">

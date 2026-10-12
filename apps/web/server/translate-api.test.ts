@@ -80,6 +80,7 @@ describe("設定 API（契約付録 §9）", () => {
       providers: [
         { name: "ollama", effort: false },
         { name: "claude", effort: true },
+        { name: "codex", effort: true },
         { name: "openrouter", effort: false },
       ],
       maxConcurrency: 4,

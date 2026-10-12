@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { api, type ProviderDefaults, type SettingsResponse } from "../api.js";
+import { api, providerLabel, type ProviderDefaults, type SettingsResponse } from "../api.js";
 import { errorText, useLoad } from "../load.js";
 import { Status } from "./Status.js";
 
@@ -70,7 +70,7 @@ function SettingsForm(props: { initial: SettingsResponse }) {
           <option value="">未選択</option>
           {providers.map((p) => (
             <option key={p.name} value={p.name}>
-              {p.name}
+              {providerLabel(p.name)}
             </option>
           ))}
         </select>
@@ -86,7 +86,7 @@ function SettingsForm(props: { initial: SettingsResponse }) {
         <tbody>
           {providers.map((p) => (
             <tr key={p.name}>
-              <td>{p.name}</td>
+              <td>{providerLabel(p.name)}</td>
               <td>
                 <input
                   className="text-input input-mid"
