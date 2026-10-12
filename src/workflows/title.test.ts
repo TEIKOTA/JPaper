@@ -173,6 +173,15 @@ describe("論文タイトルの翻訳（契約付録 §8）", () => {
     expect(r.pdfPath).toBe(path.join(outDir, "p-ja.pdf"));
     // 失敗したタイトルは checkpoint しない（次の run で訳し直す）。
     expect(readdirSync(path.join(outDir, ".run", "steps")).some((f) => f.startsWith("title."))).toBe(false);
+    // 節ループで落ちたタイトルは最後の指摘を残し、警告に置き場を添える。契約付録 §8
+    const failedFile = path.join(outDir, ".run", "failed-segments.json");
+    if (why === "品質基準に達しない" || why === "symbol-command") {
+      const saved = JSON.parse(readFileSync(failedFile, "utf8")) as { segments: { segmentId: string }[] };
+      expect(saved.segments.map((x) => x.segmentId)).toEqual(["title"]);
+      expect(warn).toContain(".run/failed-segments.json");
+    } else {
+      expect(existsSync(failedFile)).toBe(false);
+    }
     db.close();
   });
 
@@ -278,12 +287,12 @@ describe("論文タイトルの翻訳（契約付録 §8）", () => {
     "\\end{document}",
   ].join("\n");
 
-  // \title を伏せた印を保って返す本文 translator（seg-0000 が \title を含む節）。
+  // \title・\author を伏せた印を保って返す本文 translator（seg-0000 が \title を含む節）。
   function bodyTitleClient(opts: { dropMark?: boolean } = {}): FakeLlmClient {
     const base = client({ titleJa: "\\title{\\textbf{甲の研究}}" });
     return new FakeLlmClient((req) => {
       if (req.meta?.segmentId === "seg-0000" && req.meta.role === "translator") {
-        return `\`\`\`tex\n${opts.dropMark === true ? "" : "〔1〕\n"}\\author{A}\n\\maketitle\n\`\`\``;
+        return `\`\`\`tex\n${opts.dropMark === true ? "" : "〔1〕\n"}〔2〕\n\\maketitle\n\`\`\``;
       }
       return base.complete(req);
     });

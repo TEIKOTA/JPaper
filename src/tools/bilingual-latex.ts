@@ -1,5 +1,7 @@
 // 契約付録 §7・対訳 PDF ADR(20261006)。原文と訳文を段落ペアにして paracol の対訳 main.tex を組み立てる。
 import { extractPreamble, releaseLuatexjaNames, sanitizeMath, separateCjkAfterControlWords } from "./assemble-latex.js";
+import { DEFAULT_PROFILE, detectProfile, packageNames, type FrontMatterProfile } from "./frontmatter.js";
+import { findTitleArg } from "./paper-title.js";
 
 export interface BilingualSegment {
   id: string;
@@ -95,26 +97,74 @@ export function balanceParagraphs(paras: string[]): string[] {
   return out;
 }
 
-export function paragraphsOf(tex: string): string[] {
-  return balanceParagraphs(splitParagraphs(sanitizeMath(separateCjkAfterControlWords(tex))));
+// open の [ に対応する ] の位置。波括弧・コメントの中と \[ \] は数えない。閉じなければ undefined。
+function closingBracket(tex: string, open: number): number | undefined {
+  let brace = 0;
+  let depth = 0;
+  for (let i = open; i < tex.length; i++) {
+    const c = tex[i];
+    if (c === "\\") i++;
+    else if (c === "%") {
+      const nl = tex.indexOf("\n", i);
+      if (nl === -1) return undefined;
+      i = nl;
+    } else if (c === "{") brace++;
+    else if (c === "}") brace--;
+    else if (brace === 0 && c === "[") depth++;
+    else if (brace === 0 && c === "]" && --depth === 0) return i;
+  }
+  return undefined;
+}
+
+const TWOCOLUMN = /\\twocolumn\s*\[/g;
+
+// コメントの外で、型の selfSetting の命令を中身に含む最初の \twocolumn[…] の [ と ] を改行に置き換える。⚠ landmines.md
+export function unwrapTitleBlock(tex: string, profile: FrontMatterProfile = DEFAULT_PROFILE): string {
+  if (profile.selfSetting.length === 0) return tex;
+  const setter = new RegExp(`\\\\(?:${profile.selfSetting.join("|")})(?![A-Za-z@])`);
+  let skipUntil = -1;
+  for (const m of tex.matchAll(TWOCOLUMN)) {
+    if (m.index < skipUntil) continue;
+    const prefix = tex.slice(tex.lastIndexOf("\n", m.index) + 1, m.index);
+    if (stripComments(prefix) !== prefix) {
+      const nl = tex.indexOf("\n", m.index);
+      skipUntil = nl === -1 ? tex.length : nl;
+      continue;
+    }
+    const open = m.index + m[0].length - 1;
+    const close = closingBracket(tex, open);
+    if (close === undefined) return tex;
+    const inner = tex.slice(open + 1, close);
+    if (!setter.test(stripComments(inner))) {
+      skipUntil = close;
+      continue;
+    }
+    return `${tex.slice(0, m.index)}\n${inner}\n${tex.slice(close + 1)}`;
+  }
+  return tex;
+}
+
+export function paragraphsOf(tex: string, profile: FrontMatterProfile = DEFAULT_PROFILE): string[] {
+  return balanceParagraphs(splitParagraphs(sanitizeMath(separateCjkAfterControlWords(unwrapTitleBlock(tex, profile)))));
 }
 
 // 訳文セグメントの順に並べる。原文に同じ id が無いもの（訳注一覧）は左を空にする。
 export function pairSegments(
   source: BilingualSegment[],
   translated: BilingualSegment[],
+  profile: FrontMatterProfile = DEFAULT_PROFILE,
 ): PairResult {
   const bySource = new Map(source.map((s) => [s.id, s.tex]));
   const pairs: ParagraphPair[] = [];
   const fallbackSegments: string[] = [];
   for (const t of translated) {
-    const right = paragraphsOf(t.tex);
+    const right = paragraphsOf(t.tex, profile);
     const src = bySource.get(t.id);
     if (src === undefined) {
       pairs.push({ segmentId: t.id, left: "", right: right.join("\n\n") });
       continue;
     }
-    const left = paragraphsOf(src);
+    const left = paragraphsOf(src, profile);
     if (left.length === right.length) {
       left.forEach((l, i) => pairs.push({ segmentId: t.id, left: l, right: right[i]! }));
     } else {
@@ -153,25 +203,10 @@ function hasFrontmatter(tex: string): boolean {
   return stripComments(tex).includes("\\begin{frontmatter}");
 }
 
-function braceBody(s: string, open: number): string | undefined {
-  let depth = 1;
-  for (let j = open; j < s.length; j++) {
-    const c = s[j];
-    if (c === "\\") {
-      j++;
-      continue;
-    }
-    if (c === "{") depth++;
-    else if (c === "}" && --depth === 0) return s.slice(open, j);
-  }
-  return undefined;
-}
-
-// 最後の \title{...} の中身。無ければ undefined。
-export function titleOf(preamble: string): string | undefined {
-  let last: number | undefined;
-  for (const m of preamble.matchAll(/\\title\s*(?:\[[^\]]*\]\s*)?\{/g)) last = m.index + m[0].length;
-  return last === undefined ? undefined : braceBody(preamble, last);
+// 最後のタイトルの命令（型の表の命令名。既定は \title）の中身。無ければ undefined。
+export function titleOf(tex: string, names: readonly string[] = DEFAULT_PROFILE.titleCommands): string | undefined {
+  const arg = findTitleArg(tex, names);
+  return arg === undefined ? undefined : tex.slice(arg.start, arg.end);
 }
 
 // ⚠ landmines.md
@@ -231,8 +266,28 @@ const SETUP = [
 // 対訳ではリンクを作らない（hyperref の draft）。⚠ landmines.md
 const NO_LINKS = "\\PassOptionsToPackage{draft}{hyperref} % JPaper 注入: 対訳はリンクを作らない";
 
-export function bilingualPreamble(preamble: string): string {
-  return `${NO_LINKS}\n${preamble.replace(/\s*$/, "")}\n${SETUP}\n`;
+// ICML の型の対訳の前文の手当て。icml\d{4} の \begin{document} のフックを外し、\thispagestyle を無効にし、
+// 所属の番号を左右の段で共有し、\printAffiliationsAndNotice が進めた番号を戻し、\icmlcorrespondingauthor は左の段でだけ実行する。⚠ landmines.md
+function icmlSetup(preamble: string, profile: FrontMatterProfile): string {
+  if (profile.id !== "icml") return "";
+  const names = [...new Set(packageNames(preamble).filter((p) => /^icml\d{4}$/.test(p)))];
+  return [
+    "% --- JPaper 注入: 対訳の ICML 手当て ---",
+    ...names.map((n) => `\\RemoveFromHook{begindocument}[${n}]`),
+    "\\makeatletter",
+    "\\let\\thispagestyle\\@gobble",
+    "\\@ifundefined{c@@affiliationcounter}{}{\\globalcounter{@affiliationcounter}}",
+    "\\@ifundefined{icmlcorrespondingauthor}{}{\\let\\jp@icmlcorr\\icmlcorrespondingauthor" +
+      "\\renewcommand{\\icmlcorrespondingauthor}[2]{\\ifnum\\pcol@currcol=\\z@\\jp@icmlcorr{#1}{#2}\\fi}}",
+    "\\@ifundefined{printAffiliationsAndNotice}{}{\\let\\jp@icmlnotice\\printAffiliationsAndNotice" +
+      "\\renewcommand{\\printAffiliationsAndNotice}[1]{\\jp@icmlnotice{#1}\\addtocounter{@affiliationcounter}{-1}}}",
+    "\\makeatother",
+    "",
+  ].join("\n");
+}
+
+export function bilingualPreamble(preamble: string, profile: FrontMatterProfile = DEFAULT_PROFILE): string {
+  return `${NO_LINKS}\n${preamble.replace(/\s*$/, "")}\n${SETUP}\n${icmlSetup(preamble, profile)}`;
 }
 
 const BEGIN = [
@@ -271,6 +326,7 @@ function atTopLevel(tex: string): boolean {
 export function renderPairs(
   pairs: ParagraphPair[],
   preambles: { left: string; right: string },
+  profile: FrontMatterProfile = DEFAULT_PROFILE,
 ): { blocks: string[]; titled: boolean } {
   const blocks: string[] = [];
   const push = (left: string, right: string): void => {
@@ -292,8 +348,9 @@ export function renderPairs(
       titled = true;
       continue;
     }
-    const l = findMaketitle(p.left);
-    const r = findMaketitle(p.right);
+    // \maketitle がタイトルを組まない型（iopart）では置き換えない。
+    const l = profile.maketitle ? findMaketitle(p.left) : undefined;
+    const r = profile.maketitle ? findMaketitle(p.right) : undefined;
     const leftBefore = l === undefined ? p.left : p.left.slice(0, l.start);
     const rightBefore = r === undefined ? p.right : p.right.slice(0, r.start);
     if (l === undefined || !atTopLevel(leftBefore) || !atTopLevel(rightBefore)) {
@@ -304,7 +361,10 @@ export function renderPairs(
     }
     push(leftBefore.trimEnd(), rightBefore.trimEnd());
     blocks.push(
-      titleBlock(titleOf(`${seenLeft}\n${leftBefore}`) ?? "", titleOf(`${seenRight}\n${rightBefore}`) ?? ""),
+      titleBlock(
+        titleOf(`${seenLeft}\n${leftBefore}`, profile.titleCommands) ?? "",
+        titleOf(`${seenRight}\n${rightBefore}`, profile.titleCommands) ?? "",
+      ),
     );
     titled = true;
     push(p.left.slice(l.end), r === undefined ? "" : p.right.slice(r.end));
@@ -327,9 +387,10 @@ export function assembleBilingual(input: {
   translated: BilingualSegment[];
 }): BilingualOutput {
   const preamble = extractPreamble(input.translatedMainTex);
-  const { pairs, fallbackSegments } = pairSegments(input.source, input.translated);
-  const { blocks, titled } = renderPairs(pairs, { left: extractPreamble(input.cleanLatex), right: preamble });
-  const mainTex = releaseLuatexjaNames(`${bilingualPreamble(preamble)}${BEGIN}\n${paracolBody(blocks)}\\end{document}\n`);
-  const titleUnplaced = !titled && input.source.some((s) => TITLE_COMMANDS.test(stripComments(s.tex)));
+  const profile = detectProfile(input.cleanLatex);
+  const { pairs, fallbackSegments } = pairSegments(input.source, input.translated, profile);
+  const { blocks, titled } = renderPairs(pairs, { left: extractPreamble(input.cleanLatex), right: preamble }, profile);
+  const mainTex = releaseLuatexjaNames(`${bilingualPreamble(preamble, profile)}${BEGIN}\n${paracolBody(blocks)}\\end{document}\n`);
+  const titleUnplaced = profile.maketitle && !titled && input.source.some((s) => TITLE_COMMANDS.test(stripComments(s.tex)));
   return { mainTex, pairs: blocks.length, fallbackSegments, titleUnplaced };
 }

@@ -22,6 +22,8 @@ export interface Protection {
   spans: string[];
   // keep を伏せた印の番号（1 始まり）。伏せられなかったら undefined。
   keepMark?: number;
+  // frozen を伏せた印の番号（frozen の順）。伏せられなかったら undefined。
+  frozenMarks?: number[];
 }
 
 // エスケープした特殊文字。訳す対象ではなく、原文のまま持ち越すのが正しいと分かって
@@ -64,6 +66,8 @@ export interface ProtectOptions {
   off?: boolean;
   // 丸ごと 1 つの印で伏せる区間（本文中の \title 命令）。中に入る数式・記号の区間は keep に含める。契約付録 §8
   keep?: Span;
+  // keep と同じく丸ごと 1 つずつの印で伏せる区間（本文中の \author 命令）。契約付録 §3
+  frozen?: readonly Span[];
 }
 
 export function protectMath(latex: string, opts: ProtectOptions = {}): Protection {
@@ -79,10 +83,13 @@ export function protectMath(latex: string, opts: ProtectOptions = {}): Protectio
         ? math
         : mergeSpans(math, escapedSpecialSpans(latex, mergeSpans(math, verbatimSpans(latex))));
   }
-  if (keep !== undefined) {
+  const outside = (inner: Span) => (whole: Span) => inner[1] <= whole[0] || inner[0] >= whole[1];
+  const frozen = (opts.frozen ?? []).filter((f) => keep === undefined || outside(f)(keep));
+  const wholes = keep === undefined ? frozen : [...frozen, keep];
+  if (wholes.length > 0) {
     spans = mergeSpans(
-      spans.filter(([s, e]) => e <= keep[0] || s >= keep[1]),
-      [keep],
+      spans.filter((sp) => wholes.every(outside(sp))),
+      wholes,
     );
   }
   if (spans.length === 0) return { text: latex, spans: [] };
@@ -97,7 +104,13 @@ export function protectMath(latex: string, opts: ProtectOptions = {}): Protectio
     prev = end;
   }
   const k = keep === undefined ? -1 : spans.indexOf(keep);
-  return { text: out + latex.slice(prev), spans: kept, ...(k === -1 ? {} : { keepMark: k + 1 }) };
+  const frozenMarks = frozen.map((f) => spans.indexOf(f) + 1);
+  return {
+    text: out + latex.slice(prev),
+    spans: kept,
+    ...(k === -1 ? {} : { keepMark: k + 1 }),
+    ...(frozenMarks.length === 0 ? {} : { frozenMarks }),
+  };
 }
 
 export interface Restoration {

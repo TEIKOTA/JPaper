@@ -3,6 +3,7 @@ import type {
   LlmClient,
   ResolvedTerm,
   EvalIssue,
+  EvaluatorOut,
   DocumentBrief,
   StyleContract,
 } from "../types/contract.js";
@@ -17,6 +18,8 @@ import {
   MARK_CLOSE,
 } from "../segment/protect.js";
 import { translate } from "../agents/translator.js";
+import { frozenSpansOf } from "../tools/frontmatter.js";
+import { removeSpans, type Span } from "../tools/tex-spans.js";
 import { evaluate } from "../agents/evaluator.js";
 import { normalizeSlug } from "../tools/pdf-name.js";
 
@@ -37,7 +40,13 @@ export interface SectionLoopResult {
   warnIssues: EvalIssue[];
   // segment.askPdfName のとき、通過した稿の名前を整えたもの（無い・不正なら undefined）。契約付録 §8
   pdfName?: string;
+  // 落ちた節だけ: 最後の稿に付いた指摘。契約付録 §8（落ちた節の指摘）
+  lastIssues?: LastIssues;
 }
+
+export type LastIssues =
+  | { by: "evaluator"; verdict: EvaluatorOut["verdict"]; issues: EvalIssue[] }
+  | { by: "formal"; issues: FormalIssue[]; marks: string[] };
 
 export interface DocContext {
   brief?: DocumentBrief;
@@ -58,23 +67,30 @@ export async function runSectionLoop(
   let qualityLeft = perChecker;
   // 保護区間は既定で入れる。ADR 20260816-protection-depends-on-model-capability。
   const keep = segment.keep;
+  // 著者・所属・注記は訳さず原文のまま残す。契約付録 §3
+  const frozen = frozenSpansOf(segment);
   const guarded = protectMath(segment.latex, {
     off: !PROTECT_SPANS,
     ...(keep === undefined ? {} : { keep: [keep.start, keep.end] as [number, number] }),
+    ...(frozen.length === 0 ? {} : { frozen }),
   });
-  // 原文のまま残した \title は形式検査・evaluator に見せない（訳されていないのが正しい）。契約付録 §8
+  // 原文のまま残した \title・著者・所属・注記は形式検査・evaluator に見せない（訳されていないのが正しい）。契約付録 §3・§8
   const kept = guarded.keepMark;
-  const checkedSrc =
-    kept === undefined || keep === undefined
-      ? segment.latex
-      : segment.latex.slice(0, keep.start) + segment.latex.slice(keep.end);
-  const checkedSpans = guarded.spans.map((s, i) => (i + 1 === kept ? "" : s));
+  const frozenMarks = guarded.frozenMarks ?? [];
+  const hidden: Span[] = [
+    ...(kept === undefined || keep === undefined ? [] : [[keep.start, keep.end] as Span]),
+    ...(frozenMarks.length === 0 ? [] : frozen),
+  ];
+  const hiddenMarks = new Set([...(kept === undefined ? [] : [kept]), ...frozenMarks]);
+  const checkedSrc = removeSpans(segment.latex, hidden, " ");
+  const checkedSpans = guarded.spans.map((s, i) => (hiddenMarks.has(i + 1) ? " " : s));
   let revisions = 0;
   let priorJa: string | undefined;
   let issues: string[] | undefined;
   let lastJa = "";
   let lastFailCode: 3 | 4 = 3;
   let lastKinds: FormalIssue["kind"][] = [];
+  let lastIssues: LastIssues | undefined;
   // 名前の行を最後に出した稿の値（改稿で行を落としても前の稿の名前を使う）。契約付録 §8
   let lastName: string | undefined;
 
@@ -95,13 +111,13 @@ export async function runSectionLoop(
     if (out.pdfName !== undefined) lastName = out.pdfName;
     const restored = restoreMath(out.ja, guarded.spans);
     lastJa = restored.text;
-    const checked = kept === undefined ? restored : restoreMath(out.ja, checkedSpans);
+    const checked = hiddenMarks.size === 0 ? restored : restoreMath(out.ja, checkedSpans);
 
     // 印の欠落は formalCheck では「数式個数不一致」としか出ない。どの印かを名指しする。
     const markIssues = describeMarkIssues({
       ...restored,
-      missing: restored.missing.filter((n) => n !== kept),
-      duplicated: restored.duplicated.filter((n) => n !== kept),
+      missing: restored.missing.filter((n) => !hiddenMarks.has(n)),
+      duplicated: restored.duplicated.filter((n) => !hiddenMarks.has(n)),
     });
     const keptIssues: FormalIssue[] =
       kept !== undefined && (restored.missing.includes(kept) || restored.duplicated.includes(kept))
@@ -112,10 +128,17 @@ export async function runSectionLoop(
             },
           ]
         : [];
-    const formal = [...keptIssues, ...formalCheck(checkedSrc, checked.text, glossarySlice)];
+    const frozenIssues: FormalIssue[] = frozenMarks
+      .filter((m) => restored.missing.includes(m) || restored.duplicated.includes(m))
+      .map((m) => ({
+        kind: "author",
+        message: `印 ${MARK_OPEN}${String(m)}${MARK_CLOSE} は著者・所属・注記の差し替えです。訳さず消さず、原文と同じ位置にちょうど 1 回置いてください。`,
+      }));
+    const formal = [...keptIssues, ...frozenIssues, ...formalCheck(checkedSrc, checked.text, glossarySlice)];
     // 危険コマンドと文書構造の破壊は再訳の対象にしない（直せる誤りではなく、汚染の兆候
     // として即失敗させる）。\end{document} は組版が正常終了するぶん、素通しの害が大きい。
     lastKinds = [...new Set(formal.map((f) => f.kind))];
+    lastIssues = { by: "formal", issues: formal, marks: markIssues };
     if (formal.some((f) => f.kind === "unsafe-command" || f.kind === "structure")) {
       lastFailCode = 3;
       break;
@@ -154,6 +177,7 @@ export async function runSectionLoop(
     }
     lastFailCode = 4;
     lastKinds = [];
+    lastIssues = { by: "evaluator", verdict: ev.verdict, issues: ev.issues };
     // fail は「この訳が不可」であって「この節が訳せない」ではない。指摘を渡さずに
     // 捨てるのは、1 呼び出しを節約するために節 1 本を失う取引になる。ADR 20260815。
     if (qualityLeft <= 0) break;
@@ -172,5 +196,6 @@ export async function runSectionLoop(
     usedRevisions: revisions,
     maxRevisions,
     warnIssues: [],
+    ...(lastIssues === undefined ? {} : { lastIssues }),
   };
 }

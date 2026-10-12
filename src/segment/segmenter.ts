@@ -9,6 +9,8 @@ export interface Segment {
   tokens: number;
   // 翻訳へ送らず原文のまま残す区間（本文中の \title 命令）。契約付録 §8
   keep?: { start: number; end: number };
+  // keep と同じく丸ごと原文のまま残す区間（著者・所属・注記。keep の外・開始位置の順）。契約付録 §3
+  frozen?: [number, number][];
   // translator に成果物 PDF の短い英語名も出させる（title 節）。契約付録 §8
   askPdfName?: boolean;
 }

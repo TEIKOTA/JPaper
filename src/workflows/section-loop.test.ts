@@ -66,6 +66,41 @@ describe("runSectionLoop", () => {
     expect(r.failCode).toBe(4);
     expect(r.usedRevisions).toBe(r.maxRevisions / 2);
   });
+
+  it("品質で落ちた節は最後の evaluator の verdict と指摘を持つ（契約付録 §8）", async () => {
+    let ev = 0;
+    const c = new FakeLlmClient((req) =>
+      req.system.includes("審査者")
+        ? `{"verdict":"revise","issues":[{"severity":"error","message":"指摘${String(ev++)}","span":"訳文"},{"severity":"warn","message":"軽微"}]}`
+        : '{"segmentId":"seg","ja":"訳文"}',
+    );
+    const r = await runSectionLoop(c, seg, []);
+    expect(r.failCode).toBe(4);
+    expect(r.lastIssues).toEqual({
+      by: "evaluator",
+      verdict: "revise",
+      issues: [
+        { severity: "error", message: `指摘${String(ev - 1)}`, span: "訳文" },
+        { severity: "warn", message: "軽微" },
+      ],
+    });
+  });
+
+  it("形式で落ちた節は最後の稿の形式検査の指摘を持ち、通った節は持たない", async () => {
+    const withMath: Segment = { id: "seg", latex: "text $x$ here.", tokens: 100 };
+    const failed = await runSectionLoop(new FakeLlmClient('{"segmentId":"seg","ja":"数式なしの訳"}'), withMath, []);
+    expect(failed.lastIssues?.by).toBe("formal");
+    expect(failed.lastIssues?.issues.map((i) => ("kind" in i ? i.kind : undefined))).toContain("math");
+    expect(failed.lastIssues?.by === "formal" ? failed.lastIssues.marks.join("") : "").toContain("〔1〕");
+    const ok = await runSectionLoop(
+      new FakeLlmClient((req) =>
+        req.system.includes("審査者") ? '{"verdict":"pass","issues":[]}' : '{"segmentId":"seg-0000","ja":"訳文"}',
+      ),
+      seg,
+      [],
+    );
+    expect(ok.lastIssues).toBeUndefined();
+  });
 });
 
 // 敵対的: 品質ゲートを潜り抜けられないことを決定的に保証する（契約 §3）。
@@ -253,7 +288,7 @@ describe("runSectionLoop: 改稿予算の配分", () => {
       const c = new FakeLlmClient((req) => {
         users.push(req.user);
         if (req.system.includes("審査者")) return '{"verdict":"pass","issues":[]}';
-        return "```tex\n〔1〕\n\\author{A}\n\n甲の本文がここにある。\n```";
+        return "```tex\n〔1〕\n〔2〕\n\n甲の本文がここにある。\n```";
       });
       const r = await runSectionLoop(c, titleSeg, []);
       expect(r.passed).toBe(true);
@@ -268,8 +303,8 @@ describe("runSectionLoop: 改稿予算の配分", () => {
         if (req.system.includes("審査者")) return '{"verdict":"pass","issues":[]}';
         translatorUsers.push(req.user);
         return n++ === 0
-          ? "```tex\n\\author{A}\n\n甲の本文がここにある。\n```"
-          : "```tex\n〔1〕\n\\author{A}\n\n甲の本文がここにある。\n```";
+          ? "```tex\n〔2〕\n\n甲の本文がここにある。\n```"
+          : "```tex\n〔1〕\n〔2〕\n\n甲の本文がここにある。\n```";
       });
       const r = await runSectionLoop(c, titleSeg, []);
       expect(r.passed).toBe(true);
@@ -282,11 +317,54 @@ describe("runSectionLoop: 改稿予算の配分", () => {
       const c = new FakeLlmClient((req) =>
         req.system.includes("審査者")
           ? '{"verdict":"pass","issues":[]}'
-          : "```tex\n\\author{A}\n\n甲の本文がここにある。\n```",
+          : "```tex\n〔2〕\n\n甲の本文がここにある。\n```",
       );
       const r = await runSectionLoop(c, titleSeg, []);
       expect(r.passed).toBe(false);
       expect(r.failedKinds).toEqual(["title"]);
+    });
+  });
+
+  describe("\\author（著者・所属を原文のまま残す。契約付録 §3）", () => {
+    const latex = "\\author{Ann Lee \\\\ Nankai University\\\\ Bo Li \\\\ Berkeley Lab\\\\ }\n\nAlpha text is here.";
+    const authorSeg: Segment = { id: "seg-0000", latex, tokens: 100 };
+    const block = latex.slice(0, latex.indexOf("\n"));
+
+    it("\\author を印で伏せて送り、原文のまま復元する。translator・evaluator には著者を見せない", async () => {
+      const users: string[] = [];
+      const c = new FakeLlmClient((req) => {
+        users.push(req.user);
+        if (req.system.includes("審査者")) return '{"verdict":"pass","issues":[]}';
+        return "```tex\n〔1〕\n\n甲の本文がここにある。\n```";
+      });
+      const r = await runSectionLoop(c, authorSeg, []);
+      expect(r.passed).toBe(true);
+      expect(r.ja).toBe(`${block}\n\n甲の本文がここにある。`);
+      expect(users.every((u) => !u.includes("Nankai"))).toBe(true);
+    });
+
+    it("印を落とした訳は author で差し戻し、最後まで落とせば author で失敗する", async () => {
+      const translatorUsers: string[] = [];
+      const c = new FakeLlmClient((req) => {
+        if (req.system.includes("審査者")) return '{"verdict":"pass","issues":[]}';
+        translatorUsers.push(req.user);
+        return "```tex\n甲の本文がここにある。\n```";
+      });
+      const r = await runSectionLoop(c, authorSeg, []);
+      expect(r.passed).toBe(false);
+      expect(r.failedKinds).toEqual(["author"]);
+      expect(translatorUsers[1]).toContain("著者・所属・注記の差し替え");
+    });
+
+    it("伏せた \\author の前後の綴りをつなげて数えない（\\fi の直後に英字が続いても条件分岐の個数がそろう）", async () => {
+      const src = "\\ifanon x\\fi\\author{A}and text.";
+      const c = new FakeLlmClient((req) =>
+        req.system.includes("審査者") ? '{"verdict":"pass","issues":[]}' : "```tex\n\\ifanon x\\fi〔1〕と本文。\n```",
+      );
+      const r = await runSectionLoop(c, { id: "seg-0000", latex: src, tokens: 100 }, []);
+      expect(r.failedKinds).toEqual([]);
+      expect(r.passed).toBe(true);
+      expect(r.ja).toBe("\\ifanon x\\fi\\author{A}と本文。");
     });
   });
 });

@@ -494,6 +494,10 @@ export function contaminatedSegments(
     .map((r) => r.segmentId);
 }
 
+// 落ちた節の最後の指摘の置き場（.run の中）。契約付録 §8（落ちた節の指摘）
+export const FAILED_SEGMENTS_FILE = "failed-segments.json";
+const WHERE_ISSUES = `。最後の指摘は .run/${FAILED_SEGMENTS_FILE}`;
+
 function gateError(
   exitCode: number,
   results: readonly {
@@ -529,20 +533,20 @@ function gateError(
       return {
         kind: "formal",
         code: 3,
-        message: `訳文が危険コマンド・文書構造の破壊を持ち込みました（汚染の疑い）: ${tainted.slice(0, 10).join(", ")}`,
+        message: `訳文が危険コマンド・文書構造の破壊を持ち込みました（汚染の疑い）: ${tainted.slice(0, 10).join(", ")}${WHERE_ISSUES}`,
       };
     }
     return {
       kind: "formal",
       code: 3,
-      message: `形式検査を通過しないセグメントがあります: ${withKinds}${alsoQuality}`,
+      message: `形式検査を通過しないセグメントがあります: ${withKinds}${alsoQuality}${WHERE_ISSUES}`,
     };
   }
   if (exitCode === 4) {
     return {
       kind: "quality",
       code: 4,
-      message: `品質基準に達しないセグメントがあります: ${ids}${alsoFormal}`,
+      message: `品質基準に達しないセグメントがあります: ${ids}${alsoFormal}${WHERE_ISSUES}`,
     };
   }
   if (exitCode === 5) {
@@ -557,17 +561,38 @@ function gateError(
   return { kind: "internal", code: exitCode, message: `未分類の失敗です（exitCode ${exitCode}）` };
 }
 
+// 落ちた節が無い run では前の run の記録を消す。
+function writeFailedSegments(runDir: string, runId: string, failed: readonly SectionLoopCache[]): void {
+  const file = path.join(runDir, FAILED_SEGMENTS_FILE);
+  if (failed.length === 0) {
+    rmSync(file, { force: true });
+    return;
+  }
+  const segments = failed.map((r) => ({
+    segmentId: r.segmentId,
+    failCode: r.failCode ?? 3,
+    failedKinds: r.failedKinds,
+    usedRevisions: r.usedRevisions,
+    maxRevisions: r.maxRevisions,
+    lastIssues: r.lastIssues ?? null,
+  }));
+  writeFileSync(file, `${JSON.stringify({ runId, createdAt: new Date().toISOString(), segments }, null, 2)}\n`);
+}
+
 // ログ由来の断片は長さを切る（1 行 4000 文字のログで message が上限を無視して膨らむ）。
 const clip = (s: string, n = 120): string => (s.length > n ? `${s.slice(0, n)}…` : s);
 
-function summarizeGateFailure(g: BuildGateResult): string {
+export function summarizeGateFailure(g: BuildGateResult): string {
   const parts: string[] = [];
   if (g.failedSegments.length)
     parts.push(`翻訳起因: ${g.failedSegments.map((f) => `${f.id}(${f.line})`).join(", ")}`);
   if (g.structuralErrors.length) parts.push(`構造: ${g.structuralErrors.slice(0, 3).map((e) => clip(e)).join(" / ")}`);
   if (g.missingFigures.length) parts.push(`欠図: ${g.missingFigures.map((f) => clip(f, 60)).join(", ")}`);
   if (g.droppedFigures.length) parts.push(`図欠落: ${g.droppedFigures.map((f) => clip(f, 60)).join(", ")}`);
-  if (g.unresolvedRefs.length) parts.push(`未解決参照: ${g.unresolvedRefs.slice(0, 5).map((r) => clip(r, 60)).join(", ")}`);
+  // 翻訳起因・構造の誤りで組版が止まったときは未解決参照を出さない。契約付録 §6
+  const halted = g.failedSegments.length > 0 || g.structuralErrors.length > 0;
+  if (g.unresolvedRefs.length && !halted)
+    parts.push(`未解決参照: ${g.unresolvedRefs.slice(0, 5).map((r) => clip(r, 60)).join(", ")}`);
   if (g.shadowedPackages.length)
     parts.push(`同梱パッケージを無効化: ${g.shadowedPackages.join(", ")}`);
   return parts.join(" | ") || "不明なビルド失敗";
@@ -1094,6 +1119,8 @@ export async function translatePaper(
     let titleTex: string | undefined;
     // 成果物 PDF の名前に使う短い英語名（title 節の translator が訳題と一緒に出す）。契約付録 §8
     let titleSlug: string | undefined;
+    // 落ちたタイトルの結果（最後の指摘の記録に足す）。
+    let titleFailure: SectionLoopCache | undefined;
     const translateTitle = async (src: PaperTitle): Promise<void> => {
       const seg = titleSegment(src);
       const slice = titleSlice(seg, ctx.resolved);
@@ -1111,9 +1138,10 @@ export async function translatePaper(
           },
         );
         const ja = r.passed ? translatedTitle(r.ja) : undefined;
+        if (!r.passed) titleFailure = r;
         if (ja === undefined) {
           if (contaminatedSegments([r]).length > 0) {
-            notify("タイトルの訳文が危険コマンド・文書構造の破壊を持ち込みました（汚染の疑い）。原題のまま組版します");
+            notify(`タイトルの訳文が危険コマンド・文書構造の破壊を持ち込みました（汚染の疑い）。原題のまま組版します${WHERE_ISSUES}`);
             return;
           }
           const why = r.passed
@@ -1121,7 +1149,7 @@ export async function translatePaper(
             : r.failCode === 4
               ? "品質基準に達しない"
               : `形式検査を通過しない: ${[...new Set(r.failedKinds)].sort().join(", ")}`;
-          notify(`タイトルを訳せなかったため原題のまま組版します（${why}）`);
+          notify(`タイトルを訳せなかったため原題のまま組版します（${why}${WHERE_ISSUES}）`);
           return;
         }
         titleTex = composeTitle(ja, src);
@@ -1177,6 +1205,14 @@ export async function translatePaper(
       writeFileSync(path.join(chaptersDir, `${r.segmentId}.tex`), r.ja);
     }
     writeFileSync(path.join(outDir, "notes.json"), JSON.stringify(notes, null, 2));
+    try {
+      writeFailedSegments(runDir, runId, [
+        ...(titleFailure === undefined ? [] : [titleFailure]),
+        ...results.filter((r) => !r.passed),
+      ]);
+    } catch (e) {
+      notify(`落ちた節の指摘を書き出せませんでした: ${toRunError(e).message}`);
+    }
 
     const passed = results.filter((r) => r.passed).length;
     const failed = results.length - passed;

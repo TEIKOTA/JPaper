@@ -1,4 +1,5 @@
 // 契約付録 §7・組版レイアウト ADR(20260710)。訳文→main.tex 生成（原前文温存ハイブリッド）。
+import { detectProfile } from "./frontmatter.js";
 import { replaceTitle } from "./paper-title.js";
 
 export type Layout = "original" | "template";
@@ -183,13 +184,14 @@ function templatePreamble(originalPreamble: string, cleanLatex: string): string 
   return [
     LUATEX85,
     "\\documentclass[a4paper]{article}",
+    // ⚠ landmines.md
+    "\\usepackage[ipaex]{luatexja-preset}",
     "\\title{}",
     "\\author{}",
     CLASS_SHIM,
     ...classPackages(cleanLatex),
     ...(carried === "" ? [] : ["% --- JPaper 注入: 原前文の引き継ぎ（documentclass のみ差し替え）---", carried]),
     "% --- JPaper 注入: 日本語組版・共有引用 ---",
-    "\\usepackage[ipaex]{luatexja-preset}",
     "\\usepackage{amsmath,amsfonts,amssymb}",
     "\\usepackage{graphicx}",
     "\\usepackage{booktabs}",
@@ -240,7 +242,7 @@ function assembleBody(chapters: string[]): string {
 // title を渡すと前文の \title の主引数だけを差し替える（契約付録 §8）。
 export function buildPreamble(cleanLatex: string, mode: Layout, title?: string): string {
   const preamble = extractPreamble(cleanLatex);
-  const original = title === undefined ? preamble : replaceTitle(preamble, title);
+  const original = title === undefined ? preamble : replaceTitle(preamble, title, detectProfile(cleanLatex));
   return mode === "original"
     ? injectShared(neutralizePreamble(original))
     : `${templatePreamble(original, cleanLatex)}\n`;

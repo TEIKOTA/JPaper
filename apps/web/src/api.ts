@@ -104,6 +104,67 @@ export interface GlobalTerm {
   affected: AffectedPaper[];
 }
 
+export interface ProviderInfo {
+  name: string;
+  effort: boolean;
+}
+
+export interface ProviderDefaults {
+  model?: string;
+  effort?: string;
+}
+
+export interface WebSettings {
+  provider?: string;
+  providers: Record<string, ProviderDefaults | undefined>;
+  concurrency: number;
+}
+
+export interface SettingsResponse {
+  settings: WebSettings;
+  providers: ProviderInfo[];
+  maxConcurrency: number;
+}
+
+export type JobState = "queued" | "running" | "done" | "failed" | "canceled";
+export type JobPhase = "ingest" | "context" | "translate" | "typeset";
+
+export interface TranslateOptions {
+  provider: string;
+  model?: string;
+  effort?: string;
+}
+
+export interface Job {
+  id: string;
+  arxivId: string;
+  paperId: string;
+  title?: string;
+  options: TranslateOptions;
+  state: JobState;
+  phase?: JobPhase;
+  section?: { done: number; total: number };
+  costUsd: number | null;
+  createdAt: number;
+  startedAt?: number;
+  finishedAt?: number;
+  exitCode?: number | null;
+  error?: string;
+  log: string[];
+}
+
+export interface ArxivEntry {
+  id: string;
+  version?: string;
+  title: string;
+  summary: string;
+  authors: string[];
+  published: string;
+  paperId: string;
+  local: { pdf: boolean } | null;
+  job: JobState | null;
+}
+
 export class ApiError extends Error {
   constructor(
     message: string,
@@ -138,6 +199,28 @@ export const api = {
   undo: (id: string) => call<{ undone: BackupInfo }>(`${paper(id)}/undo`, post({})),
   glossary: () => call<{ terms: GlobalTerm[] }>("/api/glossary").then((r) => r.terms),
   pdfUrl: (id: string, kind: PdfKind) => `${paper(id)}/pdf/${kind}`,
+  settings: () => call<SettingsResponse>("/api/settings"),
+  saveSettings: (settings: WebSettings) => call<{ settings: WebSettings }>("/api/settings", post(settings)),
+  arxiv: (q: string, signal?: AbortSignal) =>
+    call<{ total?: number; entries: ArxivEntry[] }>(`/api/arxiv?q=${encodeURIComponent(q)}`, { signal }),
+  jobs: () => call<{ jobs: Job[] }>("/api/jobs").then((r) => r.jobs),
+  startJob: (body: { arxivId: string; title?: string } & TranslateOptions) => call<{ job: Job }>("/api/jobs", post(body)),
+  cancelJob: (id: string) => call<{ job: Job }>(`/api/jobs/${encodeURIComponent(id)}/cancel`, post({})),
+};
+
+export const JOB_STATE_LABEL: Record<JobState, string> = {
+  queued: "待機中",
+  running: "実行中",
+  done: "完了",
+  failed: "失敗",
+  canceled: "取り消し",
+};
+
+export const JOB_PHASE_LABEL: Record<JobPhase, string> = {
+  ingest: "取り込み",
+  context: "文脈",
+  translate: "翻訳",
+  typeset: "組版",
 };
 
 export const RENDERING_LABEL: Record<string, string> = {

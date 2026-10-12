@@ -1,9 +1,11 @@
-// 契約付録 §9（Web アプリ）。core を直接呼ぶ API。127.0.0.1 だけで待ち受け、認証は持たない。
+// 契約付録 §9（Web アプリ）。core を直接呼ぶ API と、翻訳ジョブ（CLI の子プロセス）・arXiv 検索の API。
+// 127.0.0.1 だけで待ち受け、認証は持たない。
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { Hono, type Context } from "hono";
 import { z } from "zod";
 import { JpaperError } from "../../../src/types/errors.js";
+import { derivePaperId } from "../../../src/ingest/index.js";
 import { GlossaryDb } from "../../../src/terminology/db.js";
 import {
   applyTermEdit,
@@ -23,6 +25,10 @@ import {
   type PdfKind,
 } from "./catalog.js";
 import { DEFAULT_API_PORT, DEFAULT_WEB_PORT, localOrigins, type WebConfig } from "./config.js";
+import { ArxivClient, ArxivError, ArxivQueryError } from "./arxiv.js";
+import { JobQueue } from "./jobs.js";
+import { MAX_JOB_CONCURRENCY, parseSettings, readSettings, writeSettings } from "./settings.js";
+import { parseArxivId, parseTranslateOptions, providerInfo } from "./translate-options.js";
 
 const LOCAL_HOSTS = new Set(["127.0.0.1", "localhost", "[::1]"]);
 
@@ -46,7 +52,28 @@ function errorResponse(c: Context, e: unknown): Response {
   return c.json({ error: e instanceof Error ? e.message : String(e), kind: "internal" }, 500);
 }
 
-export function createApp(config: WebConfig): Hono {
+export interface Services {
+  jobs: JobQueue;
+  arxiv: ArxivClient;
+}
+
+export function createServices(config: WebConfig, env: NodeJS.ProcessEnv = process.env): Services {
+  const home = env.JPAPER_HOME?.trim();
+  return {
+    jobs: new JobQueue({
+      articleDir: config.articleDir,
+      repoRoot: config.repoRoot,
+      concurrency: () => readSettings(config.settingsPath).concurrency,
+      env: { ...env, ...(home === undefined || home === "" ? {} : { JPAPER_HOME: path.resolve(home) }) },
+    }),
+    arxiv: new ArxivClient(),
+  };
+}
+
+const TITLE_MAX = 500;
+
+export function createApp(config: WebConfig, services: Services = createServices(config)): Hono {
+  const { jobs, arxiv } = services;
   const app = new Hono();
 
   // Host が 127.0.0.1・localhost 以外、Origin が画面・API のポート以外の要求は 403。
@@ -167,6 +194,79 @@ export function createApp(config: WebConfig): Hono {
   app.post("/api/papers/:id/undo", (c) => {
     try {
       return c.json({ undone: undoTermEdit(dirOf(c.req.param("id"))) });
+    } catch (e) {
+      return errorResponse(c, e);
+    }
+  });
+
+  app.get("/api/settings", (c) =>
+    c.json({
+      settings: readSettings(config.settingsPath),
+      providers: providerInfo(),
+      maxConcurrency: MAX_JOB_CONCURRENCY,
+    }),
+  );
+
+  app.post("/api/settings", async (c) => {
+    try {
+      const settings = parseSettings(await c.req.json().catch(() => undefined));
+      writeSettings(config.settingsPath, settings);
+      jobs.pump();
+      return c.json({ settings });
+    } catch (e) {
+      return errorResponse(c, e);
+    }
+  });
+
+  app.get("/api/arxiv", async (c) => {
+    try {
+      const result = await arxiv.search(c.req.query("q") ?? "");
+      const local = paperDirs(config.articleDir);
+      const active = jobs.activePapers();
+      return c.json({
+        ...(result.total === undefined ? {} : { total: result.total }),
+        entries: result.entries.map((e) => {
+          const paperId = derivePaperId({ kind: "arxiv", id: e.id });
+          const dir = local.get(paperId);
+          return {
+            ...e,
+            paperId,
+            local: dir === undefined ? null : { pdf: pdfPath(dir, "ja") !== undefined },
+            job: active.get(paperId) ?? null,
+          };
+        }),
+      });
+    } catch (e) {
+      if (e instanceof ArxivQueryError) return c.json({ error: e.message, kind: "input" }, 400);
+      if (e instanceof ArxivError) return c.json({ error: e.message, kind: "upstream" }, 502);
+      return errorResponse(c, e);
+    }
+  });
+
+  app.get("/api/jobs", (c) => c.json({ jobs: jobs.list() }));
+
+  app.post("/api/jobs", async (c) => {
+    try {
+      const body = (await c.req.json().catch(() => undefined)) as Record<string, unknown> | undefined;
+      if (typeof body !== "object" || body === null) throw new JpaperError(2, "input", "JSON で送ってください");
+      const arxivId = parseArxivId(body.arxivId);
+      const options = parseTranslateOptions(body);
+      const title =
+        typeof body.title === "string"
+          ? body.title.replace(/[\x00-\x1f\x7f]/g, " ").trim().slice(0, TITLE_MAX) || undefined
+          : undefined;
+      const job = jobs.enqueue({ arxivId, options, ...(title === undefined ? {} : { title }) });
+      return c.json({ job }, 201);
+    } catch (e) {
+      return errorResponse(c, e);
+    }
+  });
+
+  app.post("/api/jobs/:id/cancel", (c) => {
+    try {
+      const job = jobs.cancel(c.req.param("id"));
+      if (job === undefined) return c.json({ error: "ジョブが見つかりません" }, 404);
+      return c.json({ job });
     } catch (e) {
       return errorResponse(c, e);
     }

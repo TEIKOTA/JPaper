@@ -9,6 +9,7 @@ const env = {
   ...(process.env.JPAPER_GLOSSARY_DB?.trim()
     ? { JPAPER_GLOSSARY_DB: path.resolve(root, process.env.JPAPER_GLOSSARY_DB.trim()) }
     : {}),
+  ...(process.env.JPAPER_HOME?.trim() ? { JPAPER_HOME: path.resolve(root, process.env.JPAPER_HOME.trim()) } : {}),
 };
 const children = [
   spawn("pnpm", ["--filter", "@jpaper/web", "run", "server"], { stdio: "inherit", env }),

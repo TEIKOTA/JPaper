@@ -5,8 +5,8 @@ import type { Provider } from "./types/contract.js";
 
 type ProviderName = Provider;
 
-export function resolveJpaperHome(): string {
-  const env = process.env.JPAPER_HOME;
+export function resolveJpaperHome(environ: NodeJS.ProcessEnv = process.env): string {
+  const env = environ.JPAPER_HOME;
   if (env && env.trim() !== "") return env;
   return path.join(os.homedir(), ".jpaper");
 }
