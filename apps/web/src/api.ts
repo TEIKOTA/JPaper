@@ -223,6 +223,15 @@ export const JOB_PHASE_LABEL: Record<JobPhase, string> = {
   typeset: "組版",
 };
 
+// 画面に出す provider の名前。API・CLI の値は変えない。契約付録 §9
+const PROVIDER_LABEL: Record<string, string> = {
+  codex: "GPT",
+};
+
+export function providerLabel(name: string): string {
+  return Object.hasOwn(PROVIDER_LABEL, name) ? PROVIDER_LABEL[name]! : name;
+}
+
 export const RENDERING_LABEL: Record<string, string> = {
   bilingual: "初出のみ併記",
   translate: "訳す",

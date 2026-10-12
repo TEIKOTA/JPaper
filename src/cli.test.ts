@@ -235,6 +235,27 @@ describe("runCli", () => {
     expect(got.claude).toBeUndefined();
   });
 
+  it("--provider codex は --model / --effort を codex 設定として渡し、--context-window は exit 2", async () => {
+    let got: unknown;
+    const code = await runCli(
+      ["node", "jpaper", "1706.03762", "--provider", "codex", "--model", "gpt-6.1-sol", "--effort", "low"],
+      {
+        stdout: () => {},
+        translate: async (_input, opts) => {
+          got = opts;
+          return okResult;
+        },
+      },
+    );
+    expect(code).toBe(0);
+    expect(got).toMatchObject({ provider: "codex", codex: { model: "gpt-6.1-sol", effort: "low" } });
+    const bad = await runCli(["node", "jpaper", "1706.03762", "--provider", "codex", "--context-window", "32768"], {
+      stderr: () => {},
+      translate: async () => okResult,
+    });
+    expect(bad).toBe(2);
+  });
+
   it.each(["ollama", "openrouter"])("--provider %s に --effort を付けると exit 2", async (provider) => {
     let called = false;
     let err = "";

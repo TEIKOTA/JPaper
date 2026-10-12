@@ -126,6 +126,12 @@
 - **なぜ意図的か**: 本文を引数で渡すと、論文によっては引数長の上限を超えて起動できない（実測: PATH 上の `claude` が cmux のシムで `cmux: argument too large (maximum 122880 bytes)` → exit 2、UNI 2308.15474 の用語集構築）。stdin なら上限は無い（80KB で確認）。stdin へ書く以上、子プロセスが本文を読まずに終了すると書き込みが `EPIPE` になり、`error` を聞いていないと未処理例外で JPaper のプロセスごと落ちる（実測: 読まずに `exit 3` する子へ 5MB を書くと Node が `write EPIPE` で終了）。失敗は `close` の終了コードで provider エラーとして返るので、stdin 側のエラーは捨ててよい。ハンドラを外すと、claude が起動直後に失敗しただけで run 全体がクラッシュする。
 - **正本ポインタ**: 契約付録 §5（claude CLI の呼び出し）。回帰テストは `src/providers/claude.test.ts`（既定の run の節）。
 
+## `src/providers/codex.ts` — codex を利用者の設定を読まずに一時ディレクトリで起動する
+
+- **おかしく見える点**: 1 回答えさせるだけの呼び出しに `--ignore-user-config --ignore-rules --skip-git-repo-check` と十数個の `-c features.<名前>=false` を付け、環境変数 `CMUX_*` を落とし、呼び出しごとに一時ディレクトリを作って `-C` で移り、応答を標準出力ではなく `-o` のファイルから読んでいる。stdin に空の error ハンドラがある。
+- **なぜ意図的か**: 既定の codex CLI は利用者の `~/.codex` の設定・指示書・hook と作業ディレクトリの AGENTS.md を毎回の文脈に載せる（実測: 1 文の翻訳で 11,458 トークン。設定を読まなければ 2,003 トークンで、訳文とモデルは同じ）。repo の外は git repo ではないので `--skip-git-repo-check` が要る。`-o` のファイルには最終メッセージだけが入り、標準出力の形式の変化に左右されない。`--sandbox read-only` だけではシェルなどのツールが残り、論文の本文に誘導されてホームディレクトリを読める（実測: `ls ~` を実行した）ので機能ごと切る。`--disable` ではなく `-c features.…=false` なのは、知らない名前でも起動が壊れないから。`CMUX_*` を残すと、cmux の端末から起動したとき codex のラッパーが hook と computer use の引数を差し込む。stdin の error ハンドラを外すと、codex が入力を読まずに終わったとき（引数エラー・認証エラー）に約 64KB を超えるプロンプトの書き込みが EPIPE の未処理例外になり、run 全体がクラッシュする（一時ディレクトリも残る）。
+- **正本ポインタ**: [codex プロバイダ ADR](../adr/20261008-add-codex-provider-isolated-from-user-config.md)、契約付録 §5。回帰テストは `src/providers/codex.test.ts`。
+
 ## `src/providers/claude.ts` — claude を `--safe-mode` 付き・作業ディレクトリ `os.tmpdir()` で起動する
 
 - **おかしく見える点**: 1 回答えさせるだけの呼び出しに `--safe-mode` を付け、作業ディレクトリを JPaper の実行場所でなく一時ディレクトリにしている。

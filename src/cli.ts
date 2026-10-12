@@ -13,7 +13,7 @@ import {
   CLAUDE_EFFORT_PATTERN,
   isClaudeModelId,
 } from "./config.js";
-import type { ClaudeConfig, OllamaConfig, OpenRouterConfig } from "./config.js";
+import type { ClaudeConfig, CodexConfig, OllamaConfig, OpenRouterConfig } from "./config.js";
 
 export interface CliDeps {
   translate?: typeof translatePaper;
@@ -62,16 +62,16 @@ export function modelConfigFrom(
   contextWindow: string | undefined,
   think: boolean | undefined,
   effort: string | undefined,
-): { ollama?: OllamaConfig; openrouter?: OpenRouterConfig; claude?: ClaudeConfig } {
+): { ollama?: OllamaConfig; openrouter?: OpenRouterConfig; claude?: ClaudeConfig; codex?: CodexConfig } {
   const givenModelFlag =
     model !== undefined ? "--model" : contextWindow !== undefined ? "--context-window" : undefined;
   const givenThinkFlag = think === undefined ? undefined : think ? "--think" : "--no-think";
 
-  if (provider !== "claude" && effort !== undefined) {
-    throw new JpaperError(2, "input", "--effort は --provider claude のときだけ指定できます");
+  if (provider !== "claude" && provider !== "codex" && effort !== undefined) {
+    throw new JpaperError(2, "input", "--effort は --provider claude|codex のときだけ指定できます");
   }
 
-  if (provider === "claude") {
+  if (provider === "claude" || provider === "codex") {
     if (contextWindow !== undefined) {
       throw new JpaperError(2, "input", "--context-window は --provider ollama|openrouter のときだけ指定できます");
     }
@@ -86,7 +86,7 @@ export function modelConfigFrom(
     }
     if (model === undefined && effort === undefined) return {};
     return {
-      claude: {
+      [provider]: {
         ...(model === undefined ? {} : { model: model.trim() }),
         ...(effort === undefined ? {} : { effort }),
       },
@@ -189,7 +189,7 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number
       throw new JpaperError(2, "input", "<input> が必要です");
     }
     if (providerArg === undefined) {
-      throw new JpaperError(2, "input", "--provider {ollama|claude|openrouter} が必要です");
+      throw new JpaperError(2, "input", "--provider {ollama|claude|codex|openrouter} が必要です");
     }
     const provider = Provider.parse(providerArg);
     const wantThink = flags.has("--think");
@@ -235,7 +235,7 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number
       return e.code;
     }
     if ((e as { name?: string })?.name === "ZodError") {
-      stderr(`エラー: --provider は ollama|claude|openrouter のいずれか\n`);
+      stderr(`エラー: --provider は ollama|claude|codex|openrouter のいずれか\n`);
       return 2;
     }
     stderr(`想定外エラー: ${String((e as Error)?.message ?? e)}\n`);
