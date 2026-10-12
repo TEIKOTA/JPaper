@@ -66,6 +66,40 @@ describe("runSectionLoop", () => {
     expect(r.failCode).toBe(4);
     expect(r.usedRevisions).toBe(r.maxRevisions / 2);
   });
+
+  it("品質で落ちた節は最後の evaluator の verdict と指摘を持つ（契約付録 §8）", async () => {
+    let ev = 0;
+    const c = new FakeLlmClient((req) =>
+      req.system.includes("審査者")
+        ? `{"verdict":"revise","issues":[{"severity":"error","message":"指摘${String(ev++)}","span":"訳文"},{"severity":"warn","message":"軽微"}]}`
+        : '{"segmentId":"seg","ja":"訳文"}',
+    );
+    const r = await runSectionLoop(c, seg, []);
+    expect(r.failCode).toBe(4);
+    expect(r.lastIssues).toEqual({
+      by: "evaluator",
+      verdict: "revise",
+      issues: [
+        { severity: "error", message: `指摘${String(ev - 1)}`, span: "訳文" },
+        { severity: "warn", message: "軽微" },
+      ],
+    });
+  });
+
+  it("形式で落ちた節は最後の稿の形式検査の指摘を持ち、通った節は持たない", async () => {
+    const withMath: Segment = { id: "seg", latex: "text $x$ here.", tokens: 100 };
+    const failed = await runSectionLoop(new FakeLlmClient('{"segmentId":"seg","ja":"数式なしの訳"}'), withMath, []);
+    expect(failed.lastIssues?.by).toBe("formal");
+    expect(failed.lastIssues?.issues.map((i) => ("kind" in i ? i.kind : undefined))).toContain("math");
+    const ok = await runSectionLoop(
+      new FakeLlmClient((req) =>
+        req.system.includes("審査者") ? '{"verdict":"pass","issues":[]}' : '{"segmentId":"seg-0000","ja":"訳文"}',
+      ),
+      seg,
+      [],
+    );
+    expect(ok.lastIssues).toBeUndefined();
+  });
 });
 
 // 敵対的: 品質ゲートを潜り抜けられないことを決定的に保証する（契約 §3）。

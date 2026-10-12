@@ -73,6 +73,19 @@ describe("buildSystemPrompt", () => {
     expect(buildSystemPrompt("translator")).not.toContain("格下げ");
   });
 
+  it("evaluator に指示の優先順位を明示する: 確定用語 ＞ 訳注・ブリーフ・文体契約（issue #333）", () => {
+    const p = buildSystemPrompt("evaluator");
+    expect(p).toContain("「確定用語・表記」の各行の指示（訳語・併記・原表記）が最優先");
+    expect(p).toContain("〔訳注〕・文書ブリーフ・文体契約は参考情報");
+    expect(p).toContain("文書ブリーフ・文体契約からの逸脱");
+    expect(p).toContain("warn までとし、error にしない");
+    expect(p).toContain("「最急降下方向」");
+    expect(p).toContain("違反にしない");
+    expect(p.indexOf("判定基準:")).toBeLessThan(p.indexOf("指示の優先順位:"));
+    expect(buildSystemPrompt("translator")).not.toContain("指示の優先順位");
+    expect(buildSystemPrompt("glossary-builder")).not.toContain("指示の優先順位");
+  });
+
   it("brief/style は system に入れず user 側ブロックへ回す", () => {
     const brief: DocumentBrief = {
       thesis: "核",

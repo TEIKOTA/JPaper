@@ -64,6 +64,10 @@ const UNTRUSTED_DATA =
 const EVAL_RUBRIC =
   "判定基準: verdict は pass=そのまま出版できる品質／revise=直すべき点がある／fail=意味の反転・大幅な欠落・重大な誤りで即時不可。severity は error=意味を損なう問題（誤訳・意味の反転・内容や数式・引用の欠落・数値/単位の誤り・主張強度や hedging の反転・確定用語違反）で、これらは必ず error か verdict=fail にする。warn=出版を妨げない軽微な指摘（表記ゆれ・語調・言い回しの統一など）に限る。重大な問題を warn に格下げしてはならない。";
 
+// 契約付録 §3
+const EVAL_PRIORITY =
+  "指示の優先順位: user 側の「確定用語・表記」の各行の指示（訳語・併記・原表記）が最優先である。同じ行の〔訳注〕・文書ブリーフ・文体契約は参考情報で、それと食い違っても確定用語の指示に従った訳を違反にしない。文書ブリーフ・文体契約からの逸脱（文体・時制・見出し・数字の方針など）は warn までとし、error にしない。確定用語違反は、その原語そのものに指示と違う訳を当てた場合に限る。原文で用語がより大きな句の一部になっている・活用している場合（例: 用語「steepest descent → 最急降下法」に対し原文が direction of steepest descent なら「最急降下方向」）に、句に合わせて訳語を変えた形は違反にしない。";
+
 
 
 // 用語ブロックに載る文字列は全て 1 行化を通す。ここを素通しにすると
@@ -148,6 +152,6 @@ export function buildSystemPrompt(role: AgentRole): string {
       TRANSLATOR_MATH_BOUNDARY,
       TRANSLATOR_BILINGUAL,
     );
-  if (role === "evaluator") parts.push(PITFALLS, EVAL_RUBRIC);
+  if (role === "evaluator") parts.push(PITFALLS, EVAL_RUBRIC, EVAL_PRIORITY);
   return parts.join("\n\n---\n\n");
 }

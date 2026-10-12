@@ -38,6 +38,13 @@ export const SectionLoopCache = z.object({
   maxRevisions: z.number().int(),
   warnIssues: z.array(EvalIssue),
   pdfName: z.string().optional(),
+  // 落ちた節は永続しないので、checkpoint に載ることは無い。契約付録 §8（落ちた節の指摘）
+  lastIssues: z
+    .discriminatedUnion("by", [
+      z.object({ by: z.literal("evaluator"), verdict: z.enum(["pass", "revise", "fail"]), issues: z.array(EvalIssue) }),
+      z.object({ by: z.literal("formal"), issues: z.array(z.object({ kind: z.string(), message: z.string() })) }),
+    ])
+    .optional(),
 });
 export type SectionLoopCache = z.infer<typeof SectionLoopCache>;
 

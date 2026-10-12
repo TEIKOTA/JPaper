@@ -3,6 +3,7 @@ import type {
   LlmClient,
   ResolvedTerm,
   EvalIssue,
+  EvaluatorOut,
   DocumentBrief,
   StyleContract,
 } from "../types/contract.js";
@@ -39,7 +40,13 @@ export interface SectionLoopResult {
   warnIssues: EvalIssue[];
   // segment.askPdfName のとき、通過した稿の名前を整えたもの（無い・不正なら undefined）。契約付録 §8
   pdfName?: string;
+  // 落ちた節だけ: 最後の稿に付いた指摘。契約付録 §8（落ちた節の指摘）
+  lastIssues?: LastIssues;
 }
+
+export type LastIssues =
+  | { by: "evaluator"; verdict: EvaluatorOut["verdict"]; issues: EvalIssue[] }
+  | { by: "formal"; issues: FormalIssue[] };
 
 export interface DocContext {
   brief?: DocumentBrief;
@@ -83,6 +90,7 @@ export async function runSectionLoop(
   let lastJa = "";
   let lastFailCode: 3 | 4 = 3;
   let lastKinds: FormalIssue["kind"][] = [];
+  let lastIssues: LastIssues | undefined;
   // 名前の行を最後に出した稿の値（改稿で行を落としても前の稿の名前を使う）。契約付録 §8
   let lastName: string | undefined;
 
@@ -130,6 +138,7 @@ export async function runSectionLoop(
     // 危険コマンドと文書構造の破壊は再訳の対象にしない（直せる誤りではなく、汚染の兆候
     // として即失敗させる）。\end{document} は組版が正常終了するぶん、素通しの害が大きい。
     lastKinds = [...new Set(formal.map((f) => f.kind))];
+    lastIssues = { by: "formal", issues: formal };
     if (formal.some((f) => f.kind === "unsafe-command" || f.kind === "structure")) {
       lastFailCode = 3;
       break;
@@ -168,6 +177,7 @@ export async function runSectionLoop(
     }
     lastFailCode = 4;
     lastKinds = [];
+    lastIssues = { by: "evaluator", verdict: ev.verdict, issues: ev.issues };
     // fail は「この訳が不可」であって「この節が訳せない」ではない。指摘を渡さずに
     // 捨てるのは、1 呼び出しを節約するために節 1 本を失う取引になる。ADR 20260815。
     if (qualityLeft <= 0) break;
@@ -186,5 +196,6 @@ export async function runSectionLoop(
     usedRevisions: revisions,
     maxRevisions,
     warnIssues: [],
+    ...(lastIssues === undefined ? {} : { lastIssues }),
   };
 }
