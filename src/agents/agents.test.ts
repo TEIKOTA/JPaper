@@ -155,6 +155,21 @@ describe("glossary-builder", () => {
     expect(c.calls[0]!.user).toContain("併記形");
     expect(c.calls[0]!.meta).toEqual({ role: "glossary-builder", phase: "glossary" });
   });
+
+  it("note に訳し方の指示を書かせない（issue #333）", async () => {
+    const c = new FakeLlmClient(
+      JSON.stringify({
+        resolved: [],
+        brief: { thesis: "t", sectionRoles: [], notationConventions: [] },
+        style: { tensePolicy: "a", headingStyle: "b", numberStyle: "c" },
+      }),
+    );
+    await buildGlossary(c, { paperId: "p", candidates: [] });
+    const user = c.calls[0]!.user;
+    expect(user).toContain("note は読者向けの訳注");
+    expect(user).toContain("form と違う訳語・言い回しを示さない");
+    expect(user).toContain("別の語の訳を指定しない");
+  });
 });
 
 // #267: 訳文は JSON 文字列で運ばない（\t 系の綴りが黙って壊れるため）。
