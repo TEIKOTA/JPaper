@@ -19,12 +19,14 @@
 # Decision
 - **`codex` を `Provider` に加え、CLI・`translatePaper`・Web から選べるようにする**。Web の表示名は「GPT」。
 - **利用者の設定・ルールを読まずに、呼び出しごとの一時ディレクトリで起動する**（`--ignore-user-config --ignore-rules --skip-git-repo-check -C <dir>`、`--sandbox read-only`、`--ephemeral`）。最終メッセージは `-o` のファイルから読む。
-- **model・effort は claude と同じく指定されたときだけ渡す**（`--model ID`、`-c model_reasoning_effort="LEVEL"`）。JPaper は既定値を持たない。effort は TOML の文字列に埋め込むので英小文字だけを受ける。
+- **ツールを止める**: シェル・画像の閲覧・apps・plugins・hook・memories・複数エージェント・ブラウザ・computer use などを `-c features.<名前>=false` で切り、`-c web_search="disabled"` を付ける。`--sandbox read-only` だけではツールが残り、論文の本文に誘導されて手元のファイルを読める（実測: 止めない codex は `ls ~` を実行して答え、止めると「実行不可」と返した）。`--disable` は知らない機能名でエラーになるので使わない（`-c` は無視される）。
+- **環境変数 `CMUX_*` を渡さない**。cmux の codex ラッパーは `CMUX_SURFACE_ID` があると `exec` にも hook と computer use の引数を差し込む。
+- **model・effort は claude と同じく指定されたときだけ渡す**（`--model ID`、`-c model_reasoning_effort="LEVEL"`）。[claude のモデル・推論強度 ADR](./20261007-pass-claude-model-and-effort-via-cli-args.md) で claude 専用とした `--effort` を codex にも広げる。JPaper は既定値を持たない。effort は TOML の文字列に埋め込むので英小文字だけを受ける。
 - コンテキスト窓 200,000・呼び出しの期限 300 秒は claude と同じ。usage・費用はトレースに残さない。
 
 # Consequences
 - 良い面
-  - 1 呼び出しあたり約 9,000 トークンの無駄が消え、利用者の `~/.codex` の指示書や hook が訳文に混ざらない。
+  - 1 呼び出しあたり約 9,000 トークンの無駄が消え、利用者の `config.toml`・`.rules` を読まず、hook とツールも動かない。
   - Web と CLI の両方で codex を選べる。
 - トレードオフ
   - 利用者が `~/.codex/config.toml` に置いた既定モデル・推論強度・プロバイダ設定は効かない（未指定なら codex CLI 組み込みの既定）。使いたいモデルは毎回 `--model` で指定する（Web では入力履歴 #339 で補う）。

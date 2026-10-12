@@ -229,7 +229,7 @@ const PROVIDER_LABEL: Record<string, string> = {
 };
 
 export function providerLabel(name: string): string {
-  return PROVIDER_LABEL[name] ?? name;
+  return Object.hasOwn(PROVIDER_LABEL, name) ? PROVIDER_LABEL[name]! : name;
 }
 
 export const RENDERING_LABEL: Record<string, string> = {

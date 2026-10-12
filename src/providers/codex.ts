@@ -28,6 +28,26 @@ function promptFor(system: string, user: string): string {
   ].join("\n");
 }
 
+// 止める codex の機能。`-c features.<名前>=false` は codex が知らない名前でも無視される。⚠ landmines.md
+export const CODEX_DISABLED_FEATURES = [
+  "shell_tool",
+  "unified_exec",
+  "view_image",
+  "apps",
+  "plugins",
+  "hooks",
+  "memories",
+  "multi_agent",
+  "goals",
+  "image_generation",
+  "browser_use",
+  "browser_use_external",
+  "in_app_browser",
+  "computer_use",
+  "tool_suggest",
+  "skill_search",
+] as const;
+
 // ⚠ landmines.md
 export function codexArgs(cfg: CodexConfig): string[] {
   return [
@@ -38,10 +58,21 @@ export function codexArgs(cfg: CodexConfig): string[] {
     "--skip-git-repo-check",
     "--ignore-user-config",
     "--ignore-rules",
+    ...CODEX_DISABLED_FEATURES.flatMap((f) => ["-c", `features.${f}=false`]),
+    "-c",
+    'web_search="disabled"',
     ...(cfg.model === undefined ? [] : ["--model", cfg.model]),
     ...(cfg.effort === undefined ? [] : ["-c", `model_reasoning_effort="${cfg.effort}"`]),
   ];
 }
+
+// 端末多重化ソフト（cmux）が codex の起動に hook 等を差し込む合図の環境変数を渡さない。⚠ landmines.md
+export function codexEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  return Object.fromEntries(Object.entries(env).filter(([k]) => !k.startsWith("CMUX_")));
+}
+
+// stderr は診断用に末尾だけ持つ。
+const STDERR_TAIL = 8_000;
 
 // 一時ディレクトリで起動し、最終メッセージを -o のファイルから読む。
 async function defaultRun(args: string[], prompt: string, signal?: AbortSignal): Promise<string> {
@@ -52,11 +83,11 @@ async function defaultRun(args: string[], prompt: string, signal?: AbortSignal):
     await new Promise<void>((resolve, reject) => {
       const child = spawn("codex", [...args, "-C", dir, "-o", last, "-"], {
         cwd: dir,
+        env: codexEnv(process.env),
         stdio: ["pipe", "ignore", "pipe"],
       });
       let err = "";
       let canceled = false;
-      let overflowed = false;
       const onAbort = (): void => {
         canceled = true;
         child.kill("SIGKILL");
@@ -64,12 +95,7 @@ async function defaultRun(args: string[], prompt: string, signal?: AbortSignal):
       signal?.addEventListener("abort", onAbort, { once: true });
       const done = (): void => signal?.removeEventListener("abort", onAbort);
       child.stderr.on("data", (d) => {
-        if (overflowed) return;
-        err += d;
-        if (err.length > MAX_RESPONSE_CHARS) {
-          overflowed = true;
-          child.kill("SIGKILL");
-        }
+        err = (err + String(d)).slice(-STDERR_TAIL);
       });
       child.on("error", (e) => {
         done();
@@ -78,10 +104,11 @@ async function defaultRun(args: string[], prompt: string, signal?: AbortSignal):
       child.on("close", (code) => {
         done();
         if (canceled) reject(canceledError("codex 実行中"));
-        else if (overflowed) reject(new Error(`codex の出力が上限 ${MAX_RESPONSE_CHARS} 文字を超えています`));
         else if (code === 0) resolve();
         else reject(Object.assign(new Error(`codex exited ${String(code)}: ${err.slice(-800)}`), { code }));
       });
+      // ⚠ landmines.md
+      child.stdin.on("error", () => {});
       child.stdin.end(prompt);
     });
     let out: string;

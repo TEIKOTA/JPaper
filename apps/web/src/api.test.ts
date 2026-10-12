@@ -7,5 +7,6 @@ describe("providerLabel", () => {
     expect(providerLabel("claude")).toBe("claude");
     expect(providerLabel("ollama")).toBe("ollama");
     expect(providerLabel("openrouter")).toBe("openrouter");
+    expect(providerLabel("constructor")).toBe("constructor");
   });
 });

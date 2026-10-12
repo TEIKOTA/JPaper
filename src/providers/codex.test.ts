@@ -1,5 +1,8 @@
-import { describe, it, expect } from "vitest";
-import { makeCodexClient } from "./codex.js";
+import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { CODEX_DISABLED_FEATURES, codexEnv, makeCodexClient } from "./codex.js";
 import { isTransient } from "../types/errors.js";
 import type { LlmCallEvent } from "../types/contract.js";
 
@@ -11,6 +14,9 @@ const ISOLATED = [
   "--skip-git-repo-check",
   "--ignore-user-config",
   "--ignore-rules",
+  ...CODEX_DISABLED_FEATURES.flatMap((f) => ["-c", `features.${f}=false`]),
+  "-c",
+  'web_search="disabled"',
 ];
 
 describe("makeCodexClient（契約付録 §5）", () => {
@@ -86,5 +92,95 @@ describe("makeCodexClient（契約付録 §5）", () => {
       pass: 2,
       latencyMs: 40,
     });
+  });
+});
+
+describe("codexEnv", () => {
+  it("CMUX_ で始まる環境変数だけを落とす", () => {
+    expect(codexEnv({ PATH: "/bin", CMUX_SURFACE_ID: "x", CMUX_CODEX_HOOKS: "1", HOME: "/h" })).toEqual({
+      PATH: "/bin",
+      HOME: "/h",
+    });
+  });
+});
+
+describe("makeCodexClient（既定の run: PATH 上の codex を起動）", () => {
+  const origPath = process.env.PATH;
+  const origSurface = process.env.CMUX_SURFACE_ID;
+  let root = "";
+  const useFakeCodex = (name: string, body: string): void => {
+    const dir = path.join(root, name);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(path.join(dir, "codex"), `#!/bin/sh\n${body}\n`, { mode: 0o755 });
+    process.env.PATH = `${dir}${path.delimiter}${origPath ?? ""}`;
+  };
+  // -o の次の引数（最終メッセージの書き出し先）へ書く。
+  const WRITE_LAST = 'out=""; prev=""; for a in "$@"; do [ "$prev" = "-o" ] && out="$a"; prev="$a"; done';
+  const leftovers = (): string[] => readdirSync(os.tmpdir()).filter((f) => f.startsWith("jpaper-codex-"));
+
+  beforeAll(() => {
+    root = mkdtempSync(path.join(os.tmpdir(), "jpaper-fakecodex-"));
+  });
+  afterEach(() => {
+    process.env.PATH = origPath;
+    if (origSurface === undefined) delete process.env.CMUX_SURFACE_ID;
+    else process.env.CMUX_SURFACE_ID = origSurface;
+  });
+  afterAll(() => {
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it("一時ディレクトリで起動して -o のファイルから最終メッセージを読み、終わったら一時ディレクトリを消す", async () => {
+    useFakeCodex(
+      "ok",
+      `${WRITE_LAST}\nn=$(wc -c | tr -d ' ')\nprintf 'stdin=%s cwd=%s cmux=%s' "$n" "$(basename "$(pwd -P)" | cut -c1-13)" "\${CMUX_SURFACE_ID:-none}" > "$out"`,
+    );
+    process.env.CMUX_SURFACE_ID = "surface-1";
+    const before = leftovers();
+    const out = await makeCodexClient().complete({ system: "S", user: "x".repeat(200_000) });
+    expect(out).toMatch(/^stdin=2\d{5} cwd=jpaper-codex- cmux=none$/);
+    expect(leftovers()).toEqual(before);
+  });
+
+  it("stdin を読まずに終了しても親プロセスを落とさず provider 失敗にし、一時ディレクトリを消す", async () => {
+    useFakeCodex("early-exit", "echo 'error: unexpected argument' >&2\nexit 2");
+    const before = leftovers();
+    await expect(makeCodexClient().complete({ system: "S", user: "x".repeat(1_000_000) })).rejects.toMatchObject({
+      kind: "provider",
+    });
+    expect(leftovers()).toEqual(before);
+  });
+
+  it("-o に書かずに終われば provider 失敗（transient）", async () => {
+    useFakeCodex("no-output", "cat >/dev/null");
+    const e = await makeCodexClient()
+      .complete({ system: "S", user: "U" })
+      .catch((x: unknown) => x);
+    expect(e).toMatchObject({ kind: "provider" });
+    expect(isTransient(e)).toBe(true);
+    expect(String((e as Error).message)).toContain("最終メッセージを書き出しませんでした");
+  });
+
+  it("stderr が多くても成功した呼び出しは落とさない", async () => {
+    useFakeCodex("noisy", `${WRITE_LAST}\ncat >/dev/null\nhead -c 3000000 /dev/zero | tr '\\0' 'e' >&2\nprintf '訳文' > "$out"`);
+    expect(await makeCodexClient().complete({ system: "S", user: "U" })).toBe("訳文");
+  });
+
+  it("中断で子プロセスを止め、canceled で返す", async () => {
+    useFakeCodex("slow", "cat >/dev/null\nexec sleep 30");
+    const ac = new AbortController();
+    const p = makeCodexClient().complete({ system: "S", user: "U", signal: ac.signal });
+    setTimeout(() => ac.abort(), 200);
+    await expect(p).rejects.toMatchObject({ kind: "canceled" });
+  });
+
+  it("PATH に codex が無ければ再試行しない provider 失敗", async () => {
+    process.env.PATH = path.join(root, "nothing-here");
+    const e = await makeCodexClient()
+      .complete({ system: "S", user: "x".repeat(200_000) })
+      .catch((x: unknown) => x);
+    expect(e).toMatchObject({ kind: "provider" });
+    expect(isTransient(e)).toBe(false);
+    expect(existsSync(path.join(root, "nothing-here"))).toBe(false);
   });
 });
