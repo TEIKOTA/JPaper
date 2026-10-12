@@ -87,13 +87,14 @@
 | 2026-10-06 | [横長の対訳 PDF（A4 縦 2 枚分・左=原文／右=和訳）を標準の出力にする](./20261006-bilingual-side-by-side-pdf.md) | accepted |
 | 2026-10-07 | [図表のキャプションは全プロバイダの翻訳指示で訳す](./20261007-translate-captions-in-all-prompt-profiles.md) | accepted |
 | 2026-10-07 | [論文ごとの既定の出力先を CWD 配下の article/ にまとめる](./20261007-default-output-under-article-dir.md) | accepted |
-| 2026-10-07 | [claude のモデルと推論強度を CLI 引数で渡す（JPaper は既定値を持たない）](./20261007-pass-claude-model-and-effort-via-cli-args.md) | accepted |
+| 2026-10-07 | [claude のモデルと推論強度を CLI 引数で渡す（JPaper は既定値を持たない）](./20261007-pass-claude-model-and-effort-via-cli-args.md) | superseded |
 | 2026-10-07 | [成果物 PDF の名前を「ID＋短い英語名」にし、短い英語名はタイトルの翻訳と同時に決めさせる](./20261007-name-deliverable-pdfs-by-id-and-slug.md) | accepted |
 | 2026-10-07 | [パッケージ管理を npm から pnpm に移す](./20261007-adopt-pnpm-for-package-management.md) | accepted |
 | 2026-10-07 | [節の予算を 0.30×CW に加えて 8,000 トークンで頭打ちにする](./20261007-cap-segment-budget-by-output-time.md) | accepted |
 | 2026-10-07 | [用語集の Web アプリ: 訳語の編集はコードの置換で反映し、checkpoint を署名し直して LLM なしで組み直す](./20261007-glossary-web-app-replace-and-retypeset-without-llm.md) | accepted |
-| 2026-10-08 | [codex をプロバイダとして入れ、利用者の設定を読まずに起動する](./20261008-add-codex-provider-isolated-from-user-config.md) | accepted |
+| 2026-10-08 | [codex をプロバイダとして入れ、利用者の設定を読まずに起動する](./20261008-add-codex-provider-isolated-from-user-config.md) | superseded |
 | 2026-10-08 | [Web アプリで arXiv を検索し、翻訳は CLI の子プロセスをメモリ上のキューで回す](./20261008-web-app-arxiv-search-and-translate-job-queue.md) | accepted |
 | 2026-10-08 | [本文中の \author は訳さず印で伏せ、伏せた区間の用語は節の用語に数えない](./20261008-keep-author-block-untranslated.md) | accepted |
 | 2026-10-11 | [前付け（タイトル・組む位置・原文のまま残す命令）を論文テンプレートの型の表で決める](./20261011-drive-frontmatter-by-template-profile-table.md) | accepted |
 | 2026-10-12 | [落ちた節の最後の指摘を出力先の .run に既定で残す](./20261012-keep-last-issues-of-failed-segments.md) | accepted |
+| 2026-10-13 | [claude・codex の既定を最新の中位モデル（Sonnet・Sol）と effort medium にする](./20261013-default-to-latest-mid-tier-models-at-medium-effort.md) | accepted |

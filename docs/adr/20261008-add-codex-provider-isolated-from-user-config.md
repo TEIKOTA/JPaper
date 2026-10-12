@@ -1,7 +1,7 @@
 # 2026/10/08 codex をプロバイダとして入れ、利用者の設定を読まずに起動する
 
 # Status
-- accepted
+- superseded（「JPaper は既定値を持たない」点のみ。[既定の model・effort ADR](./20261013-default-to-latest-mid-tier-models-at-medium-effort.md) で置き換え。利用者の設定を読まずに起動することは存続）
 
 # Situation
 - [LLM プロバイダ抽象 ADR](./20260709-llm-provider-abstraction-local-ollama-and-cloud-cli.md) は cloud を公式 CLI の subprocess（`claude -p` / `codex exec`）で叩くと決めていたが、main には claude と openrouter しか無かった。codex の実装は main checkout に未コミットの変更として残り、10/6〜10/7 にはそのコードで論文を訳していた（#340）。

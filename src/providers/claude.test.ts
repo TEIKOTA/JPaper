@@ -173,6 +173,16 @@ describe("makeClaudeClient", () => {
     });
   });
 
+  it("別名で呼んだときは modelUsage の鍵（実際に使われたモデル）をトレースの model にする", async () => {
+    const events: LlmCallEvent[] = [];
+    const c = makeClaudeClient({ model: "sonnet" }, {
+      run: async () => JSON.stringify({ result: "訳文", modelUsage: { "claude-sonnet-5-5": { costUSD: 0.01 } } }),
+      trace: (e) => events.push(e),
+    });
+    await c.complete({ system: "s", user: "u" });
+    expect(events[0]!.model).toBe("claude-sonnet-5-5");
+  });
+
   it("失敗パス（result 欠如）ではトレースを emit しない", async () => {
     const events: LlmCallEvent[] = [];
     const c = makeClaudeClient({}, {

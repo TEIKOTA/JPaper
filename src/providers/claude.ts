@@ -15,6 +15,12 @@ export interface ClaudeDeps {
   now?: () => number; // latency 計測（テスト用に注入可能）。
 }
 
+// 別名（sonnet 等）で呼んだときに実際に使われたモデル。modelUsage の最初の鍵。
+function usedModel(v: unknown): string | undefined {
+  if (typeof v !== "object" || v === null) return undefined;
+  return Object.keys(v)[0];
+}
+
 // claude CLI の JSON 応答から usage/コストを取り出す（欠損に頑健＝フィールドは全て optional）。
 function toEvent(raw: string, latencyMs: number, meta?: LlmCallMeta): LlmCallEvent {
   let j: Record<string, unknown> = {};
@@ -32,7 +38,7 @@ function toEvent(raw: string, latencyMs: number, meta?: LlmCallMeta): LlmCallEve
     phase: meta?.phase,
     segmentId: meta?.segmentId,
     pass: meta?.pass,
-    model: typeof j.model === "string" ? j.model : undefined,
+    model: typeof j.model === "string" ? j.model : usedModel(j.modelUsage),
     latencyMs,
     numTurns: num(j.num_turns),
     inputTokens: num(usage.input_tokens),

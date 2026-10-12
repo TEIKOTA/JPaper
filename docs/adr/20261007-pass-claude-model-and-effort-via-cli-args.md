@@ -1,7 +1,7 @@
 # 2026/10/07 claude のモデルと推論強度を CLI 引数で渡す（JPaper は既定値を持たない）
 
 # Status
-- accepted
+- superseded（「JPaper は既定値を持たない」点のみ。[既定の model・effort ADR](./20261013-default-to-latest-mid-tier-models-at-medium-effort.md) で置き換え。CLI 引数で渡すことは存続）
 
 # Situation
 - 個人利用で、cloud の翻訳は claude プロバイダ（公式 claude CLI の subprocess）で回している。
