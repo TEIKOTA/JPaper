@@ -31,6 +31,18 @@ describe("latestSolModel", () => {
     expect(latestSolModel(cache([{ slug: "gpt-6.9-sol" }, { slug: "gpt-6.10-sol" }]))).toBe("gpt-6.10-sol");
   });
 
+  it("visibility が list でないモデル（hide・未知の値・欠落）は選ばない", () => {
+    const raw = JSON.stringify({
+      models: [
+        { slug: "gpt-9-sol", visibility: "internal" },
+        { slug: "gpt-8-sol" },
+        { slug: "gpt-7-sol", visibility: "hide" },
+        { slug: "gpt-6-sol", visibility: "list" },
+      ],
+    });
+    expect(latestSolModel(raw)).toBe("gpt-6-sol");
+  });
+
   it("隠されたモデル・Sol 以外・形の違う slug は選ばない", () => {
     expect(latestSolModel(cache([{ slug: "gpt-7-sol", visibility: "hide" }, { slug: "gpt-6-sol" }]))).toBe("gpt-6-sol");
     expect(latestSolModel(cache([{ slug: "gpt-6-astra" }, { slug: "gpt-6-solar" }, { slug: "x-gpt-6-sol" }]))).toBeUndefined();
@@ -54,12 +66,32 @@ describe("readCodexModelCache", () => {
     const home = mkdtempSync(path.join(os.tmpdir(), "jpaper-home-"));
     dirs.push(codexHome, home);
     writeFileSync(path.join(codexHome, "models_cache.json"), NOW);
-    expect(readCodexModelCache({ CODEX_HOME: codexHome }, home)).toBe(NOW);
-    expect(readCodexModelCache({}, home)).toBeUndefined();
+    expect(readCodexModelCache({ CODEX_HOME: codexHome }, () => home)).toBe(NOW);
+    expect(readCodexModelCache({}, () => home)).toBeUndefined();
     mkdirSync(path.join(home, ".codex"));
     writeFileSync(path.join(home, ".codex", "models_cache.json"), "x");
-    expect(readCodexModelCache({}, home)).toBe("x");
-    expect(readCodexModelCache({ CODEX_HOME: "  " }, home)).toBe("x");
+    expect(readCodexModelCache({}, () => home)).toBe("x");
+    expect(readCodexModelCache({ CODEX_HOME: "" }, () => home)).toBe("x");
+  });
+
+  it("CODEX_HOME が相対パス・普通のファイルでない・8MB を超える・ホームが分からないなら読まない", () => {
+    const home = mkdtempSync(path.join(os.tmpdir(), "jpaper-home-"));
+    dirs.push(home);
+    mkdirSync(path.join(home, "rel"));
+    writeFileSync(path.join(home, "rel", "models_cache.json"), NOW);
+    // 実在する相対パスでも読まない（codex は別の作業ディレクトリで起動するので指す場所がずれる）。
+    expect(readCodexModelCache({ CODEX_HOME: path.relative(process.cwd(), path.join(home, "rel")) }, () => home)).toBeUndefined();
+    expect(readCodexModelCache({ CODEX_HOME: "  " }, () => home)).toBeUndefined();
+    mkdirSync(path.join(home, "dir", "models_cache.json"), { recursive: true });
+    expect(readCodexModelCache({ CODEX_HOME: path.join(home, "dir") }, () => home)).toBeUndefined();
+    mkdirSync(path.join(home, "big"));
+    writeFileSync(path.join(home, "big", "models_cache.json"), Buffer.alloc(8 * 1024 * 1024 + 1, 0x20));
+    expect(readCodexModelCache({ CODEX_HOME: path.join(home, "big") }, () => home)).toBeUndefined();
+    expect(
+      readCodexModelCache({}, () => {
+        throw new Error("no home");
+      }),
+    ).toBeUndefined();
   });
 });
 

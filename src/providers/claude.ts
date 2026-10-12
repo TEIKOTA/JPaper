@@ -15,10 +15,20 @@ export interface ClaudeDeps {
   now?: () => number; // latency 計測（テスト用に注入可能）。
 }
 
-// 別名（sonnet 等）で呼んだときに実際に使われたモデル。modelUsage の最初の鍵。
-function usedModel(v: unknown): string | undefined {
-  if (typeof v !== "object" || v === null) return undefined;
-  return Object.keys(v)[0];
+// 別名（sonnet 等）で呼んだときに実際に使われたモデル。modelUsage のうち出力トークン（無ければ費用）が最大の鍵。
+export function usedModel(v: unknown): string | undefined {
+  if (typeof v !== "object" || v === null || Array.isArray(v)) return undefined;
+  const weight = (u: unknown): number => {
+    const o = (typeof u === "object" && u !== null ? u : {}) as { outputTokens?: unknown; costUSD?: unknown };
+    if (typeof o.outputTokens === "number") return o.outputTokens;
+    return typeof o.costUSD === "number" ? o.costUSD : 0;
+  };
+  let best: { key: string; w: number } | undefined;
+  for (const [key, u] of Object.entries(v)) {
+    const w = weight(u);
+    if (best === undefined || w > best.w) best = { key, w };
+  }
+  return best?.key;
 }
 
 // claude CLI の JSON 応答から usage/コストを取り出す（欠損に頑健＝フィールドは全て optional）。

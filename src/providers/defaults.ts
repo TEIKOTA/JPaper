@@ -1,5 +1,5 @@
 // 契約付録 §5（claude・codex の既定の model・effort）。ADR 20261013。
-import { readFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { ClaudeConfig, CodexConfig } from "../config.js";
@@ -21,7 +21,7 @@ function compareVersions(a: string, b: string): number {
   return 0;
 }
 
-// codex のモデル一覧（models_cache.json の中身）から、隠されていない Sol 系のうち版が最も新しいもの。
+// codex のモデル一覧（models_cache.json の中身）から、一覧に出す（visibility が list の）Sol 系のうち版が最も新しいもの。
 export function latestSolModel(cacheJson: string): string | undefined {
   let models: unknown;
   try {
@@ -34,7 +34,7 @@ export function latestSolModel(cacheJson: string): string | undefined {
   for (const m of models as unknown[]) {
     if (typeof m !== "object" || m === null) continue;
     const { slug, visibility } = m as { slug?: unknown; visibility?: unknown };
-    if (typeof slug !== "string" || visibility === "hide") continue;
+    if (typeof slug !== "string" || visibility !== "list") continue;
     const hit = SOL.exec(slug);
     if (hit === null) continue;
     if (best === undefined || compareVersions(hit[1]!, best.version) > 0) best = { slug, version: hit[1]! };
@@ -42,11 +42,21 @@ export function latestSolModel(cacheJson: string): string | undefined {
   return best?.slug;
 }
 
-// codex が保存しているモデル一覧。読めなければ undefined。
-export function readCodexModelCache(env: NodeJS.ProcessEnv = process.env, home: string = os.homedir()): string | undefined {
-  const dir = env.CODEX_HOME?.trim() || path.join(home, ".codex");
+const MAX_MODEL_CACHE_BYTES = 8 * 1024 * 1024;
+
+// codex が保存しているモデル一覧。CODEX_HOME が相対パス・普通のファイルでない・上限を超える・読めないなら undefined。
+export function readCodexModelCache(
+  env: NodeJS.ProcessEnv = process.env,
+  home: () => string = os.homedir,
+): string | undefined {
   try {
-    return readFileSync(path.join(dir, "models_cache.json"), "utf8");
+    const given = env.CODEX_HOME;
+    if (given !== undefined && given !== "" && !path.isAbsolute(given)) return undefined;
+    const dir = given !== undefined && given !== "" ? given : path.join(home(), ".codex");
+    const file = path.join(dir, "models_cache.json");
+    const st = statSync(file);
+    if (!st.isFile() || st.size > MAX_MODEL_CACHE_BYTES) return undefined;
+    return readFileSync(file, "utf8");
   } catch {
     return undefined;
   }
