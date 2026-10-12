@@ -55,8 +55,8 @@ function parseContextWindow(raw: string): number {
 }
 
 // 契約付録 §5。provider が受け取れない指定は、黙って捨てると「指定したのに効かない」に
-// なるので入口で落とす。
-function modelConfigFrom(
+// なるので入口で落とす。Web アプリの翻訳ジョブも同じ検査を使う（契約付録 §9）。
+export function modelConfigFrom(
   provider: Provider,
   model: string | undefined,
   contextWindow: string | undefined,

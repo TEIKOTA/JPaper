@@ -1,11 +1,16 @@
 // 契約付録 §9（Web アプリ）。データの場所は CLI と同じ既定で、環境変数で変えられる。
 import path from "node:path";
-import { dbPath } from "../../../src/config.js";
+import { fileURLToPath } from "node:url";
+import { dbPath, resolveJpaperHome } from "../../../src/config.js";
 import type { LatexRunner } from "../../../src/tools/build-gate.js";
+import { SETTINGS_FILE } from "./settings.js";
 
 export const DEFAULT_API_PORT = 5174;
 export const DEFAULT_WEB_PORT = 5173;
 export const HOST = "127.0.0.1";
+
+// 翻訳ジョブの CLI を起動する場所（src/cli.ts のある repo のルート）。
+export const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 
 export interface WebConfig {
   // 論文ごとの出力（<ID>-ja/）を並べたフォルダ。
@@ -17,6 +22,10 @@ export interface WebConfig {
   latexRunner?: LatexRunner;
   // 要求を受け付ける Origin（scheme・host・port の完全一致）。既定は既定ポートの画面と API。
   origins?: string[];
+  // 翻訳フォームの初期値と並行数（JPAPER_HOME/web-settings.json）。
+  settingsPath: string;
+  // 翻訳ジョブの CLI を起動する repo のルート。
+  repoRoot: string;
 }
 
 // 画面（Vite）と API のポートについて、127.0.0.1・localhost の Origin を並べる。
@@ -36,6 +45,8 @@ export function configFromEnv(env: NodeJS.ProcessEnv = process.env, cwd: string 
     articleDir: path.resolve(cwd, article === undefined || article === "" ? "article" : article),
     dbPath: db === undefined || db === "" ? dbPath() : path.resolve(cwd, db),
     origins: localOrigins(portFrom(env.JPAPER_WEB_PORT, DEFAULT_WEB_PORT), apiPortFromEnv(env)),
+    settingsPath: path.resolve(cwd, resolveJpaperHome(env), SETTINGS_FILE),
+    repoRoot: REPO_ROOT,
   };
 }
 

@@ -45,7 +45,7 @@ pnpm dev <arXiv ID|ファイル|ディレクトリ> --provider {ollama|claude|op
 
 和訳 PDF（例 `article/2507.17845-ja/2507.17845_pathorob-ja.pdf`）と対訳 PDF（例 `article/2507.17845-ja/2507.17845_pathorob-bilingual.pdf`）のパスを標準出力に、`RunSummary` を JSON で出す。オプションの正本は [契約付録 §5](./docs/design/contract-appendix.md)。
 
-### 用語集の Web アプリ
+### Web アプリ（検索・翻訳・用語集）
 
 ```sh
 pnpm dev:web
@@ -53,12 +53,14 @@ pnpm dev:web
 
 ブラウザで `http://127.0.0.1:5173` を開くと、`article/` の論文と用語集、全体の用語 DB を見られる。用語の行から訳語を直すと、訳文での出現箇所（原文の対応箇所つき）を確かめてから置換し、和訳 PDF と対訳 PDF を組み直す（LLM は使わない。直前の 1 回は元に戻せる）。データの場所は CLI と同じ既定（CWD の `article/` と `~/.jpaper/glossary.db`）で、`JPAPER_ARTICLE_DIR`・`JPAPER_GLOSSARY_DB` で変えられる。`127.0.0.1` だけで待ち受け、認証は持たない。仕様の正本は [契約付録 §9](./docs/design/contract-appendix.md)。
 
+「探す」では手元の論文と arXiv の論文を 1 つの検索欄で探し、未訳の論文は「翻訳する」から翻訳の画面へ送れる（arXiv ID を直接入れてもよい）。「翻訳」では provider・model・effort を毎回指定してジョブのキューに加え、段階・節 n/m・費用・経過時間・ログの末尾を見ながら、待機中・実行中のジョブを取り消せる。翻訳は CLI を子プロセスで動かすので、訳し終えた論文はそのまま一覧と用語集の編集の対象になる。「設定」ではフォームの初期値（JPaper は既定値を持たない）と同時に走らせる本数（既定 1 本ずつ、4 本まで）を決め、`~/.jpaper/web-settings.json`（`JPAPER_HOME`）に保存する。ジョブは API のメモリだけに持つので、API を止めると実行中の翻訳も止まる（同じ ID で始め直せば checkpoint から再開する）。翻訳が使う全体の用語 DB は CLI と同じ `JPAPER_HOME/glossary.db`（`JPAPER_GLOSSARY_DB` は翻訳には効かない）。
+
 ## コマンド
 
 | コマンド | 用途 |
 |---|---|
 | `pnpm dev` | エントリ（`src/index.ts`）を tsx で実行 |
-| `pnpm dev:web` | 用語集の Web アプリ（API と画面）を立ち上げる |
+| `pnpm dev:web` | Web アプリ（検索・翻訳・用語集の API と画面）を立ち上げる |
 | `pnpm build` | `tsc` で `dist/` へビルドし、Web アプリの画面を `apps/web/dist/` へビルド |
 | `pnpm typecheck` | 型チェックのみ（emit しない。Web アプリも含む） |
 | `pnpm test` | vitest で単体テスト（決定的な検査＝LLM 非含有） |
