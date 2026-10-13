@@ -12,6 +12,19 @@ const resp = JSON.stringify({
 });
 
 describe("buildPaperGlossary / writeBackResolved", () => {
+  it("本文の抜粋（abstract・見出し・冒頭）を glossary-builder に渡す（issue #258）", async () => {
+    const c = new FakeLlmClient(resp);
+    const db = new GlossaryDb();
+    await buildPaperGlossary(
+      c,
+      db,
+      "p",
+      "\\begin{document}\\begin{abstract}We study attention.\\end{abstract}\\section{Method}We use attention. Done.\\end{document}",
+    );
+    expect(c.calls[0]!.user).toContain("> [abstract] We study attention.\n> § Method: We use attention. Done.");
+    db.close();
+  });
+
   it("収集→build し、候補を prompt に載せる", async () => {
     const db = new GlossaryDb();
     const client = new FakeLlmClient(resp);
