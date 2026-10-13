@@ -43,12 +43,6 @@ interface Heading {
   title: string;
 }
 
-function escaped(tex: string, at: number): boolean {
-  let n = 0;
-  for (let i = at - 1; i >= 0 && tex[i] === "\\"; i--) n++;
-  return n % 2 === 1;
-}
-
 // 位置が行コメントの中か（同じ行の手前にエスケープされていない % がある）を返す関数。走査は 1 回。
 function commentTest(tex: string): (at: number) => boolean {
   const starts: number[] = [0];
@@ -76,16 +70,20 @@ function commentTest(tex: string): (at: number) => boolean {
   };
 }
 
-// 命令の区間の最後の } に対応する {（必須引数の開始）。
+// 命令の区間の最後の } に対応する {（必須引数の開始）。前から 1 回だけ走査し、\ の次の 1 文字は数えない。
 function mandatoryOpen(tex: string, span: Span): number {
-  let depth = 0;
-  for (let i = span[1] - 1; i >= span[0]; i--) {
+  const stack: number[] = [];
+  let open = span[0];
+  for (let i = span[0]; i < span[1]; i++) {
     const c = tex[i];
-    if (escaped(tex, i)) continue;
-    if (c === "}") depth++;
-    else if (c === "{" && --depth === 0) return i;
+    if (c === "\\") i++;
+    else if (c === "{") stack.push(i);
+    else if (c === "}") {
+      const o = stack.pop();
+      if (o !== undefined && i === span[1] - 1) open = o;
+    }
   }
-  return span[0];
+  return open;
 }
 
 function headingsOf(body: string): Heading[] {

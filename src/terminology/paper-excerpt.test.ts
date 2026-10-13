@@ -119,6 +119,8 @@ describe("paperExcerpt（契約付録 §4・issue #258）", () => {
     ["閉じない abstract", "\\begin{abstract}".repeat(60_000)],
     ["見出しだけの羅列", "\\section{a}".repeat(90_000)],
     ["1 行の verbatim の羅列", "x %c " + "\\verb|a| ".repeat(100_000)],
+    ["見出しの中の \\ の長い連なり", "\\section{" + "\\".repeat(1_000_000) + "}"],
+    ["\\abstract の中の \\ の長い連なり", "\\abstract{" + "\\".repeat(1_000_000) + "}"],
   ])("線形時間で終わる（%s、1MiB 前後）", (_name, body) => {
     const t = performance.now();
     paperExcerpt(`\\begin{document}${body}\\end{document}`);
