@@ -357,7 +357,7 @@ async function loadOrBuildContext(
 }
 
 // 検証の版。採否の規則・対象語の選び方・指示を変えたら上げる（checkpoint の無効化キーに入る）。
-const VERIFY_VERSION = 2;
+const VERIFY_VERSION = 3;
 export const VERIFY_STEP = "term-verify";
 // 直近の検証の結果（失敗した run を含む）。キャッシュには使わない。
 export const VERIFY_RESULT_STEP = "term-checks";
