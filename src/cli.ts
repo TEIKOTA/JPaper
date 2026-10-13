@@ -1,5 +1,6 @@
 // 契約付録 §5・§6・§8。jpaper CLI（core API translatePaper の薄い皮）。
 import { detectInput } from "./ingest/detect-input.js";
+import { describeDotEnv, loadDotEnv } from "./env-file.js";
 import { translatePaper, type RunProgress } from "./workflows/translate-paper.js";
 import { Provider, type Result } from "./types/contract.js";
 import { JpaperError } from "./types/errors.js";
@@ -244,5 +245,12 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
+  // 入口だけで読む（runCli・ライブラリ経路では読まない）。契約付録 §8
+  const env = loadDotEnv();
+  if (env.error !== undefined) {
+    process.stderr.write(`エラー: .env を読めません: ${env.error}\n`);
+    process.exit(2);
+  }
+  for (const line of describeDotEnv(env)) process.stderr.write(`${line}\n`);
   runCli(process.argv).then((code) => process.exit(code));
 }

@@ -3,8 +3,16 @@ import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { serve } from "@hono/node-server";
 import { createApp, createServices } from "./app.js";
-import { apiPortFromEnv, configFromEnv, HOST } from "./config.js";
+import { apiPortFromEnv, configFromEnv, HOST, REPO_ROOT } from "./config.js";
+import { describeDotEnv, loadDotEnv } from "../../../src/env-file.js";
 
+// ジョブの CLI と同じ repo 直下の .env を、設定を読む前に読む。契約付録 §8・§9
+const dotenv = loadDotEnv(path.join(REPO_ROOT, ".env"));
+if (dotenv.error !== undefined) {
+  console.error(`エラー: .env を読めません: ${dotenv.error}`);
+  process.exit(2);
+}
+for (const line of describeDotEnv(dotenv)) console.log(line);
 const config = configFromEnv();
 mkdirSync(path.dirname(config.dbPath), { recursive: true });
 const port = apiPortFromEnv();
