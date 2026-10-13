@@ -99,3 +99,4 @@
 | 2026-10-12 | [落ちた節の最後の指摘を出力先の .run に既定で残す](./20261012-keep-last-issues-of-failed-segments.md) | accepted |
 | 2026-10-13 | [claude・codex の既定を最新の中位モデル（Sonnet・Sol）と effort medium にする](./20261013-default-to-latest-mid-tier-models-at-medium-effort.md) | accepted |
 | 2026-10-13 | [形式検査が変わったら、以前に通した節を LLM なしで検査し直す](./20261013-recheck-passed-segments-when-formal-check-changes.md) | accepted |
+| 2026-10-13 | [取り込み（ingest）は worker 化せず、有界時間で終わることを契約として守る](./20261013-keep-ingest-synchronous-with-bounded-time.md) | accepted |
