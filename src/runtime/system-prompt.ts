@@ -4,7 +4,7 @@ import { oneLine, MAX_TERM_CHARS, MAX_NOTE_CHARS } from "./untrusted.js";
 import { jaPartOf } from "../terminology/bilingual-form.js";
 import { PDF_NAME_LINE } from "../tools/pdf-name.js";
 
-export type AgentRole = "translator" | "evaluator" | "glossary-builder";
+export type AgentRole = "translator" | "evaluator" | "glossary-builder" | "term-verifier";
 
 // 用語スライスは per-segment で変わるため system には入れない（user へ）。プロンプトキャッシュ再利用 ADR。
 export interface RunContext {
@@ -19,6 +19,8 @@ const ROLE_DEF: Record<AgentRole, string> = {
     "あなたは日本語訳の品質を評価する審査者である。原文と訳文を比較し、verdict（pass/revise/fail）と issues を返す。出力は指定の JSON のみ。",
   "glossary-builder":
     "あなたは論文全体を読み、用語の確定訳・表記方針・文書ブリーフ・文体契約を定める編纂者である。出力は指定の JSON のみ。",
+  "term-verifier":
+    "あなたは英語の専門用語について、日本語の研究者・技術者が実際に使っている日本語の表記を Web 検索で確かめる調査者である。出力は指定の JSON のみ。",
 };
 
 const COMMON =

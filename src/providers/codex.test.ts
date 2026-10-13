@@ -48,6 +48,15 @@ describe("makeCodexClient（契約付録 §5）", () => {
     expect(args).toEqual([...ISOLATED, "--model", "gpt-6.1-sol", "-c", 'model_reasoning_effort="low"']);
   });
 
+  it("webSearch の呼び出しだけ Web 検索を live にする（シェル等は止めたまま。契約付録 §4）", async () => {
+    const seen: string[][] = [];
+    const c = makeCodexClient({}, { run: async (a) => (seen.push(a), "r") });
+    await c.complete({ system: "s", user: "u", webSearch: true });
+    await c.complete({ system: "s", user: "u" });
+    expect(seen[0]).toEqual([...ISOLATED.slice(0, -1), 'web_search="live"']);
+    expect(seen[1]).toEqual(ISOLATED);
+  });
+
   it("ENOENT は非 transient の code 2", async () => {
     const c = makeCodexClient({}, {
       run: async () => {

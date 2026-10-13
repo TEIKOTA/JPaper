@@ -34,7 +34,9 @@ function setup(opts: { fetchImpl?: typeof fetch } = {}) {
 
   const kills: string[] = [];
   const exits = new Map<string, (e: ProcessExit) => void>();
+  const specs: string[][] = [];
   const runner: JobRunner = (spec) => {
+    specs.push(spec.args);
     const id = spec.args[2]!;
     const done = new Promise<ProcessExit>((r) => exits.set(id, r));
     return { done, kill: () => kills.push(id) };
@@ -67,7 +69,7 @@ function setup(opts: { fetchImpl?: typeof fetch } = {}) {
     return { status: res.status, body: (await res.json()) as Record<string, any> };
   };
   const post = (url: string, body: unknown) => req(url, { method: "POST", headers: HEADERS, body: JSON.stringify(body) });
-  return { app, req, post, settingsPath, kills, exits, urls };
+  return { app, req, post, settingsPath, kills, exits, urls, specs };
 }
 
 describe("設定 API（契約付録 §9）", () => {
@@ -76,7 +78,7 @@ describe("設定 API（契約付録 §9）", () => {
     const { status, body } = await req("/api/settings");
     expect(status).toBe(200);
     expect(body).toEqual({
-      settings: { providers: {}, concurrency: 1, history: {} },
+      settings: { providers: {}, concurrency: 1, verifyTerms: true, history: {} },
       providers: [
         { name: "ollama", effort: false },
         { name: "claude", effort: true },
@@ -100,6 +102,7 @@ describe("設定 API（契約付録 §9）", () => {
       provider: "claude",
       providers: { claude: { model: "sonnet", effort: "medium" } },
       concurrency: 2,
+      verifyTerms: true,
       history: {},
     };
     expect(saved.body.settings).toEqual(want);
@@ -124,13 +127,13 @@ describe("設定 API（契約付録 §9）", () => {
     const root = tmp();
     const file = path.join(root, "web-settings.json");
     writeFileSync(file, "{");
-    expect(readSettings(file)).toEqual({ providers: {}, concurrency: 1, history: {} });
+    expect(readSettings(file)).toEqual({ providers: {}, concurrency: 1, verifyTerms: true, history: {} });
     writeFileSync(
       file,
       JSON.stringify({ provider: "nope", concurrency: 9, providers: { ollama: { model: "m", effort: "x" }, claude: { model: "opus" } } }),
     );
-    expect(readSettings(file)).toEqual({ providers: { claude: { model: "opus" } }, concurrency: 1, history: {} });
-    expect(readSettings(path.join(root, "none.json"))).toEqual({ providers: {}, concurrency: 1, history: {} });
+    expect(readSettings(file)).toEqual({ providers: { claude: { model: "opus" } }, concurrency: 1, verifyTerms: true, history: {} });
+    expect(readSettings(path.join(root, "none.json"))).toEqual({ providers: {}, concurrency: 1, verifyTerms: true, history: {} });
   });
 
   it("設定ファイルの場所は JPAPER_HOME/web-settings.json", () => {
@@ -304,7 +307,7 @@ describe("model・effort の候補（契約付録 §9・issue #339）", () => {
     await post("/api/jobs", { arxivId: "2601.00001", provider: "claude", model: "sonnet" });
     const cleared = await post("/api/settings/history/clear", {});
     expect(cleared.status).toBe(200);
-    expect(cleared.body.settings).toEqual({ provider: "claude", providers: {}, concurrency: 2, history: {} });
+    expect(cleared.body.settings).toEqual({ provider: "claude", providers: {}, concurrency: 2, verifyTerms: true, history: {} });
     expect((await req("/api/settings")).body.settings.history).toEqual({});
   });
 
@@ -392,5 +395,24 @@ describe("model・effort の候補（契約付録 §9・issue #339）", () => {
       body: "{}",
     });
     expect(evil.status).toBe(403);
+  });
+});
+
+describe("用語を Web 検索で確かめる設定（契約付録 §4・§9・issue #309）", () => {
+  it("既定は入。切るとジョブの CLI に --no-verify-terms を渡す。真偽値以外は 400", async () => {
+    const { req, post, specs } = setup();
+    expect((await req("/api/settings")).body.settings.verifyTerms).toBe(true);
+    await post("/api/jobs", { arxivId: "2601.00001", provider: "claude" });
+    expect(specs[0]).not.toContain("--no-verify-terms");
+
+    expect((await post("/api/settings", { concurrency: 2, verifyTerms: "no" })).status).toBe(400);
+    const saved = await post("/api/settings", { concurrency: 2, verifyTerms: false });
+    expect(saved.body.settings.verifyTerms).toBe(false);
+    await post("/api/jobs", { arxivId: "2601.00002", provider: "claude" });
+    expect(specs[1]).toContain("--no-verify-terms");
+    expect((await req("/api/settings")).body.settings.verifyTerms).toBe(false);
+    // verifyTerms を送らない保存は、切った設定を戻さない。
+    await post("/api/settings", { concurrency: 1 });
+    expect((await req("/api/settings")).body.settings.verifyTerms).toBe(false);
   });
 });

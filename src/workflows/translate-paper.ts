@@ -23,6 +23,8 @@ import type {
 } from "../types/contract.js";
 import {
   GlossaryBuilderOut,
+  TermCheck,
+  VerifiedGlossary,
   RunSummary,
   JpaperInput as JpaperInputSchema,
   type BilingualSummary,
@@ -55,6 +57,10 @@ import {
   type OpenRouterConfig,
 } from "../config.js";
 import { makeLlmClient } from "../providers/index.js";
+import { z } from "zod";
+import { paperExcerpt } from "../terminology/paper-excerpt.js";
+import { applyVerification, carriedUnverified, isTargetCheck, verifyTargets } from "../terminology/verify.js";
+import { verifyTerms } from "../agents/term-verifier.js";
 import { withCliDefaults } from "../providers/defaults.js";
 import { makeJsonlTrace, withTrace } from "../runtime/trace.js";
 import { ingest, derivePaperId, type IngestDeps } from "../ingest/index.js";
@@ -87,7 +93,7 @@ import {
 } from "./step-keys.js";
 import { buildNotes } from "./notes.js";
 import { FORMAL_GATE, untranslatedHeadings } from "./quality-gate.js";
-import { checkpoint, hashContext, pruneSteps, writeStep } from "../durable/checkpoint.js";
+import { checkpoint, hashContext, pruneSteps, readStep, writeStep } from "../durable/checkpoint.js";
 import { acquireRunLock, type RunLock } from "../durable/run-lock.js";
 import {
   throwIfAborted,
@@ -141,6 +147,8 @@ export interface TranslateOptions {
   timeoutMs?: number;
   // 対訳 PDF（左=原文／右=和訳）を組むか。既定 true。契約付録 §8。
   bilingual?: boolean;
+  // 用語集の訳を Web 検索の用例で確かめるか（claude・codex だけ）。既定 true。契約付録 §4
+  verifyTerms?: boolean;
 }
 
 // subprocess プロバイダは無制限並列に耐えないため翻訳の同時実行数を制限する。
@@ -199,6 +207,8 @@ export interface TranslateDeps {
   latexRunner?: LatexRunner;
   // false なら用語集の結果を全体 DB へ書き戻さない（用語集の編集の組み直し。契約付録 §9）。既定 true。
   writeBackGlossary?: boolean;
+  // 注入した client が LlmRequest.webSearch を扱えるか。既定 false（内部で作る claude・codex の client は扱える）。契約付録 §4
+  webSearch?: boolean;
 }
 
 export interface RunProgress {
@@ -220,6 +230,10 @@ interface PaperContext {
   proposedAdded: number;
   // 正常完了時に outDir へ書き出す md（パス→中身）。中断時は書かれない。
   pending: Record<string, string>;
+  // 用語の検証の結果。検証しなかったら undefined。契約付録 §4
+  checks?: TermCheck[];
+  // 未確認の訳注を付ける語（この run の検証の結果か、glossary.md を使う run なら前の run の結果）。
+  unverified: string[];
 }
 
 // 出力先がどの論文のものかを示す印。同じ outDir に別の論文が来たら既存 md を採用しない。
@@ -269,6 +283,8 @@ async function loadOrBuildContext(
   cacheKey?: Buffer,
   warn?: (m: string) => void,
   writeBack = true,
+  verify = false,
+  localInput = false,
 ): Promise<PaperContext> {
   const built = await checkpoint(
     runDir,
@@ -277,7 +293,6 @@ async function loadOrBuildContext(
     () => buildPaperGlossary(client, db, paperId, cleanLatex),
     { invalidation: hashContext(cleanLatex), key: cacheKey },
   );
-  const proposedAdded = writeBack ? writeBackResolved(db, built, paperId) : 0;
   const glossaryMd = path.join(outDir, "glossary.md");
   const briefMd = path.join(outDir, "brief.md");
   const styleMd = path.join(outDir, "style.md");
@@ -304,26 +319,138 @@ async function loadOrBuildContext(
 
   const pending: PaperContext["pending"] = {};
   let resolved: ResolvedRow[] = built.resolved;
+  let checks: TermCheck[] | undefined;
+  let unverified: string[] = [];
+  let proposedAdded = 0;
+  let context: GlossaryBuilderOut = built;
   if (adopt(glossaryMd)) {
-    // 既存 md が正本（空にする編集も尊重する）。
+    // 既存 md が正本（空にする編集も尊重する）。検証もしない。契約付録 §4
     resolved = parseGlossaryMd(readFileSync(glossaryMd, "utf8"));
+    unverified = carriedUnverified(resolved, previousChecks(runDir, cacheKey)).map((c) => c.src);
+    if (writeBack) proposedAdded = writeBackResolved(db, built, paperId);
   } else {
-    pending[glossaryMd] = renderGlossaryMd(built.resolved);
+    if (verify) {
+      const verified = await verifyGlossary(runDir, client, db, paperId, cleanLatex, built, cacheKey, warn, localInput);
+      context = { resolved: verified.resolved, brief: verified.brief, style: verified.style };
+      checks = verified.checks;
+      unverified = checks.filter((c) => c.status === "unverified").map((c) => c.src);
+      writeStep(runDir, VERIFY_RESULT_STEP, { checks }, { key: cacheKey });
+    } else {
+      writeStep(runDir, VERIFY_RESULT_STEP, { checks: [] }, { key: cacheKey });
+    }
+    resolved = context.resolved;
+    if (writeBack) proposedAdded = writeBackResolved(db, context, paperId);
+    pending[glossaryMd] = renderGlossaryMd(resolved, checks);
   }
 
-  let brief = built.brief;
+  let brief = context.brief;
   if (adopt(briefMd)) brief = parseBriefMd(readFileSync(briefMd, "utf8"));
-  else pending[briefMd] = renderBriefMd(built.brief);
+  else pending[briefMd] = renderBriefMd(context.brief);
 
-  let style = built.style;
+  let style = context.style;
   if (adopt(styleMd)) style = parseStyleMd(readFileSync(styleMd, "utf8"));
-  else pending[styleMd] = renderStyleMd(built.style);
+  else pending[styleMd] = renderStyleMd(context.style);
 
   // 用語集は全セグメントのプロンプトへ載るので、内部矛盾はそのまま訳文全体へ伝播する。
   // 落とさず警告に留める（語形の違いも揺れではあるが、断定はしない）。契約付録 §3。
   for (const d of findKatakanaDrift(resolved)) warn?.(describeDrift(d));
 
-  return { resolved, brief, style, proposedAdded, pending };
+  return { resolved, brief, style, proposedAdded, pending, unverified, ...(checks === undefined ? {} : { checks }) };
+}
+
+// 検証の版。採否の規則・対象語の選び方・指示を変えたら上げる（checkpoint の無効化キーに入る）。
+const VERIFY_VERSION = 5;
+export const VERIFY_STEP = "term-verify";
+// 直近の検証の結果（失敗した run を含む）。キャッシュには使わない。
+export const VERIFY_RESULT_STEP = "term-checks";
+const TermChecks = z.object({ checks: z.array(TermCheck) });
+
+// 差し替えで brief・style・訳注が上限を超えたら、差し替えずに未確認（few-sites）として返す。契約付録 §4
+function withinLimits<V extends { resolved: GlossaryBuilderOut["resolved"]; brief: unknown; style: unknown; checks: TermCheck[] }>(
+  built: GlossaryBuilderOut,
+  v: V,
+): V {
+  if (VerifiedGlossary.safeParse(v).success) return v;
+  const originalOf = new Map(built.resolved.map((r) => [r.src, r.form]));
+  return {
+    ...v,
+    ...built,
+    checks: v.checks
+      .filter(isTargetCheck)
+      .map((c) =>
+        c.status === "confirmed"
+          ? c
+          : {
+              src: c.src,
+              status: "unverified" as const,
+              form: originalOf.get(c.src) ?? c.form,
+              reason: c.status === "replaced" ? ("few-sites" as const) : c.reason,
+              sources: [],
+            },
+      ),
+  };
+}
+
+// 用語集のうち対象語を Web 検索の用例で確かめ、採れた用例の表記へ差し替える（brief・style・訳注も）。契約付録 §4
+// 検証の呼び出しが失敗したら、対象語を全て未確認として進める（失敗は checkpoint に残さない）。
+async function verifyGlossary(
+  runDir: string,
+  client: LlmClient,
+  db: GlossaryDb,
+  paperId: string,
+  cleanLatex: string,
+  built: GlossaryBuilderOut,
+  cacheKey: Buffer | undefined,
+  warn: ((m: string) => void) | undefined,
+  localInput: boolean,
+): Promise<VerifiedGlossary> {
+  const excerpt = paperExcerpt(cleanLatex);
+  const targets = verifyTargets(built.resolved, excerpt, (src) => db.confirmedFor(src).length > 0);
+  if (targets.length === 0) return { ...built, checks: [] };
+  let result: VerifiedGlossary;
+  try {
+    result = await checkpoint(
+      runDir,
+      VERIFY_STEP,
+      VerifiedGlossary,
+      async () => {
+        if (localInput) {
+          warn?.("arXiv 以外の入力の論文の用語と abstract の冒頭を Web 検索に出して用語を確かめます（止めるには --no-verify-terms）");
+        }
+        const v = withinLimits(built, applyVerification(built, targets, await verifyTerms(client, { paperId, context: excerpt, targets })));
+        return { resolved: v.resolved, brief: v.brief, style: v.style, checks: v.checks };
+      },
+      {
+        invalidation: hashContext(String(VERIFY_VERSION), JSON.stringify(built), JSON.stringify(targets)),
+        key: cacheKey,
+      },
+    );
+  } catch (e) {
+    if (e instanceof JpaperError && (e.kind === "canceled" || e.kind === "timeout")) throw e;
+    warn?.(`用語の検証に失敗したため、対象の ${String(targets.length)} 語を未確認として進めます: ${String((e as Error)?.message ?? e)}`);
+    return {
+      ...built,
+      checks: targets.map((t) => ({ src: t.src, status: "unverified" as const, form: t.form, reason: "failed" as const, sources: [] })),
+    };
+  }
+  for (const c of result.checks) {
+    if (c.status === "replaced" && c.via !== undefined) {
+      warn?.(`用語の訳を ${c.via} の差し替えに揃えました: ${c.src}「${c.original ?? ""}」→「${c.form}」`);
+    } else if (c.status === "replaced") {
+      warn?.(`用語の訳を用例に合わせました: ${c.src}「${c.original ?? ""}」→「${c.form}」（出典 ${c.sources.join(" ")}）`);
+    } else if (c.status === "unverified") {
+      const via = c.via === undefined ? "" : `（${c.via} の差し替えに揃えた。元の訳「${c.original ?? ""}」）`;
+      warn?.(`用語の訳を Web 検索の用例で確かめられませんでした（未確認）: ${c.src}「${c.form}」${via}`);
+    }
+  }
+  return result;
+}
+
+// 前の run の検証の結果（出力先の glossary.md を使う run で、未確認の訳注を引き継ぐ）。契約付録 §4
+function previousChecks(runDir: string, cacheKey: Buffer | undefined): TermCheck[] {
+  const stored = readStep(runDir, VERIFY_RESULT_STEP, cacheKey);
+  const parsed = stored === undefined ? undefined : TermChecks.safeParse(stored.value);
+  return parsed?.success === true ? parsed.data.checks : [];
 }
 
 // 出力先が別の論文のものだったら、この run の成果物を書く前に前の論文の正本を落とす。
@@ -838,6 +965,9 @@ function entryError(input: JpaperInput, opts: TranslateOptions): string | undefi
   if (opts.bilingual !== undefined && typeof opts.bilingual !== "boolean") {
     return `bilingual が不正です: ${outwardMessage(String(opts.bilingual))}`;
   }
+  if (opts.verifyTerms !== undefined && typeof opts.verifyTerms !== "boolean") {
+    return `verifyTerms が不正です: ${outwardMessage(String(opts.verifyTerms))}`;
+  }
   const r = opts.openrouter;
   if (r !== undefined) {
     if (typeof r.model !== "string" || r.model.trim() === "") {
@@ -1072,6 +1202,10 @@ export async function translatePaper(
       deps.cacheKey,
       (m) => notify(m),
       deps.writeBackGlossary !== false,
+      opts.verifyTerms !== false &&
+        (opts.provider === "claude" || opts.provider === "codex") &&
+        (deps.client === undefined || deps.webSearch === true),
+      input.kind !== "arxiv",
     );
     const firstOcc = segmentFirstOccurrence(segments, ctx.resolved);
 
@@ -1231,6 +1365,7 @@ export async function translatePaper(
       resolved: ctx.resolved.map((r) => ({ ...r, firstOccurrence: false })) as ResolvedTerm[],
       firstOccurrenceBySrc: firstOcc,
       hasConfirmed: (src) => db!.confirmedFor(src).length > 0,
+      unverified: new Set(ctx.unverified),
       segmentWarns: results.map((r) => ({
         segmentId: r.segmentId,
         warnIssues: r.warnIssues,
@@ -1374,7 +1509,7 @@ export async function translatePaper(
       // 残ると、前の論文の訳文がそのまま出力先に居座る）。
       pruneSteps(
         runDir,
-        new Set(["ingest", "glossary", TITLE_SEGMENT_ID, ...segments.map((s) => s.id)]),
+        new Set(["ingest", "glossary", VERIFY_STEP, VERIFY_RESULT_STEP, TITLE_SEGMENT_ID, ...segments.map((s) => s.id)]),
       );
       promoteContext(outDir, ingested.paperId, sourceDigestOf(ingested.cleanLatex), ctx.pending);
     }
@@ -1388,6 +1523,15 @@ export async function translatePaper(
         used: results.reduce((a, r) => a + r.usedRevisions, 0),
       },
       glossary: { proposedAdded: ctx.proposedAdded },
+      terms:
+        ctx.checks === undefined
+          ? null
+          : {
+              checked: ctx.checks.filter(isTargetCheck).length,
+              confirmed: ctx.checks.filter((c) => c.status === "confirmed").length,
+              replaced: ctx.checks.filter((c) => c.status === "replaced" && isTargetCheck(c)).length,
+              unverified: ctx.checks.filter((c) => c.status === "unverified").length,
+            },
       notes: { total: notes.length, byTrigger: countByTrigger(notes) },
       layout,
       buildOk,

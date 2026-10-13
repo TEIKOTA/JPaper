@@ -11,6 +11,7 @@ const okResult: Result = {
     segments: { total: 1, passed: 1, failed: 0 },
     revisions: { max: 3, used: 0 },
     glossary: { proposedAdded: 0 },
+    terms: null,
     notes: { total: 0, byTrigger: {} },
     layout: null,
     buildOk: null,
@@ -91,6 +92,21 @@ describe("runCli", () => {
         stdout: () => {},
         translate: async (_input, opts) => {
           got.push(opts.bilingual);
+          return okResult;
+        },
+      });
+      expect(code).toBe(0);
+    }
+    expect(got).toEqual([false, undefined]);
+  });
+
+  it("--no-verify-terms は verifyTerms: false を渡し、無指定なら渡さない", async () => {
+    const got: unknown[] = [];
+    for (const extra of [["--no-verify-terms"], []]) {
+      const code = await runCli(["node", "jpaper", "1706.03762", "--provider", "claude", ...extra], {
+        stdout: () => {},
+        translate: async (_input, opts) => {
+          got.push(opts.verifyTerms);
           return okResult;
         },
       });

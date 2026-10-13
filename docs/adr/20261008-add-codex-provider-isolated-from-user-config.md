@@ -3,6 +3,7 @@
 # Status
 - accepted
 - 2026-10-13 に部分 supersede: 置換された条項＝「model・effort は指定されたときだけ渡し、JPaper は既定値を持たない」（→ 未指定なら最新の Sol・effort medium で埋める）／存続する条項＝codex をプロバイダに加えること、利用者の設定・ルールを読まずにツールを止めて一時ディレクトリで起動すること、Web の表示名「GPT」／後継 ADR＝[20261013-default-to-latest-mid-tier-models-at-medium-effort](./20261013-default-to-latest-mid-tier-models-at-medium-effort.md)
+- 2026-10-13 に部分 supersede: 置換された条項＝「`-c web_search="disabled"` を付ける」（→ 用語の検証の呼び出しに限って `live`）／存続する条項＝それ以外の呼び出しで Web 検索を止めること、利用者の設定・ルールを読まずにツールを止めて一時ディレクトリで起動すること／後継 ADR＝[20261013-verify-unconfirmed-terms-with-cli-web-search](./20261013-verify-unconfirmed-terms-with-cli-web-search.md)
 
 # Situation
 - [LLM プロバイダ抽象 ADR](./20260709-llm-provider-abstraction-local-ollama-and-cloud-cli.md) は cloud を公式 CLI の subprocess（`claude -p` / `codex exec`）で叩くと決めていたが、main には claude と openrouter しか無かった。codex の実装は main checkout に未コミットの変更として残り、10/6〜10/7 にはそのコードで論文を訳していた（#340）。

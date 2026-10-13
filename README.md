@@ -42,10 +42,10 @@ OpenRouter の API キーなどは `.env.example` を `.env` に写して書け�
 ## 使い方
 
 ```sh
-pnpm dev <arXiv ID|ファイル|ディレクトリ> --provider {ollama|claude|codex|openrouter} [--out DIR] [--no-bilingual]
+pnpm dev <arXiv ID|ファイル|ディレクトリ> --provider {ollama|claude|codex|openrouter} [--out DIR] [--no-bilingual] [--no-verify-terms]
 ```
 
-和訳 PDF（例 `article/2507.17845-ja/2507.17845_pathorob-ja.pdf`）と対訳 PDF（例 `article/2507.17845-ja/2507.17845_pathorob-bilingual.pdf`）のパスを標準出力に、`RunSummary` を JSON で出す。オプションの正本は [契約付録 §5](./docs/design/contract-appendix.md)。
+和訳 PDF（例 `article/2507.17845-ja/2507.17845_pathorob-ja.pdf`）と対訳 PDF（例 `article/2507.17845-ja/2507.17845_pathorob-bilingual.pdf`）のパスを標準出力に、`RunSummary` を JSON で出す。claude・codex では、翻訳の前に用語集の訳を CLI の Web 検索で既存の日本語の用例と照らし、出典の取れた表記に差し替える（取れない語は「未確認」の訳注になる。`--no-verify-terms` で止める。[用語の検証 ADR](./docs/adr/20261013-verify-unconfirmed-terms-with-cli-web-search.md)）。オプションの正本は [契約付録 §5](./docs/design/contract-appendix.md)。
 
 ### Web アプリ（検索・翻訳・用語集）
 

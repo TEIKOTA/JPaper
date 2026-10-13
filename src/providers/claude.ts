@@ -8,6 +8,8 @@ import { canceledError } from "../runtime/cancellation.js";
 import { MAX_RESPONSE_CHARS } from "../runtime/llm-client.js";
 
 export const MAX_TURNS = 3;
+// Web 検索を許す呼び出しのターン上限（検索 1 回で 1 ターン使う）。契約付録 §4
+export const WEB_SEARCH_MAX_TURNS = 12;
 
 export interface ClaudeDeps {
   run?: (args: string[], input: string, signal?: AbortSignal) => Promise<string>;
@@ -129,9 +131,11 @@ export function makeClaudeClient(cfg: ClaudeConfig = {}, deps: ClaudeDeps = {}):
             req.system,
             // ⚠ landmines.md
             "--max-turns",
-            String(MAX_TURNS),
+            String(req.webSearch === true ? WEB_SEARCH_MAX_TURNS : MAX_TURNS),
             "--tools",
-            "none",
+            req.webSearch === true ? "WebSearch" : "none",
+            // 利用者の権限設定によらず、WebSearch を確認なしで使わせる。
+            ...(req.webSearch === true ? ["--allowedTools", "WebSearch"] : []),
             // ⚠ landmines.md
             "--safe-mode",
             ...(cfg.model === undefined ? [] : ["--model", cfg.model]),

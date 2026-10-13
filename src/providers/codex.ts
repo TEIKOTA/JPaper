@@ -49,7 +49,7 @@ export const CODEX_DISABLED_FEATURES = [
 ] as const;
 
 // ⚠ landmines.md
-export function codexArgs(cfg: CodexConfig): string[] {
+export function codexArgs(cfg: CodexConfig, webSearch = false): string[] {
   return [
     "exec",
     "--ephemeral",
@@ -60,7 +60,7 @@ export function codexArgs(cfg: CodexConfig): string[] {
     "--ignore-rules",
     ...CODEX_DISABLED_FEATURES.flatMap((f) => ["-c", `features.${f}=false`]),
     "-c",
-    'web_search="disabled"',
+    webSearch ? 'web_search="live"' : 'web_search="disabled"',
     ...(cfg.model === undefined ? [] : ["--model", cfg.model]),
     ...(cfg.effort === undefined ? [] : ["-c", `model_reasoning_effort="${cfg.effort}"`]),
   ];
@@ -127,13 +127,12 @@ async function defaultRun(args: string[], prompt: string, signal?: AbortSignal):
 export function makeCodexClient(cfg: CodexConfig = {}, deps: CodexDeps = {}): LlmClient {
   const run = deps.run ?? defaultRun;
   const now = deps.now ?? Date.now;
-  const args = codexArgs(cfg);
   return {
     async complete(req) {
       const started = now();
       let result: string;
       try {
-        result = await run(args, promptFor(req.system, req.user), req.signal);
+        result = await run(codexArgs(cfg, req.webSearch === true), promptFor(req.system, req.user), req.signal);
       } catch (e) {
         if (e instanceof JpaperError && e.kind === "canceled") throw e;
         if ((e as { code?: unknown }).code === "ENOENT") {

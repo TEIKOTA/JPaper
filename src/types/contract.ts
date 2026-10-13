@@ -139,10 +139,63 @@ export const GlossaryBuilderOut = z.object({
 });
 export type GlossaryBuilderOut = z.infer<typeof GlossaryBuilderOut>;
 
+// ── §4 用語の検証（term-verifier。Web 検索で既存の日本語の用例を確かめる） ──
+export const MAX_VERIFY_TERMS = 10;
+export const MAX_VERIFY_CANDIDATES = 5;
+export const MAX_VERIFY_SOURCES = 5;
+const clip = (n: number) => z.string().transform((s) => s.slice(0, n));
+// 上限を超えた分は捨てて読む（1 か所の超過で応答全体を捨てて検索し直さない）。
+export const TermVerifyOut = z.object({
+  terms: z
+    .array(
+      z.object({
+        src: clip(MAX_TERM_CHARS),
+        candidates: z
+          .array(
+            z.object({
+              form: clip(MAX_TERM_CHARS),
+              sources: z
+                .array(z.object({ url: clip(2_000), quote: clip(MAX_NOTE_CHARS) }))
+                .default([])
+                .transform((a) => a.slice(0, MAX_VERIFY_SOURCES)),
+            }),
+          )
+          .default([])
+          .transform((a) => a.slice(0, MAX_VERIFY_CANDIDATES)),
+      }),
+    )
+    .transform((a) => a.slice(0, MAX_VERIFY_TERMS * 2)),
+});
+export type TermVerifyOut = z.infer<typeof TermVerifyOut>;
+
+// 検証の結果（語ごと）。replaced は用例の表記に差し替えた語、confirmed は用例と一致した語。
+// unverified の reason: not-found＝採れる用例が無い／conflicting＝最多の表記が並んだ／few-sites＝差し替えに足りるサイトの数が無い／failed＝検証の呼び出しが失敗した。
+export const TermCheck = z.object({
+  src: z.string(),
+  status: z.enum(["confirmed", "replaced", "unverified"]),
+  form: z.string(),
+  original: z.string().optional(),
+  reason: z.enum(["not-found", "conflicting", "few-sites", "failed"]).optional(),
+  // 差し替えた語の元の訳を含む・同じ訳だったので合わせて書き換えた語なら、差し替えを決めた語の src。
+  via: z.string().optional(),
+  sources: z.array(z.string()).default([]),
+});
+export type TermCheck = z.infer<typeof TermCheck>;
+
+// checkpoint `term-verify` の値（検証を当てた後の用語集・brief・style と、語ごとの結果）。
+export const VerifiedGlossary = z.object({
+  resolved: z.array(ResolvedTerm.omit({ firstOccurrence: true })).max(MAX_TERMS),
+  brief: DocumentBrief,
+  style: StyleContract,
+  checks: z.array(TermCheck),
+});
+export type VerifiedGlossary = z.infer<typeof VerifiedGlossary>;
+
 // ── §1 訳注（uncertainties） ──
 export const NoteTrigger = z.enum([
   "paper-defined-preserve",
   "low-confidence",
+  "unverified-term",
   "evaluator-warn",
   "heading-untranslated",
 ]);
@@ -203,6 +256,16 @@ export const RunSummary = z.object({
   sharedDefaults: z.array(z.enum(["db", "cacheKey", "outDir", "limits", "work"])).default([]),
   // run 中に実際に発行した LLM 呼び出し回数（失敗した run でも返す＝課金相当の仕事量）。
   llmCalls: z.number().int().nonnegative().default(0),
+  // 用語の検証（契約付録 §4）。null は検証しなかった run（対象外のプロバイダ・止めた・既存の用語集を使った）。
+  terms: z
+    .object({
+      checked: z.number().int().nonnegative(),
+      confirmed: z.number().int().nonnegative(),
+      replaced: z.number().int().nonnegative(),
+      unverified: z.number().int().nonnegative(),
+    })
+    .nullable()
+    .default(null),
   // 論文タイトルの翻訳結果。null は翻訳まで到達しなかった run。契約付録 §8
   title: z.enum(["translated", "failed", "absent"]).nullable().default(null),
   exitCode: z.number().int(),
@@ -246,8 +309,8 @@ export type Result = z.infer<typeof Result>;
 // ── §8 LlmClient 境界 ──
 // meta は呼び出し文脈（誰が・どの段・何回目か）。トレース（LlmCallEvent）へ写すためだけに使い、変換結果には影響しない。
 export interface LlmCallMeta {
-  role: "translator" | "evaluator" | "glossary-builder";
-  phase?: "translate" | "evaluate" | "glossary";
+  role: "translator" | "evaluator" | "glossary-builder" | "term-verifier";
+  phase?: "translate" | "evaluate" | "glossary" | "verify";
   segmentId?: string;
   pass?: number; // 節ループの再訳回数（0=初回）
 }
@@ -261,6 +324,8 @@ export interface LlmRequest {
   jsonMode?: boolean;
   // 呼び出し側の中断（web でクライアントが切断した等）。プロバイダは進行中の I/O を中止する。
   signal?: AbortSignal;
+  // この呼び出しだけ CLI の Web 検索を許す（claude・codex）。他のプロバイダは使わない。契約付録 §4
+  webSearch?: boolean;
 }
 export interface LlmClient {
   complete(req: LlmRequest): Promise<string>;

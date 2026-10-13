@@ -8,6 +8,8 @@ export interface TranslateOptions {
   provider: Provider;
   model?: string;
   effort?: string;
+  // false なら CLI に --no-verify-terms を渡す（設定の「用語を Web 検索で確かめる」）。
+  verifyTerms?: false;
 }
 
 export interface ProviderInfo {
@@ -77,6 +79,7 @@ export function cliArgs(arxivId: string, opts: TranslateOptions, outDir: string)
     opts.provider,
     ...(opts.model === undefined ? [] : ["--model", opts.model]),
     ...(opts.effort === undefined ? [] : ["--effort", opts.effort]),
+    ...(opts.verifyTerms === false ? ["--no-verify-terms"] : []),
     "--out",
     outDir,
   ];

@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { usedModel, makeClaudeClient, MAX_TURNS } from "./claude.js";
+import { usedModel, makeClaudeClient, MAX_TURNS, WEB_SEARCH_MAX_TURNS } from "./claude.js";
 import { isTransient } from "../types/errors.js";
 import type { LlmCallEvent } from "../types/contract.js";
 
@@ -88,6 +88,21 @@ describe("makeClaudeClient", () => {
     expect(args[args.indexOf("--max-turns") + 1]).toBe(String(MAX_TURNS));
     expect(MAX_TURNS).toBeGreaterThanOrEqual(2);
     expect(args[args.indexOf("--tools") + 1]).toBe("none"); // 安全境界はツール禁止が担う
+  });
+
+  it("webSearch の呼び出しだけ WebSearch を許し、ターン上限を広げる（契約付録 §4）", async () => {
+    const seen: string[][] = [];
+    const c = makeClaudeClient({}, { run: async (a) => (seen.push(a), JSON.stringify({ result: "r" })) });
+    await c.complete({ system: "s", user: "u", webSearch: true });
+    await c.complete({ system: "s", user: "u" });
+    const [web, plain] = seen as [string[], string[]];
+    expect(web[web.indexOf("--tools") + 1]).toBe("WebSearch");
+    expect(web[web.indexOf("--max-turns") + 1]).toBe(String(WEB_SEARCH_MAX_TURNS));
+    expect(web).toContain("--safe-mode");
+    expect(web[web.indexOf("--allowedTools") + 1]).toBe("WebSearch");
+    expect(plain).not.toContain("--allowedTools");
+    expect(plain[plain.indexOf("--tools") + 1]).toBe("none");
+    expect(plain[plain.indexOf("--max-turns") + 1]).toBe(String(MAX_TURNS));
   });
 
   it("jsonMode は無視する（claude CLI にネイティブ機能が無く CLI フラグを増やさない）", async () => {

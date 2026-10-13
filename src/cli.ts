@@ -23,7 +23,7 @@ export interface CliDeps {
 }
 
 const VALUE_FLAGS = ["--provider", "--out", "--model", "--context-window", "--effort", "--concurrency"];
-const BOOL_FLAGS = ["--think", "--no-think", "--no-bilingual"];
+const BOOL_FLAGS = ["--think", "--no-think", "--no-bilingual", "--no-verify-terms"];
 
 function parseConcurrency(raw: string): number {
   if (!/^[0-9]+$/.test(raw)) {
@@ -215,6 +215,7 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number
         ...modelCfg,
         ...(concurrencyArg === undefined ? {} : { concurrency: parseConcurrency(concurrencyArg) }),
         ...(flags.has("--no-bilingual") ? { bilingual: false } : {}),
+        ...(flags.has("--no-verify-terms") ? { verifyTerms: false } : {}),
       },
       {
         onError: (m) => stderr(`エラー: ${m}\n`),
