@@ -43,12 +43,45 @@ interface Heading {
   title: string;
 }
 
+function escaped(tex: string, at: number): boolean {
+  let n = 0;
+  for (let i = at - 1; i >= 0 && tex[i] === "\\"; i--) n++;
+  return n % 2 === 1;
+}
+
+// 位置が行コメントの中か（同じ行の手前にエスケープされていない % がある）を返す関数。走査は 1 回。
+function commentTest(tex: string): (at: number) => boolean {
+  const starts: number[] = [0];
+  const pct: number[] = [-1];
+  let run = 0;
+  for (let i = 0; i < tex.length; i++) {
+    const c = tex[i];
+    if (c === "\n") {
+      starts.push(i + 1);
+      pct.push(-1);
+    } else if (c === "%" && run % 2 === 0 && pct[pct.length - 1] === -1) {
+      pct[pct.length - 1] = i;
+    }
+    run = c === "\\" ? run + 1 : 0;
+  }
+  return (at) => {
+    let lo = 0;
+    let hi = starts.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1;
+      if (starts[mid]! <= at) lo = mid;
+      else hi = mid - 1;
+    }
+    return pct[lo]! !== -1 && pct[lo]! < at;
+  };
+}
+
 // 命令の区間の最後の } に対応する {（必須引数の開始）。
 function mandatoryOpen(tex: string, span: Span): number {
   let depth = 0;
   for (let i = span[1] - 1; i >= span[0]; i--) {
     const c = tex[i];
-    if (tex[i - 1] === "\\") continue;
+    if (escaped(tex, i)) continue;
     if (c === "}") depth++;
     else if (c === "{" && --depth === 0) return i;
   }
@@ -80,7 +113,9 @@ function abstractOf(tex: string): string | undefined {
 
 // verbatim を外してから行コメントを落とし、図表・コードの環境と \label を外した本文。⚠ landmines.md
 function proseOnly(body: string): string {
-  const plain = stripTexComments(removeSpans(body, verbatimSpans(body), " "));
+  const inComment = commentTest(body);
+  const verbatim = verbatimSpans(body).filter(([s]) => !inComment(s));
+  const plain = stripTexComments(removeSpans(body, verbatim, " "));
   const spans: Span[] = [...SKIPPED_ENVS.flatMap((e) => envSpans(plain, e)), ...commandSpans(plain, "label")];
   return removeSpans(plain, spans, " ");
 }

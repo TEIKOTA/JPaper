@@ -84,6 +84,14 @@ describe("paperExcerpt（契約付録 §4・issue #258）", () => {
     expect(paperExcerpt(tex).split("\n").map((l) => l.split(":")[0])).toEqual(["§ A", "§ B", "§ C"]);
   });
 
+  it("行コメントの中の \\verb| や \\begin{verbatim} は verbatim の始まりにしない。\\\\} は閉じ括弧として数える", () => {
+    const a = "\\begin{document}\\section{A}a.\n% old \\verb|x\n\\section{B}c $|y|$ d.\\section{C}e.\\end{document}";
+    expect(paperExcerpt(a).split("\n").map((l) => l.split(":")[0])).toEqual(["§ A", "§ B", "§ C"]);
+    const b = "\\begin{document}% \\begin{verbatim}\n\\section{B}b.\n\\begin{verbatim}v\\end{verbatim}\\section{C}c.\\end{document}";
+    expect(paperExcerpt(b).split("\n").map((l) => l.split(":")[0])).toEqual(["§ B", "§ C"]);
+    expect(paperExcerpt("\\begin{document}\\section{Line\\\\}x.\\end{document}")).toBe("§ Line\\\\: x.");
+  });
+
   it("見出しだけで上限を超えても abstract は残し、見出しの題の \\{ は数えない", () => {
     const abs = "Abstract words. ".repeat(150);
     const many = Array.from({ length: 900 }, (_, i) => `\\section{Heading number ${String(i)}}x.`).join("");
@@ -110,6 +118,7 @@ describe("paperExcerpt（契約付録 §4・issue #258）", () => {
     ["閉じない見出しの羅列", "\\section{".repeat(80_000)],
     ["閉じない abstract", "\\begin{abstract}".repeat(60_000)],
     ["見出しだけの羅列", "\\section{a}".repeat(90_000)],
+    ["1 行の verbatim の羅列", "x %c " + "\\verb|a| ".repeat(100_000)],
   ])("線形時間で終わる（%s、1MiB 前後）", (_name, body) => {
     const t = performance.now();
     paperExcerpt(`\\begin{document}${body}\\end{document}`);
