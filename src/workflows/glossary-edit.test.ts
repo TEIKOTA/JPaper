@@ -187,6 +187,10 @@ describe("用語集の編集（契約付録 §9）", () => {
       resolved: { src: string; form: string }[];
     };
     expect(glossaryStep.resolved.find((r) => r.src === "Rashomon set")!.form).toBe("羅生門集合(Rashomon set)");
+    // 印のままの訳文にも同じ置換をかける（形式検査の版の再検査で古い訳が戻らないように）。契約付録 §8
+    const seg1 = readStep(path.join(outDir, ".run"), "seg-0001", KEY)!.value as { marked?: string };
+    expect(seg1.marked).toContain("羅生門集合(Rashomon set)は大きい");
+    expect(seg1.marked).not.toContain("ラショモン集合(Rashomon set)");
 
     const { r, calls } = await rerun(outDir, db);
     expect(calls).toEqual([]);

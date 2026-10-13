@@ -38,6 +38,9 @@ export const SectionLoopCache = z.object({
   maxRevisions: z.number().int(),
   warnIssues: z.array(EvalIssue),
   pdfName: z.string().optional(),
+  // 印のままの訳文と通した形式検査の版。無い checkpoint（旧版）は再検査しない。契約付録 §8（形式検査の版）
+  marked: z.string().optional(),
+  gate: z.string().optional(),
   // 落ちた節は永続しないので、checkpoint に載ることは無い。契約付録 §8（落ちた節の指摘）
   lastIssues: z
     .discriminatedUnion("by", [

@@ -427,6 +427,7 @@ export function planTermEdit(state: PaperState, src: string, input: string): Edi
     const value = SectionLoopCache.parse({
       ...e.value,
       ja: rewriteText(e.value.ja, r),
+      ...(e.value.marked === undefined ? {} : { marked: rewriteText(e.value.marked, r) }),
       warnIssues: rewriteStrings(e.value.warnIssues, r),
     });
     const invalidation = isTitle
