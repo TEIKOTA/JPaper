@@ -87,7 +87,7 @@
 | 2026-10-06 | [横長の対訳 PDF（A4 縦 2 枚分・左=原文／右=和訳）を標準の出力にする](./20261006-bilingual-side-by-side-pdf.md) | accepted |
 | 2026-10-07 | [図表のキャプションは全プロバイダの翻訳指示で訳す](./20261007-translate-captions-in-all-prompt-profiles.md) | accepted |
 | 2026-10-07 | [論文ごとの既定の出力先を CWD 配下の article/ にまとめる](./20261007-default-output-under-article-dir.md) | accepted |
-| 2026-10-07 | [claude のモデルと推論強度を CLI 引数で渡す（JPaper は既定値を持たない）](./20261007-pass-claude-model-and-effort-via-cli-args.md) | accepted（既定値を持たない点・Web 検索を止める点のみ 2026-10-13 に部分 supersede） |
+| 2026-10-07 | [claude のモデルと推論強度を CLI 引数で渡す（JPaper は既定値を持たない）](./20261007-pass-claude-model-and-effort-via-cli-args.md) | accepted（既定値を持たない点のみ 2026-10-13 に部分 supersede） |
 | 2026-10-07 | [成果物 PDF の名前を「ID＋短い英語名」にし、短い英語名はタイトルの翻訳と同時に決めさせる](./20261007-name-deliverable-pdfs-by-id-and-slug.md) | accepted |
 | 2026-10-07 | [パッケージ管理を npm から pnpm に移す](./20261007-adopt-pnpm-for-package-management.md) | accepted |
 | 2026-10-07 | [節の予算を 0.30×CW に加えて 8,000 トークンで頭打ちにする](./20261007-cap-segment-budget-by-output-time.md) | accepted |

@@ -16,6 +16,7 @@ import { createHash } from "node:crypto";
 import path from "node:path";
 import {
   GlossaryBuilderOut,
+  VerifiedGlossary,
   type JpaperInput,
   type LlmClient,
   type Result,
@@ -82,7 +83,7 @@ import {
   titleSlice,
   type StepContext,
 } from "./step-keys.js";
-import { inputSignature, translatePaper } from "./translate-paper.js";
+import { inputSignature, translatePaper, VERIFY_STEP } from "./translate-paper.js";
 
 // 節の checkpoint と分割が一致する文脈長を探す候補。契約付録 §9
 export const CONTEXT_WINDOW_CANDIDATES: readonly number[] = [
@@ -288,10 +289,14 @@ export function loadPaperState(outDir: string, key: Buffer = loadCacheKey()): Pa
   const migrated = all.some((e) => !e.current);
   if (migrated) {
     // 作った版が違う checkpoint を引き継ぐ条件: md が最後の用語集の生成から変わっていない＋原文と訳文が対応する。
+    // 用語の検証で差し替えた run は、検証の後の用語集・brief・style と比べる。契約付録 §4
+    const verifiedStored = readStep(runDir, VERIFY_STEP, key);
+    const verified = verifiedStored === undefined ? undefined : VerifiedGlossary.safeParse(verifiedStored.value);
+    const base = verified?.success === true ? verified.data : glossaryValue;
     const untouched =
-      sameJson(parseGlossaryMd(renderGlossaryMd(glossaryValue.resolved)), ctx.resolved) &&
-      sameJson(parseBriefMd(renderBriefMd(glossaryValue.brief)), ctx.brief) &&
-      sameJson(parseStyleMd(renderStyleMd(glossaryValue.style)), ctx.style);
+      sameJson(parseGlossaryMd(renderGlossaryMd(base.resolved)), ctx.resolved) &&
+      sameJson(parseBriefMd(renderBriefMd(base.brief)), ctx.brief) &&
+      sameJson(parseStyleMd(renderStyleMd(base.style)), ctx.style);
     if (!untouched) {
       throw inputError(
         "glossary.md・brief.md・style.md が最後の翻訳のあとで編集されています。CLI で再実行して反映してから編集してください",

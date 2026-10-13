@@ -134,6 +134,8 @@ export function makeClaudeClient(cfg: ClaudeConfig = {}, deps: ClaudeDeps = {}):
             String(req.webSearch === true ? WEB_SEARCH_MAX_TURNS : MAX_TURNS),
             "--tools",
             req.webSearch === true ? "WebSearch" : "none",
+            // 利用者の権限設定によらず、WebSearch を確認なしで使わせる。
+            ...(req.webSearch === true ? ["--allowedTools", "WebSearch"] : []),
             // ⚠ landmines.md
             "--safe-mode",
             ...(cfg.model === undefined ? [] : ["--model", cfg.model]),

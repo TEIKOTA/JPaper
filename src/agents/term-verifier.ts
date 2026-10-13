@@ -30,12 +30,12 @@ export function renderVerifierUser(input: TermVerifierIn): string {
       "- 日本語で検索する。訳案のカタカナ表記だけでなく、語の由来（人名・地名・作品名など）を漢字で書いた表記、原語のままの表記も候補にして検索する。",
       "- 日本語のページ（大学・研究所・企業の技術ブログ・学会の予稿・解説記事）を優先する。機械翻訳のまとめサイトは使わない。",
       "- 採るのは、検索で見つけたページに、この分野の意味でその表記がそのまま書かれているものだけ。検索結果に無い URL を作らない。",
-      "- 用例が見つからなければ not-found。分野の用例どうしで表記が割れていれば conflicting（どれかを選ばない）。",
+      "- 見つけた日本語の表記は、割れていても全部を候補にし、表記ごとに出典を並べる（どれかを選ばない）。見つからなければ candidates を空にする。",
     ].join("\n"),
     "## 指示",
     "JSON だけを返す。形式:",
-    '{"terms":[{"src":"原語（上の一覧のまま）","status":"found"|"not-found"|"conflicting","form":"用例の日本語の表記（found のとき）","sources":[{"url":"https://...","quote":"その表記を含む本文の短い引用（そのまま）"}]}]}',
-    "一覧の用語ごとに 1 件ずつ返す。form には原語の併記を付けない。",
+    '{"terms":[{"src":"原語（上の一覧のまま）","candidates":[{"form":"用例の日本語の表記","sources":[{"url":"https://...","quote":"その表記を含む本文の短い引用（そのまま）"}]}]}]}',
+    "一覧の用語ごとに 1 件ずつ返す。form には原語の併記・括弧・句読点を付けない（40 字まで）。候補は 1 語 5 件、出典は 1 候補 5 件、引用は 400 字まで。",
   ].join("\n\n");
 }
 
@@ -49,5 +49,6 @@ export async function verifyTerms(client: LlmClient, input: TermVerifierIn): Pro
       webSearch: true,
     },
     TermVerifyOut,
+    { retries: 1 },
   );
 }

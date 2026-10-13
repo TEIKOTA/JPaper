@@ -99,6 +99,8 @@ describe("makeClaudeClient", () => {
     expect(web[web.indexOf("--tools") + 1]).toBe("WebSearch");
     expect(web[web.indexOf("--max-turns") + 1]).toBe(String(WEB_SEARCH_MAX_TURNS));
     expect(web).toContain("--safe-mode");
+    expect(web[web.indexOf("--allowedTools") + 1]).toBe("WebSearch");
+    expect(plain).not.toContain("--allowedTools");
     expect(plain[plain.indexOf("--tools") + 1]).toBe("none");
     expect(plain[plain.indexOf("--max-turns") + 1]).toBe(String(MAX_TURNS));
   });

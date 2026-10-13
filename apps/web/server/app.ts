@@ -218,13 +218,16 @@ export function createApp(config: WebConfig, services: Services = createServices
     }),
   );
 
-  // 保存は provider・providers・concurrency を置き換え、ファイルの他のキー（history など）は残す。
+  // 保存は provider・providers・concurrency・verifyTerms を置き換え、ファイルの他のキー（history など）は残す。
   app.post("/api/settings", async (c) => {
     try {
       const body: unknown = await c.req.json().catch(() => undefined);
       const { history: _h, ...parsed } = parseSettings(body);
       const raw = readSettingsObject(config.settingsPath) ?? {};
       const { provider: _p, providers: _ps, concurrency: _c, verifyTerms: _v, ...rest } = raw;
+      // verifyTerms を送らない保存（古い画面）は、保存済みの値を残す。
+      const sent = typeof body === "object" && body !== null && Object.hasOwn(body, "verifyTerms");
+      if (!sent) parsed.verifyTerms = settingsFrom(raw).verifyTerms;
       writeSettings(config.settingsPath, { ...rest, ...parsed });
       jobs.pump();
       return c.json({ settings: { ...parsed, history: settingsFrom(raw).history } });

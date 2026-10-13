@@ -141,33 +141,53 @@ export type GlossaryBuilderOut = z.infer<typeof GlossaryBuilderOut>;
 
 // ── §4 用語の検証（term-verifier。Web 検索で既存の日本語の用例を確かめる） ──
 export const MAX_VERIFY_TERMS = 10;
+export const MAX_VERIFY_CANDIDATES = 5;
 export const MAX_VERIFY_SOURCES = 5;
+const clip = (n: number) => z.string().transform((s) => s.slice(0, n));
+// 上限を超えた分は捨てて読む（1 か所の超過で応答全体を捨てて検索し直さない）。
 export const TermVerifyOut = z.object({
   terms: z
     .array(
       z.object({
-        src: z.string().max(MAX_TERM_CHARS),
-        status: z.enum(["found", "not-found", "conflicting"]),
-        form: z.string().max(MAX_TERM_CHARS).optional(),
-        sources: z
-          .array(z.object({ url: z.string().max(2_000), quote: z.string().max(MAX_NOTE_CHARS) }))
-          .max(MAX_VERIFY_SOURCES)
-          .default([]),
+        src: clip(MAX_TERM_CHARS),
+        candidates: z
+          .array(
+            z.object({
+              form: clip(MAX_TERM_CHARS),
+              sources: z
+                .array(z.object({ url: clip(2_000), quote: clip(MAX_NOTE_CHARS) }))
+                .default([])
+                .transform((a) => a.slice(0, MAX_VERIFY_SOURCES)),
+            }),
+          )
+          .default([])
+          .transform((a) => a.slice(0, MAX_VERIFY_CANDIDATES)),
       }),
     )
-    .max(MAX_VERIFY_TERMS * 2),
+    .transform((a) => a.slice(0, MAX_VERIFY_TERMS * 2)),
 });
 export type TermVerifyOut = z.infer<typeof TermVerifyOut>;
 
 // 検証の結果（語ごと）。replaced は用例の表記に差し替えた語、confirmed は用例と一致した語。
+// unverified の reason: not-found＝採れる用例が無い／conflicting＝最多の表記が並んだ／few-sites＝差し替えに足りるサイトの数が無い／failed＝検証の呼び出しが失敗した。
 export const TermCheck = z.object({
   src: z.string(),
   status: z.enum(["confirmed", "replaced", "unverified"]),
   form: z.string(),
   original: z.string().optional(),
+  reason: z.enum(["not-found", "conflicting", "few-sites", "failed"]).optional(),
   sources: z.array(z.string()).default([]),
 });
 export type TermCheck = z.infer<typeof TermCheck>;
+
+// checkpoint `term-verify` の値（検証を当てた後の用語集・brief・style と、語ごとの結果）。
+export const VerifiedGlossary = z.object({
+  resolved: z.array(ResolvedTerm.omit({ firstOccurrence: true })).max(MAX_TERMS),
+  brief: DocumentBrief,
+  style: StyleContract,
+  checks: z.array(TermCheck),
+});
+export type VerifiedGlossary = z.infer<typeof VerifiedGlossary>;
 
 // ── §1 訳注（uncertainties） ──
 export const NoteTrigger = z.enum([

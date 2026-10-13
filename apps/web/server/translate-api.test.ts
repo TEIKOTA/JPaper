@@ -411,5 +411,8 @@ describe("用語を Web 検索で確かめる設定（契約付録 §4・§9・i
     await post("/api/jobs", { arxivId: "2601.00002", provider: "claude" });
     expect(specs[1]).toContain("--no-verify-terms");
     expect((await req("/api/settings")).body.settings.verifyTerms).toBe(false);
+    // verifyTerms を送らない保存は、切った設定を戻さない。
+    await post("/api/settings", { concurrency: 1 });
+    expect((await req("/api/settings")).body.settings.verifyTerms).toBe(false);
   });
 });

@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from "vitest";
-import { mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync, readFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { LlmRequest, Provider } from "../types/contract.js";
@@ -36,7 +36,7 @@ const GLOSSARY = JSON.stringify({
     { src: "Widget set", form: "ウィジェット集合", class: "established", rendering: "translate" },
     { src: "Gizmo ratio", form: "ギズモ比(Gizmo ratio)", class: "paper-defined", rendering: "bilingual" },
   ],
-  brief: { thesis: "t", sectionRoles: [], notationConventions: [] },
+  brief: { thesis: "ウィジェット集合を調べる", sectionRoles: [], notationConventions: [] },
   style: { tensePolicy: "a", headingStyle: "b", numberStyle: "c" },
 });
 
@@ -44,11 +44,17 @@ const FOUND = JSON.stringify({
   terms: [
     {
       src: "Widget set",
-      status: "found",
-      form: "部品集合",
-      sources: [{ url: "https://example.jp/widget", quote: "部品集合とは何か" }],
+      candidates: [
+        {
+          form: "部品集合",
+          sources: [
+            { url: "https://example.jp/widget", quote: "部品集合とは何か" },
+            { url: "https://another.org/w", quote: "この部品集合は" },
+          ],
+        },
+      ],
     },
-    { src: "Gizmo ratio", status: "not-found", sources: [] },
+    { src: "Gizmo ratio", candidates: [] },
   ],
 });
 
@@ -119,10 +125,15 @@ describe("用語の検証（契約付録 §4・issue #309）", () => {
     expect(client.calls.filter((q) => q.meta?.role !== "term-verifier").every((q) => q.webSearch !== true)).toBe(true);
 
     expect(translatorUsers.some((u) => u.includes("部品集合"))).toBe(true);
+    // 用語集だけでなく brief からも元の訳が消える（translator の user に載る）。
     expect(translatorUsers.some((u) => u.includes("ウィジェット集合"))).toBe(false);
 
     const md = readFileSync(path.join(outDir, "glossary.md"), "utf8");
-    expect(md).toContain("| Widget set | 部品集合 | established | translate |  | 用例に合わせた（元の訳: ウィジェット集合） 出典: https://example.jp/widget |");
+    expect(md).toContain(
+      "| Widget set | 部品集合 | established | translate |  | 用例に合わせた（元の訳: ウィジェット集合） 出典: https://example.jp/widget https://another.org/w |",
+    );
+    expect(readFileSync(path.join(outDir, "brief.md"), "utf8")).toContain("部品集合を調べる");
+    expect(warnings.some((w) => w.startsWith("arXiv 以外の入力の論文の用語と abstract の冒頭を Web 検索に出して"))).toBe(true);
     expect(md).toContain("| Gizmo ratio | ギズモ比(Gizmo ratio) | paper-defined | bilingual |  | 未確認（Web 検索で用例を確かめられなかった） |");
 
     expect(r.summary.terms).toEqual({ checked: 2, confirmed: 0, replaced: 1, unverified: 1 });
@@ -211,6 +222,34 @@ describe("用語の検証（契約付録 §4・issue #309）", () => {
     const { r } = await run(path.join(tmp(), "out"), client, {}, db);
     expect(verifierCalls(client)).toHaveLength(0);
     expect(r.summary.terms).toEqual({ checked: 0, confirmed: 0, replaced: 0, unverified: 0 });
-    expect(existsSync(path.join(tmp(), "never"))).toBe(false);
+  });
+
+  it("glossary.md を使う run でも、訳が同じままの未確認の語には未確認の訳注を付け続ける", async () => {
+    const outDir = path.join(tmp(), "out");
+    await run(outDir, (await fake()).client);
+    const second = await run(outDir, (await fake()).client);
+    expect(second.r.summary.terms).toBeNull();
+    expect(second.r.summary.notes.byTrigger["unverified-term"]).toBe(1);
+
+    const md = path.join(outDir, "glossary.md");
+    writeFileSync(md, readFileSync(md, "utf8").replace("| ギズモ比(Gizmo ratio) |", "| 機巧比(Gizmo ratio) |"));
+    const edited = await run(outDir, (await fake()).client);
+    expect(edited.r.summary.notes.byTrigger["unverified-term"] ?? 0).toBe(0);
+  });
+
+  it("検証の途中の中断は未確認にせず、中断として返す", async () => {
+    const c = new AbortController();
+    const { client } = await fake(() => {
+      c.abort();
+      return FOUND;
+    });
+    const { translatePaper } = await import("./translate-paper.js");
+    const { GlossaryDb } = await import("../terminology/db.js");
+    const r = await translatePaper(
+      { kind: "path", path: await paper() },
+      { provider: "claude", outDir: path.join(tmp(), "out"), concurrency: 1, bilingual: false, signal: c.signal },
+      { client, db: new GlossaryDb(), latexRunner: ok, webSearch: true },
+    );
+    expect(r.exitCode).toBe(6);
   });
 });
