@@ -3,6 +3,7 @@ import type { LlmClient, GlossaryBuilderOut } from "../types/contract.js";
 import type { GlossaryDb } from "./db.js";
 import { collectCandidates } from "./collect.js";
 import { buildGlossary } from "../agents/glossary-builder.js";
+import { paperExcerpt } from "./paper-excerpt.js";
 import { oneLine, MAX_TERM_CHARS } from "../runtime/untrusted.js";
 import { normalizeBilingualForms } from "./bilingual-form.js";
 
@@ -59,7 +60,7 @@ export async function buildPaperGlossary(
         description: e.description ?? undefined,
       })),
   }));
-  const out = await buildGlossary(client, { paperId, candidates });
+  const out = await buildGlossary(client, { paperId, candidates, excerpt: paperExcerpt(cleanLatex) });
   // 併記の原語は src そのものと契約で決まっている。モデルの綴り（大文字化など）を
   // 採ると、検査の完全一致が原文と噛み合わずその節が永久に通らない。契約付録 §1
   return { ...out, resolved: normalizeBilingualForms(out.resolved) };
