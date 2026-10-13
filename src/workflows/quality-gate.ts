@@ -2,24 +2,33 @@
 import { termOccurrences } from "../terminology/term-coverage.js";
 import type { ResolvedTerm } from "../types/contract.js";
 
+export const FORMAL_ISSUE_KINDS = [
+  "math",
+  "graphics",
+  "label",
+  "paragraph",
+  "keep-original",
+  "bilingual",
+  "untranslated",
+  "reference",
+  "symbol-command",
+  "unsafe-command",
+  "structure",
+  "title",
+  "author",
+  "conditional",
+] as const;
+
 export interface FormalIssue {
-  kind:
-    | "math"
-    | "graphics"
-    | "label"
-    | "paragraph"
-    | "keep-original"
-    | "bilingual"
-    | "untranslated"
-    | "reference"
-    | "symbol-command"
-    | "unsafe-command"
-    | "structure"
-    | "title"
-    | "author"
-    | "conditional";
+  kind: (typeof FORMAL_ISSUE_KINDS)[number];
   message: string;
 }
+
+// 形式検査の規則（閾値・対象の一覧・判定）を変えたら上げる。⚠ landmines.md
+export const FORMAL_CHECK_VERSION = 1;
+
+// 通過した節の checkpoint に記録し、違えば形式検査をやり直す。契約付録 §8（形式検査の版）
+export const FORMAL_GATE = `${String(FORMAL_CHECK_VERSION)}:${FORMAL_ISSUE_KINDS.join(",")}`;
 
 // 未翻訳と断ずるのに必要な地の文の語数。数式・図だけの節を誤検知しないための下限。
 const MIN_PROSE_WORDS = 12;

@@ -187,6 +187,10 @@ describe("用語集の編集（契約付録 §9）", () => {
       resolved: { src: string; form: string }[];
     };
     expect(glossaryStep.resolved.find((r) => r.src === "Rashomon set")!.form).toBe("羅生門集合(Rashomon set)");
+    // 印のままの訳文にも同じ置換をかける（形式検査の版の再検査で古い訳が戻らないように）。契約付録 §8
+    const seg1 = readStep(path.join(outDir, ".run"), "seg-0001", KEY)!.value as { marked?: string };
+    expect(seg1.marked).toContain("羅生門集合(Rashomon set)は大きい");
+    expect(seg1.marked).not.toContain("ラショモン集合(Rashomon set)");
 
     const { r, calls } = await rerun(outDir, db);
     expect(calls).toEqual([]);
@@ -245,6 +249,18 @@ describe("用語集の編集（契約付録 §9）", () => {
     expect(out.registered).toBe(true);
     expect(db.confirmedFor("Rashomon set").map((e) => e.ja)).toEqual(["羅生門集合(Rashomon set)"]);
     expect(readBackupInfo(outDir)?.registerGlobal).toBe(true);
+    db.close();
+  });
+
+  it("形式検査の版が違い今の検査に通らない節があれば、組み直しの前に入力エラーで止める（契約付録 §8・§9）", async () => {
+    const { outDir, db } = await translated();
+    const runDir = path.join(outDir, ".run");
+    const st = readStep(runDir, "seg-0001", KEY)!;
+    const bad = "\\section{序論}\nラショモン集合(Rashomon set)は大きい。\\end{document}";
+    writeStep(runDir, "seg-0001", { ...(st.value as object), gate: "0:old", marked: bad, ja: bad }, { invalidation: st.invalidation, key: KEY });
+    await expect(
+      applyTermEdit(outDir, "Rashomon set", "羅生門集合", {}, { db, cacheKey: KEY, latexRunner: okRunner }),
+    ).rejects.toThrow(/節 seg-0001 は今の形式検査に通りません/);
     db.close();
   });
 

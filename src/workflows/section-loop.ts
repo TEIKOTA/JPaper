@@ -9,7 +9,7 @@ import type {
 } from "../types/contract.js";
 import type { Segment } from "../segment/segmenter.js";
 import { maxRevisionsFor } from "../segment/segmenter.js";
-import { formalCheck, type FormalIssue } from "./quality-gate.js";
+import { formalCheck, FORMAL_GATE, type FormalIssue } from "./quality-gate.js";
 import {
   protectMath,
   restoreMath,
@@ -42,6 +42,9 @@ export interface SectionLoopResult {
   pdfName?: string;
   // 落ちた節だけ: 最後の稿に付いた指摘。契約付録 §8（落ちた節の指摘）
   lastIssues?: LastIssues;
+  // 通った節だけ: 印のままの訳文と、通した形式検査の版。契約付録 §8（形式検査の版）
+  marked?: string;
+  gate?: string;
 }
 
 export type LastIssues =
@@ -53,18 +56,16 @@ export interface DocContext {
   style?: StyleContract;
 }
 
-export async function runSectionLoop(
-  client: LlmClient,
-  segment: Segment,
-  glossarySlice: ResolvedTerm[],
-  doc: DocContext = {},
-): Promise<SectionLoopResult> {
-  // 形式と品質は別の予算を持つ。共有すると、形式で手こずった節は品質の改稿を
-  // 1 度も試せずに落ちる。ADR 20260815。
-  const perChecker = maxRevisionsFor(segment.tokens);
-  const maxRevisions = perChecker * 2;
-  let formalLeft = perChecker;
-  let qualityLeft = perChecker;
+interface Guard {
+  guarded: ReturnType<typeof protectMath>;
+  kept: number | undefined;
+  frozenMarks: number[];
+  hiddenMarks: Set<number>;
+  checkedSrc: string;
+  checkedSpans: string[];
+}
+
+function guardOf(segment: Segment): Guard {
   // 保護区間は既定で入れる。ADR 20260816-protection-depends-on-model-capability。
   const keep = segment.keep;
   // 著者・所属・注記は訳さず原文のまま残す。契約付録 §3
@@ -84,6 +85,65 @@ export async function runSectionLoop(
   const hiddenMarks = new Set([...(kept === undefined ? [] : [kept]), ...frozenMarks]);
   const checkedSrc = removeSpans(segment.latex, hidden, " ");
   const checkedSpans = guarded.spans.map((s, i) => (hiddenMarks.has(i + 1) ? " " : s));
+  return { guarded, kept, frozenMarks, hiddenMarks, checkedSrc, checkedSpans };
+}
+
+// 印のままの訳文（marked）を復元して形式検査にかける。
+function formalOf(g: Guard, marked: string, glossarySlice: ResolvedTerm[]) {
+  const { guarded, kept, frozenMarks, hiddenMarks, checkedSrc, checkedSpans } = g;
+  const restored = restoreMath(marked, guarded.spans);
+  const checked = hiddenMarks.size === 0 ? restored : restoreMath(marked, checkedSpans);
+  // 印の欠落は formalCheck では「数式個数不一致」としか出ない。どの印かを名指しする。
+  const markIssues = describeMarkIssues({
+    ...restored,
+    missing: restored.missing.filter((n) => !hiddenMarks.has(n)),
+    duplicated: restored.duplicated.filter((n) => !hiddenMarks.has(n)),
+  });
+  const keptIssues: FormalIssue[] =
+    kept !== undefined && (restored.missing.includes(kept) || restored.duplicated.includes(kept))
+      ? [
+          {
+            kind: "title",
+            message: `印 ${MARK_OPEN}${String(kept)}${MARK_CLOSE} は論文タイトルの差し替えです。訳さず消さず、原文と同じ位置にちょうど 1 回置いてください。`,
+          },
+        ]
+      : [];
+  const frozenIssues: FormalIssue[] = frozenMarks
+    .filter((m) => restored.missing.includes(m) || restored.duplicated.includes(m))
+    .map((m) => ({
+      kind: "author",
+      message: `印 ${MARK_OPEN}${String(m)}${MARK_CLOSE} は著者・所属・注記の差し替えです。訳さず消さず、原文と同じ位置にちょうど 1 回置いてください。`,
+    }));
+  const formal = [...keptIssues, ...frozenIssues, ...formalCheck(checkedSrc, checked.text, glossarySlice)];
+  return { restored, checked, markIssues, formal };
+}
+
+// 通過した節の checkpoint に残した印のままの訳文を、今の形式検査にかけ直す。
+// 復元した訳文が checkpoint の訳文（ja）と一致しなければ undefined（再検査できない）。契約付録 §8（形式検査の版）
+export function recheckFormal(
+  segment: Segment,
+  glossarySlice: ResolvedTerm[],
+  marked: string,
+  ja: string,
+): FormalIssue[] | undefined {
+  const r = formalOf(guardOf(segment), marked, glossarySlice);
+  return r.restored.text === ja ? r.formal : undefined;
+}
+
+export async function runSectionLoop(
+  client: LlmClient,
+  segment: Segment,
+  glossarySlice: ResolvedTerm[],
+  doc: DocContext = {},
+): Promise<SectionLoopResult> {
+  // 形式と品質は別の予算を持つ。共有すると、形式で手こずった節は品質の改稿を
+  // 1 度も試せずに落ちる。ADR 20260815。
+  const perChecker = maxRevisionsFor(segment.tokens);
+  const maxRevisions = perChecker * 2;
+  let formalLeft = perChecker;
+  let qualityLeft = perChecker;
+  const g = guardOf(segment);
+  const { guarded, checkedSrc } = g;
   let revisions = 0;
   let priorJa: string | undefined;
   let issues: string[] | undefined;
@@ -109,32 +169,8 @@ export async function runSectionLoop(
       revisions,
     );
     if (out.pdfName !== undefined) lastName = out.pdfName;
-    const restored = restoreMath(out.ja, guarded.spans);
+    const { restored, checked, markIssues, formal } = formalOf(g, out.ja, glossarySlice);
     lastJa = restored.text;
-    const checked = hiddenMarks.size === 0 ? restored : restoreMath(out.ja, checkedSpans);
-
-    // 印の欠落は formalCheck では「数式個数不一致」としか出ない。どの印かを名指しする。
-    const markIssues = describeMarkIssues({
-      ...restored,
-      missing: restored.missing.filter((n) => !hiddenMarks.has(n)),
-      duplicated: restored.duplicated.filter((n) => !hiddenMarks.has(n)),
-    });
-    const keptIssues: FormalIssue[] =
-      kept !== undefined && (restored.missing.includes(kept) || restored.duplicated.includes(kept))
-        ? [
-            {
-              kind: "title",
-              message: `印 ${MARK_OPEN}${String(kept)}${MARK_CLOSE} は論文タイトルの差し替えです。訳さず消さず、原文と同じ位置にちょうど 1 回置いてください。`,
-            },
-          ]
-        : [];
-    const frozenIssues: FormalIssue[] = frozenMarks
-      .filter((m) => restored.missing.includes(m) || restored.duplicated.includes(m))
-      .map((m) => ({
-        kind: "author",
-        message: `印 ${MARK_OPEN}${String(m)}${MARK_CLOSE} は著者・所属・注記の差し替えです。訳さず消さず、原文と同じ位置にちょうど 1 回置いてください。`,
-      }));
-    const formal = [...keptIssues, ...frozenIssues, ...formalCheck(checkedSrc, checked.text, glossarySlice)];
     // 危険コマンドと文書構造の破壊は再訳の対象にしない（直せる誤りではなく、汚染の兆候
     // として即失敗させる）。\end{document} は組版が正常終了するぶん、素通しの害が大きい。
     lastKinds = [...new Set(formal.map((f) => f.kind))];
@@ -173,6 +209,8 @@ export async function runSectionLoop(
         usedRevisions: revisions,
         maxRevisions,
         warnIssues: ev.issues.filter((i) => i.severity === "warn"),
+        marked: out.ja,
+        gate: FORMAL_GATE,
       };
     }
     lastFailCode = 4;

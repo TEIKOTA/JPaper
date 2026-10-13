@@ -73,7 +73,7 @@ import {
 import { isMacroDefinitionsOnly } from "../segment/macro-only.js";
 import { findKatakanaDrift, describeDrift } from "../terminology/consistency.js";
 import { segmentBudgetFor, type Segment } from "../segment/segmenter.js";
-import { runSectionLoop } from "./section-loop.js";
+import { recheckFormal, runSectionLoop } from "./section-loop.js";
 import {
   IngestCache,
   SectionLoopCache,
@@ -86,8 +86,8 @@ import {
   titleInvalidation,
 } from "./step-keys.js";
 import { buildNotes } from "./notes.js";
-import { untranslatedHeadings } from "./quality-gate.js";
-import { checkpoint, hashContext, pruneSteps } from "../durable/checkpoint.js";
+import { FORMAL_GATE, untranslatedHeadings } from "./quality-gate.js";
+import { checkpoint, hashContext, pruneSteps, writeStep } from "../durable/checkpoint.js";
 import { acquireRunLock, type RunLock } from "../durable/run-lock.js";
 import {
   throwIfAborted,
@@ -560,6 +560,28 @@ function gateError(
     };
   }
   return { kind: "internal", code: exitCode, message: `未分類の失敗です（exitCode ${exitCode}）` };
+}
+
+// 通った節の checkpoint が別の版の形式検査で通ったものなら、印のままの訳文を今の検査にかけ直す。
+// 通れば版を書き換えて使い、落ちれば訳し直す。印のままの訳文を持たない・訳文と対応しない checkpoint はそのまま使う。契約付録 §8（形式検査の版）
+async function recheckCached(
+  r: SectionLoopCache,
+  seg: Segment,
+  slice: ResolvedTerm[],
+  retranslate: () => Promise<SectionLoopCache>,
+  save: (v: SectionLoopCache) => void,
+  onRetranslate: () => void,
+): Promise<SectionLoopCache> {
+  if (!r.passed || r.marked === undefined || r.gate === FORMAL_GATE) return r;
+  const issues = recheckFormal(seg, slice, r.marked, r.ja);
+  if (issues === undefined) return r;
+  if (issues.length === 0) {
+    const v = { ...r, gate: FORMAL_GATE };
+    save(v);
+    return v;
+  }
+  onRetranslate();
+  return retranslate();
 }
 
 // 落ちた節が無い run では前の run の記録を消す。
@@ -1086,29 +1108,38 @@ export async function translatePaper(
       const slice = segmentSlice(seg, ctx.resolved, firstOcc);
       // 失敗結果は永続しない。
       const invalidation = segmentInvalidation(seg, slice, ctx);
-      return checkpoint(
-        runDir,
-        seg.id,
-        SectionLoopCache,
-        () => runSectionLoop(client, seg, slice, { brief: ctx.brief, style: ctx.style }),
-        { invalidation, cacheable: (r) => r.passed, key: deps.cacheKey },
-      ).then((r) => {
-        doneSegments++;
-        if (r.passed) donePassed++;
-        else doneFailed++;
-        reached = { total: segments.length, passed: donePassed, failed: doneFailed };
-        progress({
-          phase: "translate",
-          segmentId: seg.id,
-          done: doneSegments,
-          total: segments.length,
-          passed: r.passed,
-          failedKinds: r.failedKinds,
-          usedRevisions: r.usedRevisions,
-          maxRevisions: r.maxRevisions,
+      const loop = (): Promise<SectionLoopCache> =>
+        runSectionLoop(client, seg, slice, { brief: ctx.brief, style: ctx.style });
+      const save = (v: SectionLoopCache): void => {
+        if (v.passed) writeStep(runDir, seg.id, v, { invalidation, key: deps.cacheKey });
+      };
+      return checkpoint(runDir, seg.id, SectionLoopCache, loop, {
+        invalidation,
+        cacheable: (r) => r.passed,
+        key: deps.cacheKey,
+      })
+        .then((r) =>
+          recheckCached(r, seg, slice, () => loop().then((v) => (save(v), v)), save, () =>
+            notify(`形式検査が変わったため、以前に通した ${seg.id} を訳し直します`),
+          ),
+        )
+        .then((r) => {
+          doneSegments++;
+          if (r.passed) donePassed++;
+          else doneFailed++;
+          reached = { total: segments.length, passed: donePassed, failed: doneFailed };
+          progress({
+            phase: "translate",
+            segmentId: seg.id,
+            done: doneSegments,
+            total: segments.length,
+            passed: r.passed,
+            failedKinds: r.failedKinds,
+            usedRevisions: r.usedRevisions,
+            maxRevisions: r.maxRevisions,
+          });
+          return r;
         });
-        return r;
-      });
     };
 
     // タイトルは前文（または本文で原文のまま残した \title）にあり、翻訳する節に含まれない。
@@ -1140,7 +1171,18 @@ export async function translatePaper(
             cacheable: (x) => x.passed && translatedTitle(x.ja) !== undefined,
             key: deps.cacheKey,
           },
-        );
+        ).then((x) => {
+          const save = (v: SectionLoopCache): void => {
+            if (v.passed && translatedTitle(v.ja) !== undefined) {
+              writeStep(runDir, TITLE_SEGMENT_ID, v, { invalidation, key: deps.cacheKey });
+            }
+          };
+          const loop = (): Promise<SectionLoopCache> =>
+            runSectionLoop(client, seg, slice, { brief: ctx.brief, style: ctx.style }).then((v) => (save(v), v));
+          return recheckCached(x, seg, slice, loop, save, () =>
+            notify("形式検査が変わったため、以前に通したタイトルを訳し直します"),
+          );
+        });
         const ja = r.passed ? translatedTitle(r.ja) : undefined;
         if (!r.passed) titleFailure = r;
         if (ja === undefined) {
