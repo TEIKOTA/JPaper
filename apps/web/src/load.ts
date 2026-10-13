@@ -3,20 +3,30 @@ import { useCallback, useEffect, useState } from "react";
 
 export type Loaded<T> = { state: "loading" } | { state: "error"; message: string } | { state: "ok"; data: T };
 
-export function useLoad<T>(fn: () => Promise<T>, deps: readonly unknown[]): [Loaded<T>, () => void] {
+// keepOnError: 読み直しに失敗したら、直前に読めたデータをそのまま使う。
+export function useLoad<T>(
+  fn: () => Promise<T>,
+  deps: readonly unknown[],
+  opts: { keepOnError?: boolean } = {},
+): [Loaded<T>, () => void] {
   const [loaded, setLoaded] = useState<Loaded<T>>({ state: "loading" });
   const [tick, setTick] = useState(0);
   const run = useCallback(fn, deps);
+  const keep = opts.keepOnError === true;
   useEffect(() => {
     let live = true;
     run().then(
       (data) => live && setLoaded({ state: "ok", data }),
-      (e: unknown) => live && setLoaded({ state: "error", message: e instanceof Error ? e.message : String(e) }),
+      (e: unknown) =>
+        live &&
+        setLoaded((prev) =>
+          keep && prev.state === "ok" ? prev : { state: "error", message: e instanceof Error ? e.message : String(e) },
+        ),
     );
     return () => {
       live = false;
     };
-  }, [run, tick]);
+  }, [run, tick, keep]);
   return [loaded, () => setTick((t) => t + 1)];
 }
 

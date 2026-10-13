@@ -7,7 +7,7 @@ import { Status } from "./Status.js";
 const POLL_MS = 2000;
 
 export function TranslatePage(props: { id?: string; title?: string }) {
-  const [settings, reloadSettings] = useLoad(() => api.settings(), []);
+  const [settings, reloadSettings] = useLoad(() => api.settings(), [], { keepOnError: true });
   const [jobs, reloadJobs] = usePoll(() => api.jobs(), POLL_MS);
   return (
     <>
