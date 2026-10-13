@@ -13,7 +13,7 @@ const HEADINGS = ["section", "subsection", "subsubsection"] as const;
 // 冒頭文から外す環境。
 const SKIPPED_ENVS = ["figure", "table", "wrapfigure", "algorithm", "comment", "lstlisting", "minted"];
 // 直後の終止符で文を切らない略語（小文字で比べる）。
-const ABBREVIATIONS = new Set(["e.g", "i.e", "al", "fig", "figs", "sec", "secs", "eq", "eqs", "tab", "cf", "vs", "resp", "approx", "no"]);
+const ABBREVIATIONS = new Set(["e.g", "i.e", "al", "fig", "figs", "sec", "secs", "eq", "eqs", "tab", "cf", "vs", "resp", "approx"]);
 const FULL_WIDTH_ENDS = new Set(["。", "．", "！", "？"]);
 
 function abbreviationBefore(text: string, dot: number): boolean {
@@ -48,6 +48,7 @@ function mandatoryOpen(tex: string, span: Span): number {
   let depth = 0;
   for (let i = span[1] - 1; i >= span[0]; i--) {
     const c = tex[i];
+    if (tex[i - 1] === "\\") continue;
     if (c === "}") depth++;
     else if (c === "{" && --depth === 0) return i;
   }
@@ -77,28 +78,25 @@ function abstractOf(tex: string): string | undefined {
   return oneLine(tex.slice(mandatoryOpen(tex, cmd) + 1, cmd[1] - 1), MAX_ABSTRACT_CHARS) || undefined;
 }
 
-// verbatim・図表・コードの環境と \label を外した本文。
+// verbatim を外してから行コメントを落とし、図表・コードの環境と \label を外した本文。⚠ landmines.md
 function proseOnly(body: string): string {
-  const spans: Span[] = [
-    ...verbatimSpans(body),
-    ...SKIPPED_ENVS.flatMap((e) => envSpans(body, e)),
-    ...commandSpans(body, "label"),
-  ];
-  return removeSpans(body, spans, " ");
+  const plain = stripTexComments(removeSpans(body, verbatimSpans(body), " "));
+  const spans: Span[] = [...SKIPPED_ENVS.flatMap((e) => envSpans(plain, e)), ...commandSpans(plain, "label")];
+  return removeSpans(plain, spans, " ");
 }
 
 // abstract・見出しの一覧・各見出しの直後の 1〜2 文。全体で MAX_EXCERPT_CHARS 字まで。
 // 見出しは全部入れ、冒頭文は残りの字数に浅い見出しから順に入れる。
 export function paperExcerpt(cleanLatex: string): string {
-  const body = proseOnly(stripTexComments(extractDocumentBody(cleanLatex)));
+  const body = proseOnly(extractDocumentBody(cleanLatex));
   const abstract = abstractOf(body) ?? abstractOf(stripTexComments(cleanLatex));
   const hs = headingsOf(body);
   const lines = hs.map((h) => `${"§".repeat(h.level + 1)} ${h.title}`);
   const head = abstract === undefined ? [] : [`[abstract] ${abstract}`];
   let used = [...head, ...lines].reduce((n, l) => n + l.length + 1, 0);
   if (used > MAX_EXCERPT_CHARS) {
-    const fit: string[] = [];
-    let n = 0;
+    const fit: string[] = [...head];
+    let n = head.reduce((k, l) => k + l.length + 1, 0);
     for (const l of lines) {
       if (n + l.length + 1 > MAX_EXCERPT_CHARS) break;
       fit.push(l);

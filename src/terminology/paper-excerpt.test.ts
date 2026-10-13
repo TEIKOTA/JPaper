@@ -79,10 +79,25 @@ describe("paperExcerpt（契約付録 §4・issue #258）", () => {
     ).toBe("[abstract] Pre abs.");
   });
 
+  it("一行内の \\verb|…%…| があっても以降の見出しを落とさない", () => {
+    const tex = "\\begin{document}\\section{A}a \\verb|x%| b. \\section{B}c $|x|$ d.\\section{C}e.\\end{document}";
+    expect(paperExcerpt(tex).split("\n").map((l) => l.split(":")[0])).toEqual(["§ A", "§ B", "§ C"]);
+  });
+
+  it("見出しだけで上限を超えても abstract は残し、見出しの題の \\{ は数えない", () => {
+    const abs = "Abstract words. ".repeat(150);
+    const many = Array.from({ length: 900 }, (_, i) => `\\section{Heading number ${String(i)}}x.`).join("");
+    const out = paperExcerpt(`\\begin{document}\\begin{abstract}${abs}\\end{abstract}${many}\\end{document}`);
+    expect(out.startsWith("[abstract] Abstract words.")).toBe(true);
+    expect(out.length).toBeLessThanOrEqual(MAX_EXCERPT_CHARS);
+    expect(paperExcerpt("\\begin{document}\\section{Left \\{ brace}x.\\end{document}")).toBe("§ Left \\{ brace: x.");
+  });
+
   it("leadSentences: 略語（e.g.・et al.・Fig.）では切らず、全角の終止符で切る", () => {
     expect(leadSentences("We use e.g. ResNet and others. Third. Fourth.")).toBe("We use e.g. ResNet and others. Third.");
     expect(leadSentences("Fig. 3 shows it, as Smith et al. note. Next. Last.")).toBe("Fig. 3 shows it, as Smith et al. note. Next.");
     expect(leadSentences("これは文である．次の文！三つ目？")).toBe("これは文である．次の文！");
+    expect(leadSentences("The answer is no. Next. Last.")).toBe("The answer is no. Next.");
   });
 
   it("leadSentences: 句点・終止符で 2 文、無ければ上限で切る。小数点では切らない", () => {
