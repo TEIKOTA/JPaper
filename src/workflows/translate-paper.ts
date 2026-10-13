@@ -563,7 +563,7 @@ function gateError(
 }
 
 // 通った節の checkpoint が別の版の形式検査で通ったものなら、印のままの訳文を今の検査にかけ直す。
-// 通れば版を書き換えて使い、落ちれば訳し直す。印のままの訳文を持たない旧版の checkpoint はそのまま使う。契約付録 §8（形式検査の版）
+// 通れば版を書き換えて使い、落ちれば訳し直す。印のままの訳文を持たない・訳文と対応しない checkpoint はそのまま使う。契約付録 §8（形式検査の版）
 async function recheckCached(
   r: SectionLoopCache,
   seg: Segment,
@@ -573,7 +573,9 @@ async function recheckCached(
   onRetranslate: () => void,
 ): Promise<SectionLoopCache> {
   if (!r.passed || r.marked === undefined || r.gate === FORMAL_GATE) return r;
-  if (recheckFormal(seg, slice, r.marked).length === 0) {
+  const issues = recheckFormal(seg, slice, r.marked, r.ja);
+  if (issues === undefined) return r;
+  if (issues.length === 0) {
     const v = { ...r, gate: FORMAL_GATE };
     save(v);
     return v;
@@ -1122,22 +1124,22 @@ export async function translatePaper(
           ),
         )
         .then((r) => {
-        doneSegments++;
-        if (r.passed) donePassed++;
-        else doneFailed++;
-        reached = { total: segments.length, passed: donePassed, failed: doneFailed };
-        progress({
-          phase: "translate",
-          segmentId: seg.id,
-          done: doneSegments,
-          total: segments.length,
-          passed: r.passed,
-          failedKinds: r.failedKinds,
-          usedRevisions: r.usedRevisions,
-          maxRevisions: r.maxRevisions,
+          doneSegments++;
+          if (r.passed) donePassed++;
+          else doneFailed++;
+          reached = { total: segments.length, passed: donePassed, failed: doneFailed };
+          progress({
+            phase: "translate",
+            segmentId: seg.id,
+            done: doneSegments,
+            total: segments.length,
+            passed: r.passed,
+            failedKinds: r.failedKinds,
+            usedRevisions: r.usedRevisions,
+            maxRevisions: r.maxRevisions,
+          });
+          return r;
         });
-        return r;
-      });
     };
 
     // タイトルは前文（または本文で原文のまま残した \title）にあり、翻訳する節に含まれない。

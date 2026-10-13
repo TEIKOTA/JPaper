@@ -118,9 +118,16 @@ function formalOf(g: Guard, marked: string, glossarySlice: ResolvedTerm[]) {
   return { restored, checked, markIssues, formal };
 }
 
-// 通過した節の checkpoint に残した印のままの訳文を、今の形式検査にかけ直す。契約付録 §8（形式検査の版）
-export function recheckFormal(segment: Segment, glossarySlice: ResolvedTerm[], marked: string): FormalIssue[] {
-  return formalOf(guardOf(segment), marked, glossarySlice).formal;
+// 通過した節の checkpoint に残した印のままの訳文を、今の形式検査にかけ直す。
+// 復元した訳文が checkpoint の訳文（ja）と一致しなければ undefined（再検査できない）。契約付録 §8（形式検査の版）
+export function recheckFormal(
+  segment: Segment,
+  glossarySlice: ResolvedTerm[],
+  marked: string,
+  ja: string,
+): FormalIssue[] | undefined {
+  const r = formalOf(guardOf(segment), marked, glossarySlice);
+  return r.restored.text === ja ? r.formal : undefined;
 }
 
 export async function runSectionLoop(

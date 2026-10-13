@@ -42,13 +42,13 @@ const throwing: LlmClient = {
   complete: () => Promise.reject(new Error("LLM を呼んではいけない")),
 };
 
-function setup() {
+function setup(content = "\\documentclass{a}\\begin{document}\\section{A}Alpha text with $x = 1$ inside.\\end{document}", id = "seg-0000") {
   const d = mkdtempSync(path.join(os.tmpdir(), "jpaper-gate-"));
   dirs.push(d);
   const tar = path.join(d, "p.tar");
   writeFileSync(
     tar,
-    makeTar([{ name: "main.tex", content: "\\documentclass{a}\\begin{document}\\section{A}Alpha text with $x = 1$ inside.\\end{document}" }]),
+    makeTar([{ name: "main.tex", content }]),
   );
   const outDir = path.join(d, "out");
   const key = randomBytes(32);
@@ -65,8 +65,8 @@ function setup() {
     return r;
   };
   const runDir = path.join(outDir, ".run");
-  const step = () => readStep(runDir, "seg-0000", key)!;
-  const put = (value: unknown) => writeStep(runDir, "seg-0000", value, { invalidation: step().invalidation, key });
+  const step = () => readStep(runDir, id, key)!;
+  const put = (value: unknown) => writeStep(runDir, id, value, { invalidation: step().invalidation, key });
   const rewrite = (patch: Record<string, unknown>) => put({ ...(step().value as object), ...patch });
   return { run, step, rewrite, put };
 }
@@ -108,5 +108,66 @@ describe("形式検査の版（契約付録 §8・issue #254）", () => {
     put({ ...old, ja: "\\section{A}アルファの訳文である。" });
     expect((await run(throwing)).exitCode).toBe(0);
     expect(step().value).not.toHaveProperty("gate");
+  });
+
+  it("印のままの訳文が checkpoint の訳文と対応しなければ再検査せずに使う", async () => {
+    const { run, rewrite } = setup();
+    await run(client());
+    rewrite({ gate: "0:old", marked: "\\section{A}別の訳である。" });
+    expect((await run(throwing)).exitCode).toBe(0);
+  });
+
+  it("タイトル節も再検査する: 通れば LLM なし、落ちれば訳し直す", async () => {
+    const paper =
+      "\\documentclass{a}\\title{Alpha Study}\\begin{document}\\maketitle\\section{A}Alpha text with $x = 1$ inside.\\end{document}";
+    const titled = (ja: string) =>
+      new FakeLlmClient((req) => {
+        if (req.system.includes("編纂者")) {
+          return JSON.stringify({
+            resolved: [],
+            brief: { thesis: "核", sectionRoles: [], notationConventions: [] },
+            style: { tensePolicy: "a", headingStyle: "b", numberStyle: "c" },
+          });
+        }
+        if (req.system.includes("審査者")) return '{"verdict":"pass","issues":[]}';
+        return req.meta?.segmentId === "title" ? "```tex\n" + ja + "\n```" : "```tex\n" + GOOD + "\n```";
+      });
+    const ok = setup(paper, "title");
+    expect((await ok.run(titled("\\title{甲の研究}"))).summary.title).toBe("translated");
+    ok.rewrite({ gate: "0:old" });
+    const r = await ok.run(throwing);
+    expect(r.summary.title).toBe("translated");
+    expect(ok.step().value).toMatchObject({ gate: FORMAL_GATE });
+
+    const ng = setup(paper, "title");
+    await ng.run(titled("\\title{甲の研究}"));
+    // 文書構造を壊す綴りを持ち込んだタイトルを、古い版で通ったことにする。
+    ng.rewrite({ gate: "0:old", marked: "\\title{甲の研究}\\end{document}", ja: "\\title{甲の研究}\\end{document}" });
+    const errs: string[] = [];
+    const c = titled("\\title{甲の研究}");
+    await ng.run(c, errs);
+    expect(errs.some((m) => m.includes("以前に通したタイトルを訳し直します"))).toBe(true);
+    expect(ng.step().value).toMatchObject({ ja: "\\title{甲の研究}", gate: FORMAL_GATE });
+  });
+
+  it("著者を伏せた節の印のままの訳文も、今の検査に通る（節ループと同じ判定）", async () => {
+    const paper =
+      "\\documentclass{a}\\begin{document}\\section{A}\\author{Jane Doe}Alpha text with $x = 1$ inside.\\end{document}";
+    const g = setup(paper);
+    const c = new FakeLlmClient((req) => {
+      if (req.system.includes("編纂者")) {
+        return JSON.stringify({
+          resolved: [],
+          brief: { thesis: "核", sectionRoles: [], notationConventions: [] },
+          style: { tensePolicy: "a", headingStyle: "b", numberStyle: "c" },
+        });
+      }
+      if (req.system.includes("審査者")) return '{"verdict":"pass","issues":[]}';
+      return "```tex\n\\section{A}〔1〕アルファの訳文 〔2〕 である。\n```";
+    });
+    expect((await g.run(c)).exitCode).toBe(0);
+    g.rewrite({ gate: "0:old" });
+    expect((await g.run(throwing)).exitCode).toBe(0);
+    expect(g.step().value).toMatchObject({ gate: FORMAL_GATE });
   });
 });

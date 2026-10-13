@@ -252,6 +252,18 @@ describe("用語集の編集（契約付録 §9）", () => {
     db.close();
   });
 
+  it("形式検査の版が違い今の検査に通らない節があれば、組み直しの前に入力エラーで止める（契約付録 §8・§9）", async () => {
+    const { outDir, db } = await translated();
+    const runDir = path.join(outDir, ".run");
+    const st = readStep(runDir, "seg-0001", KEY)!;
+    const bad = "\\section{序論}\nラショモン集合(Rashomon set)は大きい。\\end{document}";
+    writeStep(runDir, "seg-0001", { ...(st.value as object), gate: "0:old", marked: bad, ja: bad }, { invalidation: st.invalidation, key: KEY });
+    await expect(
+      applyTermEdit(outDir, "Rashomon set", "羅生門集合", {}, { db, cacheKey: KEY, latexRunner: okRunner }),
+    ).rejects.toThrow(/節 seg-0001 は今の形式検査に通りません/);
+    db.close();
+  });
+
   it("失敗した適用は、その前に成功した適用の「元に戻す」を消さない", async () => {
     const { outDir, db } = await translated();
     const md0 = readFileSync(path.join(outDir, "glossary.md"), "utf8");

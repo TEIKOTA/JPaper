@@ -1,5 +1,7 @@
 // 契約付録 §9。用語集の訳語の編集: 置換の計画・適用（checkpoint の署名し直し＋LLM なしの再組版）・元に戻す。
 import { isMacroDefinitionsOnly } from "../segment/macro-only.js";
+import { recheckFormal } from "./section-loop.js";
+import { FORMAL_GATE } from "./quality-gate.js";
 import {
   cpSync,
   existsSync,
@@ -273,6 +275,16 @@ export function loadPaperState(outDir: string, key: Buffer = loadCacheKey()): Pa
   }
 
   const all = [...(title === undefined ? [] : [title]), ...chosen.entries];
+  // 形式検査の版が違う節は、組み直しの中で訳し直しになる（LLM が要る）ので先に検査する。契約付録 §8（形式検査の版）・§9
+  const occ = segmentFirstOccurrence(chosen.segments, ctx.resolved);
+  for (const e of all) {
+    const v = e.value;
+    if (v.marked === undefined || v.gate === FORMAL_GATE) continue;
+    const slice = e.id === TITLE_SEGMENT_ID ? titleSlice(e.source, ctx.resolved) : segmentSlice(e.source, ctx.resolved, occ);
+    if ((recheckFormal(e.source, slice, v.marked, v.ja) ?? []).length > 0) {
+      throw inputError(`節 ${e.id} は今の形式検査に通りません。CLI で再実行してから編集してください`);
+    }
+  }
   const migrated = all.some((e) => !e.current);
   if (migrated) {
     // 作った版が違う checkpoint を引き継ぐ条件: md が最後の用語集の生成から変わっていない＋原文と訳文が対応する。
