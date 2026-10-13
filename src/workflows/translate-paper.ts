@@ -335,6 +335,8 @@ async function loadOrBuildContext(
       checks = verified.checks;
       unverified = checks.filter((c) => c.status === "unverified").map((c) => c.src);
       writeStep(runDir, VERIFY_RESULT_STEP, { checks }, { key: cacheKey });
+    } else {
+      writeStep(runDir, VERIFY_RESULT_STEP, { checks: [] }, { key: cacheKey });
     }
     resolved = context.resolved;
     if (writeBack) proposedAdded = writeBackResolved(db, context, paperId);

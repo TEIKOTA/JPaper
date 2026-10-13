@@ -275,6 +275,16 @@ describe("用語の検証（契約付録 §4・issue #309）", () => {
     expect(r.summary.terms).toMatchObject({ replaced: 0, unverified: 2 });
   });
 
+  it("検証せずに用語集を作り直した run の後は、前の検証の未確認を引き継がない", async () => {
+    const outDir = path.join(tmp(), "out");
+    await run(outDir, (await fake()).client);
+    rmSync(path.join(outDir, "glossary.md"));
+    const off = await run(outDir, (await fake()).client, { verifyTerms: false });
+    expect(off.r.summary.notes.byTrigger["unverified-term"] ?? 0).toBe(0);
+    const again = await run(outDir, (await fake()).client);
+    expect(again.r.summary.notes.byTrigger["unverified-term"] ?? 0).toBe(0);
+  });
+
   it("検証の途中の中断は未確認にせず、中断として返す", async () => {
     const c = new AbortController();
     const { client } = await fake(() => {
