@@ -1,28 +1,40 @@
 // 契約付録 §4（glossary-builder に渡す本文の抜粋）。issue #258。
 import { extractDocumentBody } from "../segment/segmenter.js";
 import { stripTexComments } from "../tools/paper-title.js";
-import { commandSpans, envSpans, type Span } from "../tools/tex-spans.js";
+import { commandSpans, envSpans, removeSpans, verbatimSpans, type Span } from "../tools/tex-spans.js";
+import { oneLine } from "../runtime/untrusted.js";
 
 export const MAX_EXCERPT_CHARS = 12_000;
 export const MAX_ABSTRACT_CHARS = 3_000;
+export const MAX_HEADING_CHARS = 200;
 export const MAX_LEAD_CHARS = 400;
 const LEAD_SENTENCES = 2;
 const HEADINGS = ["section", "subsection", "subsubsection"] as const;
+// 冒頭文から外す環境。
+const SKIPPED_ENVS = ["figure", "table", "wrapfigure", "algorithm", "comment", "lstlisting", "minted"];
+// 直後の終止符で文を切らない略語（小文字で比べる）。
+const ABBREVIATIONS = new Set(["e.g", "i.e", "al", "fig", "figs", "sec", "secs", "eq", "eqs", "tab", "cf", "vs", "resp", "approx", "no"]);
+const FULL_WIDTH_ENDS = new Set(["。", "．", "！", "？"]);
 
-const squash = (s: string): string => s.replace(/\s+/g, " ").trim();
+function abbreviationBefore(text: string, dot: number): boolean {
+  let i = dot;
+  while (i > 0 && /[A-Za-z.]/.test(text[i - 1]!)) i--;
+  return ABBREVIATIONS.has(text.slice(i, dot).toLowerCase());
+}
 
-const clip = (s: string, n: number): string => (s.length > n ? `${s.slice(0, n)}…` : s);
-
-// 先頭から n 文（. ! ? の後に空白か末尾、または 。）。見つからなければ max 字まで。
+// 先頭から n 文（. ! ? の後に空白か末尾で直前が略語でないもの、または全角の終止符）。見つからなければ max 字まで。
 export function leadSentences(text: string, n = LEAD_SENTENCES, max = MAX_LEAD_CHARS): string {
   const head = text.slice(0, max);
   let found = 0;
   for (let i = 0; i < head.length; i++) {
     const c = head[i]!;
-    const end = c === "。" || ((c === "." || c === "!" || c === "?") && (i + 1 === head.length || /\s/.test(head[i + 1]!)));
-    if (end && ++found === n) return head.slice(0, i + 1);
+    const ascii =
+      (c === "." || c === "!" || c === "?") &&
+      (i + 1 === head.length || /\s/.test(head[i + 1]!)) &&
+      !(c === "." && abbreviationBefore(head, i));
+    if ((ascii || FULL_WIDTH_ENDS.has(c)) && ++found === n) return head.slice(0, i + 1);
   }
-  return clip(head, max - 1);
+  return head.length < text.length ? `${head.slice(0, max - 1)}…` : head;
 }
 
 interface Heading {
@@ -31,46 +43,77 @@ interface Heading {
   title: string;
 }
 
+// 命令の区間の最後の } に対応する {（必須引数の開始）。
+function mandatoryOpen(tex: string, span: Span): number {
+  let depth = 0;
+  for (let i = span[1] - 1; i >= span[0]; i--) {
+    const c = tex[i];
+    if (c === "}") depth++;
+    else if (c === "{" && --depth === 0) return i;
+  }
+  return span[0];
+}
+
 function headingsOf(body: string): Heading[] {
   const out: Heading[] = [];
   HEADINGS.forEach((name, level) => {
     for (const span of commandSpans(body, name)) {
-      const open = body.indexOf("{", span[0]);
-      out.push({ level, span, title: squash(body.slice(open + 1, span[1] - 1)) });
+      const open = mandatoryOpen(body, span);
+      out.push({ level, span, title: oneLine(body.slice(open + 1, span[1] - 1), MAX_HEADING_CHARS) });
     }
   });
   return out.sort((a, b) => a.span[0] - b.span[0]);
 }
 
-function abstractOf(body: string): string | undefined {
-  const env = envSpans(body, "abstract").sort((a, b) => a[0] - b[0])[0];
+function abstractOf(tex: string): string | undefined {
+  const env = envSpans(tex, "abstract").sort((a, b) => a[0] - b[0])[0];
   if (env !== undefined) {
-    const inner = body.slice(body.indexOf("}", env[0]) + 1, body.lastIndexOf("\\end", env[1]));
-    return squash(inner);
+    const inner = tex.slice(tex.indexOf("}", env[0]) + 1, tex.lastIndexOf("\\end", env[1] - 1));
+    const text = oneLine(inner, MAX_ABSTRACT_CHARS);
+    if (text !== "") return text;
   }
-  const cmd = commandSpans(body, "abstract")[0];
+  const cmd = commandSpans(tex, "abstract")[0];
   if (cmd === undefined) return undefined;
-  return squash(body.slice(body.indexOf("{", cmd[0]) + 1, cmd[1] - 1));
+  return oneLine(tex.slice(mandatoryOpen(tex, cmd) + 1, cmd[1] - 1), MAX_ABSTRACT_CHARS) || undefined;
 }
 
-// abstract・見出しの一覧・各見出しの直後の 1〜2 文を決定的に取り出す。全体で MAX_EXCERPT_CHARS 字まで。
+// verbatim・図表・コードの環境と \label を外した本文。
+function proseOnly(body: string): string {
+  const spans: Span[] = [
+    ...verbatimSpans(body),
+    ...SKIPPED_ENVS.flatMap((e) => envSpans(body, e)),
+    ...commandSpans(body, "label"),
+  ];
+  return removeSpans(body, spans, " ");
+}
+
+// abstract・見出しの一覧・各見出しの直後の 1〜2 文。全体で MAX_EXCERPT_CHARS 字まで。
+// 見出しは全部入れ、冒頭文は残りの字数に浅い見出しから順に入れる。
 export function paperExcerpt(cleanLatex: string): string {
-  const body = stripTexComments(extractDocumentBody(cleanLatex));
-  const parts: string[] = [];
+  const body = proseOnly(stripTexComments(extractDocumentBody(cleanLatex)));
   const abstract = abstractOf(body) ?? abstractOf(stripTexComments(cleanLatex));
-  if (abstract !== undefined && abstract !== "") parts.push(`[abstract] ${clip(abstract, MAX_ABSTRACT_CHARS)}`);
   const hs = headingsOf(body);
-  hs.forEach((h, i) => {
-    const to = i + 1 < hs.length ? hs[i + 1]!.span[0] : body.length;
-    const lead = leadSentences(squash(body.slice(h.span[1], Math.min(to, h.span[1] + MAX_LEAD_CHARS * 4))));
-    const mark = "§".repeat(h.level + 1);
-    parts.push(lead === "" ? `${mark} ${h.title}` : `${mark} ${h.title}: ${lead}`);
-  });
-  let out = "";
-  for (const p of parts) {
-    const next = out === "" ? p : `${out}\n${p}`;
-    if (next.length > MAX_EXCERPT_CHARS) break;
-    out = next;
+  const lines = hs.map((h) => `${"§".repeat(h.level + 1)} ${h.title}`);
+  const head = abstract === undefined ? [] : [`[abstract] ${abstract}`];
+  let used = [...head, ...lines].reduce((n, l) => n + l.length + 1, 0);
+  if (used > MAX_EXCERPT_CHARS) {
+    const fit: string[] = [];
+    let n = 0;
+    for (const l of lines) {
+      if (n + l.length + 1 > MAX_EXCERPT_CHARS) break;
+      fit.push(l);
+      n += l.length + 1;
+    }
+    return fit.join("\n");
   }
-  return out;
+  const byDepth = hs.map((h, i) => ({ h, i })).sort((a, b) => a.h.level - b.h.level || a.i - b.i);
+  for (const { h, i } of byDepth) {
+    const to = i + 1 < hs.length ? hs[i + 1]!.span[0] : body.length;
+    const raw = body.slice(h.span[1], Math.min(to, h.span[1] + MAX_LEAD_CHARS * 4));
+    const lead = leadSentences(oneLine(raw, MAX_LEAD_CHARS * 4));
+    if (lead === "" || used + lead.length + 2 > MAX_EXCERPT_CHARS) continue;
+    lines[i] = `${lines[i]!}: ${lead}`;
+    used += lead.length + 2;
+  }
+  return [...head, ...lines].join("\n");
 }

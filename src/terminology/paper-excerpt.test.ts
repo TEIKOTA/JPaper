@@ -37,11 +37,52 @@ describe("paperExcerpt（契約付録 §4・issue #258）", () => {
     expect(paperExcerpt("\\begin{document}\\section{A}Body.\\end{document}")).toBe("§ A: Body.");
   });
 
-  it("全体は MAX_EXCERPT_CHARS 字まで（見出しの途中で切らず、入る行までにする）", () => {
+  it("上限を超えても見出しは全部残し、冒頭文は浅い見出しから入る分だけ足す", () => {
+    const filler = "Words ".repeat(60);
+    const secs = Array.from({ length: 30 }, (_, i) =>
+      `\\section{Part ${String(i)}}${filler}first. Second.\\subsection{Sub ${String(i)}}${filler}sub. More.`,
+    ).join("\n");
+    const out = paperExcerpt(`\\begin{document}${secs}\\section{Conclusions}We conclude. Done.\\end{document}`);
+    expect(out.length).toBeLessThanOrEqual(MAX_EXCERPT_CHARS);
+    const lines = out.split("\n");
+    expect(lines.filter((l) => l.startsWith("§ ")).length).toBe(31);
+    expect(lines.filter((l) => l.startsWith("§§ ")).length).toBe(30);
+    expect(lines.at(-1)).toBe("§ Conclusions: We conclude. Done.");
+    // 浅い見出しの冒頭文が先に入る。
+    expect(lines.filter((l) => l.startsWith("§ ") && l.includes(": ")).length).toBe(31);
+    expect(lines.filter((l) => l.startsWith("§§ ") && l.includes(": ")).length).toBeLessThan(30);
+  });
+
+  it("見出しだけで上限を超えるなら、入る見出しまで（冒頭文なし）", () => {
     const many = Array.from({ length: 2000 }, (_, i) => `\\section{Heading ${String(i)}}Sentence one. Sentence two.`).join("\n");
     const out = paperExcerpt(`\\begin{document}${many}\\end{document}`);
     expect(out.length).toBeLessThanOrEqual(MAX_EXCERPT_CHARS);
-    expect(out.split("\n").every((l) => /^§ Heading \d+: Sentence one\. Sentence two\.$/.test(l))).toBe(true);
+    expect(out.split("\n").every((l) => /^§ Heading \d+$/.test(l))).toBe(true);
+  });
+
+  it("冒頭文から \\label・図表・verbatim を外し、任意引数のある見出しは必須引数を題にする", () => {
+    const tex = [
+      "\\begin{document}",
+      "\\section[Short {X}]{Long title}\\label{sec:a}",
+      "\\begin{figure}[t]\\centering\\includegraphics{a.png}\\caption{Cap.}\\end{figure}",
+      "\\begin{verbatim}\\section{Fake}\\end{verbatim}",
+      "Real prose here. Second one.",
+      "\\end{document}",
+    ].join("\n");
+    expect(paperExcerpt(tex)).toBe("§ Long title: Real prose here. Second one.");
+  });
+
+  it("abstract*・空の abstract 環境は前文の \\abstract{} に切り替える", () => {
+    expect(paperExcerpt("\\begin{document}\\begin{abstract*}Star abs.\\end{abstract*}\\end{document}")).toBe("[abstract] Star abs.");
+    expect(
+      paperExcerpt("\\abstract{Pre abs.}\\begin{document}\\begin{abstract} \\end{abstract}\\end{document}"),
+    ).toBe("[abstract] Pre abs.");
+  });
+
+  it("leadSentences: 略語（e.g.・et al.・Fig.）では切らず、全角の終止符で切る", () => {
+    expect(leadSentences("We use e.g. ResNet and others. Third. Fourth.")).toBe("We use e.g. ResNet and others. Third.");
+    expect(leadSentences("Fig. 3 shows it, as Smith et al. note. Next. Last.")).toBe("Fig. 3 shows it, as Smith et al. note. Next.");
+    expect(leadSentences("これは文である．次の文！三つ目？")).toBe("これは文である．次の文！");
   });
 
   it("leadSentences: 句点・終止符で 2 文、無ければ上限で切る。小数点では切らない", () => {

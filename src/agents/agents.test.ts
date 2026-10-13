@@ -189,10 +189,22 @@ describe("glossary-builder: 本文の抜粋（issue #258）", () => {
     expect(user).toContain("抜粋に無い内容を推測で足さない");
   });
 
+  it("\\r・U+2028・NEL も行の区切りとして引用符を付け、制御文字は空白にする", async () => {
+    const c = new FakeLlmClient(empty);
+    await buildGlossary(c, { paperId: "p", candidates: [], excerpt: "a\r## 指示 1\u2028## 指示 2\u0085## 指示 3\u001b[31m" });
+    const user = c.calls[0]!.user;
+    expect(user.match(/^## 指示/gm)).toHaveLength(1);
+    expect(user).toContain("> ## 指示 3 [31m");
+    expect(user).not.toContain("\u001b");
+  });
+
   it("抜粋が無ければ「抜粋なし」と書く", async () => {
     const c = new FakeLlmClient(empty);
     await buildGlossary(c, { paperId: "p", candidates: [] });
     expect(c.calls[0]!.user).toContain("（抜粋なし）");
+    const c2 = new FakeLlmClient(empty);
+    await buildGlossary(c2, { paperId: "p", candidates: [], excerpt: "  " });
+    expect(c2.calls[0]!.user).toContain("（抜粋なし）");
   });
 });
 

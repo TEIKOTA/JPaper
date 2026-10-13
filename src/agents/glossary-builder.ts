@@ -13,13 +13,13 @@ function renderUser(input: GlossaryBuilderIn): string {
       return `- ${c.src}${c.definedInPaper ? " [論文内定義]" : ""}: ${globals || "候補なし"}`;
     })
     .join("\n");
-  // 抜粋は論文由来のデータ。行頭を引用符にして見出しの偽装を防ぐ。
+  // 契約付録 §4
   const excerpt =
-    input.excerpt === undefined || input.excerpt === ""
+    input.excerpt === undefined || input.excerpt.trim() === ""
       ? "（抜粋なし）"
       : input.excerpt
-          .split("\n")
-          .map((l) => `> ${l}`)
+          .split(/\r\n?|[\n\u0085\u2028\u2029]/)
+          .map((l) => `> ${l.replace(/[\u0000-\u001f\u007f-\u009f]/g, " ")}`)
           .join("\n");
   return [
     `# 論文 ${input.paperId} の用語確定`,
