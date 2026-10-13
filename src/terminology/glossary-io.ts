@@ -20,7 +20,7 @@ function checkCell(c: TermCheck | undefined): string {
   if (c.status === "replaced") return `用例に合わせた（元の訳: ${c.original ?? ""}）${src}`;
   if (c.status === "confirmed") return `用例と一致${src}`;
   if (c.reason === "conflicting") return "未確認（用例の表記が割れている）";
-  if (c.reason === "few-sites") return "未確認（違う表記の用例が 1 サイトだけ）";
+  if (c.reason === "few-sites") return "未確認（差し替えに足りる用例が無い）";
   if (c.reason === "failed") return "未確認（検証の呼び出しに失敗した）";
   return "未確認（Web 検索で用例を確かめられなかった）";
 }

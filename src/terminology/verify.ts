@@ -4,12 +4,19 @@ import { MAX_VERIFY_TERMS, type TermCheck, type TermVerifyOut } from "../types/c
 import type { ResolvedRow } from "./glossary-io.js";
 import { canonicalBilingualForm } from "./bilingual-form.js";
 import { isAcceptableTerm } from "./glossary.js";
-import { rewriteStrings, shieldsFor, termJa, type TermRewrite } from "./replace.js";
+import { rewriteStrings, sameJaTerms, shieldsFor, termJa, type TermRewrite } from "./replace.js";
 
-// 用例の表記として受け付ける長さと文字（かな・漢字・長音・中黒・英数字・空白・ハイフン）。
+// 用例の表記として受け付ける長さと文字（かな・漢字・々・長音・中黒・英数字・空白・ハイフン）。
 export const MAX_USAGE_FORM_CHARS = 40;
-const USAGE_FORM = /^[぀-ヿ㐀-鿿ー・A-Za-z0-9 \-]+$/;
-const JAPANESE = /[぀-ヿ㐀-鿿]/;
+const USAGE_FORM = /^[぀-ヿ㐀-鿿々ー・A-Za-z0-9 \-]+$/;
+const JAPANESE = /[぀-ヿ㐀-鿿々]/;
+const LATIN_THEN_CJK = /([A-Za-z0-9])\s+(?=[぀-ヿ㐀-鿿々])/g;
+const CJK_THEN_LATIN = /([぀-ヿ㐀-鿿々])\s+(?=[A-Za-z0-9])/g;
+
+// 空白をまとめ、英数字と日本語の間の空白を除く（「Rashomon 集合」と「Rashomon集合」を同じ表記にする）。
+export function normalizeUsage(s: string): string {
+  return s.replace(/\s+/g, " ").trim().replace(LATIN_THEN_CJK, "$1").replace(CJK_THEN_LATIN, "$1");
+}
 // 訳を差し替えるのに要る、同じ表記を載せた異なるサイトの数。
 export const MIN_REPLACE_SITES = 2;
 
@@ -60,10 +67,10 @@ export function verifyTargets(
     .map(({ r }) => ({ src: r.src, form: r.form }));
 }
 
-// 用例の表記として使えるか（長さ・使える文字・日本語を含む）。連続する空白は 1 つにする。
+// 用例の表記として使えるか（長さ・使える文字・日本語を含む）。空白は normalizeUsage でまとめる。
 export function usableForm(form: string | undefined): string | undefined {
   if (form === undefined) return undefined;
-  const s = form.trim().replace(/\s+/g, " ");
+  const s = normalizeUsage(form);
   if (s === "" || s.length > MAX_USAGE_FORM_CHARS) return undefined;
   if (!USAGE_FORM.test(s) || !JAPANESE.test(s)) return undefined;
   return s;
@@ -94,7 +101,7 @@ function usagesOf(candidates: TermVerifyOut["terms"][number]["candidates"]): Usa
     const usage = byForm.get(form) ?? { form, sites: new Map<string, string>() };
     for (const s of c.sources) {
       const at = siteOf(s.url);
-      if (at !== undefined && s.quote.includes(form) && !usage.sites.has(at.site)) usage.sites.set(at.site, at.url);
+      if (at !== undefined && normalizeUsage(s.quote).includes(form) && !usage.sites.has(at.site)) usage.sites.set(at.site, at.url);
     }
     if (usage.sites.size > 0) byForm.set(form, usage);
   }
@@ -106,7 +113,7 @@ export interface Verified<T, B, S> {
   brief: B;
   style: S;
   checks: TermCheck[];
-  // 差し替えた訳を含むほかの語（書き換えずに元の訳のまま残る）。
+  // 差し替えた訳を含む・同じ訳を持つほかの語（書き換えずに元の訳のまま残る）。
   kept: { src: string; form: string; original: string }[];
 }
 
@@ -158,6 +165,7 @@ export function applyVerification<T extends ResolvedRow, B, S>(
     const shields = shieldsFor(ctx.resolved, row.src, current);
     rewrites.push({ oldJa: current, newJa: best.form, shields });
     for (const s of shields) kept.push({ src: s.src, form: s.ja, original: current });
+    for (const src of sameJaTerms(ctx.resolved, row.src, current)) kept.push({ src, form: current, original: current });
   }
   let brief = ctx.brief;
   let style = ctx.style;

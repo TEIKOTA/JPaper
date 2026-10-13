@@ -289,14 +289,15 @@ export function loadPaperState(outDir: string, key: Buffer = loadCacheKey()): Pa
   const migrated = all.some((e) => !e.current);
   if (migrated) {
     // 作った版が違う checkpoint を引き継ぐ条件: md が最後の用語集の生成から変わっていない＋原文と訳文が対応する。
-    // 用語の検証で差し替えた run は、検証の後の用語集・brief・style と比べる。契約付録 §4
+    // 用語の検証で差し替えた run は、検証の後の用語集・brief・style とも比べる。契約付録 §4
     const verifiedStored = readStep(runDir, VERIFY_STEP, key);
     const verified = verifiedStored === undefined ? undefined : VerifiedGlossary.safeParse(verifiedStored.value);
-    const base = verified?.success === true ? verified.data : glossaryValue;
-    const untouched =
+    const matches = (base: GlossaryBuilderOut): boolean =>
       sameJson(parseGlossaryMd(renderGlossaryMd(base.resolved)), ctx.resolved) &&
       sameJson(parseBriefMd(renderBriefMd(base.brief)), ctx.brief) &&
       sameJson(parseStyleMd(renderStyleMd(base.style)), ctx.style);
+    // 用語集の編集は glossary の step を書き直すので、どちらかと一致すれば未編集とみなす。
+    const untouched = matches(glossaryValue) || (verified?.success === true && matches(verified.data));
     if (!untouched) {
       throw inputError(
         "glossary.md・brief.md・style.md が最後の翻訳のあとで編集されています。CLI で再実行して反映してから編集してください",

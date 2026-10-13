@@ -58,11 +58,11 @@ const FOUND = JSON.stringify({
   ],
 });
 
-async function fake(verifier: (req: LlmRequest) => string | Promise<string> = () => FOUND) {
+async function fake(verifier: (req: LlmRequest) => string | Promise<string> = () => FOUND, glossary = GLOSSARY) {
   const { FakeLlmClient } = await import("../testing/fake-llm.js");
   const translatorUsers: string[] = [];
   const client = new FakeLlmClient((req) => {
-    if (req.system.includes("編纂者")) return GLOSSARY;
+    if (req.system.includes("編纂者")) return glossary;
     if (req.system.includes("調査者")) return verifier(req);
     if (req.system.includes("審査者")) return '{"verdict":"pass","issues":[]}';
     translatorUsers.push(req.user);
@@ -235,6 +235,44 @@ describe("用語の検証（契約付録 §4・issue #309）", () => {
     writeFileSync(md, readFileSync(md, "utf8").replace("| ギズモ比(Gizmo ratio) |", "| 機巧比(Gizmo ratio) |"));
     const edited = await run(outDir, (await fake()).client);
     expect(edited.r.summary.notes.byTrigger["unverified-term"] ?? 0).toBe(0);
+  });
+
+  it("検証の呼び出しが失敗した run の後も、未確認の訳注を付け続ける", async () => {
+    const { JpaperError } = await import("../types/errors.js");
+    const outDir = path.join(tmp(), "out");
+    const bad = await fake(() => {
+      throw new JpaperError(2, "provider", "検索できませんでした");
+    });
+    const first = await run(outDir, bad.client);
+    expect(first.r.summary.notes.byTrigger["unverified-term"]).toBe(2);
+    const second = await run(outDir, (await fake()).client);
+    expect(second.r.summary.notes.byTrigger["unverified-term"]).toBe(2);
+  });
+
+  it("差し替えで brief が上限を超えるなら差し替えず未確認にする", async () => {
+    const { MAX_BRIEF_CHARS } = await import("../runtime/untrusted.js");
+    const long = JSON.parse(GLOSSARY) as { brief: { thesis: string } };
+    long.brief.thesis = "ウィジェット集合".repeat(Math.floor(MAX_BRIEF_CHARS / 8));
+    const longer = JSON.stringify({
+      terms: [
+        {
+          src: "Widget set",
+          candidates: [
+            {
+              form: "とても長い部品の集合",
+              sources: [
+                { url: "https://a.jp/1", quote: "とても長い部品の集合" },
+                { url: "https://b.jp/1", quote: "とても長い部品の集合" },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+    const { client } = await fake(() => longer, JSON.stringify(long));
+    const { r } = await run(path.join(tmp(), "out"), client);
+    expect(r.exitCode).toBe(0);
+    expect(r.summary.terms).toMatchObject({ replaced: 0, unverified: 2 });
   });
 
   it("検証の途中の中断は未確認にせず、中断として返す", async () => {

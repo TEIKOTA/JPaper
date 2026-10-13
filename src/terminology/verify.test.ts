@@ -224,6 +224,39 @@ describe("applyVerification（採否は決定的）", () => {
   });
 });
 
+describe("表記のまとめ方と同じ訳の語", () => {
+  it("英数字と日本語の間の空白の有無は同じ表記として数え、々を受け付ける", () => {
+    const r = applyVerification(
+      ctx([row("Rashomon set", "ラショモン集合"), row("Sasaki set", "ササキ集合")]),
+      [
+        { src: "Rashomon set", form: "ラショモン集合" },
+        { src: "Sasaki set", form: "ササキ集合" },
+      ],
+      out([
+        {
+          src: "Rashomon set",
+          candidates: [
+            { form: "Rashomon 集合", sources: [at("https://a.jp", "Rashomon 集合の")] },
+            { form: "Rashomon集合", sources: [at("https://b.jp", "Rashomon集合の")] },
+          ],
+        },
+        { src: "Sasaki set", candidates: [{ form: "佐々木集合", sources: [at("https://a.jp", "佐々木集合"), at("https://c.jp", "佐々木集合と")] }] },
+      ]),
+    );
+    expect(r.resolved.map((x) => x.form)).toEqual(["Rashomon集合", "佐々木集合"]);
+  });
+
+  it("元の訳と同じ訳を持つほかの語は書き換えず、残ることを返す", () => {
+    const r = applyVerification(
+      ctx([row("Widget set", "ウィジェット集合"), row("widget sets", "ウィジェット集合")]),
+      [{ src: "Widget set", form: "ウィジェット集合" }],
+      out([{ src: "Widget set", candidates: [{ form: "部品集合", sources: [at("https://a.jp", "部品集合"), at("https://b.jp", "部品集合")] }] }]),
+    );
+    expect(r.resolved.map((x) => x.form)).toEqual(["部品集合", "ウィジェット集合"]);
+    expect(r.kept).toEqual([{ src: "widget sets", form: "ウィジェット集合", original: "ウィジェット集合" }]);
+  });
+});
+
 describe("carriedUnverified", () => {
   it("前の run の未確認のうち、今の用語集の訳が同じ語だけを引き継ぐ", () => {
     const rows = [row("A term", "語A"), row("B term", "人が直した訳")];

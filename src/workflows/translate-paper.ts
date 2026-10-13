@@ -57,6 +57,7 @@ import {
   type OpenRouterConfig,
 } from "../config.js";
 import { makeLlmClient } from "../providers/index.js";
+import { z } from "zod";
 import { paperExcerpt } from "../terminology/paper-excerpt.js";
 import { applyVerification, carriedUnverified, verifyTargets } from "../terminology/verify.js";
 import { verifyTerms } from "../agents/term-verifier.js";
@@ -333,6 +334,7 @@ async function loadOrBuildContext(
       context = { resolved: verified.resolved, brief: verified.brief, style: verified.style };
       checks = verified.checks;
       unverified = checks.filter((c) => c.status === "unverified").map((c) => c.src);
+      writeStep(runDir, VERIFY_RESULT_STEP, { checks }, { key: cacheKey });
     }
     resolved = context.resolved;
     if (writeBack) proposedAdded = writeBackResolved(db, context, paperId);
@@ -357,6 +359,27 @@ async function loadOrBuildContext(
 // 検証の版。採否の規則・対象語の選び方・指示を変えたら上げる（checkpoint の無効化キーに入る）。
 const VERIFY_VERSION = 2;
 export const VERIFY_STEP = "term-verify";
+// 直近の検証の結果（失敗した run を含む）。キャッシュには使わない。
+export const VERIFY_RESULT_STEP = "term-checks";
+const TermChecks = z.object({ checks: z.array(TermCheck) });
+
+// 差し替えで brief・style・訳注が上限を超えたら、差し替えずに未確認（few-sites）として返す。契約付録 §4
+function withinLimits<V extends { resolved: GlossaryBuilderOut["resolved"]; brief: unknown; style: unknown; checks: TermCheck[]; kept: unknown[] }>(
+  built: GlossaryBuilderOut,
+  v: V,
+): V {
+  if (VerifiedGlossary.safeParse(v).success) return v;
+  return {
+    ...v,
+    ...built,
+    kept: [],
+    checks: v.checks.map((c) =>
+      c.status === "replaced"
+        ? { src: c.src, status: "unverified" as const, form: c.original ?? c.form, reason: "few-sites" as const, sources: [] }
+        : c,
+    ),
+  };
+}
 
 // 用語集のうち対象語を Web 検索の用例で確かめ、採れた用例の表記へ差し替える（brief・style・訳注も）。契約付録 §4
 // 検証の呼び出しが失敗したら、対象語を全て未確認として進める（失敗は checkpoint に残さない）。
@@ -374,9 +397,6 @@ async function verifyGlossary(
   const excerpt = paperExcerpt(cleanLatex);
   const targets = verifyTargets(built.resolved, excerpt, (src) => db.confirmedFor(src).length > 0);
   if (targets.length === 0) return { ...built, checks: [] };
-  if (localInput) {
-    warn?.("arXiv 以外の入力の論文の用語と abstract の冒頭を Web 検索に出して用語を確かめます（止めるには --no-verify-terms）");
-  }
   let result: VerifiedGlossary;
   try {
     result = await checkpoint(
@@ -384,7 +404,10 @@ async function verifyGlossary(
       VERIFY_STEP,
       VerifiedGlossary,
       async () => {
-        const v = applyVerification(built, targets, await verifyTerms(client, { paperId, context: excerpt, targets }));
+        if (localInput) {
+          warn?.("arXiv 以外の入力の論文の用語と abstract の冒頭を Web 検索に出して用語を確かめます（止めるには --no-verify-terms）");
+        }
+        const v = withinLimits(built, applyVerification(built, targets, await verifyTerms(client, { paperId, context: excerpt, targets })));
         for (const k of v.kept) {
           warn?.(`用語の訳を差し替えた「${k.original}」を含む ${k.src}「${k.form}」は元の訳のまま残ります`);
         }
@@ -415,8 +438,8 @@ async function verifyGlossary(
 
 // 前の run の検証の結果（出力先の glossary.md を使う run で、未確認の訳注を引き継ぐ）。契約付録 §4
 function previousChecks(runDir: string, cacheKey: Buffer | undefined): TermCheck[] {
-  const stored = readStep(runDir, VERIFY_STEP, cacheKey);
-  const parsed = stored === undefined ? undefined : VerifiedGlossary.safeParse(stored.value);
+  const stored = readStep(runDir, VERIFY_RESULT_STEP, cacheKey);
+  const parsed = stored === undefined ? undefined : TermChecks.safeParse(stored.value);
   return parsed?.success === true ? parsed.data.checks : [];
 }
 
@@ -1476,7 +1499,7 @@ export async function translatePaper(
       // 残ると、前の論文の訳文がそのまま出力先に居座る）。
       pruneSteps(
         runDir,
-        new Set(["ingest", "glossary", VERIFY_STEP, TITLE_SEGMENT_ID, ...segments.map((s) => s.id)]),
+        new Set(["ingest", "glossary", VERIFY_STEP, VERIFY_RESULT_STEP, TITLE_SEGMENT_ID, ...segments.map((s) => s.id)]),
       );
       promoteContext(outDir, ingested.paperId, sourceDigestOf(ingested.cleanLatex), ctx.pending);
     }
