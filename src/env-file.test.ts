@@ -1,5 +1,6 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { spawnSync } from "node:child_process";
+import { createRequire } from "node:module";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -21,10 +22,10 @@ const DOTENV = ".env";
 describe("loadDotEnv（契約付録 §8・issue #273）", () => {
   it("許可したキーのうち環境に無いものだけを載せ、既にあるものは上書きしない", () => {
     const f = path.join(tmp(), "dotenv");
-    writeFileSync(f, "JPAPER_HOME=from-file\nJPAPER_DUMP_RAW=raw-from-file\n");
+    writeFileSync(f, "JPAPER_HOME=from-file\nJPAPER_DUMP_RAW=/raw-from-file\n");
     const env: NodeJS.ProcessEnv = { JPAPER_HOME: "from-shell" };
     expect(loadDotEnv(f, env)).toEqual({ loaded: ["JPAPER_DUMP_RAW"], ignored: [] });
-    expect(env).toEqual({ JPAPER_HOME: "from-shell", JPAPER_DUMP_RAW: "raw-from-file" });
+    expect(env).toEqual({ JPAPER_HOME: "from-shell", JPAPER_DUMP_RAW: "/raw-from-file" });
   });
 
   it("空文字の環境変数も「既にある」として上書きしない", () => {
@@ -67,12 +68,39 @@ describe("loadDotEnv（契約付録 §8・issue #273）", () => {
   });
 });
 
+describe("loadDotEnv の値の扱い", () => {
+  it("パスのキーの相対パスは .env のあるディレクトリを基準に解決する（CLI と Web で揃える）", () => {
+    const d = tmp();
+    const env: NodeJS.ProcessEnv = {};
+    loadDotEnv(path.join(d, "dotenv"), env, () => "JPAPER_HOME=./home\nJPAPER_DUMP_RAW=/abs/raw\nCODEX_HOME=\nJPAPER_MAX_LLM_QUEUE=./3\n");
+    expect(env).toEqual({
+      JPAPER_HOME: path.join(d, "home"),
+      JPAPER_DUMP_RAW: "/abs/raw",
+      CODEX_HOME: "",
+      JPAPER_MAX_LLM_QUEUE: "./3",
+    });
+  });
+
+  it("先頭の BOM を外して読む", () => {
+    const env: NodeJS.ProcessEnv = {};
+    expect(loadDotEnv("x", env, () => "\uFEFFOPENROUTER_API_KEY=k\n").loaded).toEqual(["OPENROUTER_API_KEY"]);
+    expect(env.OPENROUTER_API_KEY).toBe("k");
+  });
+
+  it("キー名の形でない行は名前を返さず、件数だけ返す", () => {
+    const r = loadDotEnv("x", {}, () => "OPENROUTER_API_KEY sk-or-v1-zzz=\nc2VjcmV0=\nFOO=1\n");
+    expect(r).toEqual({ loaded: [], ignored: ["FOO"], malformed: 2 });
+    expect(describeDotEnv(r).join("\n")).not.toContain("sk-or");
+  });
+});
+
 describe("describeDotEnv", () => {
   it("読んだキー・読まないキーの名前だけを並べる", () => {
     expect(describeDotEnv({ loaded: ["CODEX_HOME", "JPAPER_HOME"], ignored: ["PATH"] })).toEqual([
       ".env から読んだ: CODEX_HOME, JPAPER_HOME",
       ".env の次のキーは読みません: PATH",
     ]);
+    expect(describeDotEnv({ loaded: [], ignored: [], malformed: 2 })).toEqual([".env のキー名の形でない 2 行は読みません"]);
     expect(describeDotEnv({ loaded: [], ignored: [] })).toEqual([]);
   });
 });
@@ -80,7 +108,7 @@ describe("describeDotEnv", () => {
 describe("CLI の入口", () => {
   const root = path.join(import.meta.dirname, "..");
   const run = (cwd: string) =>
-    spawnSync(process.execPath, [path.join(root, "node_modules", "tsx", "dist", "cli.mjs"), path.join(root, "src", "cli.ts"), "--help"], {
+    spawnSync(process.execPath, [createRequire(import.meta.url).resolve("tsx/cli"), path.join(root, "src", "cli.ts"), "--help"], {
       cwd,
       encoding: "utf8",
       env: { PATH: process.env.PATH, HOME: process.env.HOME },
