@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from "vitest";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { createApp } from "./app.js";
@@ -7,7 +7,7 @@ import { ArxivClient } from "./arxiv.js";
 import { ATOM } from "./arxiv.fixtures.js";
 import { configFromEnv } from "./config.js";
 import { JobQueue, type JobRunner, type ProcessExit } from "./jobs.js";
-import { readSettings } from "./settings.js";
+import { emptySettings, MAX_HISTORY, readSettings, recordHistory, writeSettings } from "./settings.js";
 
 const dirs: string[] = [];
 const tmp = () => {
@@ -76,7 +76,7 @@ describe("設定 API（契約付録 §9）", () => {
     const { status, body } = await req("/api/settings");
     expect(status).toBe(200);
     expect(body).toEqual({
-      settings: { providers: {}, concurrency: 1 },
+      settings: { providers: {}, concurrency: 1, history: {} },
       providers: [
         { name: "ollama", effort: false },
         { name: "claude", effort: true },
@@ -84,6 +84,7 @@ describe("設定 API（契約付録 §9）", () => {
         { name: "openrouter", effort: false },
       ],
       maxConcurrency: 4,
+      maxHistory: MAX_HISTORY,
     });
   });
 
@@ -95,9 +96,15 @@ describe("設定 API（契約付録 §9）", () => {
       providers: { claude: { model: " sonnet ", effort: "medium" }, ollama: { model: "", effort: "" } },
     });
     expect(saved.status).toBe(200);
-    const want = { provider: "claude", providers: { claude: { model: "sonnet", effort: "medium" } }, concurrency: 2 };
+    const want = {
+      provider: "claude",
+      providers: { claude: { model: "sonnet", effort: "medium" } },
+      concurrency: 2,
+      history: {},
+    };
     expect(saved.body.settings).toEqual(want);
-    expect(JSON.parse(readFileSync(settingsPath, "utf8"))).toEqual(want);
+    const { history: _h, ...stored } = want;
+    expect(JSON.parse(readFileSync(settingsPath, "utf8"))).toEqual(stored);
     expect((await req("/api/settings")).body.settings).toEqual(want);
 
     for (const bad of [
@@ -117,13 +124,13 @@ describe("設定 API（契約付録 §9）", () => {
     const root = tmp();
     const file = path.join(root, "web-settings.json");
     writeFileSync(file, "{");
-    expect(readSettings(file)).toEqual({ providers: {}, concurrency: 1 });
+    expect(readSettings(file)).toEqual({ providers: {}, concurrency: 1, history: {} });
     writeFileSync(
       file,
       JSON.stringify({ provider: "nope", concurrency: 9, providers: { ollama: { model: "m", effort: "x" }, claude: { model: "opus" } } }),
     );
-    expect(readSettings(file)).toEqual({ providers: { claude: { model: "opus" } }, concurrency: 1 });
-    expect(readSettings(path.join(root, "none.json"))).toEqual({ providers: {}, concurrency: 1 });
+    expect(readSettings(file)).toEqual({ providers: { claude: { model: "opus" } }, concurrency: 1, history: {} });
+    expect(readSettings(path.join(root, "none.json"))).toEqual({ providers: {}, concurrency: 1, history: {} });
   });
 
   it("設定ファイルの場所は JPAPER_HOME/web-settings.json", () => {
@@ -236,5 +243,154 @@ describe("翻訳ジョブ API（契約付録 §9）", () => {
     });
     expect(evil.status).toBe(403);
     expect(existsSync(settingsPath)).toBe(false);
+  });
+});
+
+describe("model・effort の候補（契約付録 §9・issue #339）", () => {
+  it("翻訳を始めた model・effort を provider ごとに新しい順で覚え、重複は先頭へ寄せる", async () => {
+    const { req, post } = setup();
+    await post("/api/jobs", { arxivId: "2601.00001", provider: "claude", model: "sonnet", effort: "medium" });
+    await post("/api/jobs", { arxivId: "2601.00002", provider: "claude", model: "opus", effort: "high" });
+    await post("/api/jobs", { arxivId: "2601.00003", provider: "claude", model: " sonnet " });
+    await post("/api/jobs", { arxivId: "2601.00004", provider: "ollama", model: "gemma4:12b" });
+    await post("/api/jobs", { arxivId: "2601.00005", provider: "codex" });
+    const { body } = await req("/api/settings");
+    expect(body.settings.history).toEqual({
+      claude: { models: ["sonnet", "opus"], efforts: ["high", "medium"] },
+      ollama: { models: ["gemma4:12b"], efforts: [] },
+    });
+  });
+
+  it("provider ごとに MAX_HISTORY 件まで", async () => {
+    const { req, post } = setup();
+    for (let i = 0; i < MAX_HISTORY + 2; i++) {
+      await post("/api/jobs", { arxivId: `2601.${String(10000 + i)}`, provider: "claude", model: `m${String(i)}` });
+    }
+    const models = (await req("/api/settings")).body.settings.history.claude.models as string[];
+    expect(models).toHaveLength(MAX_HISTORY);
+    expect(models[0]).toBe(`m${String(MAX_HISTORY + 1)}`);
+    expect(models).not.toContain("m0");
+  });
+
+  it("recordHistory は先頭に置き、MAX_HISTORY 件で切る。model も effort も無ければ変えない", () => {
+    let s = emptySettings();
+    for (let i = 0; i < MAX_HISTORY + 2; i++) s = recordHistory(s, { provider: "claude", model: `m${String(i)}`, effort: "low" });
+    expect(s.history.claude?.models).toHaveLength(MAX_HISTORY);
+    expect(s.history.claude?.models[0]).toBe(`m${String(MAX_HISTORY + 1)}`);
+    expect(s.history.claude?.efforts).toEqual(["low"]);
+    expect(recordHistory(s, { provider: "codex" })).toBe(s);
+  });
+
+  it("始められなかったジョブ（検査の誤り・同じ論文の重複）は覚えない", async () => {
+    const { req, post } = setup();
+    await post("/api/jobs", { arxivId: "2601.00001", provider: "claude", model: "-x" });
+    await post("/api/jobs", { arxivId: "2601.00001", provider: "claude", model: "a" });
+    const dup = await post("/api/jobs", { arxivId: "2601.00001", provider: "claude", model: "b" });
+    expect(dup.status).toBe(409);
+    expect((await req("/api/settings")).body.settings.history).toEqual({ claude: { models: ["a"], efforts: [] } });
+  });
+
+  it("設定の保存は候補を消さず、送られた history は無視する", async () => {
+    const { req, post } = setup();
+    await post("/api/jobs", { arxivId: "2601.00001", provider: "claude", model: "sonnet" });
+    const saved = await post("/api/settings", { concurrency: 2, history: { claude: { models: ["evil"] } } });
+    expect(saved.body.settings.history).toEqual({ claude: { models: ["sonnet"], efforts: [] } });
+    expect((await req("/api/settings")).body.settings.history).toEqual({ claude: { models: ["sonnet"], efforts: [] } });
+  });
+
+  it("候補を消せる。ほかの設定は残る", async () => {
+    const { req, post } = setup();
+    await post("/api/settings", { provider: "claude", concurrency: 2 });
+    await post("/api/jobs", { arxivId: "2601.00001", provider: "claude", model: "sonnet" });
+    const cleared = await post("/api/settings/history/clear", {});
+    expect(cleared.status).toBe(200);
+    expect(cleared.body.settings).toEqual({ provider: "claude", providers: {}, concurrency: 2, history: {} });
+    expect((await req("/api/settings")).body.settings.history).toEqual({});
+  });
+
+  it("読むときは検査に通らない値・重複を捨て、件数で切る", () => {
+    const file = path.join(tmp(), "web-settings.json");
+    const many = Array.from({ length: MAX_HISTORY + 3 }, (_, i) => `m${String(i)}`);
+    writeFileSync(
+      file,
+      JSON.stringify({
+        concurrency: 1,
+        history: {
+          claude: { models: ["a", "-x", 3, "a", "b"], efforts: ["HIGH", "low"] },
+          ollama: { models: many, efforts: ["low"] },
+          gpt: { models: ["x"] },
+          codex: "nope",
+        },
+      }),
+    );
+    expect(readSettings(file).history).toEqual({
+      claude: { models: ["a", "b"], efforts: ["low"] },
+      ollama: { models: many.slice(0, MAX_HISTORY), efforts: [] },
+    });
+  });
+
+  it("候補を保存できなくてもジョブは始まる", async () => {
+    const { post, settingsPath } = setup();
+    mkdirSync(settingsPath, { recursive: true });
+    const r = await post("/api/jobs", { arxivId: "2601.00001", provider: "claude", model: "sonnet" });
+    expect(r.status).toBe(201);
+  });
+
+  it("writeSettings は rename に失敗したら一時ファイルを消して投げる", () => {
+    const dir = tmp();
+    const file = path.join(dir, "web-settings.json");
+    mkdirSync(path.join(file, "occupied"), { recursive: true });
+    expect(() => writeSettings(file, {})).toThrow();
+    expect(readdirSync(dir).filter((n) => n.endsWith(".tmp"))).toEqual([]);
+  });
+
+  it("読めない設定ファイルは、ジョブを始めても候補を消しても書き換えない", async () => {
+    const { post, settingsPath } = setup();
+    mkdirSync(path.dirname(settingsPath), { recursive: true });
+    const broken = '{"provider":"claude","providers":{"claude":{"model":"opus"}},"concurrency":3,}';
+    writeFileSync(settingsPath, broken);
+    expect((await post("/api/jobs", { arxivId: "2601.00001", provider: "claude", model: "sonnet" })).status).toBe(201);
+    expect(readFileSync(settingsPath, "utf8")).toBe(broken);
+    const cleared = await post("/api/settings/history/clear", {});
+    expect(cleared.status).toBe(409);
+    expect(readFileSync(settingsPath, "utf8")).toBe(broken);
+  });
+
+  it("候補の記録・消去・設定の保存は、ファイルの知らないキーを残す", async () => {
+    const { post, settingsPath } = setup();
+    mkdirSync(path.dirname(settingsPath), { recursive: true });
+    writeFileSync(settingsPath, JSON.stringify({ concurrency: 1, futureKey: { a: 1 } }));
+    const keep = () => (JSON.parse(readFileSync(settingsPath, "utf8")) as { futureKey?: unknown }).futureKey;
+    await post("/api/jobs", { arxivId: "2601.00001", provider: "claude", model: "sonnet" });
+    expect(keep()).toEqual({ a: 1 });
+    await post("/api/settings", { concurrency: 2 });
+    expect(keep()).toEqual({ a: 1 });
+    await post("/api/settings/history/clear", {});
+    expect(keep()).toEqual({ a: 1 });
+  });
+
+  it("候補が変わらなければ設定ファイルを書き直さない", async () => {
+    const { post, settingsPath } = setup();
+    await post("/api/jobs", { arxivId: "2601.00001", provider: "claude", model: "sonnet" });
+    const compact = JSON.stringify(JSON.parse(readFileSync(settingsPath, "utf8")));
+    writeFileSync(settingsPath, compact);
+    await post("/api/jobs", { arxivId: "2601.00002", provider: "claude", model: "sonnet" });
+    expect(readFileSync(settingsPath, "utf8")).toBe(compact);
+  });
+
+  it("候補を消す要求も Content-Type・Origin の検査を通る", async () => {
+    const { app } = setup();
+    const plain = await app.request("/api/settings/history/clear", {
+      method: "POST",
+      headers: { host: "127.0.0.1:5174", "content-type": "text/plain" },
+      body: "{}",
+    });
+    expect(plain.status).toBe(415);
+    const evil = await app.request("/api/settings/history/clear", {
+      method: "POST",
+      headers: { ...HEADERS, origin: "https://evil.example" },
+      body: "{}",
+    });
+    expect(evil.status).toBe(403);
   });
 });

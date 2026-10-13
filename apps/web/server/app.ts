@@ -27,7 +27,17 @@ import {
 import { DEFAULT_API_PORT, DEFAULT_WEB_PORT, localOrigins, type WebConfig } from "./config.js";
 import { ArxivClient, ArxivError, ArxivQueryError } from "./arxiv.js";
 import { JobQueue } from "./jobs.js";
-import { MAX_JOB_CONCURRENCY, parseSettings, readSettings, writeSettings } from "./settings.js";
+import {
+  emptySettings,
+  MAX_HISTORY,
+  MAX_JOB_CONCURRENCY,
+  parseSettings,
+  readSettings,
+  readSettingsObject,
+  recordHistory,
+  settingsFrom,
+  writeSettings,
+} from "./settings.js";
 import { parseArxivId, parseTranslateOptions, providerInfo } from "./translate-options.js";
 
 const LOCAL_HOSTS = new Set(["127.0.0.1", "localhost", "[::1]"]);
@@ -204,15 +214,35 @@ export function createApp(config: WebConfig, services: Services = createServices
       settings: readSettings(config.settingsPath),
       providers: providerInfo(),
       maxConcurrency: MAX_JOB_CONCURRENCY,
+      maxHistory: MAX_HISTORY,
     }),
   );
 
+  // 保存は provider・providers・concurrency を置き換え、ファイルの他のキー（history など）は残す。
   app.post("/api/settings", async (c) => {
     try {
-      const settings = parseSettings(await c.req.json().catch(() => undefined));
-      writeSettings(config.settingsPath, settings);
+      const body: unknown = await c.req.json().catch(() => undefined);
+      const { history: _h, ...parsed } = parseSettings(body);
+      const raw = readSettingsObject(config.settingsPath) ?? {};
+      const { provider: _p, providers: _ps, concurrency: _c, ...rest } = raw;
+      writeSettings(config.settingsPath, { ...rest, ...parsed });
       jobs.pump();
-      return c.json({ settings });
+      return c.json({ settings: { ...parsed, history: settingsFrom(raw).history } });
+    } catch (e) {
+      return errorResponse(c, e);
+    }
+  });
+
+  // history だけを消す。ファイルを読めなければ書かずに 409。
+  app.post("/api/settings/history/clear", (c) => {
+    try {
+      const raw = readSettingsObject(config.settingsPath);
+      if (raw === undefined) {
+        throw new JpaperError(2, "conflict", "設定ファイル（web-settings.json）を読めないため、候補を消せません");
+      }
+      const next = { ...raw, history: {} };
+      writeSettings(config.settingsPath, next);
+      return c.json({ settings: settingsFrom(next) });
     } catch (e) {
       return errorResponse(c, e);
     }
@@ -256,6 +286,15 @@ export function createApp(config: WebConfig, services: Services = createServices
           ? body.title.replace(/[\x00-\x1f\x7f]/g, " ").trim().slice(0, TITLE_MAX) || undefined
           : undefined;
       const job = jobs.enqueue({ arxivId, options, ...(title === undefined ? {} : { title }) });
+      try {
+        const raw = readSettingsObject(config.settingsPath);
+        if (raw === undefined) throw new Error("設定ファイル（web-settings.json）を読めません");
+        const before = settingsFrom(raw).history;
+        const after = recordHistory({ ...emptySettings(), history: before }, options).history;
+        if (JSON.stringify(after) !== JSON.stringify(before)) writeSettings(config.settingsPath, { ...raw, history: after });
+      } catch (e) {
+        console.error(`model・effort の候補を保存できません: ${e instanceof Error ? e.message : String(e)}`);
+      }
       return c.json({ job }, 201);
     } catch (e) {
       return errorResponse(c, e);

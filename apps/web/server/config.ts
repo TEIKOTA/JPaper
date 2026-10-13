@@ -22,7 +22,7 @@ export interface WebConfig {
   latexRunner?: LatexRunner;
   // 要求を受け付ける Origin（scheme・host・port の完全一致）。既定は既定ポートの画面と API。
   origins?: string[];
-  // 翻訳フォームの初期値と並行数（JPAPER_HOME/web-settings.json）。
+  // 翻訳フォームの初期値・並行数・model と effort の候補（JPAPER_HOME/web-settings.json）。
   settingsPath: string;
   // 翻訳ジョブの CLI を起動する repo のルート。
   repoRoot: string;

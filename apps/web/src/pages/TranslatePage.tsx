@@ -7,7 +7,7 @@ import { Status } from "./Status.js";
 const POLL_MS = 2000;
 
 export function TranslatePage(props: { id?: string; title?: string }) {
-  const [settings] = useLoad(() => api.settings(), []);
+  const [settings, reloadSettings] = useLoad(() => api.settings(), [], { keepOnError: true });
   const [jobs, reloadJobs] = usePoll(() => api.jobs(), POLL_MS);
   return (
     <>
@@ -20,7 +20,10 @@ export function TranslatePage(props: { id?: string; title?: string }) {
           settings={settings.data}
           id={props.id}
           title={props.title}
-          onStarted={reloadJobs}
+          onStarted={() => {
+            reloadJobs();
+            reloadSettings();
+          }}
         />
       )}
       <h2 className="section-title">ジョブ</h2>
@@ -44,6 +47,7 @@ function TranslateForm(props: {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   const [started, setStarted] = useState<string>();
+  const history = settings.history;
   const acceptsEffort = providers.find((p) => p.name === provider)?.effort === true;
   const title = props.title !== undefined && arxivId.trim() === props.id ? props.title : undefined;
 
@@ -116,8 +120,14 @@ function TranslateForm(props: {
             className="text-input input-mid"
             value={model}
             placeholder="未指定"
+            list="model-history"
             onChange={(e) => setModel(e.target.value)}
           />
+          <datalist id="model-history">
+            {(history[provider]?.models ?? []).map((m) => (
+              <option key={m} value={m} />
+            ))}
+          </datalist>
         </label>
         {acceptsEffort && (
           <label className="field">
@@ -126,8 +136,14 @@ function TranslateForm(props: {
               className="text-input input-short"
               value={effort}
               placeholder="未指定"
+              list="effort-history"
               onChange={(e) => setEffort(e.target.value)}
             />
+            <datalist id="effort-history">
+              {(history[provider]?.efforts ?? []).map((v) => (
+                <option key={v} value={v} />
+              ))}
+            </datalist>
           </label>
         )}
       </div>
