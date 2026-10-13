@@ -139,10 +139,41 @@ export const GlossaryBuilderOut = z.object({
 });
 export type GlossaryBuilderOut = z.infer<typeof GlossaryBuilderOut>;
 
+// ── §4 用語の検証（term-verifier。Web 検索で既存の日本語の用例を確かめる） ──
+export const MAX_VERIFY_TERMS = 10;
+export const MAX_VERIFY_SOURCES = 5;
+export const TermVerifyOut = z.object({
+  terms: z
+    .array(
+      z.object({
+        src: z.string().max(MAX_TERM_CHARS),
+        status: z.enum(["found", "not-found", "conflicting"]),
+        form: z.string().max(MAX_TERM_CHARS).optional(),
+        sources: z
+          .array(z.object({ url: z.string().max(2_000), quote: z.string().max(MAX_NOTE_CHARS) }))
+          .max(MAX_VERIFY_SOURCES)
+          .default([]),
+      }),
+    )
+    .max(MAX_VERIFY_TERMS * 2),
+});
+export type TermVerifyOut = z.infer<typeof TermVerifyOut>;
+
+// 検証の結果（語ごと）。replaced は用例の表記に差し替えた語、confirmed は用例と一致した語。
+export const TermCheck = z.object({
+  src: z.string(),
+  status: z.enum(["confirmed", "replaced", "unverified"]),
+  form: z.string(),
+  original: z.string().optional(),
+  sources: z.array(z.string()).default([]),
+});
+export type TermCheck = z.infer<typeof TermCheck>;
+
 // ── §1 訳注（uncertainties） ──
 export const NoteTrigger = z.enum([
   "paper-defined-preserve",
   "low-confidence",
+  "unverified-term",
   "evaluator-warn",
   "heading-untranslated",
 ]);
@@ -203,6 +234,16 @@ export const RunSummary = z.object({
   sharedDefaults: z.array(z.enum(["db", "cacheKey", "outDir", "limits", "work"])).default([]),
   // run 中に実際に発行した LLM 呼び出し回数（失敗した run でも返す＝課金相当の仕事量）。
   llmCalls: z.number().int().nonnegative().default(0),
+  // 用語の検証（契約付録 §4）。null は検証しなかった run（対象外のプロバイダ・止めた・既存の用語集を使った）。
+  terms: z
+    .object({
+      checked: z.number().int().nonnegative(),
+      confirmed: z.number().int().nonnegative(),
+      replaced: z.number().int().nonnegative(),
+      unverified: z.number().int().nonnegative(),
+    })
+    .nullable()
+    .default(null),
   // 論文タイトルの翻訳結果。null は翻訳まで到達しなかった run。契約付録 §8
   title: z.enum(["translated", "failed", "absent"]).nullable().default(null),
   exitCode: z.number().int(),
@@ -246,8 +287,8 @@ export type Result = z.infer<typeof Result>;
 // ── §8 LlmClient 境界 ──
 // meta は呼び出し文脈（誰が・どの段・何回目か）。トレース（LlmCallEvent）へ写すためだけに使い、変換結果には影響しない。
 export interface LlmCallMeta {
-  role: "translator" | "evaluator" | "glossary-builder";
-  phase?: "translate" | "evaluate" | "glossary";
+  role: "translator" | "evaluator" | "glossary-builder" | "term-verifier";
+  phase?: "translate" | "evaluate" | "glossary" | "verify";
   segmentId?: string;
   pass?: number; // 節ループの再訳回数（0=初回）
 }
@@ -261,6 +302,8 @@ export interface LlmRequest {
   jsonMode?: boolean;
   // 呼び出し側の中断（web でクライアントが切断した等）。プロバイダは進行中の I/O を中止する。
   signal?: AbortSignal;
+  // この呼び出しだけ CLI の Web 検索を許す（claude・codex）。他のプロバイダは使わない。契約付録 §4
+  webSearch?: boolean;
 }
 export interface LlmClient {
   complete(req: LlmRequest): Promise<string>;

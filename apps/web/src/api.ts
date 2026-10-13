@@ -123,6 +123,7 @@ export interface WebSettings {
   provider?: string;
   providers: Record<string, ProviderDefaults | undefined>;
   concurrency: number;
+  verifyTerms: boolean;
   history: Record<string, ProviderHistory | undefined>;
 }
 

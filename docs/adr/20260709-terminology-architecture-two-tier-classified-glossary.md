@@ -2,6 +2,7 @@
 
 # Status
 - accepted
+- 2026-10-13 に部分 supersede: 置換された条項＝決定 4「ネット検索は defer（v1 では持たない）。入れるときも LLM にツールを持たせない」（→ 承認済みの訳が無い用語は、翻訳の前に CLI 自身の Web 検索で用例を確かめる）／存続する条項＝2 層辞書・4 クラス分類・表記方針・proposed 書き戻し・事前注入／後継 ADR＝[20261013-verify-unconfirmed-terms-with-cli-web-search](./20261013-verify-unconfirmed-terms-with-cli-web-search.md)
 
 # Situation
 - JPaper は学術論文の和訳エージェント。[翻訳パイプライン ADR](./20260708-translation-pipeline-ingestion-and-figures.md) で「横断 用語 DB（confirmed/proposed・`node:sqlite`・新出語は proposed 自動追記）を最優先機能・実装の第一歩」と決めていた。その用語 DB を実装する前に、データモデルと処理フローを確定する必要が生じた。

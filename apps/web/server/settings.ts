@@ -26,11 +26,13 @@ export interface WebSettings {
   provider?: Provider;
   providers: Partial<Record<Provider, ProviderDefaults>>;
   concurrency: number;
+  // 用語を Web 検索で確かめる（claude・GPT）。既定 true。契約付録 §4・§9
+  verifyTerms: boolean;
   history: Partial<Record<Provider, ProviderHistory>>;
 }
 
 export function emptySettings(): WebSettings {
-  return { providers: {}, concurrency: DEFAULT_JOB_CONCURRENCY, history: {} };
+  return { providers: {}, concurrency: DEFAULT_JOB_CONCURRENCY, verifyTerms: true, history: {} };
 }
 
 function isConcurrency(v: unknown): v is number {
@@ -121,7 +123,7 @@ export function recordHistory(
 // lenient: 検査に通らない項目を捨てる（読み込み）。false なら入力の誤りとして投げる（保存）。
 export function parseSettings(body: unknown, lenient = false): WebSettings {
   if (typeof body !== "object" || body === null) throw new JpaperError(2, "input", "設定を JSON で送ってください");
-  const b = body as { provider?: unknown; providers?: unknown; concurrency?: unknown };
+  const b = body as { provider?: unknown; providers?: unknown; concurrency?: unknown; verifyTerms?: unknown };
   const attempt = <T>(fn: () => T): T | undefined => {
     if (!lenient) return fn();
     try {
@@ -140,6 +142,10 @@ export function parseSettings(body: unknown, lenient = false): WebSettings {
     else if (!lenient) {
       throw new JpaperError(2, "input", `並行数は 1〜${String(MAX_JOB_CONCURRENCY)} で指定してください`);
     }
+  }
+  if (b.verifyTerms !== undefined) {
+    if (typeof b.verifyTerms === "boolean") out.verifyTerms = b.verifyTerms;
+    else if (!lenient) throw new JpaperError(2, "input", "verifyTerms は true か false で指定してください");
   }
   if (b.providers !== undefined && b.providers !== null) {
     if (typeof b.providers !== "object") {

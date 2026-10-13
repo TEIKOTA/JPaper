@@ -1,5 +1,5 @@
 // 契約付録 §1・§2。編集可能な glossary.md/brief.md/style.md の描画と読み戻し（durable 編集ループ）。
-import type { DocumentBrief, StyleContract } from "../types/contract.js";
+import type { DocumentBrief, StyleContract, TermCheck } from "../types/contract.js";
 
 export interface ResolvedRow {
   src: string;
@@ -13,14 +13,29 @@ function cell(s: string): string {
   return s.replace(/[|\r\n]/g, " ").trim();
 }
 
-export function renderGlossaryMd(resolved: ResolvedRow[]): string {
+// 検証の結果の欄（読み戻さない）。契約付録 §4
+function checkCell(c: TermCheck | undefined): string {
+  if (c === undefined) return "";
+  const src = c.sources.length === 0 ? "" : ` 出典: ${c.sources.join(" ")}`;
+  if (c.status === "replaced") return `用例に合わせた（元の訳: ${c.original ?? ""}）${src}`;
+  if (c.status === "confirmed") return `用例と一致${src}`;
+  return "未確認（Web 検索で用例を確かめられなかった）";
+}
+
+// checks を渡すと「検証」の欄を足す（parseGlossaryMd は先頭 5 欄だけを読む）。
+export function renderGlossaryMd(resolved: ResolvedRow[], checks?: readonly TermCheck[]): string {
+  const bySrc = new Map((checks ?? []).map((c) => [c.src, c]));
+  const withChecks = checks !== undefined;
   const rows = resolved
-    .map(
-      (r) =>
-        `| ${cell(r.src)} | ${cell(r.form)} | ${cell(r.class)} | ${cell(r.rendering)} | ${cell(r.note ?? "")} |`,
-    )
+    .map((r) => {
+      const base = `| ${cell(r.src)} | ${cell(r.form)} | ${cell(r.class)} | ${cell(r.rendering)} | ${cell(r.note ?? "")} |`;
+      return withChecks ? `${base} ${cell(checkCell(bySrc.get(r.src)))} |` : base;
+    })
     .join("\n");
-  return `# 用語集\n\n編集可（訳語・表記を直して再実行すると当該語の訳が差し替わる）。\n\n| 原語 | 確定訳/表記 | 分類 | 表記方針 | 訳注 |\n|---|---|---|---|---|\n${rows}\n`;
+  const head = withChecks
+    ? "| 原語 | 確定訳/表記 | 分類 | 表記方針 | 訳注 | 検証 |\n|---|---|---|---|---|---|"
+    : "| 原語 | 確定訳/表記 | 分類 | 表記方針 | 訳注 |\n|---|---|---|---|---|";
+  return `# 用語集\n\n編集可（訳語・表記を直して再実行すると当該語の訳が差し替わる）。\n\n${head}\n${rows}\n`;
 }
 
 export function parseGlossaryMd(md: string): ResolvedRow[] {

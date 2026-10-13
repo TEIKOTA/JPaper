@@ -17,6 +17,8 @@ export interface NotesInput {
   hasConfirmed: (src: string) => boolean;
   segmentWarns: SegmentWarns[];
   segmentLints?: SegmentLint[];
+  // 用語の検証で用例を確かめられなかった語（契約付録 §4）。
+  unverified?: ReadonlySet<string>;
 }
 
 export function buildNotes(input: NotesInput): TranslatorNote[] {
@@ -25,6 +27,19 @@ export function buildNotes(input: NotesInput): TranslatorNote[] {
   for (const t of input.resolved) {
     const segmentId = input.firstOccurrenceBySrc.get(t.src);
     if (segmentId === undefined) continue; // 本文に出現しない語は対象外
+
+    // 未確認の語は、モデルの note ではなく未確認と分かる決まった文面にする。契約付録 §4
+    if (input.unverified?.has(t.src) === true) {
+      notes.push({
+        id: `note-unverified-term-${t.src}`,
+        trigger: "unverified-term",
+        src: t.src,
+        segmentId,
+        firstOccurrence: true,
+        text: `${t.src} の訳語「${t.form}」は、Web 検索で既存の日本語の用例を確かめられなかった（未確認）`,
+      });
+      continue;
+    }
 
     const preserve =
       t.class === "paper-defined" &&

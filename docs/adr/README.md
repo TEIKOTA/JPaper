@@ -47,7 +47,7 @@
 | 2026-07-08 | [品質ゲートの二層分離（形式=機械判定 / 品質=LLM）と明示的失敗](./20260708-quality-gate-machine-vs-llm-and-explicit-failure.md) | accepted |
 | 2026-07-09 | [品質ゲートの2層化・再訳契約・組版エラー分類](./20260709-quality-gate-two-layer-and-build-error-triage.md) | accepted |
 | 2026-07-09 | [LLM プロバイダ抽象化: ローカル(Ollama) と cloud(公式 CLI subprocess) を使い分け](./20260709-llm-provider-abstraction-local-ollama-and-cloud-cli.md) | accepted（claude のモデルをログインセッションに委ねる点のみ 2026-10-07 に部分 supersede） |
-| 2026-07-09 | [用語アーキテクチャ: 2層辞書・4クラス分類・表記方針・proposed 書き戻し](./20260709-terminology-architecture-two-tier-classified-glossary.md) | accepted |
+| 2026-07-09 | [用語アーキテクチャ: 2層辞書・4クラス分類・表記方針・proposed 書き戻し](./20260709-terminology-architecture-two-tier-classified-glossary.md) | accepted（ネット検索の defer＝決定 4 のみ 2026-10-13 に部分 supersede） |
 | 2026-07-09 | [ユーザーインターフェース: ファイル配置・jpaper CLI・GUI は core の薄い皮](./20260709-user-interface-file-layout-and-cli.md) | accepted（論文ごと成果物の既定の置き場所と成果物名 `main.pdf` のみ 2026-10-07 に部分 supersede） |
 | 2026-07-10 | [翻訳一貫性: 文書ブリーフ＋文体契約・evaluator 軸の明文化・訳注 surface](./20260710-translation-consistency-brief-style-and-annotations.md) | accepted |
 | 2026-07-10 | [組版レイアウト方針: 原プリアンブル温存を既定・共通テンプレへ明示的フォールバック](./20260710-typesetting-layout-original-first-hybrid.md) | accepted |
@@ -87,12 +87,12 @@
 | 2026-10-06 | [横長の対訳 PDF（A4 縦 2 枚分・左=原文／右=和訳）を標準の出力にする](./20261006-bilingual-side-by-side-pdf.md) | accepted |
 | 2026-10-07 | [図表のキャプションは全プロバイダの翻訳指示で訳す](./20261007-translate-captions-in-all-prompt-profiles.md) | accepted |
 | 2026-10-07 | [論文ごとの既定の出力先を CWD 配下の article/ にまとめる](./20261007-default-output-under-article-dir.md) | accepted |
-| 2026-10-07 | [claude のモデルと推論強度を CLI 引数で渡す（JPaper は既定値を持たない）](./20261007-pass-claude-model-and-effort-via-cli-args.md) | accepted（既定値を持たない点のみ 2026-10-13 に部分 supersede） |
+| 2026-10-07 | [claude のモデルと推論強度を CLI 引数で渡す（JPaper は既定値を持たない）](./20261007-pass-claude-model-and-effort-via-cli-args.md) | accepted（既定値を持たない点・Web 検索を止める点のみ 2026-10-13 に部分 supersede） |
 | 2026-10-07 | [成果物 PDF の名前を「ID＋短い英語名」にし、短い英語名はタイトルの翻訳と同時に決めさせる](./20261007-name-deliverable-pdfs-by-id-and-slug.md) | accepted |
 | 2026-10-07 | [パッケージ管理を npm から pnpm に移す](./20261007-adopt-pnpm-for-package-management.md) | accepted |
 | 2026-10-07 | [節の予算を 0.30×CW に加えて 8,000 トークンで頭打ちにする](./20261007-cap-segment-budget-by-output-time.md) | accepted |
 | 2026-10-07 | [用語集の Web アプリ: 訳語の編集はコードの置換で反映し、checkpoint を署名し直して LLM なしで組み直す](./20261007-glossary-web-app-replace-and-retypeset-without-llm.md) | accepted |
-| 2026-10-08 | [codex をプロバイダとして入れ、利用者の設定を読まずに起動する](./20261008-add-codex-provider-isolated-from-user-config.md) | accepted（既定値を持たない点のみ 2026-10-13 に部分 supersede） |
+| 2026-10-08 | [codex をプロバイダとして入れ、利用者の設定を読まずに起動する](./20261008-add-codex-provider-isolated-from-user-config.md) | accepted（既定値を持たない点・Web 検索を止める点のみ 2026-10-13 に部分 supersede） |
 | 2026-10-08 | [Web アプリで arXiv を検索し、翻訳は CLI の子プロセスをメモリ上のキューで回す](./20261008-web-app-arxiv-search-and-translate-job-queue.md) | accepted |
 | 2026-10-08 | [本文中の \author は訳さず印で伏せ、伏せた区間の用語は節の用語に数えない](./20261008-keep-author-block-untranslated.md) | accepted |
 | 2026-10-11 | [前付け（タイトル・組む位置・原文のまま残す命令）を論文テンプレートの型の表で決める](./20261011-drive-frontmatter-by-template-profile-table.md) | accepted |
@@ -100,3 +100,4 @@
 | 2026-10-13 | [claude・codex の既定を最新の中位モデル（Sonnet・Sol）と effort medium にする](./20261013-default-to-latest-mid-tier-models-at-medium-effort.md) | accepted |
 | 2026-10-13 | [形式検査が変わったら、以前に通した節を LLM なしで検査し直す](./20261013-recheck-passed-segments-when-formal-check-changes.md) | accepted |
 | 2026-10-13 | [取り込み（ingest）は worker 化せず、有界時間で終わることを契約として守る](./20261013-keep-ingest-synchronous-with-bounded-time.md) | accepted |
+| 2026-10-13 | [承認済みの訳が無い用語は、翻訳の前に CLI 自身の Web 検索で用例を確かめる](./20261013-verify-unconfirmed-terms-with-cli-web-search.md) | accepted |

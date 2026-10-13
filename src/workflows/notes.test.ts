@@ -65,3 +65,28 @@ describe("buildNotes", () => {
     expect(headingNotes[1]?.text).toContain("Results");
   });
 });
+
+describe("未確認の語の訳注（契約付録 §4・issue #309）", () => {
+  it("未確認の語はモデルの note や low-confidence より優先して、決まった文面で 1 件だけ出す", () => {
+    const resolved = [
+      term({ src: "Val", form: "値(Value)", class: "paper-defined", rendering: "bilingual", note: "初出のみ併記" }),
+      term({ src: "attn", class: "established", rendering: "bilingual", note: "モデルの説明" }),
+      term({ src: "absent", class: "established", rendering: "translate" }),
+    ];
+    const notes = buildNotes({
+      resolved,
+      firstOccurrenceBySrc: new Map([
+        ["Val", "seg-0"],
+        ["attn", "seg-1"],
+      ]),
+      hasConfirmed: () => false,
+      segmentWarns: [],
+      unverified: new Set(["Val", "attn", "absent"]),
+    });
+    expect(notes.map((n) => [n.trigger, n.src, n.segmentId])).toEqual([
+      ["unverified-term", "Val", "seg-0"],
+      ["unverified-term", "attn", "seg-1"],
+    ]);
+    expect(notes[0]!.text).toBe("Val の訳語「値(Value)」は、Web 検索で既存の日本語の用例を確かめられなかった（未確認）");
+  });
+});

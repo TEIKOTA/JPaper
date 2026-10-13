@@ -224,7 +224,7 @@ export function createApp(config: WebConfig, services: Services = createServices
       const body: unknown = await c.req.json().catch(() => undefined);
       const { history: _h, ...parsed } = parseSettings(body);
       const raw = readSettingsObject(config.settingsPath) ?? {};
-      const { provider: _p, providers: _ps, concurrency: _c, ...rest } = raw;
+      const { provider: _p, providers: _ps, concurrency: _c, verifyTerms: _v, ...rest } = raw;
       writeSettings(config.settingsPath, { ...rest, ...parsed });
       jobs.pump();
       return c.json({ settings: { ...parsed, history: settingsFrom(raw).history } });
@@ -285,7 +285,12 @@ export function createApp(config: WebConfig, services: Services = createServices
         typeof body.title === "string"
           ? body.title.replace(/[\x00-\x1f\x7f]/g, " ").trim().slice(0, TITLE_MAX) || undefined
           : undefined;
-      const job = jobs.enqueue({ arxivId, options, ...(title === undefined ? {} : { title }) });
+      const verify = readSettings(config.settingsPath).verifyTerms;
+      const job = jobs.enqueue({
+        arxivId,
+        options: { ...options, ...(verify ? {} : { verifyTerms: false as const }) },
+        ...(title === undefined ? {} : { title }),
+      });
       try {
         const raw = readSettingsObject(config.settingsPath);
         if (raw === undefined) throw new Error("設定ファイル（web-settings.json）を読めません");

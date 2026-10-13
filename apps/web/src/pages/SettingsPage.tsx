@@ -20,6 +20,7 @@ function SettingsForm(props: { initial: SettingsResponse }) {
     props.initial.settings.providers,
   );
   const [concurrency, setConcurrency] = useState(props.initial.settings.concurrency);
+  const [verifyTerms, setVerifyTerms] = useState(props.initial.settings.verifyTerms);
   const [history, setHistory] = useState(props.initial.settings.history);
   const [historyMessage, setHistoryMessage] = useState<{ ok: boolean; text: string }>();
   const used = providers.filter((p) => {
@@ -45,11 +46,13 @@ function SettingsForm(props: { initial: SettingsResponse }) {
             ...(provider === "" ? {} : { provider }),
             providers: defaults,
             concurrency,
+            verifyTerms,
           })
           .then(
             (r) => {
               setBusy(false);
               setDefaults(r.settings.providers);
+              setVerifyTerms(r.settings.verifyTerms);
               setHistory(r.settings.history);
               setMessage({ ok: true, text: "保存しました。" });
             },
@@ -136,6 +139,18 @@ function SettingsForm(props: { initial: SettingsResponse }) {
             </option>
           ))}
         </select>
+      </label>
+
+      <label className="check">
+        <input
+          type="checkbox"
+          checked={verifyTerms}
+          onChange={(e) => {
+            setMessage(undefined);
+            setVerifyTerms(e.target.checked);
+          }}
+        />
+        <span>用語を Web 検索で確かめる（claude・GPT）</span>
       </label>
 
       <div className="form-actions">

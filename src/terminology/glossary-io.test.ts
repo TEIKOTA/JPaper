@@ -58,3 +58,23 @@ describe("brief/style round-trip", () => {
     expect(parseStyleMd(renderStyleMd(s))).toEqual(s);
   });
 });
+
+describe("glossary.md の検証の欄（契約付録 §4・issue #309）", () => {
+  it("checks を渡すと検証の欄を足し、読み戻しは先頭 5 欄だけを使う", async () => {
+    const { renderGlossaryMd: render, parseGlossaryMd: parse } = await import("./glossary-io.js");
+    const rows = [
+      { src: "Widget set", form: "部品集合", class: "established", rendering: "translate" },
+      { src: "Gizmo", form: "ギズモ", class: "established", rendering: "translate", note: "説明" },
+      { src: "Plain", form: "平易", class: "proper-noun", rendering: "translate" },
+    ];
+    const md = render(rows, [
+      { src: "Widget set", status: "replaced", form: "部品集合", original: "ウィジェット|集合", sources: ["https://a.jp/x", "https://b.jp/y"] },
+      { src: "Gizmo", status: "unverified", form: "ギズモ", sources: [] },
+    ]);
+    expect(md).toContain("| 原語 | 確定訳/表記 | 分類 | 表記方針 | 訳注 | 検証 |");
+    expect(md).toContain("| Widget set | 部品集合 | established | translate |  | 用例に合わせた（元の訳: ウィジェット 集合） 出典: https://a.jp/x https://b.jp/y |");
+    expect(md).toContain("| Plain | 平易 | proper-noun | translate |  |  |");
+    expect(parse(md)).toEqual(rows);
+    expect(render(rows)).not.toContain("検証");
+  });
+});
