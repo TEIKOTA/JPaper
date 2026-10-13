@@ -53,7 +53,7 @@ pnpm dev:web
 
 ブラウザで `http://127.0.0.1:5173` を開くと、`article/` の論文と用語集、全体の用語 DB を見られる。用語の行から訳語を直すと、訳文での出現箇所（原文の対応箇所つき）を確かめてから置換し、和訳 PDF と対訳 PDF を組み直す（LLM は使わない。直前の 1 回は元に戻せる）。データの場所は CLI と同じ既定（CWD の `article/` と `~/.jpaper/glossary.db`）で、`JPAPER_ARTICLE_DIR`・`JPAPER_GLOSSARY_DB` で変えられる。`127.0.0.1` だけで待ち受け、認証は持たない。仕様の正本は [契約付録 §9](./docs/design/contract-appendix.md)。
 
-「探す」では手元の論文と arXiv の論文を 1 つの検索欄で探し、未訳の論文は「翻訳する」から翻訳の画面へ送れる（arXiv ID を直接入れてもよい）。「翻訳」では provider・model・effort を毎回指定してジョブのキューに加え、段階・節 n/m・費用・経過時間・ログの末尾を見ながら、待機中・実行中のジョブを取り消せる。翻訳は CLI を子プロセスで動かすので、訳し終えた論文はそのまま一覧と用語集の編集の対象になる。「設定」ではフォームの初期値（JPaper は既定値を持たない）と同時に走らせる本数（既定 1 本ずつ、4 本まで）を決め、`~/.jpaper/web-settings.json`（`JPAPER_HOME`）に保存する。ジョブは API のメモリだけに持つので、API を止めると実行中の翻訳も止まる（同じ ID で始め直せば checkpoint から再開する）。翻訳が使う全体の用語 DB は CLI と同じ `JPAPER_HOME/glossary.db`（`JPAPER_GLOSSARY_DB` は翻訳には効かない）。
+「探す」では手元の論文と arXiv の論文を 1 つの検索欄で探し、未訳の論文は「翻訳する」から翻訳の画面へ送れる（arXiv ID を直接入れてもよい）。「翻訳」では provider・model・effort を毎回指定してジョブのキューに加え、段階・節 n/m・費用・経過時間・ログの末尾を見ながら、待機中・実行中のジョブを取り消せる。翻訳は CLI を子プロセスで動かすので、訳し終えた論文はそのまま一覧と用語集の編集の対象になる。「設定」ではフォームの初期値（未指定なら claude は最新の Sonnet、GPT は最新の Sol を effort medium で使う）と同時に走らせる本数（既定 1 本ずつ、4 本まで）を決め、`~/.jpaper/web-settings.json`（`JPAPER_HOME`）に保存する。ジョブは API のメモリだけに持つので、API を止めると実行中の翻訳も止まる（同じ ID で始め直せば checkpoint から再開する）。翻訳が使う全体の用語 DB は CLI と同じ `JPAPER_HOME/glossary.db`（`JPAPER_GLOSSARY_DB` は翻訳には効かない）。
 
 ## コマンド
 
@@ -68,7 +68,7 @@ pnpm dev:web
 | `scripts/new-branch.sh <type> <issue番号> <slug>` | 規約検証付きで topic branch を作成 |
 | `scripts/check-pr.sh [<PR番号>]` | PR タイトル・body・issue 連結のローカル検査（PR 作成・編集後） |
 
-LLM プロバイダは `LlmClient` 境界で差し替え可能。**local=Ollama**、**cloud=公式 CLI subprocess（`claude -p` / `codex exec`）**、**OpenRouter（OpenAI 互換 API）** の 4 実装で、`--provider {ollama|claude|codex|openrouter}` は**必須（既定なし）**。claude と codex は `--model` / `--effort` を指定したときだけ CLI に渡す（JPaper は既定値を持たない）。LLM クライアントは薄い自作ランタイム内に閉じ込める（[プロバイダ ADR](./docs/adr/20260709-llm-provider-abstraction-local-ollama-and-cloud-cli.md)）。
+LLM プロバイダは `LlmClient` 境界で差し替え可能。**local=Ollama**、**cloud=公式 CLI subprocess（`claude -p` / `codex exec`）**、**OpenRouter（OpenAI 互換 API）** の 4 実装で、`--provider {ollama|claude|codex|openrouter}` は**必須（既定なし）**。claude と codex は `--model` / `--effort` を CLI に渡し、未指定なら最新の中位モデル（claude は Sonnet、codex は Sol）と effort medium を使う。LLM クライアントは薄い自作ランタイム内に閉じ込める（[プロバイダ ADR](./docs/adr/20260709-llm-provider-abstraction-local-ollama-and-cloud-cli.md)）。
 
 ## 開発ルール
 

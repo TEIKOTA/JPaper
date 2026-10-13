@@ -25,7 +25,7 @@ export function paperOutDir(paperId: string, outOpt?: string): string {
 
 export const DEFAULT_CLAUDE_CW = 200_000; // 契約付録 §4
 
-// 契約付録 §5。未指定の項目は claude CLI に渡さない（JPaper は既定値を持たない）。
+// 契約付録 §5。未指定の項目は translatePaper が既定で埋める（src/providers/defaults.ts）。
 export interface ClaudeConfig {
   model?: string;
   effort?: string;
@@ -36,7 +36,7 @@ export const CLAUDE_EFFORT_PATTERN = /^[a-z]+$/;
 
 export const DEFAULT_CODEX_CW = 200_000; // 契約付録 §4
 
-// 契約付録 §5。未指定の項目は codex CLI に渡さない（JPaper は既定値を持たない）。
+// 契約付録 §5。未指定の項目は translatePaper が既定で埋める（src/providers/defaults.ts）。
 export interface CodexConfig {
   model?: string;
   effort?: string;

@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { makeClaudeClient, MAX_TURNS } from "./claude.js";
+import { usedModel, makeClaudeClient, MAX_TURNS } from "./claude.js";
 import { isTransient } from "../types/errors.js";
 import type { LlmCallEvent } from "../types/contract.js";
 
@@ -171,6 +171,29 @@ describe("makeClaudeClient", () => {
       costUsd: 0.0123,
       latencyMs: 40,
     });
+  });
+
+  it("別名で呼んだときは modelUsage の鍵（実際に使われたモデル）をトレースの model にする", async () => {
+    const events: LlmCallEvent[] = [];
+    const c = makeClaudeClient({ model: "sonnet" }, {
+      run: async () => JSON.stringify({ result: "訳文", modelUsage: { "claude-sonnet-5-5": { costUSD: 0.01 } } }),
+      trace: (e) => events.push(e),
+    });
+    await c.complete({ system: "s", user: "u" });
+    expect(events[0]!.model).toBe("claude-sonnet-5-5");
+  });
+
+  it("modelUsage に複数のモデルがあれば出力トークン（無ければ費用）が最大のものを選び、配列は無視する", () => {
+    expect(
+      usedModel({
+        "claude-haiku-4-5": { outputTokens: 21, costUSD: 0.001 },
+        "claude-sonnet-5-5": { outputTokens: 3000, costUSD: 0.02 },
+      }),
+    ).toBe("claude-sonnet-5-5");
+    expect(usedModel({ a: { costUSD: 0.001 }, b: { costUSD: 0.05 } })).toBe("b");
+    expect(usedModel(["x"])).toBeUndefined();
+    expect(usedModel(null)).toBeUndefined();
+    expect(usedModel({})).toBeUndefined();
   });
 
   it("失敗パス（result 欠如）ではトレースを emit しない", async () => {

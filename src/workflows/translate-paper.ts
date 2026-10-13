@@ -55,6 +55,7 @@ import {
   type OpenRouterConfig,
 } from "../config.js";
 import { makeLlmClient } from "../providers/index.js";
+import { withCliDefaults } from "../providers/defaults.js";
 import { makeJsonlTrace, withTrace } from "../runtime/trace.js";
 import { ingest, derivePaperId, type IngestDeps } from "../ingest/index.js";
 import type { IngestLimits } from "../ingest/limits.js";
@@ -895,13 +896,15 @@ export async function translatePaper(
   const trace = deps.trace ?? makeJsonlTrace(path.join(runDir, "llm-trace.jsonl"), runId);
   // 注入クライアントにもトレースを掛ける。web はテナント別資格情報のために必ず注入するので、
   // プロバイダ生成側にだけ配線すると課金の記録が構造的に消える。
+  // claude・codex の未指定の model・effort は既定で埋める。契約付録 §5
+  const cli = deps.client === undefined ? withCliDefaults(opts.provider, opts) : {};
   const client0 =
     deps.client === undefined
       ? makeLlmClient(opts.provider, {
           ollama: opts.ollama,
           openrouter: opts.openrouter,
-          claude: opts.claude,
-          codex: opts.codex,
+          claude: cli.claude,
+          codex: cli.codex,
           trace,
         })
       : withTrace(deps.client, trace, opts.provider);
@@ -924,6 +927,7 @@ export async function translatePaper(
       // 通知の失敗は run を壊さない。
     }
   };
+  if (cli.warning !== undefined) notify(cli.warning);
   const progress = (e: RunProgress): void => {
     try {
       deps.onProgress?.(e);

@@ -1,5 +1,5 @@
 // 契約付録 §9（Web アプリ）。翻訳フォームの初期値と並行数を JPAPER_HOME/web-settings.json に置く。
-// provider・model・effort の既定値はコードに持たない（未設定なら空）。
+// フォームの初期値はコードに持たない（未設定なら空）。空の model・effort は translatePaper の既定（契約付録 §5）で埋まる。
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { Provider } from "../../../src/types/contract.js";

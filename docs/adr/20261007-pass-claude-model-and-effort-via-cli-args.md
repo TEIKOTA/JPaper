@@ -2,6 +2,7 @@
 
 # Status
 - accepted
+- 2026-10-13 に部分 supersede: 置換された条項＝「JPaper 側にモデル・推論強度の既定値を持たない」（→ 未指定なら最新の Sonnet・effort medium で埋める）／存続する条項＝指定された `--model` / `--effort` を claude CLI の引数で渡すこと、値の形の検査、checkpoint の無効化キーに含めないこと／後継 ADR＝[20261013-default-to-latest-mid-tier-models-at-medium-effort](./20261013-default-to-latest-mid-tier-models-at-medium-effort.md)
 
 # Situation
 - 個人利用で、cloud の翻訳は claude プロバイダ（公式 claude CLI の subprocess）で回している。
