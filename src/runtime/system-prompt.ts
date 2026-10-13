@@ -2,6 +2,7 @@
 import type { ResolvedTerm, DocumentBrief, StyleContract } from "../types/contract.js";
 import { oneLine, MAX_TERM_CHARS, MAX_NOTE_CHARS } from "./untrusted.js";
 import { jaPartOf } from "../terminology/bilingual-form.js";
+import { PDF_NAME_LINE } from "../tools/pdf-name.js";
 
 export type AgentRole = "translator" | "evaluator" | "glossary-builder";
 
@@ -54,6 +55,10 @@ const TRANSLATOR_MATH_BOUNDARY =
 // 足すのが原因なので、規約そのものを先に書く。契約付録 §1
 const TRANSLATOR_BILINGUAL =
   "併記の使いどころ: 「日本語(原語)」の併記は、user 側の用語指示で bilingual と指示された語の初出だけに使う。そこに挙がっていない語には併記を付けず、日本語だけで訳す（keep-original 指定の語は原表記のまま）。同じ語を何度も併記しない。";
+
+// 契約付録 §8（成果物 PDF の名前）
+const TRANSLATOR_PDF_NAME =
+  `名前の行の扱い: user 側の指示が囲みの最後に \`${PDF_NAME_LINE} <name>\` の行を足すよう求めているときに限り、その 1 行は原文に無い行として足す（マークアップを追加しない規則の例外）。求められていなければ足さない。`;
 
 const PITFALLS =
   "頻出の誤訳に注意する（evaluator 用チェックリスト）: 統計語 significantly=「有意」（p 値の含意を保つ）／SI 単位は立体・°K は K に／主張強度・hedging（may/might/suggest 等）を原文どおり保つ／false friend: agency=「行為主体性」など文脈依存の訳。";
@@ -151,6 +156,7 @@ export function buildSystemPrompt(role: AgentRole): string {
       TRANSLATOR_FIDELITY,
       TRANSLATOR_MATH_BOUNDARY,
       TRANSLATOR_BILINGUAL,
+      TRANSLATOR_PDF_NAME,
     );
   if (role === "evaluator") parts.push(PITFALLS, EVAL_RUBRIC, EVAL_PRIORITY);
   return parts.join("\n\n---\n\n");
