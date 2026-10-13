@@ -37,6 +37,8 @@ pnpm install
 lefthook install   # commit-msg / pre-push フック（未導入なら brew install lefthook）
 ```
 
+OpenRouter の API キーなどは `.env.example` を `.env` に写して書ける（CLI は作業ディレクトリの、Web は repo 直下の `.env` を読む。シェルの環境変数が優先。詳細は [契約付録 §8](./docs/design/contract-appendix.md)）。
+
 ## 使い方
 
 ```sh
