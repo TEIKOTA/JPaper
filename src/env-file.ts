@@ -28,15 +28,15 @@ export interface DotEnvResult {
   error?: string;
 }
 
-// .env を読み、DOTENV_KEYS のうち環境変数に無い（undefined の）キーだけを env に載せる。キー名は辞書順で返す。
-// 先頭の BOM は外す。PATH_KEYS の ~/ はホームに、相対パスは .env のあるディレクトリを基準に解決する。
-// ファイルが無ければ何もしない。読めなければ error（中身は含めない）。
 function absolutePath(v: string, base: string, home: () => string): string {
   if (v === "" || path.isAbsolute(v)) return v;
   if (v === "~" || v.startsWith("~/")) return path.join(home(), v.slice(1));
   return path.resolve(base, v);
 }
 
+// .env を読み、DOTENV_KEYS のうち環境変数に無い（undefined の）キーだけを env に載せる。キー名は辞書順で返す。
+// 先頭の BOM は外す。PATH_KEYS の ~/ はホームに、相対パスは .env のあるディレクトリを基準に解決する。
+// ファイルが無ければ何もしない。読めなければ error（中身は含めない）。
 export function loadDotEnv(
   file = ".env",
   env: NodeJS.ProcessEnv = process.env,
