@@ -1,5 +1,6 @@
 // 契約付録 §8（.env の読み込み）。issue #273。
 import { readFileSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { parseEnv } from "node:util";
 
@@ -13,7 +14,7 @@ export const DOTENV_KEYS = [
   "JPAPER_MAX_LLM_QUEUE",
 ] as const;
 
-// 相対パスなら .env のあるディレクトリを基準に絶対パスへ直すキー。
+// 相対パスなら .env のあるディレクトリを基準に絶対パスへ直すキー（先頭の ~/ はホームに展開する）。
 const PATH_KEYS = new Set<string>(["JPAPER_HOME", "JPAPER_DUMP_RAW", "CODEX_HOME"]);
 // 名前を出してよいキーの形（大文字・数字・_）。
 const KEY_NAME = /^[A-Z_][A-Z0-9_]*$/;
@@ -28,12 +29,19 @@ export interface DotEnvResult {
 }
 
 // .env を読み、DOTENV_KEYS のうち環境変数に無い（undefined の）キーだけを env に載せる。キー名は辞書順で返す。
-// 先頭の BOM は外す。PATH_KEYS の相対パスは .env のあるディレクトリを基準に解決する。
+// 先頭の BOM は外す。PATH_KEYS の ~/ はホームに、相対パスは .env のあるディレクトリを基準に解決する。
 // ファイルが無ければ何もしない。読めなければ error（中身は含めない）。
+function absolutePath(v: string, base: string, home: () => string): string {
+  if (v === "" || path.isAbsolute(v)) return v;
+  if (v === "~" || v.startsWith("~/")) return path.join(home(), v.slice(1));
+  return path.resolve(base, v);
+}
+
 export function loadDotEnv(
   file = ".env",
   env: NodeJS.ProcessEnv = process.env,
   read: (path: string) => string = (p) => readFileSync(p, "utf8"),
+  home: () => string = os.homedir,
 ): DotEnvResult {
   let text: string;
   try {
@@ -53,7 +61,7 @@ export function loadDotEnv(
     if (!KEY_NAME.test(k)) malformed++;
     else if (!allowed.has(k)) ignored.push(k);
     else if (env[k] === undefined && v !== undefined) {
-      env[k] = PATH_KEYS.has(k) && v !== "" && !path.isAbsolute(v) ? path.resolve(base, v) : v;
+      env[k] = PATH_KEYS.has(k) ? absolutePath(v, base, home) : v;
       loaded.push(k);
     }
   }
