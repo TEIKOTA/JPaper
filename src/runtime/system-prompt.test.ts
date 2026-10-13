@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { PDF_NAME_LINE } from "../tools/pdf-name.js";
 import { buildSystemPrompt, renderGlossaryBlock,
   renderDocContextBlock,
 } from "./system-prompt.js";
@@ -63,7 +64,7 @@ describe("buildSystemPrompt", () => {
   it("translator にだけ、求められたときの `% pdf-name:` の行をマークアップを足さない規則の例外として許す（issue #347）", () => {
     const t = buildSystemPrompt("translator");
     expect(t).toContain("名前の行の扱い");
-    expect(t).toContain("`% pdf-name: <name>` の行を足すよう求めているときに限り");
+    expect(t).toContain(`\`${PDF_NAME_LINE} <name>\` の行を足すよう求めているときに限り`);
     expect(t).toContain("求められていなければ足さない");
     expect(buildSystemPrompt("evaluator")).not.toContain("pdf-name");
     expect(buildSystemPrompt("glossary-builder")).not.toContain("pdf-name");
