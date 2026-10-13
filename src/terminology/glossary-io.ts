@@ -17,6 +17,9 @@ function cell(s: string): string {
 function checkCell(c: TermCheck | undefined): string {
   if (c === undefined) return "";
   const src = c.sources.length === 0 ? "" : ` 出典: ${c.sources.join(" ")}`;
+  if (c.status === "replaced" && c.via !== undefined) {
+    return `用例に合わせた ${c.via} の訳に揃えた（元の訳: ${c.original ?? ""}）`;
+  }
   if (c.status === "replaced") return `用例に合わせた（元の訳: ${c.original ?? ""}）${src}`;
   if (c.status === "confirmed") return `用例と一致${src}`;
   if (c.reason === "conflicting") return "未確認（用例の表記が割れている）";

@@ -176,6 +176,8 @@ export const TermCheck = z.object({
   form: z.string(),
   original: z.string().optional(),
   reason: z.enum(["not-found", "conflicting", "few-sites", "failed"]).optional(),
+  // 差し替えた語の元の訳を含む・同じ訳だったので合わせて書き換えた語なら、差し替えを決めた語の src。
+  via: z.string().optional(),
   sources: z.array(z.string()).default([]),
 });
 export type TermCheck = z.infer<typeof TermCheck>;

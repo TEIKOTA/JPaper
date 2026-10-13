@@ -359,27 +359,29 @@ async function loadOrBuildContext(
 }
 
 // 検証の版。採否の規則・対象語の選び方・指示を変えたら上げる（checkpoint の無効化キーに入る）。
-const VERIFY_VERSION = 3;
+const VERIFY_VERSION = 4;
 export const VERIFY_STEP = "term-verify";
 // 直近の検証の結果（失敗した run を含む）。キャッシュには使わない。
 export const VERIFY_RESULT_STEP = "term-checks";
 const TermChecks = z.object({ checks: z.array(TermCheck) });
 
 // 差し替えで brief・style・訳注が上限を超えたら、差し替えずに未確認（few-sites）として返す。契約付録 §4
-function withinLimits<V extends { resolved: GlossaryBuilderOut["resolved"]; brief: unknown; style: unknown; checks: TermCheck[]; kept: unknown[] }>(
+function withinLimits<V extends { resolved: GlossaryBuilderOut["resolved"]; brief: unknown; style: unknown; checks: TermCheck[] }>(
   built: GlossaryBuilderOut,
   v: V,
 ): V {
   if (VerifiedGlossary.safeParse(v).success) return v;
+  const originalOf = new Map(built.resolved.map((r) => [r.src, r.form]));
   return {
     ...v,
     ...built,
-    kept: [],
-    checks: v.checks.map((c) =>
-      c.status === "replaced"
-        ? { src: c.src, status: "unverified" as const, form: c.original ?? c.form, reason: "few-sites" as const, sources: [] }
-        : c,
-    ),
+    checks: v.checks
+      .filter((c) => c.via === undefined)
+      .map((c) =>
+        c.status === "replaced"
+          ? { src: c.src, status: "unverified" as const, form: c.original ?? c.form, reason: "few-sites" as const, sources: [] }
+          : { ...c, form: originalOf.get(c.src) ?? c.form },
+      ),
   };
 }
 
@@ -410,9 +412,6 @@ async function verifyGlossary(
           warn?.("arXiv 以外の入力の論文の用語と abstract の冒頭を Web 検索に出して用語を確かめます（止めるには --no-verify-terms）");
         }
         const v = withinLimits(built, applyVerification(built, targets, await verifyTerms(client, { paperId, context: excerpt, targets })));
-        for (const k of v.kept) {
-          warn?.(`用語の訳を差し替えた「${k.original}」を含む ${k.src}「${k.form}」は元の訳のまま残ります`);
-        }
         return { resolved: v.resolved, brief: v.brief, style: v.style, checks: v.checks };
       },
       {
@@ -429,7 +428,9 @@ async function verifyGlossary(
     };
   }
   for (const c of result.checks) {
-    if (c.status === "replaced") {
+    if (c.status === "replaced" && c.via !== undefined) {
+      warn?.(`用語の訳を ${c.via} の差し替えに揃えました: ${c.src}「${c.original ?? ""}」→「${c.form}」`);
+    } else if (c.status === "replaced") {
       warn?.(`用語の訳を用例に合わせました: ${c.src}「${c.original ?? ""}」→「${c.form}」（出典 ${c.sources.join(" ")}）`);
     } else if (c.status === "unverified") {
       warn?.(`用語の訳を Web 検索の用例で確かめられませんでした（未確認）: ${c.src}「${c.form}」`);
@@ -1519,9 +1520,9 @@ export async function translatePaper(
         ctx.checks === undefined
           ? null
           : {
-              checked: ctx.checks.length,
+              checked: ctx.checks.filter((c) => c.via === undefined).length,
               confirmed: ctx.checks.filter((c) => c.status === "confirmed").length,
-              replaced: ctx.checks.filter((c) => c.status === "replaced").length,
+              replaced: ctx.checks.filter((c) => c.status === "replaced" && c.via === undefined).length,
               unverified: ctx.checks.filter((c) => c.status === "unverified").length,
             },
       notes: { total: notes.length, byTrigger: countByTrigger(notes) },

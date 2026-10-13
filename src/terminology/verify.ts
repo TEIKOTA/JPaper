@@ -4,7 +4,7 @@ import { MAX_VERIFY_TERMS, type TermCheck, type TermVerifyOut } from "../types/c
 import type { ResolvedRow } from "./glossary-io.js";
 import { canonicalBilingualForm } from "./bilingual-form.js";
 import { isAcceptableTerm } from "./glossary.js";
-import { rewriteStrings, sameJaTerms, shieldsFor, termJa, type TermRewrite } from "./replace.js";
+import { rewriteStrings, termJa, type TermRewrite } from "./replace.js";
 
 // 用例の表記として受け付ける長さと文字（かな・漢字・々・長音・中黒・英数字・空白・ハイフン）。
 export const MAX_USAGE_FORM_CHARS = 40;
@@ -113,14 +113,13 @@ export interface Verified<T, B, S> {
   brief: B;
   style: S;
   checks: TermCheck[];
-  // 差し替えた訳を含む・同じ訳を持つほかの語（書き換えずに元の訳のまま残る）。
-  kept: { src: string; form: string; original: string }[];
 }
 
 // 検索結果を用語集へ当てる。異なるサイトの数が最も多い表記を採り、最多が並べば未確認（conflicting）。
 // 採った表記が用語集の訳（併記形は日本語部分）と同じなら confirmed。違えば MIN_REPLACE_SITES 以上の
-// サイトにあるときだけ差し替えて replaced（足りなければ few-sites）。差し替えた訳は、ほかの語の訳に
-// 含まれる箇所を除いて、brief・style・各語の訳注でも書き換える。
+// サイトにあるときだけ差し替えて replaced（足りなければ few-sites）。同じ元の訳を別の訳へ差し替える語が
+// 先にあれば conflicting。差し替えた元の訳は、ほかの語の訳（それを含む語・同じ訳の語。keep-original は除く）・
+// brief・style・各語の訳注でも書き換え、書き換えた語は via 付きの replaced として返す。
 export function applyVerification<T extends ResolvedRow, B, S>(
   ctx: { resolved: readonly T[]; brief: B; style: S },
   targets: readonly VerifyTarget[],
@@ -131,8 +130,8 @@ export function applyVerification<T extends ResolvedRow, B, S>(
   for (const t of out.terms) if (!bySrc.has(key(t.src))) bySrc.set(key(t.src), t);
   const checks: TermCheck[] = [];
   const next = new Map<string, string>();
-  const rewrites: TermRewrite[] = [];
-  const kept: Verified<T, B, S>["kept"] = [];
+  // 元の訳 → 新しい訳と、差し替えを決めた語。
+  const rewrites = new Map<string, { newJa: string; src: string }>();
   for (const target of targets) {
     const row = ctx.resolved.find((r) => r.src === target.src);
     if (row === undefined) continue;
@@ -160,25 +159,55 @@ export function applyVerification<T extends ResolvedRow, B, S>(
       unverified("few-sites");
       continue;
     }
+    const earlier = rewrites.get(current);
+    if (earlier !== undefined && earlier.newJa !== best.form) {
+      unverified("conflicting");
+      continue;
+    }
     next.set(row.src, replaced);
     checks.push({ src: row.src, status: "replaced", form: replaced, original: row.form, sources });
-    const shields = shieldsFor(ctx.resolved, row.src, current);
-    rewrites.push({ oldJa: current, newJa: best.form, shields });
-    for (const s of shields) kept.push({ src: s.src, form: s.ja, original: current });
-    for (const src of sameJaTerms(ctx.resolved, row.src, current)) kept.push({ src, form: current, original: current });
+    if (earlier === undefined) rewrites.set(current, { newJa: best.form, src: row.src });
+  }
+  // 長い元の訳から当てる（短い訳が長い訳の一部を先に書き換えないように）。先に当てた新しい訳は、後の書き換えから守る。
+  const order: { rule: TermRewrite; src: string }[] = [];
+  for (const [oldJa, r] of [...rewrites.entries()].sort((a, b) => b[0].length - a[0].length)) {
+    const shields = order.map((o) => ({ src: o.src, ja: o.rule.newJa })).filter((sh) => sh.ja.includes(oldJa));
+    order.push({ rule: { oldJa, newJa: r.newJa, shields }, src: r.src });
   }
   let brief = ctx.brief;
   let style = ctx.style;
-  let resolved = ctx.resolved.map((r) => {
-    const form = next.get(r.src);
-    return form === undefined ? { ...r } : { ...r, form };
+  const resolved = ctx.resolved.map((r) => {
+    const own = next.get(r.src);
+    if (own !== undefined) return { ...r, form: own };
+    const ja = termJa(r);
+    if (ja === undefined || ja === "") return { ...r };
+    let changed = ja;
+    let via: string | undefined;
+    for (const { rule, src } of order) {
+      const after = rewriteStrings(changed, rule);
+      if (after !== changed) via ??= src;
+      changed = after;
+    }
+    if (via === undefined) return { ...r };
+    const form = r.rendering === "bilingual" ? canonicalBilingualForm(`${changed}(${r.src})`, r.src) : changed;
+    if (form.length > MAX_TERM_CHARS) return { ...r };
+    const own2 = checks.find((c) => c.src === r.src);
+    if (own2 !== undefined) own2.form = form;
+    else checks.push({ src: r.src, status: "replaced", form, original: r.form, via, sources: [] });
+    return { ...r, form };
   });
-  for (const r of rewrites) {
-    brief = rewriteStrings(brief, r);
-    style = rewriteStrings(style, r);
-    resolved = resolved.map((row) => (row.note === undefined ? row : { ...row, note: rewriteStrings(row.note, r) }));
+  for (const { rule } of order) {
+    brief = rewriteStrings(brief, rule);
+    style = rewriteStrings(style, rule);
   }
-  return { resolved, brief, style, checks, kept };
+  return {
+    resolved: resolved.map((row) =>
+      row.note === undefined ? row : { ...row, note: order.reduce((n, { rule }) => rewriteStrings(n, rule), row.note) },
+    ),
+    brief,
+    style,
+    checks,
+  };
 }
 
 // 前の run の検証の結果のうち、今の用語集の行と訳が同じままの未確認の語（人が直した語は除く）。

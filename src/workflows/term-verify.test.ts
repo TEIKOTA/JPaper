@@ -35,6 +35,7 @@ const GLOSSARY = JSON.stringify({
   resolved: [
     { src: "Widget set", form: "ウィジェット集合", class: "established", rendering: "translate" },
     { src: "Gizmo ratio", form: "ギズモ比(Gizmo ratio)", class: "paper-defined", rendering: "bilingual" },
+    { src: "empirical Widget set", form: "経験的ウィジェット集合", class: "proper-noun", rendering: "translate" },
   ],
   brief: { thesis: "ウィジェット集合を調べる", sectionRoles: [], notationConventions: [] },
   style: { tensePolicy: "a", headingStyle: "b", numberStyle: "c" },
@@ -133,6 +134,10 @@ describe("用語の検証（契約付録 §4・issue #309）", () => {
       "| Widget set | 部品集合 | established | translate |  | 用例に合わせた（元の訳: ウィジェット集合） 出典: https://example.jp/widget https://another.org/w |",
     );
     expect(readFileSync(path.join(outDir, "brief.md"), "utf8")).toContain("部品集合を調べる");
+    // 元の訳を含む語は差し替えに揃え、件数には数えない。
+    expect(md).toContain(
+      "| empirical Widget set | 経験的部品集合 | proper-noun | translate |  | 用例に合わせた Widget set の訳に揃えた（元の訳: 経験的ウィジェット集合） |",
+    );
     expect(warnings.some((w) => w.startsWith("arXiv 以外の入力の論文の用語と abstract の冒頭を Web 検索に出して"))).toBe(true);
     expect(md).toContain("| Gizmo ratio | ギズモ比(Gizmo ratio) | paper-defined | bilingual |  | 未確認（Web 検索で用例を確かめられなかった） |");
 
