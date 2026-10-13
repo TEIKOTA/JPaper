@@ -59,7 +59,7 @@ import {
 import { makeLlmClient } from "../providers/index.js";
 import { z } from "zod";
 import { paperExcerpt } from "../terminology/paper-excerpt.js";
-import { applyVerification, carriedUnverified, verifyTargets } from "../terminology/verify.js";
+import { applyVerification, carriedUnverified, isTargetCheck, verifyTargets } from "../terminology/verify.js";
 import { verifyTerms } from "../agents/term-verifier.js";
 import { withCliDefaults } from "../providers/defaults.js";
 import { makeJsonlTrace, withTrace } from "../runtime/trace.js";
@@ -359,7 +359,7 @@ async function loadOrBuildContext(
 }
 
 // 検証の版。採否の規則・対象語の選び方・指示を変えたら上げる（checkpoint の無効化キーに入る）。
-const VERIFY_VERSION = 4;
+const VERIFY_VERSION = 5;
 export const VERIFY_STEP = "term-verify";
 // 直近の検証の結果（失敗した run を含む）。キャッシュには使わない。
 export const VERIFY_RESULT_STEP = "term-checks";
@@ -376,11 +376,17 @@ function withinLimits<V extends { resolved: GlossaryBuilderOut["resolved"]; brie
     ...v,
     ...built,
     checks: v.checks
-      .filter((c) => c.via === undefined)
+      .filter(isTargetCheck)
       .map((c) =>
-        c.status === "replaced"
-          ? { src: c.src, status: "unverified" as const, form: c.original ?? c.form, reason: "few-sites" as const, sources: [] }
-          : { ...c, form: originalOf.get(c.src) ?? c.form },
+        c.status === "confirmed"
+          ? c
+          : {
+              src: c.src,
+              status: "unverified" as const,
+              form: originalOf.get(c.src) ?? c.form,
+              reason: c.status === "replaced" ? ("few-sites" as const) : c.reason,
+              sources: [],
+            },
       ),
   };
 }
@@ -433,7 +439,8 @@ async function verifyGlossary(
     } else if (c.status === "replaced") {
       warn?.(`用語の訳を用例に合わせました: ${c.src}「${c.original ?? ""}」→「${c.form}」（出典 ${c.sources.join(" ")}）`);
     } else if (c.status === "unverified") {
-      warn?.(`用語の訳を Web 検索の用例で確かめられませんでした（未確認）: ${c.src}「${c.form}」`);
+      const via = c.via === undefined ? "" : `（${c.via} の差し替えに揃えた。元の訳「${c.original ?? ""}」）`;
+      warn?.(`用語の訳を Web 検索の用例で確かめられませんでした（未確認）: ${c.src}「${c.form}」${via}`);
     }
   }
   return result;
@@ -1520,9 +1527,9 @@ export async function translatePaper(
         ctx.checks === undefined
           ? null
           : {
-              checked: ctx.checks.filter((c) => c.via === undefined).length,
+              checked: ctx.checks.filter(isTargetCheck).length,
               confirmed: ctx.checks.filter((c) => c.status === "confirmed").length,
-              replaced: ctx.checks.filter((c) => c.status === "replaced" && c.via === undefined).length,
+              replaced: ctx.checks.filter((c) => c.status === "replaced" && isTargetCheck(c)).length,
               unverified: ctx.checks.filter((c) => c.status === "unverified").length,
             },
       notes: { total: notes.length, byTrigger: countByTrigger(notes) },

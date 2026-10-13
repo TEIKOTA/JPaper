@@ -117,9 +117,10 @@ export interface Verified<T, B, S> {
 
 // 検索結果を用語集へ当てる。異なるサイトの数が最も多い表記を採り、最多が並べば未確認（conflicting）。
 // 採った表記が用語集の訳（併記形は日本語部分）と同じなら confirmed。違えば MIN_REPLACE_SITES 以上の
-// サイトにあるときだけ差し替えて replaced（足りなければ few-sites）。同じ元の訳を別の訳へ差し替える語が
-// 先にあれば conflicting。差し替えた元の訳は、ほかの語の訳（それを含む語・同じ訳の語。keep-original は除く）・
-// brief・style・各語の訳注でも書き換え、書き換えた語は via 付きの replaced として返す。
+// サイトにあるときだけ差し替えて replaced（足りなければ few-sites）。同じ元の訳の語どうしで採った表記が
+// 違えば、サイトの最も多い表記の語を採り、ほかは conflicting（最多が並べば全て conflicting）。
+// 差し替えた元の訳は、ほかの語の訳（それを含む語・同じ訳の語。keep-original と confirmed の語は除く）・
+// brief・style・各語の訳注でも書き換え、書き換えた語の check に via と元の訳を付ける。
 export function applyVerification<T extends ResolvedRow, B, S>(
   ctx: { resolved: readonly T[]; brief: B; style: S },
   targets: readonly VerifyTarget[],
@@ -128,50 +129,72 @@ export function applyVerification<T extends ResolvedRow, B, S>(
   const key = (src: string): string => src.trim().toLowerCase();
   const bySrc = new Map<string, TermVerifyOut["terms"][number]>();
   for (const t of out.terms) if (!bySrc.has(key(t.src))) bySrc.set(key(t.src), t);
-  const checks: TermCheck[] = [];
-  const next = new Map<string, string>();
-  // 元の訳 → 新しい訳と、差し替えを決めた語。
-  const rewrites = new Map<string, { newJa: string; src: string }>();
+  type Found = { row: T; current: string; newJa: string; form: string; sites: number; sources: string[] };
+  const decided: ({ row: T; reason: TermCheck["reason"] } | Found)[] = [];
   for (const target of targets) {
     const row = ctx.resolved.find((r) => r.src === target.src);
     if (row === undefined) continue;
     const current = termJa(row) ?? row.form;
-    const unverified = (reason: TermCheck["reason"]): void => {
-      checks.push({ src: row.src, status: "unverified", form: row.form, reason, sources: [] });
-    };
     const [best, second] = usagesOf(bySrc.get(key(target.src))?.candidates ?? []);
     if (best === undefined) {
-      unverified("not-found");
+      decided.push({ row, reason: "not-found" });
       continue;
     }
     if (second !== undefined && second.sites.size === best.sites.size) {
-      unverified("conflicting");
+      decided.push({ row, reason: "conflicting" });
       continue;
     }
     const sources = [...best.sites.values()];
     if (best.form === current) {
-      checks.push({ src: row.src, status: "confirmed", form: row.form, sources });
+      decided.push({ row, current, newJa: current, form: row.form, sites: best.sites.size, sources });
       continue;
     }
     const replaced =
       row.rendering === "bilingual" ? canonicalBilingualForm(`${best.form}(${row.src})`, row.src) : best.form;
     if (best.sites.size < MIN_REPLACE_SITES || replaced.length > MAX_TERM_CHARS) {
-      unverified("few-sites");
+      decided.push({ row, reason: "few-sites" });
       continue;
     }
-    const earlier = rewrites.get(current);
-    if (earlier !== undefined && earlier.newJa !== best.form) {
-      unverified("conflicting");
-      continue;
+    decided.push({ row, current, newJa: best.form, form: replaced, sites: best.sites.size, sources });
+  }
+  // 元の訳ごとに採る表記（サイトの最も多い表記。並べば無し）。
+  const winner = new Map<string, string | undefined>();
+  const most = new Map<string, number>();
+  for (const d of decided) {
+    if (!("newJa" in d)) continue;
+    const top = most.get(d.current) ?? 0;
+    if (d.sites > top) {
+      most.set(d.current, d.sites);
+      winner.set(d.current, d.newJa);
+    } else if (d.sites === top && winner.get(d.current) !== d.newJa) {
+      winner.set(d.current, undefined);
     }
-    next.set(row.src, replaced);
-    checks.push({ src: row.src, status: "replaced", form: replaced, original: row.form, sources });
-    if (earlier === undefined) rewrites.set(current, { newJa: best.form, src: row.src });
+  }
+  const checks: TermCheck[] = [];
+  const next = new Map<string, string>();
+  // 元の訳 → 新しい訳と、差し替えを決めた語。
+  const rewrites = new Map<string, { newJa: string; src: string }>();
+  const confirmedJa: { src: string; ja: string }[] = [];
+  for (const d of decided) {
+    if (!("newJa" in d)) {
+      checks.push({ src: d.row.src, status: "unverified", form: d.row.form, reason: d.reason, sources: [] });
+    } else if (winner.get(d.current) !== d.newJa) {
+      checks.push({ src: d.row.src, status: "unverified", form: d.row.form, reason: "conflicting", sources: [] });
+    } else if (d.newJa === d.current) {
+      checks.push({ src: d.row.src, status: "confirmed", form: d.row.form, sources: d.sources });
+      confirmedJa.push({ src: d.row.src, ja: d.current });
+    } else {
+      next.set(d.row.src, d.form);
+      checks.push({ src: d.row.src, status: "replaced", form: d.form, original: d.row.form, sources: d.sources });
+      if (!rewrites.has(d.current)) rewrites.set(d.current, { newJa: d.newJa, src: d.row.src });
+    }
   }
   // 長い元の訳から当てる（短い訳が長い訳の一部を先に書き換えないように）。先に当てた新しい訳は、後の書き換えから守る。
   const order: { rule: TermRewrite; src: string }[] = [];
   for (const [oldJa, r] of [...rewrites.entries()].sort((a, b) => b[0].length - a[0].length)) {
-    const shields = order.map((o) => ({ src: o.src, ja: o.rule.newJa })).filter((sh) => sh.ja.includes(oldJa));
+    const shields = [...order.map((o) => ({ src: o.src, ja: o.rule.newJa })), ...confirmedJa].filter(
+      (sh) => sh.ja !== oldJa && sh.ja.includes(oldJa),
+    );
     order.push({ rule: { oldJa, newJa: r.newJa, shields }, src: r.src });
   }
   let brief = ctx.brief;
@@ -191,8 +214,8 @@ export function applyVerification<T extends ResolvedRow, B, S>(
     if (via === undefined) return { ...r };
     const form = r.rendering === "bilingual" ? canonicalBilingualForm(`${changed}(${r.src})`, r.src) : changed;
     if (form.length > MAX_TERM_CHARS) return { ...r };
-    const own2 = checks.find((c) => c.src === r.src);
-    if (own2 !== undefined) own2.form = form;
+    const own2 = checks.findIndex((c) => c.src === r.src);
+    if (own2 !== -1) checks[own2] = { ...checks[own2]!, form, original: r.form, via };
     else checks.push({ src: r.src, status: "replaced", form, original: r.form, via, sources: [] });
     return { ...r, form };
   });
@@ -208,6 +231,11 @@ export function applyVerification<T extends ResolvedRow, B, S>(
     style,
     checks,
   };
+}
+
+// 対象語の検証の結果か（ほかの語の差し替えに揃えただけの語でないか）。
+export function isTargetCheck(c: TermCheck): boolean {
+  return c.status !== "replaced" || c.via === undefined;
 }
 
 // 前の run の検証の結果のうち、今の用語集の行と訳が同じままの未確認の語（人が直した語は除く）。

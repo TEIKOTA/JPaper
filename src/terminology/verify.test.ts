@@ -253,7 +253,7 @@ describe("表記のまとめ方と同じ訳の語", () => {
     expect(r.resolved.map((x) => x.form)).toEqual(["Rashomon集合", "佐々木集合"]);
   });
 
-  it("元の訳と同じ訳の語・それを含む併記形の語も揃え、keep-original と未確認の語の check は今の訳に合わせる", () => {
+  it("元の訳と同じ訳の語・それを含む併記形の語も揃え、keep-original は揃えず、未確認の語の check は今の訳と via を持つ", () => {
     const r = applyVerification(
       ctx([
         row("Widget set", "ウィジェット集合"),
@@ -277,14 +277,17 @@ describe("表記のまとめ方と同じ訳の語", () => {
     ]);
     expect(r.checks.map((c) => [c.src, c.status, c.via ?? "", c.form])).toEqual([
       ["Widget set", "replaced", "", "部品集合"],
-      ["Widget set ratio", "unverified", "", "部品集合比"],
+      ["Widget set ratio", "unverified", "Widget set", "部品集合比"],
       ["widget sets", "replaced", "Widget set", "部品集合"],
       ["Widget set size", "replaced", "Widget set", "部品集合の大きさ(Widget set size)"],
     ]);
   });
 
-  it("同じ元の訳を別の表記へ差し替える語が先にあれば、後の語は conflicting（訳は先の差し替えに揃う）", () => {
-    const two = (form: string) => ({ form, sources: [at("https://a.jp", form), at("https://b.jp", form)] });
+  it("同じ元の訳の語どうしで採った表記が違えば、サイトの多い表記を採り、ほかは conflicting（訳は採った差し替えに揃う）", () => {
+    const sites = (form: string, n: number) => ({
+      form,
+      sources: Array.from({ length: n }, (_, i) => at(`https://s${String(i)}.jp`, form)),
+    });
     const r = applyVerification(
       ctx([row("Widget set", "ウィジェット集合"), row("Widget sets", "ウィジェット集合")]),
       [
@@ -292,16 +295,61 @@ describe("表記のまとめ方と同じ訳の語", () => {
         { src: "Widget sets", form: "ウィジェット集合" },
       ],
       out([
-        { src: "Widget set", candidates: [two("部品集合")] },
-        { src: "Widget sets", candidates: [two("部品群")] },
+        { src: "Widget set", candidates: [sites("部品集合", 2)] },
+        { src: "Widget sets", candidates: [sites("部品群", 3)] },
       ]),
     );
-    // 後の語は未確認のまま、訳は先の差し替えに揃う（check の form も今の訳）。
-    expect(r.checks.map((c) => [c.src, c.status, c.reason ?? c.via ?? "", c.form])).toEqual([
-      ["Widget set", "replaced", "", "部品集合"],
-      ["Widget sets", "unverified", "conflicting", "部品集合"],
+    expect(r.checks.map((c) => [c.src, c.status, c.reason ?? "", c.via ?? "", c.form])).toEqual([
+      ["Widget set", "unverified", "conflicting", "Widget sets", "部品群"],
+      ["Widget sets", "replaced", "", "", "部品群"],
     ]);
-    expect(r.resolved.map((x) => x.form)).toEqual(["部品集合", "部品集合"]);
+    expect(r.resolved.map((x) => x.form)).toEqual(["部品群", "部品群"]);
+  });
+
+  it("同じ元の訳の語どうしで採った表記のサイトの数が並べば、どちらも conflicting で差し替えない", () => {
+    const two = (form: string) => ({ form, sources: [at("https://a.jp", form), at("https://b.jp", form)] });
+    const r = applyVerification(
+      ctx([row("Widget set", "ウィジェット集合"), row("Widget sets", "ウィジェット集合")], "ウィジェット集合"),
+      [
+        { src: "Widget set", form: "ウィジェット集合" },
+        { src: "Widget sets", form: "ウィジェット集合" },
+      ],
+      out([
+        { src: "Widget set", candidates: [two("部品集合")] },
+        { src: "Widget sets", candidates: [two("ウィジェット集合")] },
+      ]),
+    );
+    expect(r.checks.map((c) => [c.src, c.status, c.reason ?? ""])).toEqual([
+      ["Widget set", "unverified", "conflicting"],
+      ["Widget sets", "unverified", "conflicting"],
+    ]);
+    expect(r.resolved.map((x) => x.form)).toEqual(["ウィジェット集合", "ウィジェット集合"]);
+    expect(r.brief).toEqual({ thesis: "ウィジェット集合", note: "" });
+  });
+
+  it("用例と一致した（confirmed の）語は、元の訳を含んでも揃えず、brief・style でもその訳を書き換えない", () => {
+    const two = (form: string) => ({ form, sources: [at("https://a.jp", form), at("https://b.jp", form)] });
+    const r = applyVerification(
+      ctx(
+        [row("Widget set", "ウィジェット集合"), row("empirical Widget set", "経験的ウィジェット集合"), row("Widget set family", "ウィジェット集合族")],
+        "経験的ウィジェット集合とウィジェット集合族",
+      ),
+      [
+        { src: "Widget set", form: "ウィジェット集合" },
+        { src: "empirical Widget set", form: "経験的ウィジェット集合" },
+      ],
+      out([
+        { src: "Widget set", candidates: [two("部品集合")] },
+        { src: "empirical Widget set", candidates: [two("経験的ウィジェット集合")] },
+      ]),
+    );
+    expect(r.resolved.map((x) => x.form)).toEqual(["部品集合", "経験的ウィジェット集合", "部品集合族"]);
+    expect(r.checks.map((c) => [c.src, c.status, c.via ?? "", c.form])).toEqual([
+      ["Widget set", "replaced", "", "部品集合"],
+      ["empirical Widget set", "confirmed", "", "経験的ウィジェット集合"],
+      ["Widget set family", "replaced", "Widget set", "部品集合族"],
+    ]);
+    expect(r.brief).toEqual({ thesis: "経験的ウィジェット集合と部品集合族", note: "" });
   });
 });
 

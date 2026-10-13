@@ -77,4 +77,14 @@ describe("glossary.md の検証の欄（契約付録 §4・issue #309）", () =>
     expect(parse(md)).toEqual(rows);
     expect(render(rows)).not.toContain("検証");
   });
+
+  it("ほかの語の差し替えに揃えた未確認の語は、未確認の理由に揃えたことと元の訳を続ける", () => {
+    const md = renderGlossaryMd(
+      [{ src: "Widget set ratio", form: "部品集合比", class: "established", rendering: "translate" }],
+      [{ src: "Widget set ratio", status: "unverified", form: "部品集合比", reason: "few-sites", original: "ウィジェット集合比", via: "Widget set", sources: [] }],
+    );
+    expect(md).toContain(
+      "| Widget set ratio | 部品集合比 | established | translate |  | 未確認（差し替えに足りる用例が無い）。Widget set の訳に揃えた（元の訳: ウィジェット集合比） |",
+    );
+  });
 });
