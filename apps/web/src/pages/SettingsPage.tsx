@@ -20,6 +20,12 @@ function SettingsForm(props: { initial: SettingsResponse }) {
     props.initial.settings.providers,
   );
   const [concurrency, setConcurrency] = useState(props.initial.settings.concurrency);
+  const [history, setHistory] = useState(props.initial.settings.history);
+  const [historyMessage, setHistoryMessage] = useState<{ ok: boolean; text: string }>();
+  const used = providers.filter((p) => {
+    const h = history[p.name];
+    return h !== undefined && (h.models.length > 0 || h.efforts.length > 0);
+  });
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ ok: boolean; text: string }>();
   const edit = (name: string, key: keyof ProviderDefaults, value: string) => {
@@ -136,6 +142,58 @@ function SettingsForm(props: { initial: SettingsResponse }) {
           {busy ? "保存しています…" : "保存"}
         </button>
         {message !== undefined && <span className={message.ok ? "" : "error"}>{message.text}</span>}
+      </div>
+
+      <h2 className="section-title">model・effort の候補</h2>
+      <p className="form-note">翻訳を始めたときの model・effort を provider ごとに新しい順に 10 件まで覚え、翻訳フォームの候補に出します。</p>
+      {used.length === 0 ? (
+        <p className="empty">候補はありません。</p>
+      ) : (
+        <table className="table settings-table">
+          <thead>
+            <tr>
+              <th>provider</th>
+              <th>model</th>
+              <th>effort</th>
+            </tr>
+          </thead>
+          <tbody>
+            {used.map((p) => (
+              <tr key={p.name}>
+                <td>{providerLabel(p.name)}</td>
+                <td>{history[p.name]?.models.join(", ") || <span className="muted">—</span>}</td>
+                <td>{history[p.name]?.efforts.join(", ") || <span className="muted">—</span>}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+      <div className="form-actions">
+        <button
+          className="secondary"
+          type="button"
+          disabled={busy || used.length === 0}
+          onClick={() => {
+            setBusy(true);
+            setHistoryMessage(undefined);
+            api.clearHistory().then(
+              (r) => {
+                setBusy(false);
+                setHistory(r.settings.history);
+                setHistoryMessage({ ok: true, text: "候補を消しました。" });
+              },
+              (err: unknown) => {
+                setBusy(false);
+                setHistoryMessage({ ok: false, text: errorText(err) });
+              },
+            );
+          }}
+        >
+          候補を消す
+        </button>
+        {historyMessage !== undefined && (
+          <span className={historyMessage.ok ? "" : "error"}>{historyMessage.text}</span>
+        )}
       </div>
     </form>
   );

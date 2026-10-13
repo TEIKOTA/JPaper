@@ -44,6 +44,7 @@ function TranslateForm(props: {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   const [started, setStarted] = useState<string>();
+  const [history, setHistory] = useState(settings.history);
   const acceptsEffort = providers.find((p) => p.name === provider)?.effort === true;
   const title = props.title !== undefined && arxivId.trim() === props.id ? props.title : undefined;
 
@@ -67,6 +68,7 @@ function TranslateForm(props: {
           .then(
             (r) => {
               setBusy(false);
+              api.settings().then((latest) => setHistory(latest.settings.history), () => undefined);
               setStarted(`${r.job.arxivId} を${JOB_STATE_LABEL[r.job.state]}のジョブに加えました。`);
               setArxivId("");
               if (props.id !== undefined) window.history.replaceState(null, "", href.translate());
@@ -116,8 +118,14 @@ function TranslateForm(props: {
             className="text-input input-mid"
             value={model}
             placeholder="未指定"
+            list="model-history"
             onChange={(e) => setModel(e.target.value)}
           />
+          <datalist id="model-history">
+            {(history[provider]?.models ?? []).map((m) => (
+              <option key={m} value={m} />
+            ))}
+          </datalist>
         </label>
         {acceptsEffort && (
           <label className="field">
@@ -126,8 +134,14 @@ function TranslateForm(props: {
               className="text-input input-short"
               value={effort}
               placeholder="未指定"
+              list="effort-history"
               onChange={(e) => setEffort(e.target.value)}
             />
+            <datalist id="effort-history">
+              {(history[provider]?.efforts ?? []).map((v) => (
+                <option key={v} value={v} />
+              ))}
+            </datalist>
           </label>
         )}
       </div>

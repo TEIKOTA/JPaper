@@ -27,7 +27,7 @@ import {
 import { DEFAULT_API_PORT, DEFAULT_WEB_PORT, localOrigins, type WebConfig } from "./config.js";
 import { ArxivClient, ArxivError, ArxivQueryError } from "./arxiv.js";
 import { JobQueue } from "./jobs.js";
-import { MAX_JOB_CONCURRENCY, parseSettings, readSettings, writeSettings } from "./settings.js";
+import { MAX_JOB_CONCURRENCY, parseSettings, readSettings, recordHistory, writeSettings } from "./settings.js";
 import { parseArxivId, parseTranslateOptions, providerInfo } from "./translate-options.js";
 
 const LOCAL_HOSTS = new Set(["127.0.0.1", "localhost", "[::1]"]);
@@ -209,9 +209,20 @@ export function createApp(config: WebConfig, services: Services = createServices
 
   app.post("/api/settings", async (c) => {
     try {
-      const settings = parseSettings(await c.req.json().catch(() => undefined));
+      const body: unknown = await c.req.json().catch(() => undefined);
+      const settings = { ...parseSettings(body), history: readSettings(config.settingsPath).history };
       writeSettings(config.settingsPath, settings);
       jobs.pump();
+      return c.json({ settings });
+    } catch (e) {
+      return errorResponse(c, e);
+    }
+  });
+
+  app.post("/api/settings/history/clear", (c) => {
+    try {
+      const settings = { ...readSettings(config.settingsPath), history: {} };
+      writeSettings(config.settingsPath, settings);
       return c.json({ settings });
     } catch (e) {
       return errorResponse(c, e);
@@ -256,6 +267,11 @@ export function createApp(config: WebConfig, services: Services = createServices
           ? body.title.replace(/[\x00-\x1f\x7f]/g, " ").trim().slice(0, TITLE_MAX) || undefined
           : undefined;
       const job = jobs.enqueue({ arxivId, options, ...(title === undefined ? {} : { title }) });
+      try {
+        writeSettings(config.settingsPath, recordHistory(readSettings(config.settingsPath), options));
+      } catch (e) {
+        console.error(`model・effort の履歴を保存できません: ${e instanceof Error ? e.message : String(e)}`);
+      }
       return c.json({ job }, 201);
     } catch (e) {
       return errorResponse(c, e);

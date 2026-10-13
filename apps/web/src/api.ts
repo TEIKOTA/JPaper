@@ -114,10 +114,16 @@ export interface ProviderDefaults {
   effort?: string;
 }
 
+export interface ProviderHistory {
+  models: string[];
+  efforts: string[];
+}
+
 export interface WebSettings {
   provider?: string;
   providers: Record<string, ProviderDefaults | undefined>;
   concurrency: number;
+  history: Record<string, ProviderHistory | undefined>;
 }
 
 export interface SettingsResponse {
@@ -200,7 +206,9 @@ export const api = {
   glossary: () => call<{ terms: GlobalTerm[] }>("/api/glossary").then((r) => r.terms),
   pdfUrl: (id: string, kind: PdfKind) => `${paper(id)}/pdf/${kind}`,
   settings: () => call<SettingsResponse>("/api/settings"),
-  saveSettings: (settings: WebSettings) => call<{ settings: WebSettings }>("/api/settings", post(settings)),
+  saveSettings: (settings: Omit<WebSettings, "history">) =>
+    call<{ settings: WebSettings }>("/api/settings", post(settings)),
+  clearHistory: () => call<{ settings: WebSettings }>("/api/settings/history/clear", post({})),
   arxiv: (q: string, signal?: AbortSignal) =>
     call<{ total?: number; entries: ArxivEntry[] }>(`/api/arxiv?q=${encodeURIComponent(q)}`, { signal }),
   jobs: () => call<{ jobs: Job[] }>("/api/jobs").then((r) => r.jobs),
