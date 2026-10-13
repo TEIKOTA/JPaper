@@ -130,6 +130,7 @@ export interface SettingsResponse {
   settings: WebSettings;
   providers: ProviderInfo[];
   maxConcurrency: number;
+  maxHistory: number;
 }
 
 export type JobState = "queued" | "running" | "done" | "failed" | "canceled";

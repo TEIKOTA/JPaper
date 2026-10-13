@@ -7,7 +7,7 @@ import { Status } from "./Status.js";
 const POLL_MS = 2000;
 
 export function TranslatePage(props: { id?: string; title?: string }) {
-  const [settings] = useLoad(() => api.settings(), []);
+  const [settings, reloadSettings] = useLoad(() => api.settings(), []);
   const [jobs, reloadJobs] = usePoll(() => api.jobs(), POLL_MS);
   return (
     <>
@@ -20,7 +20,10 @@ export function TranslatePage(props: { id?: string; title?: string }) {
           settings={settings.data}
           id={props.id}
           title={props.title}
-          onStarted={reloadJobs}
+          onStarted={() => {
+            reloadJobs();
+            reloadSettings();
+          }}
         />
       )}
       <h2 className="section-title">ジョブ</h2>
@@ -44,7 +47,7 @@ function TranslateForm(props: {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   const [started, setStarted] = useState<string>();
-  const [history, setHistory] = useState(settings.history);
+  const history = settings.history;
   const acceptsEffort = providers.find((p) => p.name === provider)?.effort === true;
   const title = props.title !== undefined && arxivId.trim() === props.id ? props.title : undefined;
 
@@ -68,7 +71,6 @@ function TranslateForm(props: {
           .then(
             (r) => {
               setBusy(false);
-              api.settings().then((latest) => setHistory(latest.settings.history), () => undefined);
               setStarted(`${r.job.arxivId} を${JOB_STATE_LABEL[r.job.state]}のジョブに加えました。`);
               setArxivId("");
               if (props.id !== undefined) window.history.replaceState(null, "", href.translate());

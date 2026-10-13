@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from "vitest";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { createApp } from "./app.js";
@@ -7,7 +7,7 @@ import { ArxivClient } from "./arxiv.js";
 import { ATOM } from "./arxiv.fixtures.js";
 import { configFromEnv } from "./config.js";
 import { JobQueue, type JobRunner, type ProcessExit } from "./jobs.js";
-import { emptySettings, MAX_HISTORY, readSettings, recordHistory } from "./settings.js";
+import { emptySettings, MAX_HISTORY, readSettings, recordHistory, writeSettings } from "./settings.js";
 
 const dirs: string[] = [];
 const tmp = () => {
@@ -84,6 +84,7 @@ describe("設定 API（契約付録 §9）", () => {
         { name: "openrouter", effort: false },
       ],
       maxConcurrency: 4,
+      maxHistory: MAX_HISTORY,
     });
   });
 
@@ -102,7 +103,8 @@ describe("設定 API（契約付録 §9）", () => {
       history: {},
     };
     expect(saved.body.settings).toEqual(want);
-    expect(JSON.parse(readFileSync(settingsPath, "utf8"))).toEqual(want);
+    const { history: _h, ...stored } = want;
+    expect(JSON.parse(readFileSync(settingsPath, "utf8"))).toEqual(stored);
     expect((await req("/api/settings")).body.settings).toEqual(want);
 
     for (const bad of [
@@ -332,5 +334,63 @@ describe("model・effort の候補（契約付録 §9・issue #339）", () => {
     mkdirSync(settingsPath, { recursive: true });
     const r = await post("/api/jobs", { arxivId: "2601.00001", provider: "claude", model: "sonnet" });
     expect(r.status).toBe(201);
+  });
+
+  it("writeSettings は rename に失敗したら一時ファイルを消して投げる", () => {
+    const dir = tmp();
+    const file = path.join(dir, "web-settings.json");
+    mkdirSync(path.join(file, "occupied"), { recursive: true });
+    expect(() => writeSettings(file, {})).toThrow();
+    expect(readdirSync(dir).filter((n) => n.endsWith(".tmp"))).toEqual([]);
+  });
+
+  it("読めない設定ファイルは、ジョブを始めても候補を消しても書き換えない", async () => {
+    const { post, settingsPath } = setup();
+    mkdirSync(path.dirname(settingsPath), { recursive: true });
+    const broken = '{"provider":"claude","providers":{"claude":{"model":"opus"}},"concurrency":3,}';
+    writeFileSync(settingsPath, broken);
+    expect((await post("/api/jobs", { arxivId: "2601.00001", provider: "claude", model: "sonnet" })).status).toBe(201);
+    expect(readFileSync(settingsPath, "utf8")).toBe(broken);
+    const cleared = await post("/api/settings/history/clear", {});
+    expect(cleared.status).toBe(409);
+    expect(readFileSync(settingsPath, "utf8")).toBe(broken);
+  });
+
+  it("候補の記録・消去・設定の保存は、ファイルの知らないキーを残す", async () => {
+    const { post, settingsPath } = setup();
+    mkdirSync(path.dirname(settingsPath), { recursive: true });
+    writeFileSync(settingsPath, JSON.stringify({ concurrency: 1, futureKey: { a: 1 } }));
+    const keep = () => (JSON.parse(readFileSync(settingsPath, "utf8")) as { futureKey?: unknown }).futureKey;
+    await post("/api/jobs", { arxivId: "2601.00001", provider: "claude", model: "sonnet" });
+    expect(keep()).toEqual({ a: 1 });
+    await post("/api/settings", { concurrency: 2 });
+    expect(keep()).toEqual({ a: 1 });
+    await post("/api/settings/history/clear", {});
+    expect(keep()).toEqual({ a: 1 });
+  });
+
+  it("候補が変わらなければ設定ファイルを書き直さない", async () => {
+    const { post, settingsPath } = setup();
+    await post("/api/jobs", { arxivId: "2601.00001", provider: "claude", model: "sonnet" });
+    const compact = JSON.stringify(JSON.parse(readFileSync(settingsPath, "utf8")));
+    writeFileSync(settingsPath, compact);
+    await post("/api/jobs", { arxivId: "2601.00002", provider: "claude", model: "sonnet" });
+    expect(readFileSync(settingsPath, "utf8")).toBe(compact);
+  });
+
+  it("候補を消す要求も Content-Type・Origin の検査を通る", async () => {
+    const { app } = setup();
+    const plain = await app.request("/api/settings/history/clear", {
+      method: "POST",
+      headers: { host: "127.0.0.1:5174", "content-type": "text/plain" },
+      body: "{}",
+    });
+    expect(plain.status).toBe(415);
+    const evil = await app.request("/api/settings/history/clear", {
+      method: "POST",
+      headers: { ...HEADERS, origin: "https://evil.example" },
+      body: "{}",
+    });
+    expect(evil.status).toBe(403);
   });
 });

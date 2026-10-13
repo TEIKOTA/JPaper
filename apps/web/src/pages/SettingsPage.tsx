@@ -14,7 +14,7 @@ export function SettingsPage() {
 }
 
 function SettingsForm(props: { initial: SettingsResponse }) {
-  const { providers, maxConcurrency } = props.initial;
+  const { providers, maxConcurrency, maxHistory } = props.initial;
   const [provider, setProvider] = useState(props.initial.settings.provider ?? "");
   const [defaults, setDefaults] = useState<Record<string, ProviderDefaults | undefined>>(
     props.initial.settings.providers,
@@ -50,6 +50,7 @@ function SettingsForm(props: { initial: SettingsResponse }) {
             (r) => {
               setBusy(false);
               setDefaults(r.settings.providers);
+              setHistory(r.settings.history);
               setMessage({ ok: true, text: "保存しました。" });
             },
             (err: unknown) => {
@@ -145,7 +146,7 @@ function SettingsForm(props: { initial: SettingsResponse }) {
       </div>
 
       <h2 className="section-title">model・effort の候補</h2>
-      <p className="form-note">翻訳を始めたときの model・effort を provider ごとに新しい順に 10 件まで覚え、翻訳フォームの候補に出します。</p>
+      <p className="form-note">翻訳を始めたときの model・effort を provider ごとに新しい順に {maxHistory} 件まで覚え、翻訳フォームの候補に出します。</p>
       {used.length === 0 ? (
         <p className="empty">候補はありません。</p>
       ) : (
