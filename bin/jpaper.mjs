@@ -5,6 +5,6 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { register } from "tsx/esm/api";
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
-register();
+register({ tsconfig: join(root, "tsconfig.json") }); // ⚠ landmines.md
 const { main } = await import(pathToFileURL(join(root, "src", "cli.ts")).href);
 await main(process.argv);

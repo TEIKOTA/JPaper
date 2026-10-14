@@ -55,7 +55,7 @@ pnpm link --global # jpaper コマンドをどこからでも使えるように�
 lefthook install   # commit-msg / pre-push フック（未導入なら brew install lefthook）
 ```
 
-`jpaper` コマンドは repo のソース（`src/cli.ts`）を tsx で直接動かすので、build は要らず、`git pull` するとそのまま新しい版で動く（`bin/jpaper.mjs`）。`pnpm link --global` を使わない場合は、repo の中で `pnpm dev` を `jpaper` の代わりに使える。
+`jpaper` コマンドは repo のソース（`src/cli.ts`）を tsx で直接動かすので、build は要らず、`git pull` するとそのまま新しい版で動く（`bin/jpaper.mjs`）。link した `jpaper` は、repo でその時 checkout している branch のコードを動かす。`pnpm link --global` を使わない場合は、repo の中で `pnpm dev` を `jpaper` の代わりに使える（ただし作業ディレクトリが repo 直下になるので、読む `.env` と、相対パスの `<input>`・`--out` の基準が repo 直下になる）。
 
 OpenRouter の API キーなどは、`.env.example` を `.env` に写して書ける。CLI は作業ディレクトリの `.env` を、Web は repo 直下の `.env` を読み、シェルの環境変数のほうが優先される（詳細は [契約付録 §8](./docs/design/contract-appendix.md)）。
 
