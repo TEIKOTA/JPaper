@@ -171,16 +171,30 @@ function termsBySrc(articleDir: string): Map<string, PaperTerm[]> {
   return out;
 }
 
+type TitleOf = (dir: string) => { titleJa?: string };
+
+function titleMemo(key?: Buffer): TitleOf {
+  const seen = new Map<string, { titleJa?: string }>();
+  return (dir) => {
+    let t = seen.get(dir);
+    if (t === undefined) {
+      t = pick(paperTitles(dir, key));
+      seen.set(dir, t);
+    }
+    return t;
+  };
+}
+
 function affectedIn(
   index: Map<string, PaperTerm[]>,
   src: string,
   form: string,
   exclude: string | undefined,
-  key?: Buffer,
+  titleOf: TitleOf,
 ): AffectedPaper[] {
   return (index.get(src.toLowerCase()) ?? [])
     .filter((p) => p.id !== exclude && isEditable(p.row) && p.row.form !== form)
-    .map((p) => ({ id: p.id, ...pick(paperTitles(p.dir, key)), currentJa: termJa(p.row) ?? p.row.form }));
+    .map((p) => ({ id: p.id, ...titleOf(p.dir), currentJa: termJa(p.row) ?? p.row.form }));
 }
 
 function pick(t: { titleJa?: string }): { titleJa?: string } {
@@ -195,7 +209,7 @@ export function affectedPapers(
   exclude?: string,
   key?: Buffer,
 ): AffectedPaper[] {
-  return affectedIn(termsBySrc(articleDir), src, form, exclude, key);
+  return affectedIn(termsBySrc(articleDir), src, form, exclude, titleMemo(key));
 }
 
 export interface GlobalTerm {
@@ -210,6 +224,7 @@ export interface GlobalTerm {
 
 export function globalTerms(db: GlossaryDb, articleDir: string, key?: Buffer): GlobalTerm[] {
   const index = termsBySrc(articleDir);
+  const titleOf = titleMemo(key);
   const out: GlobalTerm[] = [];
   for (const src of db.allSrcTerms().sort((a, b) => a.localeCompare(b))) {
     for (const e of db.allFor(src)) {
@@ -220,7 +235,7 @@ export function globalTerms(db: GlossaryDb, articleDir: string, key?: Buffer): G
         rendering: e.rendering,
         status: e.status,
         source: e.source,
-        affected: e.status === "confirmed" && e.ja !== null ? affectedIn(index, e.src, e.ja, undefined, key) : [],
+        affected: e.status === "confirmed" && e.ja !== null ? affectedIn(index, e.src, e.ja, undefined, titleOf) : [],
       });
     }
   }
