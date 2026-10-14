@@ -7,7 +7,7 @@ description: Use when the evaluator agent reviews a Japanese translation of an a
 
 学術論文の和訳でよく起きる既知の誤訳を、evaluator が**レビューの観点**として使うためのチェックリスト。[翻訳一貫性 ADR](../../../docs/adr/20260710-translation-consistency-brief-style-and-annotations.md) 決定5 の正本。
 
-- **使うのは evaluator だけ**。translator / glossary-builder には注入しない（訳を作る側には混ぜず、誤りの検出だけに使う）。
+- **使うのは evaluator だけ**。translator / glossary-builder には注入しない（訳を作る側に影響させず、誤りの検出に集中する）。
 - **global 用語 DB には seed しない**（[契約付録](../../../docs/design/contract-appendix.md) §2「v1 は空で開始」を維持）。この一覧は用語の事実として登録する種ではなく、レビューの観点である。
 - 段階的に読む: 該当が疑われるときだけ本文を参照する。列挙は網羅ではなく代表例で、随時追記する。
 

@@ -13,7 +13,7 @@
 - `src/agents/` — エージェント定義（`translator.ts` / `evaluator.ts` / `glossary-builder.ts`）
 - `src/workflows/` — ワークフロー（素の TS の関数。`Promise.all` / `for` / `if` でつなぐ）
 - `src/tools/` — エージェントが使うツール（TS の関数）
-- `src/cli.ts` — jpaper CLI（`pnpm dev` の実体）。`src/index.ts` は `translatePaper`・`runCli` などをライブラリとして公開する
+- `src/cli.ts` — jpaper CLI（`pnpm dev` の実体）。`src/index.ts` は `translatePaper`・`runCli` などを export する
 - `apps/web/` — Web アプリ（論文の検索・翻訳ジョブ・用語集の編集）。`server/` は core と CLI を呼ぶ Hono の API、`src/` は Vite と React の画面。pnpm workspace のパッケージ
 - `input/` — 用語集・スタイルガイドなどの知識の正本（commit する）
 - `output/` — 実行の記録（`runs/`）と作業領域（`workspace/`）。実行時に作られるもので、gitignore している
@@ -83,7 +83,7 @@
 - ユーザーに見せる成果物（レポート・HTML 等）は `/tmp` や scratchpad でなく repo 内か home 配下の永続位置に置き、応答の末尾で所在と開き方を必ず示す。
 - 想定外の失敗が起きたら [`docs/process/failure-patterns.md`](./docs/process/failure-patterns.md) へその場で 1 行追記する（根拠必須）。対策はログの精読ではなく昇華先（scripts・skill・本ファイル）に置く。
 - compact・セッション切替の直後は、求められなくても現状報告（直近の作業・実行中ジョブ・未コミット差分・次の一手）を先に出す。セッションを跨ぐ引き継ぎは [`docs/templates/handoff.md`](./docs/templates/handoff.md) の雛形で書く。
-- **ソースのコメントには事実だけを書く**。理由（why）は正本（ADR・契約付録・設計メモ）に置き、コードの中には正本への参照（`// 契約付録 §N`）と、中身を持たない地雷の目印（`// ⚠ landmines.md`）だけを書く。規約の正本は [ソースコメント ADR](./docs/adr/20260710-source-comments-facts-only-rationale-to-docs.md)。
+- **ソースは事実のみ**。理由（why）は正本（ADR・契約付録・設計メモ）に置き、コード内のコメントは正本への参照（`// 契約付録 §N`）と、中身を持たない地雷の目印（`// ⚠ landmines.md`）だけにする。規約の正本は [ソースコメント ADR](./docs/adr/20260710-source-comments-facts-only-rationale-to-docs.md)。
 - コードが不自然に見えても、**直す前に [`docs/design/landmines.md`](./docs/design/landmines.md) を確認する**。載っていれば意図的な書き方なので、そのまま残す。
 
 ## コマンド
