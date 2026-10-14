@@ -111,7 +111,7 @@
 1. **後勝ち vs 連結**: 通常の `\title` は後勝ちだが elsarticle は `\g@addto@macro` で**連結**（elsarticle.dtx:193）。「最後の `\title` を拾う」規則は elsarticle で 2 個以上あると誤る。
 2. **偽の `\title`**: AAAI テンプレは `\iffalse … \fi` 内にダミーの `\title` を 2 つ残す（2510.17897）。コメント除去だけでは足りず、`\iffalse…\fi`（と `\if0`、`comment` 環境）も除外が必要。2607.28007 のように匿名版／実名版 `\author` が 2 組並ぶ例もある。
 3. **即時組版と格納の違い**: `\icmltitle` `\aistatstitle` iopart の `\title`/`\author`/`\address`/abstract はその場で組む。iopart の `\maketitle` は `\newpage` にすぎず、ここに対訳タイトルブロックを差し込むとタイトルが二重になる。MDPI はソースに `\maketitle` が無く、`\AfterEndPreamble` で自動的に組む。
-4. **`\maketitle` は 1 回きり**: article/AAAI/MDPI は実行後に `\let\maketitle\relax` し、article は `\@title` も空にする。対訳ブロックを「左右で `\maketitle` を 2 回呼ぶ」形で作ると 2 回目が無音で空になる。AAAI の `\maketitle` は内部で `\twocolumn[...]` を使う。
+4. **`\maketitle` は 1 回きり**: article/AAAI/MDPI は実行後に `\let\maketitle\relax` し、article は `\@title` も空にする。対訳ブロックを「左右で `\maketitle` を 2 回呼ぶ」形で作ると、2 回目はエラーも出さずに空になる。AAAI の `\maketitle` は内部で `\twocolumn[...]` を使う。
 5. **abstract を `\maketitle` より前に置いて格納する系**: acmart、revtex（必須）、amsart、PNAS（前文）、CAS、elsarticle（frontmatter 内）、IEEE compsoc（`\IEEEtitleabstractindextext`）、sn-jnl/MDPI（命令形 `\abstract{}`）。`\maketitle` の位置でタイトルブロックを差し替えると、要旨もそこで組まれる点に注意する。sn-jnl/MDPI の `\abstract{…}` は環境ではなく命令なので、「abstract 環境を訳す」処理では拾えない。
 6. **タイトル中のマクロや体裁命令**: `\title{\papertitle}`、CVPR の `\confName`、`\title{\diverse: …}`（2601.20627）、`\title{\textbf{…}}`、`\title{\vspace{-.5em}…}`、`\title{\begin{flushleft}{\begin{spacing}{1}…}}`（naturep）、`\\`、`\thanks{}`、`\tnoteref{}`、`\titlebreak`（jmlr.cls）、`\texorpdfstring`。「本題に文字が残るか」の判定は、環境・`\vspace` 等の体裁命令も除いてから行う。
 7. **同名異義**:
@@ -121,7 +121,7 @@
    - `\address`: elsarticle は `[label]{}` で格納、iopart はその場で組む、MDPI は格納
    - `\author` の任意引数: authblk/PNAS/elsarticle では所属ラベル、jmlr.cls/acmart では短縮名、iopart では `cor1`。sn-jnl は星付き、CAS は後置 `[orcid=…]`
 
-   `\` 名 → 引数仕様の解釈はプロファイル依存にする。
+   命令名から引数の仕様を読み取る処理は、プロファイルごとに変える。
 8. **空白・改行を挟む引数**: `\title [mode = title]{…}`（CAS）、`\affiliations {`（AAAI 例）、`\author {`。命令と `[`/`{` の間の空白を許容する。
 9. **走行タイトルの書式が `\cmd{…}` だけではない**: `\renewcommand{\shorttitle}{…}`（arxiv.sty。ここで `{\shorttitle}` が現れる）、`\markboth{}{}`、`\ShortHeadings{}{}`、`\hypersetup{pdftitle=…}`、旧 AAAI/IJCAI の `\pdfinfo{/Title (…)}`、`\title[短縮]{…}` の任意引数、`\icmltitlerunning`（前文）。「定義命令の直後の `\title` は拾わない」という既存規則は、`\renewcommand{\shorttitle}` にも適用する必要がある。
 10. **前文での再定義**: `\let\lncsemail\email \renewcommand{\email}[1]{…}`（2605.18329）。`\newcommand`/`\let`/`\def` の直後にある front matter 命令名は、使用箇所として扱わない。
@@ -131,7 +131,7 @@
     - 旧 CVPR の慣用 `\twocolumn[{\renewcommand\twocolumn[1][]{#1}\maketitle …}]` も同じ扱い
     - CVPR 2025 以降は `\maketitle` 直後の `strip` 環境
 
-    いまの `\twocolumn[` 置換は `\icmltitle` を含む場合に限っているが、`\maketitle` を含む `\twocolumn[` は別経路で壊れうる。
+    いまの `\twocolumn[` 置換は `\icmltitle` を含む場合に限っているが、`\maketitle` を含む `\twocolumn[` は別の経路でおかしくなりうる。
 12. **版依存**:
     - ICML ≤2016 は `\icmlauthor{名}{email}`＋`\icmladdress`（第2引数の意味が違う）。2017 以降は `icmlauthorlist`＋`\icmlaffiliation`。2026 は `\printAffiliationsAndNotice{}` が必須
     - llncs の `\orcidID` は 2.20 以降
