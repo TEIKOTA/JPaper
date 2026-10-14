@@ -9,6 +9,7 @@ import {
   DEFAULT_OLLAMA,
   DEFAULT_OPENROUTER,
   MAX_CONCURRENCY,
+  defaultConcurrencyFor,
   MAX_CONTEXT_WINDOW,
   MIN_CONTEXT_WINDOW,
   CLAUDE_EFFORT_PATTERN,
@@ -24,6 +25,51 @@ export interface CliDeps {
 
 const VALUE_FLAGS = ["--provider", "--out", "--model", "--context-window", "--effort", "--concurrency"];
 const BOOL_FLAGS = ["--think", "--no-think", "--no-bilingual", "--no-verify-terms"];
+const HELP_FLAGS = ["--help", "-h"];
+const HELP_HINT = "使い方は jpaper --help で表示できます\n";
+
+// 契約付録 §5
+export const USAGE = `使い方: jpaper <input> --provider {ollama|claude|codex|openrouter} [オプション]
+
+論文の LaTeX ソースを和訳し、和訳 PDF と対訳 PDF を作る。
+
+<input>
+  arXiv ID（例 2606.22649）、.tex・.tex.gz・zip・tar.gz などのファイル、またはディレクトリ
+
+必須:
+  --provider NAME       使う LLM（ollama・claude・codex・openrouter）
+
+オプション:
+  --out DIR             出力先（既定 ./article/<論文 ID>-ja）
+  --model ID            モデル（既定: claude は最新の Sonnet、codex は手元の一覧にある最新の Sol、
+                        ollama は ${DEFAULT_OLLAMA.model}、openrouter は ${DEFAULT_OPENROUTER.model}）
+  --effort LEVEL        推論の強さ（claude・codex だけ。既定 medium）
+  --context-window N    コンテキスト窓のトークン数（ollama・openrouter だけ。${String(MIN_CONTEXT_WINDOW)}〜${String(MAX_CONTEXT_WINDOW)}）
+  --think, --no-think   思考を出させる・出させない（ollama だけ。既定は出させない）
+  --concurrency N       同時に走らせる LLM 呼び出しの数（1〜${String(MAX_CONCURRENCY)}。既定は ollama が ${String(defaultConcurrencyFor("ollama"))}、ほかは ${String(defaultConcurrencyFor("claude"))}）
+  --no-bilingual        対訳 PDF を作らない
+  --no-verify-terms     用語の訳を Web 検索で確かめない（確かめるのは claude・codex だけ）
+  -h, --help            この使い方を表示する
+
+作業ディレクトリの .env を読む。実行の要約（JSON）と、和訳 PDF・対訳 PDF のパスを標準出力に出す。
+終了コード: 0 成功、1 想定外のエラー・実行環境の障害、2 入力の誤り・外部サービスやプロバイダの障害など、
+3 形式検査が通らない、4 品質が基準に届かない、5 組版の失敗、6 中断・期限超過
+`;
+
+// 契約付録 §5
+export function wantsHelp(args: string[]): boolean {
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a === undefined) continue;
+    if (VALUE_FLAGS.includes(a)) {
+      const v = args[i + 1];
+      if (v !== undefined && !v.startsWith("--")) i++;
+    } else if (HELP_FLAGS.includes(a)) {
+      return true;
+    }
+  }
+  return false;
+}
 
 function parseConcurrency(raw: string): number {
   if (!/^[0-9]+$/.test(raw)) {
@@ -159,6 +205,10 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number
   const stderr = (s: string): void => rawStderr(forTerminal(s));
 
   const args = argv.slice(2);
+  if (wantsHelp(args)) {
+    stdout(USAGE);
+    return 0;
+  }
 
   try {
     const positional: string[] = [];
@@ -234,10 +284,12 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number
   } catch (e) {
     if (e instanceof JpaperError) {
       stderr(`エラー: ${e.message}\n`);
+      if (e.kind === "input") stderr(HELP_HINT);
       return e.code;
     }
     if ((e as { name?: string })?.name === "ZodError") {
       stderr(`エラー: --provider は ollama|claude|codex|openrouter のいずれか\n`);
+      stderr(HELP_HINT);
       return 2;
     }
     stderr(`想定外エラー: ${String((e as Error)?.message ?? e)}\n`);
@@ -247,12 +299,14 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number
 
 // jpaper コマンドの入口（bin/jpaper.mjs と直接実行）。.env はここだけで読む（runCli・ライブラリ経路では読まない）。契約付録 §5・§8
 export async function main(argv: string[]): Promise<never> {
-  const env = loadDotEnv();
-  if (env.error !== undefined) {
-    process.stderr.write(`エラー: .env を読めません: ${env.error}\n`);
-    process.exit(2);
+  if (!wantsHelp(argv.slice(2))) {
+    const env = loadDotEnv();
+    if (env.error !== undefined) {
+      process.stderr.write(`エラー: .env を読めません: ${env.error}\n`);
+      process.exit(2);
+    }
+    for (const line of describeDotEnv(env)) process.stderr.write(`${line}\n`);
   }
-  for (const line of describeDotEnv(env)) process.stderr.write(`${line}\n`);
   process.exit(await runCli(argv));
 }
 

@@ -113,8 +113,8 @@ describe("describeDotEnv", () => {
 
 describe("CLI の入口", () => {
   const root = path.join(import.meta.dirname, "..");
-  const run = (cwd: string) =>
-    spawnSync(process.execPath, [createRequire(import.meta.url).resolve("tsx/cli"), path.join(root, "src", "cli.ts"), "--help"], {
+  const run = (cwd: string, arg = "--no-such-option") =>
+    spawnSync(process.execPath, [createRequire(import.meta.url).resolve("tsx/cli"), path.join(root, "src", "cli.ts"), arg], {
       cwd,
       encoding: "utf8",
       env: { PATH: process.env.PATH, HOME: process.env.HOME },
@@ -136,6 +136,15 @@ describe("CLI の入口", () => {
     expect(r.stderr).toContain(".env から読んだ: JPAPER_DUMP_RAW");
     expect(r.stderr).toContain(".env の次のキーは読みません: FOO");
     expect(r.stderr + r.stdout).not.toContain("xyz");
+  });
+
+  it("--help では .env を読まず、使い方だけを出して終了コード 0（issue #371）", () => {
+    const d = tmp();
+    mkdirSync(path.join(d, DOTENV));
+    const r = run(d, "--help");
+    expect(r.status).toBe(0);
+    expect(r.stdout).toContain("使い方: jpaper");
+    expect(r.stderr).toBe("");
   });
 
   it("runCli では読まず、入口の main() の中の 1 か所だけで読む", () => {
