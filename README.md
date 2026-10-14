@@ -15,6 +15,16 @@
   - あわせて、論文ごとの用語集（`glossary.md`）と実行の記録を残す。
 - **品質**: 訳す役（`translator`）と品質を判定する役（`evaluator`）を分けている。検査は、節ごとの軽い形式検査と evaluator、組み上げた後の全文の組版ゲートの 2 層からなる。合格したらループを抜け、上限（`MAX_REVISIONS`）を超えたら明示的に失敗する（[品質ゲート ADR](./docs/adr/20260708-quality-gate-machine-vs-llm-and-explicit-failure.md) / [2 層化 ADR](./docs/adr/20260709-quality-gate-two-layer-and-build-error-triage.md)）。
 
+## 見本
+
+対訳 PDF の一部（左が原文、右が和訳）。図・数式・相互参照は原文のまま持ち越し、本文とキャプションを訳す。
+
+![MaRS の対訳 PDF の p.2。Fig.1 と本文](./docs/images/readme/mars-p2-fig1.png)
+
+![MaRS の対訳 PDF の p.5。Fig.2 のグラフとキャプション](./docs/images/readme/mars-p5-fig2.png)
+
+原文: Francesco Di Salvo, Sebastian Doerrich, Christian Ledig「MaRS: Robust Out-of-Distribution Detection via Mahalanobis Residual Scoring」（[arXiv:2606.22649](https://arxiv.org/abs/2606.22649)、[CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)）。JPaper で和訳した対訳 PDF の 2 ページから一部を切り出した（画像も CC BY 4.0。作り方は [`docs/images/readme/make_samples.py`](./docs/images/readme/make_samples.py)）。
+
 ## アーキテクチャ
 
 agent-native の考え方と Flue の設計に沿って、次のように分けている。
