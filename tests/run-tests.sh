@@ -20,7 +20,7 @@ check_contributor_structure() {
   local root="$1" prereqs tool
   grep -Fq -- '- `tests/`' "$root/AGENTS.md" || return 1
   grep -Fq -- '- `.codex/`' "$root/AGENTS.md" || return 1
-  grep -Fq -- 'GitHub Actions は既定オフ' "$root/AGENTS.md" || return 1
+  grep -Fq -- 'GitHub Actions は同じ検査をもう一度走らせる確認' "$root/AGENTS.md" || return 1
   grep -Fq -- 'ローカル script が正本' "$root/README.md" || return 1
   prereqs="$(awk '
     /^### 前提ツール$/ { in_prereqs = 1; next }
