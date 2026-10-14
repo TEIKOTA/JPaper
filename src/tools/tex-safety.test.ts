@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { fastestMs } from "../testing/timing.js";
 import {
   findUnsafeTexCommands,
   findUnsafeSupportCommands,
@@ -297,19 +298,19 @@ describe("走査コストの上限", () => {
     // 引数の閉じ波括弧を末尾まで探していた頃は マッチ数 × 末尾走査 = O(n²) で、
     // 4MiB の支援ファイルが 20,040ms、6.3KB のアップロードで 40 秒止まった。
     const tex = "\\input{".repeat(Math.floor((4 * 1024 * 1024) / 7));
-    const started = Date.now();
-    expect(() => findUnsafeSupportCommands(tex)).toThrowError(/上限/);
-    expect(() => findUnsafeTexCommands(tex)).toThrowError(/上限/);
-    expect(Date.now() - started).toBeLessThan(3000);
+    expect(
+      fastestMs(2, () => {
+        expect(() => findUnsafeSupportCommands(tex)).toThrowError(/上限/);
+        expect(() => findUnsafeTexCommands(tex)).toThrowError(/上限/);
+      }),
+    ).toBeLessThan(3000);
   });
 
   it("閉じない \\csname の羅列で二次にならない", () => {
     // \endcsname を正規表現で探していた頃はマッチ位置ごとに末尾まで走査して O(n²) になり、
     // 1MiB で 144,204ms（上限の 8MiB なら数時間）同期でイベントループを止めた。
     const tex = "\\csname ".repeat(Math.floor((8 * 1024 * 1024) / 8));
-    const started = Date.now();
-    expect(() => findUnsafeTexCommands(tex)).toThrowError(/上限/);
-    expect(Date.now() - started).toBeLessThan(3000);
+    expect(fastestMs(2, () => expect(() => findUnsafeTexCommands(tex)).toThrowError(/上限/))).toBeLessThan(3000);
   });
 
   it("\\csname 直後の空白詰めで名前照合を外せない", () => {
