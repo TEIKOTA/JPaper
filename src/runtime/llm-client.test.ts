@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { fastestMs } from "../testing/timing.js";
 import { z } from "zod";
 import { extractJson, repairJsonEscapes, runAgent, MAX_RESPONSE_CHARS } from "./llm-client.js";
 import { FakeLlmClient } from "../testing/fake-llm.js";
@@ -119,9 +120,9 @@ describe("応答の仕事量の上限", () => {
     // 候補ごとに末尾まで再走査していた頃は 50 万文字で 25,629ms かかり、
     // withRetry の 4 試行で 4 倍になった（timeoutMs も割り込めない同期処理）。
     const text = "\\textbf{x ".repeat(50_000);
-    const started = Date.now();
-    expect(() => extractJson(text)).toThrowError(/JSON が見つかりません/);
-    expect(Date.now() - started).toBeLessThan(2000);
+    expect(
+      fastestMs(2, () => expect(() => extractJson(text)).toThrowError(/JSON が見つかりません/)),
+    ).toBeLessThan(2000);
   });
 
   it("上限を超える長さの応答は読まずに落とす", () => {

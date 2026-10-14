@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { fastestMs } from "../testing/timing.js";
 import {
   sizeClassFor,
   maxRevisionsFor,
@@ -83,10 +84,12 @@ describe("段落分割のコスト", () => {
     // 連結後の文字列を段落ごとに数え直していた頃は O(n²) で、400KiB の入力が
     // 120,557ms 同期でイベントループを止めた（10ms タイマー発火 0/12,055）。
     const body = "a\n\n".repeat(Math.floor((400 * 1024) / 3));
-    const started = Date.now();
-    const segs = segment(`\\begin{document}\\section{S}${body}\\end{document}`, 60_000);
-    expect(segs.length).toBeGreaterThan(1);
-    expect(Date.now() - started).toBeLessThan(3000);
+    expect(
+      fastestMs(2, () => {
+        const segs = segment(`\\begin{document}\\section{S}${body}\\end{document}`, 60_000);
+        expect(segs.length).toBeGreaterThan(1);
+      }),
+    ).toBeLessThan(3000);
   });
 
   it("足し込みの丸めが連結して数えた値と一致する", () => {
