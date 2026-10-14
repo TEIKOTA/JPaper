@@ -9,7 +9,7 @@
   },
   "packageManager": "pnpm@10.30.3",
   "bin": {
-    "jpaper": "dist/cli.js"
+    "jpaper": "bin/jpaper.mjs"
   },
   "scripts": {
     "dev": "tsx src/cli.ts",

@@ -41,15 +41,18 @@ agent-native の考え方と Flue の設計に沿って、次のように分け�
 
 ```sh
 pnpm install
+pnpm link --global # jpaper コマンドをどこからでも使えるようにする（初回だけ。事前に pnpm setup が要る）
 lefthook install   # commit-msg / pre-push フック（未導入なら brew install lefthook）
 ```
+
+`jpaper` コマンドは repo のソース（`src/cli.ts`）を tsx で直接動かすので、build は要らず、`git pull` するとそのまま新しい版で動く（`bin/jpaper.mjs`）。`pnpm link --global` を使わない場合は、repo の中で `pnpm dev` を `jpaper` の代わりに使える。
 
 OpenRouter の API キーなどは、`.env.example` を `.env` に写して書ける。CLI は作業ディレクトリの `.env` を、Web は repo 直下の `.env` を読み、シェルの環境変数のほうが優先される（詳細は [契約付録 §8](./docs/design/contract-appendix.md)）。
 
 ## 使い方
 
 ```sh
-pnpm dev <arXiv ID|ファイル|ディレクトリ> --provider {ollama|claude|codex|openrouter} [--out DIR] [--no-bilingual] [--no-verify-terms]
+jpaper <arXiv ID|ファイル|ディレクトリ> --provider {ollama|claude|codex|openrouter} [--out DIR] [--no-bilingual] [--no-verify-terms]
 ```
 
 和訳 PDF（例 `article/2507.17845-ja/2507.17845_pathorob-ja.pdf`）と対訳 PDF（例 `article/2507.17845-ja/2507.17845_pathorob-bilingual.pdf`）のパスを標準出力に出し、`RunSummary` を JSON で出す。
@@ -80,7 +83,8 @@ pnpm dev:web
 
 | コマンド | 用途 |
 |---|---|
-| `pnpm dev` | jpaper CLI（`src/cli.ts`）を tsx で実行 |
+| `jpaper` | jpaper CLI（`bin/jpaper.mjs` が `src/cli.ts` を tsx で実行。`pnpm link --global` の後） |
+| `pnpm dev` | jpaper CLI（`src/cli.ts`）を tsx で実行（repo の中で） |
 | `pnpm dev:web` | Web アプリ（検索・翻訳・用語集の API と画面）を立ち上げる |
 | `pnpm build` | `tsc` で `dist/` へビルドし、Web アプリの画面を `apps/web/dist/` へビルド |
 | `pnpm typecheck` | 型チェックのみ（emit しない。Web アプリも含む） |
