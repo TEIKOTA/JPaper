@@ -6,6 +6,7 @@ import { buildGlossary } from "../agents/glossary-builder.js";
 import { paperExcerpt } from "./paper-excerpt.js";
 import { oneLine, MAX_TERM_CHARS } from "../runtime/untrusted.js";
 import { normalizeBilingualForms } from "./bilingual-form.js";
+import { normalizeTermSrcs } from "./term-src.js";
 
 // 一般語は「ほぼ全ての論文にヒットする」ため、汚染の運び屋になる。用語として受け付けない。
 const STOPWORDS = new Set([
@@ -63,7 +64,7 @@ export async function buildPaperGlossary(
   const out = await buildGlossary(client, { paperId, candidates, excerpt: paperExcerpt(cleanLatex) });
   // 併記の原語は src そのものと契約で決まっている。モデルの綴り（大文字化など）を
   // 採ると、検査の完全一致が原文と噛み合わずその節が永久に通らない。契約付録 §1
-  return { ...out, resolved: normalizeBilingualForms(out.resolved) };
+  return { ...out, resolved: normalizeBilingualForms(normalizeTermSrcs(out.resolved)) };
 }
 
 // proposed 書き戻しは毎回実行（dedup で再実行は 0 件）＝実行ごとの追加件数を正しく返す。
@@ -73,7 +74,7 @@ export function writeBackResolved(
   paperId: string,
 ): number {
   return db.writeBackProposed(
-    out.resolved
+    normalizeBilingualForms(normalizeTermSrcs(out.resolved))
       .filter((r) => isAcceptableTerm(r.src))
       .map((r) => ({
         src: oneLine(r.src, MAX_TERM_CHARS),

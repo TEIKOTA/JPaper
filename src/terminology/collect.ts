@@ -1,5 +1,6 @@
 // 契約付録 §8。決定的な用語候補収集（固定5パターン＋DB 最長一致）。網羅性は求めない。
 import { oneLine, MAX_TERM_CHARS } from "../runtime/untrusted.js";
+import { trimTermPunctuation } from "./term-src.js";
 
 export interface Candidate {
   src: string;
@@ -47,6 +48,7 @@ function add(map: Map<string, Acc>, raw: string, def: boolean, pos: number): voi
   let src = oneLine(raw, MAX_TERM_CHARS);
   if (!src.startsWith("\\")) {
     while (LEADING_FUNCTION_WORD.test(src)) src = src.replace(LEADING_FUNCTION_WORD, "");
+    src = trimTermPunctuation(src);
     if (REFERENCE_WORD.test(src)) return;
   }
   if (src === "") return;

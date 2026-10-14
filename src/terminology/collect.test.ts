@@ -84,3 +84,25 @@ describe("文頭の機能語と参照語", () => {
     expect(srcs).not.toContain("Sec");
   });
 });
+
+describe("候補の末尾の句読点（issue #376）", () => {
+  it("段落見出しの末尾のピリオド・コロンを落とし、略語のピリオドは残す", () => {
+    const srcs = collectCandidates(
+      "\\textbf{Rashomon Ratio.} As introduced by \\citet{x}. \\textbf{Effective approach:} we do. " +
+        "\\emph{et al.} and \\textit{e.g.} and \\textbf{ID Acc.} here.",
+    ).map((c) => c.src);
+    expect(srcs).toContain("Rashomon Ratio");
+    expect(srcs).not.toContain("Rashomon Ratio.");
+    expect(srcs).toContain("Effective approach");
+    expect(srcs).not.toContain("Effective approach:");
+    expect(srcs).toContain("et al.");
+    expect(srcs).toContain("e.g.");
+    expect(srcs).toContain("ID Acc.");
+  });
+
+  it("末尾の句読点を落とした後の参照語だけの句は候補にしない", () => {
+    const srcs = collectCandidates("\\textbf{Figure.} shows it.").map((c) => c.src);
+    expect(srcs).not.toContain("Figure");
+    expect(srcs).not.toContain("Figure.");
+  });
+});
