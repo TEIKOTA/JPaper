@@ -1312,7 +1312,7 @@ run_pp() { # run_pp <expected-hook-rc> <command> <title> <body> <issues> [extra 
 fix/71-post-pr-target|main|open|71' \
     PATH="$CP_FAKE:$PATH" "$@" \
     python3 "$HOOK_DRIVER" --hook "$ROOT/scripts/hooks/post-pr-check.sh" \
-      --command "$command" --cwd "$ROOT" --expect-return "$expected"
+      --command "$command" --cwd "${PP_CWD:-$ROOT}" --expect-return "$expected"
 }
 run_pp_e2e() { # fake shell で元 command 成功後、同じ command を PostToolUse へ渡す
   local expected="$1" command="$2" title="$3" body_text="$4" issues="$5"
@@ -1413,8 +1413,13 @@ expect 0 "post-pr: --body= の空値でも明示 PR を検査して違反を拒�
   run_pp_e2e 2 "gh pr edit 71 --body=" "feat: 機能を追加" "" ""
 rc=0; grep -q '^pr view 71 ' "$pp_log" || rc=1
 report 0 "$rc" "post-pr: 空の既知 option 値を target 解釈の迂回に使わせない"
+# CI の checkout は detached HEAD なので、current branch を持つ fixture repo を cwd にする。
+pp_branch_repo="$(mktemp -d)" || { echo "FATAL: post-pr fixture repo を作成できません" >&2; exit 1; }
+git -c init.defaultBranch=fix/71-post-pr-target init -q "$pp_branch_repo" || exit 1
+cp -R "$ROOT/scripts" "$pp_branch_repo/scripts" || exit 1
+run_pp_e2e_on_branch() { PP_CWD="$pp_branch_repo" run_pp_e2e "$@"; }
 expect 0 "post-pr: gh pr edit の option 値を PR 番号と誤認しない" \
-  run_pp_e2e 0 "gh pr edit --body 42" "feat: 機能を追加" "Closes #12" "12" \
+  run_pp_e2e_on_branch 0 "gh pr edit --body 42" "feat: 機能を追加" "Closes #12" "12" \
   FAKE_GH_PR_NUMBER=71
 rc=0; grep -q '^pr view 42 ' "$pp_log" && rc=1
 report 0 "$rc" "post-pr: --body の値 42 を target にしない"
@@ -1950,7 +1955,7 @@ if [ -n "$last_create" ] && [ -n "$first_delete" ] && [ "$last_create" -lt "$fir
 report 0 "$rc" "--prune: upsert 完了後に削除する順序"
 
 expect 0 "--dry-run: 実行成功" run_setup "$log" "$out" --dry-run --prune
-rc=0; grep -vqE '^(label list|api repos/\{owner\}/\{repo\} --jq \.visibility)' "$log" && rc=1
+rc=0; grep -vqE '^(label list( .*)?|api repos/\{owner\}/\{repo\} --jq \.visibility)$' "$log" && rc=1
 grep -q '^label list' "$log" || rc=1
 report 0 "$rc" "--dry-run: 読み取り以外の gh を呼ばない"
 rc=0; grep -q '^dry-run: gh label create' "$out" || rc=1
@@ -1968,6 +1973,18 @@ rc=0; grep -q 'actions/permissions' "$log" && rc=1
 report 0 "$rc" "public repo: Actions を無効化しない"
 rc=0; grep -q 'public repo なので' "$out" || rc=1
 report 0 "$rc" "public repo: 維持することを表示"
+
+FAKE_GH_VISIBILITY=public run_setup "$log" "$out" --repo o/r; rc=$?
+report 0 "$rc" "public repo（--repo）: 実行成功"
+rc=0; grep -qx 'api repos/o/r --jq .visibility' "$log" || rc=1
+grep -q 'actions/permissions' "$log" && rc=1
+report 0 "$rc" "public repo（--repo）: 指定した repo の公開状態を読み、無効化しない"
+
+FAKE_GH_VISIBILITY=public FAKE_GH_VISIBILITY_FAIL=1 run_setup "$log" "$out"; rc=$?
+report 0 "$rc" "公開状態を読めない: 実行成功"
+rc=0; grep -qF 'api --method PUT repos/{owner}/{repo}/actions/permissions -F enabled=false' "$log" || rc=1
+grep -q 'WARN: repo の公開状態を読めないため private として扱う' "$out" || rc=1
+report 0 "$rc" "公開状態を読めない: 警告を出して private として無効化する"
 
 # 不正な labels.yml の拒否（重複 name / 不正 color）
 tmp_root="$(mktemp -d)"
@@ -2068,7 +2085,8 @@ expect 0 "sync-docs: seed と project log を別々に読む" bash -c \
 # ---- issue #57 delegation contracts -----------------------------------
 
 skill_section() { # skill_section <heading> <file>
-  awk -v heading="$1" '
+  # macOS の awk は en_US.UTF-8 で文字列を照合順序で比べ、異なる漢字の見出しを等しいと判定する。
+  LC_ALL=C awk -v heading="$1" '
     $0 == heading { in_section = 1; next }
     /^## / && in_section { exit }
     in_section { print }

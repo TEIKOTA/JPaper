@@ -156,14 +156,19 @@ if [[ -n "$REPO" ]]; then
 else
   REPO_API='repos/{owner}/{repo}'
 fi
-VISIBILITY="$(gh api "$REPO_API" --jq .visibility 2>/dev/null || true)"
 if [[ $ENABLE_ACTIONS -eq 1 ]]; then
   echo "▶ GitHub Actions は有効のまま維持する（--enable-actions）"
-elif [[ "$VISIBILITY" == "public" ]]; then
-  echo "▶ public repo なので GitHub Actions は有効のまま維持する"
 else
-  echo "▶ GitHub Actions を無効化する（有効化する場合は --enable-actions。手順は README）"
-  run gh api --method PUT "$REPO_API/actions/permissions" -F enabled=false
+  VISIBILITY="$(gh api "$REPO_API" --jq .visibility 2>/dev/null || true)"
+  if [[ "$VISIBILITY" == "public" ]]; then
+    echo "▶ public repo なので GitHub Actions は有効のまま維持する"
+  else
+    if [[ -z "$VISIBILITY" ]]; then
+      echo "WARN: repo の公開状態を読めないため private として扱う" >&2
+    fi
+    echo "▶ GitHub Actions を無効化する（無効化しない場合は --enable-actions。ADR: docs/adr/20261014-enable-github-actions-on-public-repo.md）"
+    run gh api --method PUT "$REPO_API/actions/permissions" -F enabled=false
+  fi
 fi
 
 echo "✔ 完了"
