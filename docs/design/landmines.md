@@ -84,6 +84,12 @@
 - **なぜ意図的か**: 学会クラス（neurips 等）の `\maketitle` は全幅で、脚注（`\thanks`・学会表記）の挿入物が後続の paracol と衝突して空白ページが出る（PoC で実測）。タイトルと著者を左右の半分にそれぞれ置く仕様なので、`\thanks` を無効にした著者とタイトルだけのブロックを各列に置く。タイトルは paracol の中に入れるので、本文先頭がタイトルでも空の paracol は作らない。本文に `\title` を書く論文（article・llncs・revtex で一般的）で前文だけを見ると左右とも空のタイトルになり、`\maketitle` が段落の先頭に単独で無いと左の列で `\maketitle` が実行される。article の `\maketitle` は実行後に `\title` / `\author` を `\relax` にするので、右の列ではタイトルが素の文字列で出る（いずれも実測）。前の部分を残すのは、`\author` が `\@author` を大域に定義してタイトルブロックがそれを使うため（`\title` / `\author` は何も出力しない）。環境の中の `\maketitle` は置き換えず、`titleUnplaced` で警告する。frontmatter 環境（elsarticle）のペアは `\maketitle` を探さずにタイトルとして扱う（下の `replaceFrontmatter`）。
 - **正本ポインタ**: [対訳 PDF ADR](../adr/20261006-bilingual-side-by-side-pdf.md)（Decision「タイトルと著者」）。
 
+## `src/tools/bilingual-latex.ts` — `pairAcrossConditionals` / `splitAtConditionals` が条件分岐の行を段の切り替えの外へ出す
+
+- **おかしく見える点**: 原文と訳文の段落をそのまま左右に並べる組み立てなのに、`\if…` / `\else` / `\fi` だけの行は左右に複製せず、`\switchcolumn` の外に 1 回だけ置いている。割るかどうかも「段落の中で開いて段落の中で閉じる環境・波括弧の内側では割らない」という、段落の中で閉じない環境の内側では割る判定になっている。
+- **なぜ意図的か**: 左右に 1 回ずつ置くと、偽の条件で TeX は 2 つ目の `\if…` を入れ子として数えて対応する `\fi` まで読み飛ばし、その間の `\switchcolumn` が奇数個になるので、以後の段落ペアがすべて左右逆の段に入る（実測: 2607.28007 の `\ifpeerreview`。枝の中の `\author` も実行されず著者欄が「No Author Given」になった）。環境・波括弧の内側（表・マクロ定義の中の `\fi`）で割ると段の切り替えが引数・表の中に入って組版が落ちるので割らない。ただし節をまたぐ環境（同じ論文の `credits`。節の境目で段落が割れ、`\begin{credits}` と `\ifpeerreview` だけのペアができる）の内側で割らないと、`\if…` だけが左右に複製され、後続の段落の `\else` / `\fi` は 1 回だけになって食い違い、`Incomplete \iffalse` で落ちる（実測）。左右で条件分岐の行の並びが違う段落は、正しい置き方が決まらないので従来どおり段落ごと左右に置く。
+- **正本ポインタ**: 契約付録 §8（対訳 PDF「段落の境目の条件分岐（issue #378）」）。
+
 ## `src/tools/bilingual-latex.ts` — `replaceFrontmatter` が elsarticle の `frontmatter` 環境を `jpFrontmatter` に差し替える
 
 - **おかしく見える点**: 原文と訳文をそのまま並べる組み立てなのに、左右の `\begin{frontmatter}` / `\end{frontmatter}` だけを、前文（`SETUP`）で定義した `jpFrontmatter` に名前ごと置き換えている。`jpFrontmatter` は列の中で `\title` / `\author` を集めてタイトルブロックを組み、`\corref` / `\cortext` / `\fnref` / `\fntext` / `\tnoteref` / `\tnotetext` / `\ead` / `\affiliation` / `\address` を無効にし、`abstract` / `keyword` / `highlights` / `graphicalabstract` をその場に組む。所属と責任著者・資金などの注は対訳 PDF に出ない。`abstract` / `keyword` の見出しは左が `Abstract` / `Keywords`、右が `概要` / `キーワード`。
@@ -280,7 +286,7 @@
 - **前提**: `process.cpuUsage()` はプロセス内のすべてのスレッドの CPU 時間を数える。vitest の pool が forks（既定。1 プロセスで 1 ファイルずつ走る）なので、他のテストファイルの処理は入らない。pool を threads に替えると他のファイルの CPU 時間まで数え、実時間より悪くなる（#383 のレビューの実測: `--pool=threads` で関係 16 ファイルのうち 8 ファイル・13 件が red）。pool を変えるときはこの関数も見直す。
 - **正本ポインタ**: issue #245・#377。self-test は `src/testing/timing.test.ts`。
 
-## `src/tools/bilingual-latex.ts` — `renderPairs` の `\switchcolumn` の後の `\relax`
+## `src/tools/bilingual-latex.ts` — `pairBlock` の `\switchcolumn` の後の `\relax`
 
 - **おかしく見える点**: 右の列の文が `[` で始まるときだけ、`\switchcolumn` の直後に何もしない `\relax` を挟んでいる。
 - **なぜ意図的か**: paracol の `\switchcolumn` は直後の `[…]` を省略可能な引数（列の番号）として読む。右の列の段落が `[BCN18] で示されているように…` のように角括弧で始まると、`[BCN18]` を番号と読んで `Missing number, treated as zero` の致命エラーで落ちる（実測: PDF 入力の `oss.pdf` 1〜3 ページ。PDF から起こした LaTeX は引用が `\cite` ではなく文字どおりの `[BCN18]` になる）。左の列は前のブロックとの間に空行（`\par`）が入るので先読みに当たらない。常に挟むと既存の出力がすべて変わるので、`[` で始まるときだけにしている。

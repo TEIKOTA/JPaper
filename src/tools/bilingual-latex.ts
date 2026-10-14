@@ -323,6 +323,64 @@ function atTopLevel(tex: string): boolean {
 }
 
 // ⚠ landmines.md
+function pairBlock(left: string, right: string): string {
+  return `${left}\n\\switchcolumn\n${/^\s*\[/.test(right) ? "\\relax\n" : ""}${right}\n\\switchcolumn*`;
+}
+
+// コメントを除くと \if…（\iff を除く）/ \else / \fi だけの行。
+const CONDITIONAL_LINE = /^\\(?:if(?!f$)[A-Za-z@]*(?:\s*\\[A-Za-z@]+){0,2}|else|fi)$/;
+
+// 条件分岐の行で割る。段落の中で開いて段落の中で閉じる環境・波括弧の内側の行では割らない
+// （段落の中で閉じない環境・波括弧の内側では割る）。runs は conds より 1 つ多い。⚠ landmines.md
+export function splitAtConditionals(tex: string): { runs: string[]; conds: string[] } {
+  const lines = tex.split("\n");
+  // 各行の前で、段落の中で開いて閉じていない環境・波括弧の数（最後の要素は段落の末尾）。
+  const env: number[] = [0];
+  const brace: number[] = [0];
+  for (const line of lines) {
+    const n = nestingOf(line);
+    env.push(Math.max(0, env[env.length - 1]! + n.env));
+    brace.push(Math.max(0, brace[brace.length - 1]! + n.brace));
+  }
+  const suffixMin = (xs: number[]): number[] => {
+    const out = [...xs];
+    for (let i = out.length - 2; i >= 0; i--) out[i] = Math.min(out[i]!, out[i + 1]!);
+    return out;
+  };
+  const envMin = suffixMin(env);
+  const braceMin = suffixMin(brace);
+  const runs: string[] = [];
+  const conds: string[] = [];
+  let buf: string[] = [];
+  lines.forEach((line, i) => {
+    const bare = stripComments(line).trim();
+    if (env[i] === envMin[i] && brace[i] === braceMin[i] && CONDITIONAL_LINE.test(bare)) {
+      runs.push(buf.join("\n").trim());
+      conds.push(bare);
+      buf = [];
+    } else {
+      buf.push(line);
+    }
+  });
+  runs.push(buf.join("\n").trim());
+  return { runs, conds };
+}
+
+// 左右で条件分岐の行の並びが同じなら、条件分岐の行を段の切り替えの外に 1 回だけ置く。⚠ landmines.md
+export function pairAcrossConditionals(left: string, right: string): string {
+  const l = splitAtConditionals(left);
+  const r = splitAtConditionals(right);
+  if (l.conds.length === 0 || l.conds.join("\n") !== r.conds.join("\n")) return pairBlock(left, right);
+  const out: string[] = [];
+  l.runs.forEach((run, i) => {
+    const other = r.runs[i]!;
+    if (run !== "" || other !== "") out.push(pairBlock(run, other));
+    if (i < l.conds.length) out.push(l.conds[i]!);
+  });
+  return out.join("\n");
+}
+
+// ⚠ landmines.md
 export function renderPairs(
   pairs: ParagraphPair[],
   preambles: { left: string; right: string },
@@ -333,8 +391,7 @@ export function renderPairs(
     if (left.trim() === "" && right.trim() === "") return;
     const l = replaceFrontmatter(left, "left");
     const r = muteBibliography(dropLabels(provideCommands(replaceFrontmatter(right, "right"))));
-    // ⚠ landmines.md
-    blocks.push(`${l}\n\\switchcolumn\n${/^\s*\[/.test(r) ? "\\relax\n" : ""}${r}\n\\switchcolumn*`);
+    blocks.push(pairAcrossConditionals(l, r));
   };
   let seenLeft = preambles.left;
   let seenRight = preambles.right;
