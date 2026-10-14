@@ -1,5 +1,6 @@
+import { readFileSync } from "node:fs";
 import { describe, it, expect } from "vitest";
-import { runCli, formatProgress } from "./cli.js";
+import { runCli, formatProgress, USAGE, wantsHelp } from "./cli.js";
 import type { Result } from "./types/contract.js";
 
 const okResult: Result = {
@@ -22,6 +23,75 @@ const okResult: Result = {
     exitCode: 0,
   },
 };
+
+describe("--help（契約付録 §5・issue #371）", () => {
+  const neverTranslate = async (): Promise<Result> => {
+    throw new Error("translate を呼ばない");
+  };
+
+  it.each([["--help"], ["-h"]])("%s は使い方を stdout に出し exit 0（他の引数を検査しない）", async (flag) => {
+    let out = "";
+    let err = "";
+    const code = await runCli(["node", "jpaper", "--modell", flag], {
+      stdout: (s) => (out += s),
+      stderr: (s) => (err += s),
+      translate: neverTranslate,
+    });
+    expect(code).toBe(0);
+    expect(out).toBe(USAGE);
+    expect(err).toBe("");
+  });
+
+  it("値を取るオプションの値としての -h は使い方にしない", () => {
+    expect(wantsHelp(["1706.03762", "--provider", "claude", "--model", "-h"])).toBe(false);
+    expect(wantsHelp(["--out", "--help"])).toBe(true);
+    expect(wantsHelp(["1706.03762", "--provider", "claude"])).toBe(false);
+  });
+
+  it("使い方に全てのオプションが載っている", () => {
+    const src = readFileSync(new URL("./cli.ts", import.meta.url), "utf8");
+    const flags = [...src.matchAll(/^const (?:VALUE|BOOL|HELP)_FLAGS = \[(.*)\];$/gm)]
+      .flatMap((m) => [...(m[1] ?? "").matchAll(/"(-[^"]+)"/g)].map((f) => f[1]));
+    expect(flags.length).toBeGreaterThan(10);
+    for (const f of flags) expect(USAGE).toContain(f);
+  });
+
+  it("入力エラーでは使い方の出し方を stderr に添える", async () => {
+    let err = "";
+    const code = await runCli(["node", "jpaper", "1706.03762"], {
+      stderr: (s) => (err += s),
+      translate: neverTranslate,
+    });
+    expect(code).toBe(2);
+    expect(err).toContain("jpaper --help");
+  });
+
+  it("不正な provider でも使い方の出し方を添える", async () => {
+    let err = "";
+    const code = await runCli(["node", "jpaper", "1706.03762", "--provider", "openai"], {
+      stderr: (s) => (err += s),
+      translate: neverTranslate,
+    });
+    expect(code).toBe(2);
+    expect(err).toContain("jpaper --help");
+  });
+
+  it("翻訳の失敗（translate の結果）には添えない", async () => {
+    let err = "";
+    const code = await runCli(["node", "jpaper", "1706.03762", "--provider", "claude"], {
+      stdout: () => {},
+      stderr: (s) => (err += s),
+      translate: async () => ({
+        ...okResult,
+        status: "failed",
+        exitCode: 2,
+        error: { kind: "input", code: 2, message: "x" },
+      }),
+    });
+    expect(code).toBe(2);
+    expect(err).not.toContain("jpaper --help");
+  });
+});
 
 describe("runCli", () => {
   it("--provider 未指定は exit 2", async () => {
