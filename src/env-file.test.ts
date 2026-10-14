@@ -138,12 +138,17 @@ describe("CLI の入口", () => {
     expect(r.stderr + r.stdout).not.toContain("xyz");
   });
 
-  it("runCli では読まず、入口のガードの中でだけ読む", () => {
+  it("runCli では読まず、入口の main() の中の 1 か所だけで読む", () => {
     const src = readFileSync(path.join(import.meta.dirname, "cli.ts"), "utf8");
+    const main = src.indexOf("export async function main(");
+    expect(main).toBeGreaterThan(-1);
     const guard = src.indexOf("if (import.meta.url === `file://${process.argv[1]}`)");
-    expect(guard).toBeGreaterThan(-1);
-    expect(src.indexOf("loadDotEnv(")).toBeGreaterThan(guard);
-    expect(src.slice(0, guard)).not.toContain("loadDotEnv(");
+    expect(guard).toBeGreaterThan(main);
+    const calls = [...src.matchAll(/loadDotEnv\(/g)].map((m) => m.index);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toBeGreaterThan(main);
+    expect(calls[0]).toBeLessThan(guard);
+    expect(src.indexOf("export async function runCli(")).toBeLessThan(main);
   });
 });
 

@@ -245,13 +245,17 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number
   }
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
-  // 入口だけで読む（runCli・ライブラリ経路では読まない）。契約付録 §8
+// jpaper コマンドの入口（bin/jpaper.mjs と直接実行）。.env はここだけで読む（runCli・ライブラリ経路では読まない）。契約付録 §5・§8
+export async function main(argv: string[]): Promise<never> {
   const env = loadDotEnv();
   if (env.error !== undefined) {
     process.stderr.write(`エラー: .env を読めません: ${env.error}\n`);
     process.exit(2);
   }
   for (const line of describeDotEnv(env)) process.stderr.write(`${line}\n`);
-  runCli(process.argv).then((code) => process.exit(code));
+  process.exit(await runCli(argv));
+}
+
+if (import.meta.url === `file://${process.argv[1]}`) {
+  void main(process.argv);
 }

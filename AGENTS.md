@@ -91,7 +91,7 @@
 - `pnpm install` — 依存を入れる（初回。パッケージ管理は pnpm。[pnpm ADR](./docs/adr/20261007-adopt-pnpm-for-package-management.md)）
 - `pnpm test` — vitest の単体テスト（決定的な検査。LLM を含めない）
 - `pnpm build` / `pnpm typecheck` — tsc のビルド / 型チェック（typecheck は emit しない）
-- `pnpm dev` — `src/cli.ts`（jpaper CLI）を tsx で実行
+- `pnpm dev` — `src/cli.ts`（jpaper CLI）を tsx で実行（`pnpm link --global` の後は、任意のディレクトリで `jpaper` として同じ CLI を使える。`bin/jpaper.mjs`）
 - `pnpm dev:web` — Web アプリ（API と画面）を立ち上げる（仕様の正本は契約付録 §9）
 - `bash tests/run-tests.sh` — 規約検査スクリプト群の self-test（scripts/ を変更したら必ず実行。`scripts/` `tests/` の編集後は PostToolUse hook が自動実行する）
 - `scripts/new-branch.sh <type> <issue番号> <slug> [--worktree <標準配置のdir>]` — 規約検証付きで topic branch を作成する（既定は fetch 後の `origin/main`。取得失敗時は local main へ fallback。`--from` で変更可）
