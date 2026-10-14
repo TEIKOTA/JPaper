@@ -10,7 +10,7 @@
 # Context
 - public repo では、標準の GitHub ホストランナーの実行時間は課金されず、無料枠も消費しない。20260901 の理由（private の無料枠の取り合い）は、public にした JPaper には当てはまらない。
 - 検査の中身はもともとローカルの scripts（`bash tests/run-tests.sh`・`scripts/check-pr.sh`）と `pnpm test`・`pnpm typecheck`・`pnpm build` で、CI は実行の場を足すだけである。self-test は macOS（bash 3.2）と Linux の両方で走らせられる。
-- CI の条件はローカルと違う。checkout は detached HEAD になり、macOS の runner は `en_US.UTF-8` で動く（macOS の awk はこの locale で文字列を照合順序で比べ、異なる漢字の見出しを等しいと判定する）。独立レビューで、self-test がこの 2 つの条件で落ちることを見つけ、#356 で直した。
+- CI の条件はローカルと違う。checkout は detached HEAD になり、macOS の runner は `en_US.UTF-8` で動く可能性がある（未検証。macOS の awk はこの locale で文字列を照合順序で比べ、異なる漢字の見出しを等しいと判定する）。独立レビューで、self-test がこの 2 つの条件で落ちることを手元で再現し、#356 で直した。runner の locale は初回の CI の実行で確かめる。
 - public にすると、fork からの PR でも workflow が走る。pr-checks は `pull_request`（`pull_request_target` ではない）で、base 側の commit の scripts で検査するので、PR 側の変更で検査を迂回できず、secret も渡らない。
 
 # Material for decision
