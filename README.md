@@ -93,7 +93,7 @@ pnpm dev:web
 
 運用ガイドは [`AGENTS.md`](./AGENTS.md)（`CLAUDE.md` は symlink）。issue 駆動・PR 必須・日本語 Conventional Commits・ADR による決定の記録を、最初から lefthook とローカルの検査で機械的に強制している。
 
-検証はローカル script が正本（`bash tests/run-tests.sh` と `scripts/check-pr.sh`）。GitHub Actions（`.github/workflows/` の node-checks・pr-checks・self-test）は、同じ検査を Linux と macOS でもう一度走らせる（[ADR](./docs/adr/20261014-enable-github-actions-on-public-repo.md)）。
+検証はローカル script が正本（`bash tests/run-tests.sh` と `scripts/check-pr.sh`）。GitHub Actions（`.github/workflows/` の node-checks・pr-checks・self-test）は、同じ検査を Linux（self-test は macOS でも）でもう一度走らせる（[ADR](./docs/adr/20261014-enable-github-actions-on-public-repo.md)）。
 
 Claude Code 用の権限の既定と hook は `.claude/settings.json` にある。read-only コマンドの allowlist、secret ファイルの Read の拒否、`scripts/hooks/` の Bash ガード、scripts を編集した後の自動 self-test、未コミットの差分に対する Stop 時の警告を設定している。
 

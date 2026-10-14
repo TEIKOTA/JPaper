@@ -2,11 +2,11 @@
 
 > 「一見おかしいが意図的」なコードの唯一の正本。コードが不自然に見えても、**直す前にここを確認する**。該当があれば意図的なので、そのまま維持する。
 >
-> 方針は [ソースコメント ADR](../adr/20260710-source-comments-facts-only-rationale-to-docs.md)。該当箇所にはソース側に中身ゼロの標識 `⚠ landmines.md` だけを置き、理由はここに書く。
+> 方針は [ソースコメント ADR](../adr/20260710-source-comments-facts-only-rationale-to-docs.md)。該当箇所にはソース側に中身を持たない目印 `⚠ landmines.md` だけを置き、理由はここに書く。
 
 ## 記入ルール
 
-- 1 エントリ 1 箇所。**行番号でなくシンボル名（path＋関数/定数名）で anchor** する（行移動で腐らせない）。
+- 1 エントリ 1 箇所。**行番号でなくシンボル名（path＋関数/定数名）で場所を示す**（行が動いても指す先がずれないようにする）。
 - 各エントリに書く: 「何がおかしく見えるか」「なぜ意図的か」「関連する正本ポインタ」。
 - 該当コードを消す／意図が失効したら、このエントリも消す。
 
@@ -15,13 +15,13 @@
 ## `scripts/check-commit-msg.sh` — 日本語判定の `LC_ALL=C grep '[^ -~]'`
 
 - **おかしく見える点**: 日本語を判定するのに、ひらがな/カタカナ等の文字クラス（`[ぁ-ん]` 等）ではなく「ASCII 印字可能文字 `0x20-0x7E` 以外のバイト」を見ている。一見すると日本語専用の判定に見えない。
-- **なぜ意図的か**: 文字クラスの範囲指定は一部 locale で `Invalid collation character` になり、CI で誤判定して commit/PR タイトル検査を壊す。`LC_ALL=C` のバイト単位で非 ASCII の有無を見ることで、「英語のみの件名を拒否する」意図を保ちつつ macOS(BSD)/Linux/CI の移植性を確保している。素直に文字クラスへ戻すと CI が再び落ちる。
+- **なぜ意図的か**: 文字クラスの範囲指定は一部 locale で `Invalid collation character` になり、CI で誤判定し、commit/PR タイトルの検査が正しく働かなくなる。`LC_ALL=C` のバイト単位で非 ASCII の有無を見ることで、「英語のみの件名を拒否する」意図を保ちつつ macOS(BSD)/Linux/CI の移植性を確保している。素直に文字クラスへ戻すと CI が再び落ちる。
 - **正本ポインタ**: [日本語 Conventional Commits ADR](../adr/20260706-adopt-commit-and-pr-message-convention.md)。self-test は `tests/run-tests.sh`。
 
 ## `src/terminology/db.ts` — `process.getBuiltinModule("node:sqlite")` で読み込む
 
 - **おかしく見える点**: 他の組み込みは `import { X } from "node:..."` なのに、ここだけ `process.getBuiltinModule("node:sqlite")` で取得している。素直に `import { DatabaseSync } from "node:sqlite"` に直したくなる。
-- **なぜ意図的か**: vitest/vite は新しい組み込み `node:sqlite` を内蔵リストに持たず、`node:` 接頭辞を剥がして `sqlite` を解決しようとして `Failed to load url sqlite` で落ちる（`test.server.deps.external` でも解決前に失敗）。`process.getBuiltinModule` はバンドラを迂回して Node の組み込みを直接得るため、prod・test の双方で安定する。型は `import type` と `typeof import("node:sqlite")`（いずれも erase される）で保つ。素直な import に戻すと `pnpm test` が db 系で全滅する。
+- **なぜ意図的か**: vitest/vite は新しい組み込み `node:sqlite` を内蔵リストに持たず、`node:` 接頭辞を外して `sqlite` を解決しようとして `Failed to load url sqlite` で落ちる（`test.server.deps.external` でも解決前に失敗）。`process.getBuiltinModule` はバンドラを迂回して Node の組み込みを直接得るため、prod・test の双方で安定する。型は `import type` と `typeof import("node:sqlite")`（いずれも erase される）で保つ。素直な import に戻すと `pnpm test` で db を使うテストがすべて落ちる。
 - **正本ポインタ**: 契約付録 §2（node:sqlite・engines>=22.5）。`process.getBuiltinModule` は Node 22.3+。
 
 ## `src/workflows/quality-gate.ts` — `untranslatedHeadings` は全大文字語を見逃し・偽陽性は訳注に留める
@@ -33,7 +33,7 @@
 ## `src/runtime/trace.ts` — `makeJsonlTrace` の空 catch（I/O エラーを握り潰す）
 
 - **おかしく見える点**: append/mkdir を囲む `catch {}` が空でエラーを完全に無視する。ログも再送も無く、素直に「握り潰しはバグ」と直したくなる。
-- **なぜ意図的か**: これはコスト観測用の**副作用チャネル**であり、翻訳本体の成否とは独立。トレース書き込みが失敗（書込不可 CWD・パス衝突・容量不足）しても run の主成果物（PDF）を落としてはならない。throw を伝播させると `complete` の純変換器契約を壊し、観測の都合で翻訳が失敗するという本末転倒になる。ゆえにベストエフォートで黙って捨てる。mkdir を初回 emit まで遅延するのも、構築時 throw が `translatePaper` の try/catch を素通りして終了コードを誤分類するのを防ぐため。
+- **なぜ意図的か**: これはコスト観測用の**副作用チャネル**であり、翻訳本体の成否とは独立。トレース書き込みが失敗（書込不可 CWD・パス衝突・容量不足）しても run の主成果物（PDF）を落としてはならない。throw を伝播させると `complete` の純変換器の契約が守れなくなり、観測の都合で翻訳が失敗するという本末転倒になる。そのため、ベストエフォートとして、エラーは知らせずに捨てる。mkdir を初回 emit まで遅延するのも、構築時 throw が `translatePaper` の try/catch を素通りして終了コードを誤分類するのを防ぐため。
 - **正本ポインタ**: [LLM トレース ADR](../adr/20260722-llm-call-trace-local-jsonl.md)、契約付録 §8（トレースは副作用チャネル・`complete` 契約は不変）。
 
 ## `src/workflows/translate-paper.ts` — `translateTitle` の catch が中断以外の例外を握り潰す
@@ -81,13 +81,13 @@
 ## `src/tools/bilingual-latex.ts` — `renderPairs` が `\maketitle` を `\jpTitleBlock` の左右ペアに置き換える
 
 - **おかしく見える点**: 原文と訳文の段落をそのまま並べる関数なのに、最初の `\maketitle`（コメント外・環境や波括弧の外）だけは消して、その位置にタイトルブロック（左=原文の前文と `\maketitle` までの本文にある最後の `\title`／右=和訳 main.tex の前文と本文の同じ範囲の `\title`）を差し込んでいる。`\maketitle` と同じ段落の前の部分（本文の `\title` / `\author`）は 1 行として残す。
-- **なぜ意図的か**: 学会クラス（neurips 等）の `\maketitle` は全幅で、脚注（`\thanks`・学会表記）の挿入物が後続の paracol と衝突して空白ページが出る（PoC で実測）。タイトルと著者を左右の半分にそれぞれ置く仕様なので、`\thanks` を潰した著者とタイトルだけのブロックを各列に置く。タイトルは paracol の中に入れるので、本文先頭がタイトルでも空の paracol は作らない。本文に `\title` を書く論文（article・llncs・revtex で一般的）で前文だけを見ると左右とも空のタイトルになり、`\maketitle` が段落の先頭に単独で無いと左の列で `\maketitle` が実行される。article の `\maketitle` は実行後に `\title` / `\author` を `\relax` にするので、右の列ではタイトルが素の文字列で出る（いずれも実測）。前の部分を残すのは、`\author` が `\@author` を大域に定義してタイトルブロックがそれを使うため（`\title` / `\author` は何も出力しない）。環境の中の `\maketitle` は置き換えず、`titleUnplaced` で警告する。frontmatter 環境（elsarticle）のペアは `\maketitle` を探さずにタイトルとして扱う（下の `replaceFrontmatter`）。
+- **なぜ意図的か**: 学会クラス（neurips 等）の `\maketitle` は全幅で、脚注（`\thanks`・学会表記）の挿入物が後続の paracol と衝突して空白ページが出る（PoC で実測）。タイトルと著者を左右の半分にそれぞれ置く仕様なので、`\thanks` を無効にした著者とタイトルだけのブロックを各列に置く。タイトルは paracol の中に入れるので、本文先頭がタイトルでも空の paracol は作らない。本文に `\title` を書く論文（article・llncs・revtex で一般的）で前文だけを見ると左右とも空のタイトルになり、`\maketitle` が段落の先頭に単独で無いと左の列で `\maketitle` が実行される。article の `\maketitle` は実行後に `\title` / `\author` を `\relax` にするので、右の列ではタイトルが素の文字列で出る（いずれも実測）。前の部分を残すのは、`\author` が `\@author` を大域に定義してタイトルブロックがそれを使うため（`\title` / `\author` は何も出力しない）。環境の中の `\maketitle` は置き換えず、`titleUnplaced` で警告する。frontmatter 環境（elsarticle）のペアは `\maketitle` を探さずにタイトルとして扱う（下の `replaceFrontmatter`）。
 - **正本ポインタ**: [対訳 PDF ADR](../adr/20261006-bilingual-side-by-side-pdf.md)（Decision「タイトルと著者」）。
 
 ## `src/tools/bilingual-latex.ts` — `replaceFrontmatter` が elsarticle の `frontmatter` 環境を `jpFrontmatter` に差し替える
 
-- **おかしく見える点**: 原文と訳文をそのまま並べる組み立てなのに、左右の `\begin{frontmatter}` / `\end{frontmatter}` だけを、前文（`SETUP`）で定義した `jpFrontmatter` に名前ごと置き換えている。`jpFrontmatter` は列の中で `\title` / `\author` を集めてタイトルブロックを組み、`\corref` / `\cortext` / `\fnref` / `\fntext` / `\tnoteref` / `\tnotetext` / `\ead` / `\affiliation` / `\address` を潰し、`abstract` / `keyword` / `highlights` / `graphicalabstract` をその場に組む。所属と責任著者・資金などの注は対訳 PDF に出ない。`abstract` / `keyword` の見出しは左が `Abstract` / `Keywords`、右が `概要` / `キーワード`。
-- **なぜ意図的か**: elsarticle の `frontmatter` を paracol の左右でそのまま実行すると、`\author` が大域に積み増されて右の列の著者が左右 2 回分になり、題も左右が連結され、`abstract` は保存した箱を全幅で出すので折り目をまたぎ、1 ページ目が白紙になる（実測: 2410.16038）。frontmatter は空行を含んでも `balanceParagraphs` で 1 ペアにまとまるので、ペア単位で差し替えられる。所属・注を出さないのは `\jpTitleBlock` が `\thanks` を潰すのと同じ扱い（タイトルと著者だけを左右に置く）。
+- **おかしく見える点**: 原文と訳文をそのまま並べる組み立てなのに、左右の `\begin{frontmatter}` / `\end{frontmatter}` だけを、前文（`SETUP`）で定義した `jpFrontmatter` に名前ごと置き換えている。`jpFrontmatter` は列の中で `\title` / `\author` を集めてタイトルブロックを組み、`\corref` / `\cortext` / `\fnref` / `\fntext` / `\tnoteref` / `\tnotetext` / `\ead` / `\affiliation` / `\address` を無効にし、`abstract` / `keyword` / `highlights` / `graphicalabstract` をその場に組む。所属と責任著者・資金などの注は対訳 PDF に出ない。`abstract` / `keyword` の見出しは左が `Abstract` / `Keywords`、右が `概要` / `キーワード`。
+- **なぜ意図的か**: elsarticle の `frontmatter` を paracol の左右でそのまま実行すると、`\author` が大域に積み増されて右の列の著者が左右 2 回分になり、題も左右が連結され、`abstract` は保存した箱を全幅で出すので折り目をまたぎ、1 ページ目が白紙になる（実測: 2410.16038）。frontmatter は空行を含んでも `balanceParagraphs` で 1 ペアにまとまるので、ペア単位で差し替えられる。所属・注を出さないのは `\jpTitleBlock` が `\thanks` を無効にするのと同じ扱い（タイトルと著者だけを左右に置く）。
 - **正本ポインタ**: 契約付録 §8（対訳 PDF）、[対訳 PDF ADR](../adr/20261006-bilingual-side-by-side-pdf.md)（Decision「タイトルと著者」）。
 
 ## `src/tools/bilingual-latex.ts` — `paracolBody` が `\begin{paracol}{2}` の直後で `\jpRobustNotes` を実行する
@@ -110,14 +110,14 @@
 
 ## `src/providers/claude.ts` — `--max-turns` が 1 でなく 3
 
-- **おかしく見える点**: `--tools none` で 1 回しか答えさせないはずなのに、`--max-turns` が `1` ではなく `3`。「1 回きり」なら 1 に締めたくなる。
+- **おかしく見える点**: `--tools none` で 1 回しか答えさせないはずなのに、`--max-turns` が `1` ではなく `3`。「1 回きり」なら 1 に絞りたくなる。
 - **なぜ意図的か**: claude CLI 2.1.291 は、用語集構築のような長い入力で内部的に 2 ターンを使う（実測: `num_turns: 2`）。`--max-turns 1` だと `subtype: error_max_turns`（「Reached maximum number of turns (1)」）で exit 1 になり、応答が正常でも run が `claude exited 1` で失敗する。`--tools none` でツールは使えないので、ターン上限は安全境界ではない（安全は `--tools none` が担う）。1 に戻すと該当呼び出しが全て落ちる。用語の検証の呼び出し（`webSearch: true`）だけは `--tools WebSearch` で、検索 1 回で 1 ターン使うので `WEB_SEARCH_MAX_TURNS`（12）にする。そこでも安全は「許すツールを WebSearch だけにする」ことが担う。
 - **正本ポインタ**: [LLM プロバイダ抽象化 ADR](../adr/20260709-llm-provider-abstraction-local-ollama-and-cloud-cli.md)。回帰テストは `src/providers/claude.test.ts`。
 
 ## `src/ingest/main-tex.ts` — `stripComments` がコメントだけの行を改行ごと消す
 
 - **おかしく見える点**: `%` から行末を消すだけでなく、空白と `%` だけで始まる行は行そのもの（改行を含む）を消している。行番号が原文とずれる。
-- **なぜ意図的か**: TeX では `%` が行末の改行まで食うので、コメントだけの行は何も生まない。`%` 以降だけ消して改行を残すと、空白だけの行＝段落区切りになり、`\author{…}` のような段落を許さない引数の中で `Paragraph ended before \author was complete` で組版が落ちる（実測: AAAI 2026 テンプレートの 2510.17897）。
+- **なぜ意図的か**: TeX では `%` から行末の改行までがコメントとして読み捨てられるので、コメントだけの行は何も生まない。`%` 以降だけ消して改行を残すと、空白だけの行＝段落区切りになり、`\author{…}` のような段落を許さない引数の中で `Paragraph ended before \author was complete` で組版が落ちる（実測: AAAI 2026 テンプレートの 2510.17897）。
 - **正本ポインタ**: issue #303。
 
 ## `src/providers/claude.ts` — プロンプト本文を `-p` の引数でなく stdin で渡し、stdin のエラーを捨てる
@@ -129,7 +129,7 @@
 ## `src/providers/codex.ts` — codex を利用者の設定を読まずに一時ディレクトリで起動する
 
 - **おかしく見える点**: 1 回答えさせるだけの呼び出しに `--ignore-user-config --ignore-rules --skip-git-repo-check` と十数個の `-c features.<名前>=false` を付け、環境変数 `CMUX_*` を落とし、呼び出しごとに一時ディレクトリを作って `-C` で移り、応答を標準出力ではなく `-o` のファイルから読んでいる。stdin に空の error ハンドラがある。
-- **なぜ意図的か**: 既定の codex CLI は利用者の `~/.codex` の設定・指示書・hook と作業ディレクトリの AGENTS.md を毎回の文脈に載せる（実測: 1 文の翻訳で 11,458 トークン。設定を読まなければ 2,003 トークンで、訳文とモデルは同じ）。repo の外は git repo ではないので `--skip-git-repo-check` が要る。`-o` のファイルには最終メッセージだけが入り、標準出力の形式の変化に左右されない。`--sandbox read-only` だけではシェルなどのツールが残り、論文の本文に誘導されてホームディレクトリを読める（実測: `ls ~` を実行した）ので機能ごと切る。`--disable` ではなく `-c features.…=false` なのは、知らない名前でも起動が壊れないから。`CMUX_*` を残すと、cmux の端末から起動したとき codex のラッパーが hook と computer use の引数を差し込む。stdin の error ハンドラを外すと、codex が入力を読まずに終わったとき（引数エラー・認証エラー）に約 64KB を超えるプロンプトの書き込みが EPIPE の未処理例外になり、run 全体がクラッシュする（一時ディレクトリも残る）。
+- **なぜ意図的か**: 既定の codex CLI は利用者の `~/.codex` の設定・指示書・hook と作業ディレクトリの AGENTS.md を毎回の文脈に載せる（実測: 1 文の翻訳で 11,458 トークン。設定を読まなければ 2,003 トークンで、訳文とモデルは同じ）。repo の外は git repo ではないので `--skip-git-repo-check` が要る。`-o` のファイルには最終メッセージだけが入り、標準出力の形式の変化に左右されない。`--sandbox read-only` だけではシェルなどのツールが残り、論文の本文に誘導されてホームディレクトリを読める（実測: `ls ~` を実行した）ので機能ごと切る。`--disable` ではなく `-c features.…=false` なのは、知らない名前でも起動が失敗しないから。`CMUX_*` を残すと、cmux の端末から起動したとき codex のラッパーが hook と computer use の引数を差し込む。stdin の error ハンドラを外すと、codex が入力を読まずに終わったとき（引数エラー・認証エラー）に約 64KB を超えるプロンプトの書き込みが EPIPE の未処理例外になり、run 全体がクラッシュする（一時ディレクトリも残る）。
 - **正本ポインタ**: [codex プロバイダ ADR](../adr/20261008-add-codex-provider-isolated-from-user-config.md)、契約付録 §5。回帰テストは `src/providers/codex.test.ts`。
 
 ## `src/providers/claude.ts` — claude を `--safe-mode` 付き・作業ディレクトリ `os.tmpdir()` で起動する
@@ -173,7 +173,7 @@
 ## `src/tools/tex-spans.ts` — `verbatimSpans` は前の `\verb` 系の区間と読んだ引数の内側の候補を読まず、次の `]` / `}` の位置を使い回す。`maskChars` は伏せ終えた位置へ戻らない
 
 - **おかしく見える点**: 候補ごとに `indexOf` すれば済みそうなのに、直前の区間（`[..]`・言語引数を読んだならその後ろの空白まで）の終わりより前の候補を飛ばし、`[..]` と言語引数の閉じの位置を前の探索結果から引いている。`maskChars` も区間を並べ替えてから、伏せ終えた位置より後ろだけを伏せる。
-- **なぜ意図的か**: 無効ブロックの除去（`src/ingest/disabled-blocks.ts`）が文書全体（上限 8MiB）に掛けるため。`\lstinline{` や `\lstinline[` の羅列の後ろに閉じが 1 つだけある入力では、候補ごとに遠くの同じ閉じまで探して重なった区間を積み、伏せ直しも候補数×長さになって二次になる（実測: 1MiB で 18.7 秒、2MiB で 89 秒）。引数の閉じの後ろが長い空白だと、候補ごとに同じ空白をなめ直して二次になる（実測: 0.25MiB で 14.7 秒）。内側の候補は verbatim の中身か引数で命令ではないので読まない。以前は読んでいたため、内側の候補が外へはみ出す区間を作り、本文の数式まで伏せていた（例: `\verb|\lstinline{| $a$` で以降の数式を拾えなかった）。読まないので伏せる範囲は変わる（ほとんどは狭くなり、TeX の解釈に近づく。引数が文書末尾まで閉じない壊れた入力では広くなることもある）。
+- **なぜ意図的か**: 無効ブロックの除去（`src/ingest/disabled-blocks.ts`）が文書全体（上限 8MiB）に掛けるため。`\lstinline{` や `\lstinline[` の羅列の後ろに閉じが 1 つだけある入力では、候補ごとに遠くの同じ閉じまで探して重なった区間を積み、伏せ直しも候補数×長さになって二次になる（実測: 1MiB で 18.7 秒、2MiB で 89 秒）。引数の閉じの後ろが長い空白だと、候補ごとに同じ空白を読み直して二次になる（実測: 0.25MiB で 14.7 秒）。内側の候補は verbatim の中身か引数で命令ではないので読まない。以前は読んでいたため、内側の候補が外へはみ出す区間を作り、本文の数式まで伏せていた（例: `\verb|\lstinline{| $a$` で以降の数式を拾えなかった）。読まないので伏せる範囲は変わる（ほとんどは狭くなり、TeX の解釈に近づく。引数が文書末尾まで閉じない壊れた入力では広くなることもある）。
 - **正本ポインタ**: 契約付録 §4、issue #332。回帰テストは `src/tools/tex-spans.test.ts`・`src/ingest/disabled-blocks.test.ts`（線形時間）。
 
 ## `src/tools/tex-spans.ts` — `maskChars` は `[...tex]` でなく `tex.split("")` で 1 文字ずつに分ける
