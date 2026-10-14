@@ -34,14 +34,14 @@ export const USAGE = `使い方: jpaper <input> --provider {ollama|claude|codex|
 論文の LaTeX ソースを和訳し、和訳 PDF と対訳 PDF を作る。
 
 <input>
-  arXiv ID（例 2606.22649）、.tex・.tex.gz・zip・tar.gz のファイル、またはディレクトリ
+  arXiv ID（例 2606.22649）、.tex・.tex.gz・zip・tar.gz などのファイル、またはディレクトリ
 
 必須:
   --provider NAME       使う LLM（ollama・claude・codex・openrouter）
 
 オプション:
   --out DIR             出力先（既定 ./article/<論文 ID>-ja）
-  --model ID            モデル（既定: claude は最新の Sonnet、codex は最新の Sol、
+  --model ID            モデル（既定: claude は最新の Sonnet、codex は手元の一覧にある最新の Sol、
                         ollama は ${DEFAULT_OLLAMA.model}、openrouter は ${DEFAULT_OPENROUTER.model}）
   --effort LEVEL        推論の強さ（claude・codex だけ。既定 medium）
   --context-window N    コンテキスト窓のトークン数（ollama・openrouter だけ。${String(MIN_CONTEXT_WINDOW)}〜${String(MAX_CONTEXT_WINDOW)}）
@@ -51,7 +51,7 @@ export const USAGE = `使い方: jpaper <input> --provider {ollama|claude|codex|
   --no-verify-terms     用語の訳を Web 検索で確かめない（確かめるのは claude・codex だけ）
   -h, --help            この使い方を表示する
 
-作業ディレクトリの .env を読む。和訳 PDF と対訳 PDF のパスと、実行の要約（JSON）を標準出力に出す。
+作業ディレクトリの .env を読む。実行の要約（JSON）と、和訳 PDF・対訳 PDF のパスを標準出力に出す。
 終了コード: 0 成功、1 想定外のエラー・実行環境の障害、2 入力の誤り・外部サービスやプロバイダの障害など、
 3 形式検査が通らない、4 品質が基準に届かない、5 組版の失敗、6 中断・期限超過
 `;
