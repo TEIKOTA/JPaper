@@ -113,4 +113,4 @@ Claude Code 用の権限の既定と hook は `.claude/settings.json` にある�
 
 ## ライセンス
 
-[MIT License](./LICENSE)
+[MIT License](./LICENSE)。ただし `docs/images/readme/` の見本の画像は、原文の論文と同じ [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)（出典は「見本」の節）。
