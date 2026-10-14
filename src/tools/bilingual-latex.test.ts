@@ -18,6 +18,7 @@ import {
   unwrapTitleBlock,
   splitAtConditionals,
   pairAcrossConditionals,
+  conditionalsBalanced,
 } from "./bilingual-latex.js";
 import { findUnsafeTexCommands } from "./tex-safety.js";
 import { fastestMs } from "../testing/timing.js";
@@ -651,36 +652,97 @@ describe("段落の境目の条件分岐（issue #378）", () => {
     expect(body.match(/^\\fi$/gm)).toHaveLength(1);
   });
 
-  it("1 つの段落の中で閉じた条件分岐も、行で割って左右の段の切り替えを枝の中で閉じる", () => {
-    const block = pairAcrossConditionals("\\ifdraft\nA\n\\else\nB\n\\fi\nC", "\\ifdraft\n甲\n\\else\n乙\n\\fi\n丙");
-    expect(block).toBe(
-      [
-        "\\ifdraft",
-        "A\n\\switchcolumn\n甲\n\\switchcolumn*",
-        "\\else",
-        "B\n\\switchcolumn\n乙\n\\switchcolumn*",
-        "\\fi",
-        "C\n\\switchcolumn\n丙\n\\switchcolumn*",
-      ].join("\n"),
+  it("1 つの段落の中で閉じた条件分岐は割らず、従来どおり段落ごと左右に置く", () => {
+    const l = "\\ifdraft\nA\n\\else\nB\n\\fi\nC";
+    const r = "\\ifdraft\n甲\n\\else\n乙\n\\fi\n丙";
+    expect(pairAcrossConditionals(l, r)).toBe(`${l}\n\\switchcolumn\n${r}\n\\switchcolumn*`);
+    expect(pairAcrossConditionals("text\n\\ifdraft\nnote\n\\fi\nmore", "本文\n\\ifdraft\n注\n\\fi\n続き")).toBe(
+      "text\n\\ifdraft\nnote\n\\fi\nmore\n\\switchcolumn\n本文\n\\ifdraft\n注\n\\fi\n続き\n\\switchcolumn*",
     );
-    expect(runColumns(block)).toEqual([
-      { col: 0, line: "B" },
-      { col: 1, line: "乙" },
-      { col: 0, line: "C" },
-      { col: 1, line: "丙" },
+  });
+
+  it("制御綴り以外を含む条件の行（\\ifnum\\x>0）で開いて閉じる段落は割らず、偽・真のどちらでも左右が入れ替わらない", () => {
+    const l = "\\ifnum\\x>0\nPositiveL\n\\fi";
+    const r = "\\ifnum\\x>0\nPositiveR\n\\fi";
+    expect(pairAcrossConditionals(l, r)).toBe(`${l}\n\\switchcolumn\n${r}\n\\switchcolumn*`);
+    const { blocks } = renderPairs(
+      [
+        { segmentId: "s", left: l, right: r },
+        { segmentId: "s", left: "AfterL", right: "AfterR" },
+      ],
+      { left: "", right: "" },
+      detectProfile("\\documentclass{iopart}\n\\begin{document}\n\\end{document}"),
+    );
+    const body = blocks.join("\n\n");
+    expect(runColumns(body)).toEqual([
+      { col: 0, line: "AfterL" },
+      { col: 1, line: "AfterR" },
+    ]);
+    expect(runColumns(body, { "\\ifnum\\x>0": true })).toEqual([
+      { col: 0, line: "PositiveL" },
+      { col: 1, line: "PositiveR" },
+      { col: 0, line: "AfterL" },
+      { col: 1, line: "AfterR" },
+    ]);
+  });
+
+  it("\\if… と本文が同じ行の条件分岐・\\ifcase と \\or・角括弧の引数の中の条件分岐は、段落の中で閉じていれば割らない", () => {
+    expect(splitAtConditionals("\\ifdraft Note\n\\fi").conds).toEqual([]);
+    expect(splitAtConditionals("\\ifcase\\x\nA\n\\or\nB\n\\fi").conds).toEqual([]);
+    expect(splitAtConditionals("\\twocolumn[\n\\ifarxiv\nX\n\\else\nY\n\\fi\n]").conds).toEqual([]);
+  });
+
+  it("段落をまたぐ \\ifnum\\x>0 / \\ifcase の条件分岐は、条件の行と \\or の行を 1 回だけ置く", () => {
+    expect(splitAtConditionals("\\ifcase\\x\nA\n\\or\nB")).toEqual({ runs: ["", "A", "B"], conds: ["\\ifcase\\x", "\\or"] });
+    const { blocks } = renderPairs(
+      [
+        { segmentId: "s", left: "\\ifnum\\x>0\nPositiveL", right: "\\ifnum\\x>0\nPositiveR" },
+        { segmentId: "s", left: "MoreL\n\\fi\nAfterL", right: "MoreR\n\\fi\nAfterR" },
+      ],
+      { left: "", right: "" },
+      detectProfile("\\documentclass{iopart}\n\\begin{document}\n\\end{document}"),
+    );
+    const body = blocks.join("\n\n");
+    expect(body.match(/^\\ifnum\\x>0$/gm)).toHaveLength(1);
+    expect(runColumns(body)).toEqual([
+      { col: 0, line: "AfterL" },
+      { col: 1, line: "AfterR" },
+    ]);
+    expect(runColumns(body, { "\\ifnum\\x>0": true }).map((x) => `${x.col}:${x.line}`)).toEqual([
+      "0:PositiveL",
+      "1:PositiveR",
+      "0:MoreL",
+      "1:MoreR",
+      "0:AfterL",
+      "1:AfterR",
     ]);
   });
 
   it("コメント付きの行・\\ifx の比較・\\fi の後の空の残りを扱う", () => {
-    expect(splitAtConditionals("\\ifx\\a\\b % note\nA\n\\fi  % end")).toEqual({ runs: ["", "A", ""], conds: ["\\ifx\\a\\b", "\\fi"] });
+    expect(splitAtConditionals("\\ifx\\a\\b % note\nA")).toEqual({ runs: ["", "A"], conds: ["\\ifx\\a\\b"] });
+    expect(splitAtConditionals("A\n\\fi  % end")).toEqual({ runs: ["A", ""], conds: ["\\fi"] });
+  });
+
+  it("条件分岐の釣り合いは \\iff・\\newif の直後・{ が続く \\if…（etoolbox など）を数えない", () => {
+    expect(conditionalsBalanced("\\newif\\ifpeerreview")).toBe(true);
+    expect(conditionalsBalanced("$a \\iff b$")).toBe(true);
+    expect(conditionalsBalanced("\\ifbool{x}{a}{b}")).toBe(true);
+    expect(conditionalsBalanced("\\ifpeerreview")).toBe(false);
+    expect(conditionalsBalanced("\\else")).toBe(false);
+    expect(conditionalsBalanced("\\fi\n\\maketitle")).toBe(false);
+    expect(conditionalsBalanced("\\ifx\\a\\b x\\else y\\fi % \\fi")).toBe(true);
   });
 
   it("波括弧・環境の中の条件分岐の行（マクロ定義など）と \\iff の行では割らない", () => {
-    const def = "\\newcommand{\\foo}{%\n\\ifdraft\nx\n\\else\ny\n\\fi\n}";
-    expect(splitAtConditionals(def)).toEqual({ runs: [def], conds: [] });
-    const env = "\\begin{verbatim}\n\\fi\n\\end{verbatim}";
-    expect(splitAtConditionals(env)).toEqual({ runs: [env], conds: [] });
-    expect(splitAtConditionals("$a\n\\iff\nb$").conds).toEqual([]);
+    const def = "\\fi\n\\newcommand{\\foo}{%\n\\ifdraft\nx\n\\else\ny\n\\fi\n}";
+    expect(splitAtConditionals(def).conds).toEqual(["\\fi"]);
+    const env = "\\fi\n\\begin{verbatim}\n\\fi\n\\end{verbatim}";
+    expect(splitAtConditionals(env).conds).toEqual(["\\fi"]);
+    expect(splitAtConditionals("\\fi\n$a\n\\iff\nb$").conds).toEqual(["\\fi"]);
+    expect(splitAtConditionals("\\fi\n\\[\na\n\\iff\\quad\nb\n\\]")).toEqual({
+      runs: ["", "\\[\na\n\\iff\\quad\nb\n\\]"],
+      conds: ["\\fi"],
+    });
   });
 
   it("段落の中で閉じない環境（節をまたぐ credits）の中の条件分岐の行は割り、後続の段落の \\else / \\fi と揃える", () => {

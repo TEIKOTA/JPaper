@@ -327,12 +327,32 @@ function pairBlock(left: string, right: string): string {
   return `${left}\n\\switchcolumn\n${/^\s*\[/.test(right) ? "\\relax\n" : ""}${right}\n\\switchcolumn*`;
 }
 
-// コメントを除くと \if…（\iff を除く）/ \else / \fi だけの行。
-const CONDITIONAL_LINE = /^\\(?:if(?!f$)[A-Za-z@]*(?:\s*\\[A-Za-z@]+){0,2}|else|fi)$/;
+// コメントを除くと \if…（\iff を除く。続く \fi / \else / \or を含まない）/ \else / \or / \fi だけの行。
+const CONDITIONAL_LINE =
+  /^\\(?:if(?!f(?![A-Za-z@]))[A-Za-z@]*(?![A-Za-z@{])(?!.*\\(?:fi|else|or)(?![A-Za-z@])).*|else|or|fi)$/;
 
-// 条件分岐の行で割る。段落の中で開いて段落の中で閉じる環境・波括弧の内側の行では割らない
-// （段落の中で閉じない環境・波括弧の内側では割る）。runs は conds より 1 つ多い。⚠ landmines.md
+// コメントを除いて、\if…（\iff・\newif の直後・{ が続くものを除く）と \fi が釣り合い、
+// \else / \or が開いた条件分岐の中にだけあるか。
+export function conditionalsBalanced(tex: string): boolean {
+  let depth = 0;
+  let prev = "";
+  for (const m of stripComments(tex).matchAll(/\\([A-Za-z@]+|[^A-Za-z@])/g)) {
+    const name = m[1]!;
+    const next = m.input[m.index + m[0].length];
+    if (/^if(?!f$)/.test(name) && prev !== "newif" && next !== "{") depth++;
+    else if (name === "fi") {
+      if (depth === 0) return false;
+      depth--;
+    } else if ((name === "else" || name === "or") && depth === 0) return false;
+    prev = name;
+  }
+  return depth === 0;
+}
+
+// 条件分岐が釣り合っていない段落だけを条件分岐の行で割る。段落の中で開いて段落の中で閉じる
+// 環境・波括弧の内側の行では割らない。runs は conds より 1 つ多い。⚠ landmines.md
 export function splitAtConditionals(tex: string): { runs: string[]; conds: string[] } {
+  if (conditionalsBalanced(tex)) return { runs: [tex.trim()], conds: [] };
   const lines = tex.split("\n");
   // 各行の前で、段落の中で開いて閉じていない環境・波括弧の数（最後の要素は段落の末尾）。
   const env: number[] = [0];
