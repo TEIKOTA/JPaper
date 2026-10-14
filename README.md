@@ -51,9 +51,13 @@ agent-native の考え方と Flue の設計に沿って、次のように分け�
 
 ```sh
 pnpm install
-pnpm link --global # jpaper コマンドをどこからでも使えるようにする（初回だけ。事前に pnpm setup が要る）
+pnpm setup         # PATH を通す設定をシェルの設定ファイル（~/.zshrc など）に書き足す（初回だけ）
+source ~/.zshrc    # pnpm setup が書き足した設定を読み込む（zsh なら新しいターミナルを開いてもよい）
+pnpm link --global # jpaper コマンドをどこからでも使えるようにする（初回だけ）
 lefthook install   # commit-msg / pre-push フック（未導入なら brew install lefthook）
 ```
+
+`pnpm setup` の後に同じターミナルで設定を読み直さないと、`pnpm link --global` は `ERR_PNPM_NO_GLOBAL_BIN_DIR` で失敗する。zsh 以外のシェルを使っている場合や `ZDOTDIR` を設定している場合は、`source ~/.zshrc` の代わりに、`pnpm setup` が最後に表示する `source …` の行を実行する。
 
 `jpaper` コマンドは repo のソース（`src/cli.ts`）を tsx で直接動かすので、build は要らず、`git pull` するとそのまま新しい版で動く（`bin/jpaper.mjs`）。link した `jpaper` は、repo でその時 checkout している branch のコードを動かす。`pnpm link --global` を使わない場合は、repo の中で `pnpm dev` を `jpaper` の代わりに使える（ただし作業ディレクトリが repo 直下になるので、読む `.env` と、相対パスの `<input>`・`--out` の基準が repo 直下になる）。
 
