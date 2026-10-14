@@ -5,11 +5,11 @@ description: Use when the evaluator agent reviews a Japanese translation of an a
 
 # Translation Pitfalls（evaluator 向けチェックリスト）
 
-学術和訳で頻出する既知の誤訳を、evaluator が**レビュー観点**として使うためのチェックリスト。[翻訳一貫性 ADR](../../../docs/adr/20260710-translation-consistency-brief-style-and-annotations.md) 決定5 の正本。
+学術論文の和訳でよく起きる既知の誤訳を、evaluator が**レビューの観点**として使うためのチェックリスト。[翻訳一貫性 ADR](../../../docs/adr/20260710-translation-consistency-brief-style-and-annotations.md) 決定5 の正本。
 
-- **適用先は evaluator のみ**。translator / glossary-builder には注入しない（生成側を汚さず検出に集中）。
-- **global 用語 DB には seed しない**（[契約付録](../../../docs/design/contract-appendix.md) §2「v1 は空で開始」を維持）。これは「事実の種」ではなく「レビュー観点」。
-- 段階開示: 該当が疑われるときだけ本文を参照する。列挙は網羅ではなく代表例で、随時追記する。
+- **使うのは evaluator だけ**。translator / glossary-builder には注入しない（訳を作る側には混ぜず、誤りの検出だけに使う）。
+- **global 用語 DB には seed しない**（[契約付録](../../../docs/design/contract-appendix.md) §2「v1 は空で開始」を維持）。この一覧は用語の事実として登録する種ではなく、レビューの観点である。
+- 段階的に読む: 該当が疑われるときだけ本文を参照する。列挙は網羅ではなく代表例で、随時追記する。
 
 ## 1. 統計語（意味の取り違い）
 
@@ -28,11 +28,11 @@ description: Use when the evaluator agent reviews a Japanese translation of an a
 
 - `agency`（社会科学）＝**行為主体性**であって「代理権」ではない。
 - `mole fraction`＝**モル分率**（「分子比」ではない）。
-- `argument`（数学）＝偏角/引数、`degenerate`＝縮退、`kernel`＝核/カーネル、`domain`＝定義域/領域、`normal`＝法線/正規 — いずれも文脈で確定し、日常語に落とさない。
-- 論文が定義した語（`paper-defined`）は既定で preserve/併記（`値(Value)` 等）。安易な直訳は誤り。
+- `argument`（数学）＝偏角/引数、`degenerate`＝縮退、`kernel`＝核/カーネル、`domain`＝定義域/領域、`normal`＝法線/正規。いずれも文脈で訳を決め、日常語の訳にしない。
+- 論文が定義した語（`paper-defined`）は、既定で原語のまま残すか併記する（`値(Value)` など）。安易な直訳は誤り。
 
 ## 使い方（evaluator）
 
-1. 訳文を読み、上記カテゴリに触れる箇所を洗う。
+1. 訳文を読み、上のカテゴリに当たる箇所を探す。
 2. 誤りは `EvalIssue{ severity: "error" }`、機微な懸念は `warn`（warn は訳注に流れる）。
-3. 決定的に落とせる単位/略語/表記の整合は §7 (B) の言語整合 lint が別途機械検査する。ここは**意味の妥当性**を見る。
+3. 単位・略語・表記の整合のうち決定的に判定できるものは、§7 (B) の言語整合 lint が別に機械で検査する。ここでは**意味の妥当性**を見る。
