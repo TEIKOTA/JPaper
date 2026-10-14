@@ -21,7 +21,7 @@
 - `docs/adr/` — アーキテクチャ決定記録。運用ルールは [`docs/adr/README.md`](./docs/adr/README.md)
 - `scripts/` — 規約の検証（commit 件名・branch 名・PR body・PR 全体）と repo 初期設定
 - `tests/` — ローカル検査 script の self-test
-- `.github/` — PR / issue テンプレート、ラベル定義（`labels.yml` が正本）、CI 定義（既定オフ: `workflows-disabled/`。プロジェクト固有の `node-checks.yml` は `workflows/` に残置）
+- `.github/` — PR / issue テンプレート、ラベル定義（`labels.yml` が正本）、CI 定義（`workflows/` の node-checks・pr-checks・self-test）
 - `.claude/` — Claude Code 設定（`settings.json`: 権限・hook 配線）と共有 skill（`skills/`。開発運用: 一覧は各ディレクトリの `SKILL.md` を参照。翻訳運用: `translation-pitfalls`=evaluator 向け誤訳チェックリスト）。`.agents` は `.claude` への symlink（agents.md / Codex 互換パス。`.claude` を symlink にすると Claude Code の worktree 機能が拒否するため実ディレクトリが正本）
 - `.codex/` — Codex 用の project-local hook 設定（trust 後に有効）
 
@@ -38,7 +38,7 @@
 - topic branch からのさらなる分岐（積み上げ）は 1 段まで。「A が正しければ B、誤っていれば C」のような代替案は積まず、兄弟 branch として切る。
 - branch 名は `<type>/<issue番号>-<slug>`（`chore/<slug>` のみ issue なし可）。pre-push フックで検証される。
 - 編集を始める前に現在の branch を確認し、main・無関係 branch にいるなら `scripts/new-branch.sh` で topic branch を作ってから作業する（命名検証を作成時点で行う）。
-- 検証（テスト・動作確認）前に PR を開かない。PR は issue と 1 対 1 を基本にする。PR を作成・編集したら `scripts/check-pr.sh` でタイトル・body 規約を自己検査する（ローカル script が正本、GitHub Actions は既定オフ。[`docs/adr/20260901-disable-github-actions-by-default.md`](./docs/adr/20260901-disable-github-actions-by-default.md)）。
+- 検証（テスト・動作確認）前に PR を開かない。PR は issue と 1 対 1 を基本にする。PR を作成・編集したら `scripts/check-pr.sh` でタイトル・body 規約を自己検査する（ローカル script が正本。GitHub Actions は同じ検査をもう一度走らせる確認。[`docs/adr/20261014-enable-github-actions-on-public-repo.md`](./docs/adr/20261014-enable-github-actions-on-public-repo.md)）。
 - 変更には**テストを伴わせる**。バグ修正・ガード追加では、守る対象を一度外して red になることを実証（退行注入）してから green を確認する。テスト・ビルドのコマンドは「## コマンド」を正本とする。
 - issue 起点のタスクでは issue 本文を scope boundary として扱う。着手は `fix-issue` skill の手順（読解 → 着手前ゲート → branch → 実装 → commit → PR 自己検査）で入り、認識合わせの結論は issue 本文へ固定して大きな実装は fresh session で始める。
 - issue を起票する前に `gh issue list --state all` / `gh pr list --state all` で同一テーマを検索し、結果を issue テンプレートの「重複確認」節へ記録する（空の記録はゲート未実施とみなす）。着手前にも、起票からの時間差で同じテーマが実装・merge されていないかを確認する（[`docs/adr/20260729-adopt-ai-session-operational-guards.md`](./docs/adr/20260729-adopt-ai-session-operational-guards.md)）。
@@ -99,7 +99,7 @@
 - `lefthook install` — commit-msg / pre-push フックを有効化する（初回セットアップ必須）
 - `scripts/setup-user-hooks.sh [--claude] [--codex] [--git] [--worktree-access] [--dry-run] [--uninstall]` — hook をユーザーレベル（`~/.claude`・`~/.codex`・グローバル git の post-checkout）にも配線し、古い branch・未 pull の checkout や Bash guard を通らない経路でもガードを効かせる。`--worktree-access` は `~/worktrees` を Claude / Codex の作業許可範囲に加える（初回セットアップ時と hook 追加・変更後に実行）
 - `scripts/check-codex-hooks.sh [--repo <dir>]` — Codex hook の trust 状態を検査する（未 trust の hook は Codex で実行されない。SessionStart も警告する）
-- `scripts/setup-github-repo.sh [--prune] [--dry-run] [--enable-actions]` — ラベル同期・squash merge / commit title 固定・Actions 無効化（repo 作成直後に `--prune` 付きで 1 回。定義外ラベルの削除は `--prune` 時のみ）
+- `scripts/setup-github-repo.sh [--prune] [--dry-run] [--enable-actions]` — ラベル同期・squash merge / commit title 固定・private repo での Actions 無効化（repo 作成直後に `--prune` 付きで 1 回。定義外ラベルの削除は `--prune` 時のみ）
 - `scripts/check-pr.sh [<PR番号>]` — PR タイトル・body・issue 連結のローカル検査（PR 作成・編集後に実行する）
 - `scripts/check-pr.sh --backlog` — 自分の open PR を作成日順・base・draft 状態で一覧する（棚卸しは上限超過時も止めない）
 - `scripts/check-skill-frontmatter.rb [<skills-dir>]` — 全 `SKILL.md` の frontmatter を Agent Skills 共通契約と repo の起動条件規約で検査する
