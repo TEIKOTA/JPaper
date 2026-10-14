@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# PR のタイトル・body・issue 連結をローカルで検査する（CI 既定オフ環境の正本ゲート。
-# ADR: docs/adr/20260901-disable-github-actions-by-default.md）。検査ロジックは
+# PR のタイトル・body・issue 連結をローカルで検査する（正本ゲート。CI の pr-checks も同じ script を呼ぶ。
+# ADR: docs/adr/20261014-enable-github-actions-on-public-repo.md）。検査ロジックは
 # scripts/check-commit-msg.sh / scripts/check-pr-body-close.sh を再利用する。
 # 使い方: scripts/check-pr.sh [<PR番号>] [--head <branch>] [--repo <owner>/<name>] [--backlog]
 #   PR番号と --head の両方を省略した場合はカレント branch に紐づく PR を対象にする。

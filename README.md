@@ -75,7 +75,7 @@ LLM プロバイダは `LlmClient` 境界で差し替え可能。**local=Ollama*
 ## 開発ルール
 
 運用ガイドは [`AGENTS.md`](./AGENTS.md)（`CLAUDE.md` は symlink）。issue 駆動・PR 必須・日本語 Conventional Commits・ADR による決定記録を最初から機械強制（lefthook + ローカル検査）している。
-検証はローカル script が正本（`bash tests/run-tests.sh` と `scripts/check-pr.sh`）。GitHub Actions（`.github/workflows/` の node-checks・pr-checks・self-test）は、同じ検査を Linux と macOS でもう一度走らせる（[ADR](./docs/adr/20261014-enable-github-actions-on-public-repo.md)）。
+検証はローカル script が正本（`bash tests/run-tests.sh` と `scripts/check-pr.sh`）。GitHub Actions（`.github/workflows/` の node-checks・pr-checks・self-test）は、同じ検査を Linux（self-test は macOS でも）でもう一度走らせる（[ADR](./docs/adr/20261014-enable-github-actions-on-public-repo.md)）。
 Claude Code 用の権限既定と hook は `.claude/settings.json`（read-only コマンドの allowlist・secret ファイルの Read deny・`scripts/hooks/` の Bash ガード / scripts 編集後の自動 self-test / 未コミット差分の Stop 警告）。
 
 ## ライセンス
