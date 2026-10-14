@@ -7,6 +7,7 @@
 #   - `gh api repos/*/issues/N`  … N が $FAKE_GH_ISSUES にあれば "issue"、
 #                                  $FAKE_GH_ISSUE_PRS にあれば "pr" を出力（--jq 適用後を模倣）。
 #                                  どちらにも無ければ exit 1（存在しない issue）
+#   - `gh api repos/<o>/<r> --jq .visibility` … $FAKE_GH_VISIBILITY（既定 private）を出力
 # それ以外は成功を返すだけ。
 set -eu
 
@@ -124,6 +125,11 @@ if [ "${1:-}" = "api" ]; then
         if [ "$x" = "$n" ]; then printf 'pr\n'; exit 0; fi
       done
       exit 1
+      ;;
+    repos/*)
+      case "$*" in
+        *"--jq .visibility"*) printf '%s\n' "${FAKE_GH_VISIBILITY:-private}"; exit 0 ;;
+      esac
       ;;
   esac
 fi

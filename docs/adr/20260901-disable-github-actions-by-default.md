@@ -4,6 +4,8 @@
 
 accepted
 
+- 部分 supersede（2026-10-14）: 決定 1（workflow を `workflows-disabled/` に置く）と、決定 2 のうち public repo で Actions を無効化する部分は [`20261014-enable-github-actions-on-public-repo.md`](./20261014-enable-github-actions-on-public-repo.md) により置換（public にした JPaper では Actions を有効にする）。private repo での既定オフ・決定 3（merge の判断はローカル検査）・required status checks の注意は存続。
+
 ## Situation
 
 - 本 template から生成されるプロジェクトは無料プラン・private repo・個人＋AI 協働が前提で、GitHub Actions の included minutes（private 2,000 分/月）は**アカウント単位**で全リポジトリが共有する。

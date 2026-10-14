@@ -1,7 +1,3 @@
-# 【既定オフ】このディレクトリ（workflows-disabled/）にある限り GitHub は workflow として
-# 認識しない。同等の検査はローカルの scripts/check-pr.sh が正本。CI を有効化する手順は
-# README「CI を有効化する場合」を参照（ADR: docs/adr/20260901-disable-github-actions-by-default.md）。
-#
 # PR のタイトル・body・参照 issue をローカル gate と同じ正本で検査する最小 CI。
 name: pr-checks
 

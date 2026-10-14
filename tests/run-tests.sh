@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # テンプレート検査スクリプト群の self-test。
-# 使い方: bash tests/run-tests.sh（ローカル実行が正本。CI は既定オフ: .github/workflows-disabled/self-test.yml）
+# 使い方: bash tests/run-tests.sh（ローカル実行が正本。CI は .github/workflows/self-test.yml）
 # bash 3.2（macOS /bin/bash）互換。失敗ケースを意図的に踏むため set -e は使わない。
 set -u
 
@@ -675,7 +675,7 @@ check_pr_workflow_contract() { # check_pr_workflow_contract <workflow>
   ' "$workflow"
 }
 expect 0 "pr workflow: base 側 check-pr.sh だけへ title/body/API 判定を委譲" \
-  check_pr_workflow_contract "$ROOT/.github/workflows-disabled/pr-checks.yml"
+  check_pr_workflow_contract "$ROOT/.github/workflows/pr-checks.yml"
 workflow_fixture="$(mktemp)" || { echo "FATAL: workflow fixture を作成できません" >&2; exit 1; }
 awk '
   /ref: \$\{\{ github\.event\.pull_request\.base\.sha \}\}/ {
@@ -684,7 +684,7 @@ awk '
     next
   }
   { print }
-' "$ROOT/.github/workflows-disabled/pr-checks.yml" > "$workflow_fixture" || exit 1
+' "$ROOT/.github/workflows/pr-checks.yml" > "$workflow_fixture" || exit 1
 expect 1 "pr workflow: comment decoy があっても head checkout を拒否（red）" \
   check_pr_workflow_contract "$workflow_fixture"
 awk '
@@ -694,10 +694,10 @@ awk '
     print "          ref: ${{ github.event.pull_request.head.sha }}"
   }
   { print }
-' "$ROOT/.github/workflows-disabled/pr-checks.yml" > "$workflow_fixture" || exit 1
+' "$ROOT/.github/workflows/pr-checks.yml" > "$workflow_fixture" || exit 1
 expect 1 "pr workflow: base checkout 後の別 step head checkout を拒否（red）" \
   check_pr_workflow_contract "$workflow_fixture"
-cat "$ROOT/.github/workflows-disabled/pr-checks.yml" > "$workflow_fixture" || exit 1
+cat "$ROOT/.github/workflows/pr-checks.yml" > "$workflow_fixture" || exit 1
 cat >> "$workflow_fixture" <<'EOF'
   decoy:
     runs-on: ubuntu-latest
@@ -1950,7 +1950,8 @@ if [ -n "$last_create" ] && [ -n "$first_delete" ] && [ "$last_create" -lt "$fir
 report 0 "$rc" "--prune: upsert 完了後に削除する順序"
 
 expect 0 "--dry-run: 実行成功" run_setup "$log" "$out" --dry-run --prune
-rc=0; [ "$(grep -c . "$log")" -eq 1 ] && grep -q '^label list' "$log" || rc=1
+rc=0; grep -vqE '^(label list|api repos/\{owner\}/\{repo\} --jq \.visibility)' "$log" && rc=1
+grep -q '^label list' "$log" || rc=1
 report 0 "$rc" "--dry-run: 読み取り以外の gh を呼ばない"
 rc=0; grep -q '^dry-run: gh label create' "$out" || rc=1
 report 0 "$rc" "--dry-run: 実行予定コマンドを表示"
@@ -1960,6 +1961,13 @@ report 0 "$rc" "--dry-run: Actions 無効化コマンドを表示"
 expect 0 "--enable-actions: 実行成功" run_setup "$log" "$out" --enable-actions
 rc=0; grep -q 'actions/permissions' "$log" && rc=1
 report 0 "$rc" "--enable-actions: 無効化を呼ばない"
+
+FAKE_GH_VISIBILITY=public run_setup "$log" "$out"; rc=$?
+report 0 "$rc" "public repo: 実行成功"
+rc=0; grep -q 'actions/permissions' "$log" && rc=1
+report 0 "$rc" "public repo: Actions を無効化しない"
+rc=0; grep -q 'public repo なので' "$out" || rc=1
+report 0 "$rc" "public repo: 維持することを表示"
 
 # 不正な labels.yml の拒否（重複 name / 不正 color）
 tmp_root="$(mktemp -d)"

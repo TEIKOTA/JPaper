@@ -4,8 +4,9 @@
 #      --prune 指定時のみ、labels.yml に無い既存ラベル（GitHub デフォルト含む）を削除する。
 #      初回セットアップは --prune 付きで実行してデフォルトラベルを入れ替える。
 #   2. merge 方式を squash のみに固定し、merge 後の head branch 自動削除を有効化する
-#   3. GitHub Actions を repo 設定で無効化する（既定。template から生成された repo には
-#      設定が引き継がれないため毎回必要。--enable-actions でスキップ）
+#   3. private repo では GitHub Actions を repo 設定で無効化する（既定。template から生成された
+#      repo には設定が引き継がれないため毎回必要。--enable-actions でスキップ）。public repo では
+#      無効化しない
 # 使い方: scripts/setup-github-repo.sh [--repo <owner>/<name>] [--prune] [--dry-run] [--enable-actions]
 #   --repo 省略時はカレントリポジトリの origin を使う。
 #   --dry-run は変更コマンドを表示するだけで実行しない（読み取りは行う）。
@@ -147,17 +148,22 @@ else
     -f squash_merge_commit_message=PR_BODY
 fi
 
-# CI はローカル検証が正本（ADR: docs/adr/20260901-disable-github-actions-by-default.md）。
+# private repo の Actions は既定で無効化する（ADR: docs/adr/20260901-disable-github-actions-by-default.md）。
+# public repo では無効化しない（ADR: docs/adr/20261014-enable-github-actions-on-public-repo.md）。
 # -F は enabled=false を boolean に型変換する（-f だと文字列 "false" になり無効）。
+if [[ -n "$REPO" ]]; then
+  REPO_API="repos/$REPO"
+else
+  REPO_API='repos/{owner}/{repo}'
+fi
+VISIBILITY="$(gh api "$REPO_API" --jq .visibility 2>/dev/null || true)"
 if [[ $ENABLE_ACTIONS -eq 1 ]]; then
-  echo "▶ GitHub Actions は有効のまま維持する（workflow は .github/workflows-disabled/ から .github/workflows/ へ戻すこと）"
+  echo "▶ GitHub Actions は有効のまま維持する（--enable-actions）"
+elif [[ "$VISIBILITY" == "public" ]]; then
+  echo "▶ public repo なので GitHub Actions は有効のまま維持する"
 else
   echo "▶ GitHub Actions を無効化する（有効化する場合は --enable-actions。手順は README）"
-  if [[ -n "$REPO" ]]; then
-    run gh api --method PUT "repos/$REPO/actions/permissions" -F enabled=false
-  else
-    run gh api --method PUT 'repos/{owner}/{repo}/actions/permissions' -F enabled=false
-  fi
+  run gh api --method PUT "$REPO_API/actions/permissions" -F enabled=false
 fi
 
 echo "✔ 完了"
