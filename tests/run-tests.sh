@@ -247,7 +247,7 @@ nb_tmp="$nb_repo/temporary"
 mkdir -p "$nb_tmp"
 git -C "$nb_repo" init -q -b main
 git -C "$nb_repo" -c user.email=t@example.com -c user.name=t commit -q --allow-empty -m init
-git init -q --bare "$nb_remote"
+git init -q --bare -b main "$nb_remote"
 git -C "$nb_repo" remote add origin "$nb_remote"
 git -C "$nb_repo" push -q -u origin main
 git clone -q "$nb_remote" "$nb_upstream"
@@ -1120,8 +1120,12 @@ pe_ansi_c_unicode_u_heredoc="$(printf '%s\n' \
 (cd "$pe_root" && /bin/bash -c "$pe_ansi_c_unicode_u_heredoc")
 expect_code 2 "post-edit regression: Bash 3.2 の \\u literal heredoc を検知" \
   run_pe_detector "$pe_ansi_c_unicode_u_heredoc"
-rc=0; [ -f "$pe_root/scripts/unicode-u-escape.py" ] || rc=1
-report 0 "$rc" "post-edit regression: Bash 3.2 の \\u literal heredoc は実ファイルを書いた"
+if /bin/bash -c '[ "${BASH_VERSINFO[0]}" -eq 3 ]'; then
+  rc=0; [ -f "$pe_root/scripts/unicode-u-escape.py" ] || rc=1
+  report 0 "$rc" "post-edit regression: Bash 3.2 の \\u literal heredoc は実ファイルを書いた"
+else
+  printf 'SKIP: %s\n' "post-edit regression: Bash 3.2 の \\u literal heredoc は実ファイルを書いた（/bin/bash が 3 系でない）"
+fi
 
 pe_ansi_c_unicode_U_heredoc="$(printf '%s\n' \
   "python3 - <<\$'PY\\U0000002dEND'" \
@@ -1130,8 +1134,12 @@ pe_ansi_c_unicode_U_heredoc="$(printf '%s\n' \
 (cd "$pe_root" && /bin/bash -c "$pe_ansi_c_unicode_U_heredoc")
 expect_code 2 "post-edit regression: Bash 3.2 の \\U literal heredoc を検知" \
   run_pe_detector "$pe_ansi_c_unicode_U_heredoc"
-rc=0; [ -f "$pe_root/scripts/unicode-U-escape.py" ] || rc=1
-report 0 "$rc" "post-edit regression: Bash 3.2 の \\U literal heredoc は実ファイルを書いた"
+if /bin/bash -c '[ "${BASH_VERSINFO[0]}" -eq 3 ]'; then
+  rc=0; [ -f "$pe_root/scripts/unicode-U-escape.py" ] || rc=1
+  report 0 "$rc" "post-edit regression: Bash 3.2 の \\U literal heredoc は実ファイルを書いた"
+else
+  printf 'SKIP: %s\n' "post-edit regression: Bash 3.2 の \\U literal heredoc は実ファイルを書いた（/bin/bash が 3 系でない）"
+fi
 
 # focused adversarial matrix: 隣接する構文境界を個別に固定する。
 expect_code 2 "post-edit matrix: hook input cwd から relative target を解決" \
