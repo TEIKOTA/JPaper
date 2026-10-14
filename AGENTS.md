@@ -9,20 +9,20 @@
 ## リポジトリ構成
 
 <!-- 論文和訳エージェント（agent-native / Flue 設計準拠）の構成。 -->
-- `src/runtime/` — 薄い自作ランタイム（agent 定義子＋`run()`。Flue の Agent/Workflow 設計準拠）
+- `src/runtime/` — 薄い自作のランタイム（LLM を呼ぶ `runAgent()`、並列の上限、中断、実行の記録など。Flue の Agent/Workflow の設計に沿う）
 - `src/agents/` — エージェント定義（`translator.ts` / `evaluator.ts` / `glossary-builder.ts`）
-- `src/workflows/` — ワークフロー（素の TS 関数。`Promise.all` / `for` / `if` で配線）
-- `src/tools/` — エージェントが使うツール（TS 関数）
-- `src/index.ts` — エントリポイント（ワークフロー起動 CLI）
-- `apps/web/` — Web アプリ（論文の検索・翻訳ジョブ・用語集の編集。`server/`=core と CLI を呼ぶ Hono API、`src/`=Vite＋React の画面）。pnpm workspace のパッケージ
-- `input/` — 用語集・スタイルガイド等の知識 SSOT（コミット対象）
-- `output/` — 実行証跡（`runs/`）と作業領域（`workspace/`）。runtime 生成物で gitignore
+- `src/workflows/` — ワークフロー（素の TS の関数。`Promise.all` / `for` / `if` でつなぐ）
+- `src/tools/` — エージェントが使うツール（TS の関数）
+- `src/cli.ts` — jpaper CLI（`pnpm dev` の実体）。`src/index.ts` は `translatePaper`・`runCli` などを export する
+- `apps/web/` — Web アプリ（論文の検索・翻訳ジョブ・用語集の編集）。`server/` は core と CLI を呼ぶ Hono の API、`src/` は Vite と React の画面。pnpm workspace のパッケージ
+- `input/` — 用語集・スタイルガイドなどの知識の正本（commit する）
+- `output/` — 実行の記録（`runs/`）と作業領域（`workspace/`）。実行時に作られるもので、gitignore している
 - `docs/` — 設計ドキュメント・運用メモ（ビルド対象外）。実装契約の正本は [`docs/design/contract-appendix.md`](./docs/design/contract-appendix.md)
 - `docs/adr/` — アーキテクチャ決定記録。運用ルールは [`docs/adr/README.md`](./docs/adr/README.md)
 - `scripts/` — 規約の検証（commit 件名・branch 名・PR body・PR 全体）と repo 初期設定
 - `tests/` — ローカル検査 script の self-test
 - `.github/` — PR / issue テンプレート、ラベル定義（`labels.yml` が正本）、CI 定義（`workflows/` の node-checks・pr-checks・self-test）
-- `.claude/` — Claude Code 設定（`settings.json`: 権限・hook 配線）と共有 skill（`skills/`。開発運用: 一覧は各ディレクトリの `SKILL.md` を参照。翻訳運用: `translation-pitfalls`=evaluator 向け誤訳チェックリスト）。`.agents` は `.claude` への symlink（agents.md / Codex 互換パス。`.claude` を symlink にすると Claude Code の worktree 機能が拒否するため実ディレクトリが正本）
+- `.claude/` — Claude Code 設定（`settings.json`: 権限・hook 配線）と共有 skill（`skills/`。開発運用: 一覧は各ディレクトリの `SKILL.md` を参照。翻訳の運用: `translation-pitfalls` は evaluator 向けの誤訳チェックリスト）。`.agents` は `.claude` への symlink（agents.md / Codex 互換パス。`.claude` を symlink にすると Claude Code の worktree 機能が拒否するため実ディレクトリが正本）
 - `.codex/` — Codex 用の project-local hook 設定（trust 後に有効）
 
 ## 検索ポリシー
@@ -83,14 +83,14 @@
 - ユーザーに見せる成果物（レポート・HTML 等）は `/tmp` や scratchpad でなく repo 内か home 配下の永続位置に置き、応答の末尾で所在と開き方を必ず示す。
 - 想定外の失敗が起きたら [`docs/process/failure-patterns.md`](./docs/process/failure-patterns.md) へその場で 1 行追記する（根拠必須）。対策はログの精読ではなく昇華先（scripts・skill・本ファイル）に置く。
 - compact・セッション切替の直後は、求められなくても現状報告（直近の作業・実行中ジョブ・未コミット差分・次の一手）を先に出す。セッションを跨ぐ引き継ぎは [`docs/templates/handoff.md`](./docs/templates/handoff.md) の雛形で書く。
-- **ソースは事実のみ**。why は正本（ADR/契約付録/設計メモ）へ置き、inline は正本ポインタ（`// 契約付録 §N`）と中身ゼロの地雷標識（`// ⚠ landmines.md`）のみ。規約の正本は [ソースコメント ADR](./docs/adr/20260710-source-comments-facts-only-rationale-to-docs.md)。
-- **コードが不自然に見えても、直す前に [`docs/design/landmines.md`](./docs/design/landmines.md) を確認する**。該当があれば意図的なので維持する。
+- **ソースは事実のみ**。理由（why）は正本（ADR・契約付録・設計メモ）に置き、コード内のコメントは正本への参照（`// 契約付録 §N`）と、中身を持たない地雷の目印（`// ⚠ landmines.md`）だけにする。規約の正本は [ソースコメント ADR](./docs/adr/20260710-source-comments-facts-only-rationale-to-docs.md)。
+- コードが不自然に見えても、**直す前に [`docs/design/landmines.md`](./docs/design/landmines.md) を確認する**。載っていれば意図的な書き方なので、そのまま残す。
 
 ## コマンド
 
-- `pnpm install` — 依存の導入（初回。パッケージ管理は pnpm＝[pnpm ADR](./docs/adr/20261007-adopt-pnpm-for-package-management.md)）
-- `pnpm test` — vitest 単体テスト（決定的な検査。LLM を含めない）
-- `pnpm build` / `pnpm typecheck` — tsc ビルド / 型チェック（emit なし）
+- `pnpm install` — 依存を入れる（初回。パッケージ管理は pnpm。[pnpm ADR](./docs/adr/20261007-adopt-pnpm-for-package-management.md)）
+- `pnpm test` — vitest の単体テスト（決定的な検査。LLM を含めない）
+- `pnpm build` / `pnpm typecheck` — tsc のビルド / 型チェック（typecheck は emit しない）
 - `pnpm dev` — `src/cli.ts`（jpaper CLI）を tsx で実行
 - `pnpm dev:web` — Web アプリ（API と画面）を立ち上げる（仕様の正本は契約付録 §9）
 - `bash tests/run-tests.sh` — 規約検査スクリプト群の self-test（scripts/ を変更したら必ず実行。`scripts/` `tests/` の編集後は PostToolUse hook が自動実行する）
