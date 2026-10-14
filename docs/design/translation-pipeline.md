@@ -2,7 +2,7 @@
 
 > これは**計画フェーズの設計メモ**。確定した決定は [`docs/adr/`](../adr/) に置き、ここには分析・計画・未決事項を置く（ADR より変わりやすく、合意できた時点で随時更新する）。
 > 根拠: 現行の和訳リポジトリ `資料/` の静的調査と、サブエージェントによる 2 本のデモ（U-Net / Transformer, 2026-07-08）。
-> 実装の契約（zod の I/O・SQLite の DDL・品質ループの値・トークン予算・CLI の終了コード）の正本は [契約付録](./contract-appendix.md)（会社B のレビューを受けて 2026-07-09 に確定。v1 は source-first に限定）。
+> **実装の契約（zod の I/O・SQLite の DDL・品質ループの値・トークン予算・CLI の終了コード）の正本は [契約付録](./contract-appendix.md)**（会社B のレビューを受けて 2026-07-09 に確定。v1 は source-first に限定）。
 
 ## 1. 現行 `資料/` パイプラインの要約（参考）
 
@@ -17,14 +17,14 @@
 
 **AI が担うのは本文の翻訳だけ。構造の抽出・図の検出と切り出し・数式・引用番号・組版は、決定的な処理（スクリプト・ツール）に寄せる。**
 
-- AI に渡すのは座標付きの JSON ではなく、「クリーンな生の文」（クリーンな LaTeX または Markdown）。単語ごとの bbox や座標は、翻訳する LLM にとってノイズになり、文脈を乱す。位置のメタデータはスクリプト内部の中間表現に留める。
+- AI に渡すのは座標付きの JSON ではなく、「クリーンな生の文」（クリーンな LaTeX または Markdown）。単語ごとの bbox や座標は、翻訳する LLM にとってノイズになり文脈を乱す（**コンテキスト汚染**）ので、位置のメタデータはスクリプト内部の中間表現に留める。
 - 論文の LaTeX の構造（`\section` / 段落 / `\cite`）は標準的で、形が分かっている。構造を LaTeX / Markdown の形のまま持てば、そのまま組版（build）に使え、JSON→md→LaTeX の変換の往復を避けられる。
 - この原則は JPaper の ADR（[配線=コード/判断=LLM](../adr/20260708-adopt-deterministic-agent-architecture.md)、[決定的処理はツール化](../adr/20260708-translation-pipeline-ingestion-and-figures.md)）と一致し、デモで実データでも確かめた。
 
 ## 3. 取り込み（ingestion）: source-first
 
-- arXiv の LaTeX ソースがあれば最優先で使う。数式・表・構造・引用がすべて元のまま揃うので、再構成も OCR も要らない。「クリーンな第二の LaTeX」は元の LaTeX そのものになる。
-- ソースが無い論文だけを、PDF-only の抽出経路（下記）に回す。多くの論文はソースがあるので解決でき、抽出の作り込みは少数の PDF-only の論文に向けた投資だと割り切る。
+- arXiv の LaTeX ソースがあれば**最優先**で使う。数式・表・構造・引用がすべて元のまま揃うので、再構成も OCR も要らない。「クリーンな第二の LaTeX」は元の LaTeX そのものになる。
+- **ソースが無い論文だけを、PDF-only の抽出経路（下記）に回す**。多くの論文はソースがあるので解決でき、抽出の作り込みは少数の PDF-only の論文に向けた投資だと割り切る。
 - 入力の形（source-first の受け口を広くする）: `ingest()` は次を受け付ける。
   - TeX ソースのアーカイブ（zip / tar.gz / arXiv の拡張子なし gzip-tar / 単体の .tex.gz）。明示された要件。展開して main.tex を見つけ、`\input` / `\include` と図のファイルを集めて、source の経路へ渡す。
   - arXiv ID（ソースの tarball を取得する）／ TeX ソースのディレクトリ・単一の .tex。
@@ -40,7 +40,7 @@
 | 埋め込みラスタ | `pdfimages -png` | 埋め込み画像を**元解像度で無劣化抽出** | 高（ラスタ図のみ） |
 | メタ/フォント | `pdfinfo` / `pdffonts` | ページ数・寸法・生成元・数式フォント有無 | 高 |
 
-- `pdftotext` は数式を正しく取り出せない（Attention の式で、√ の中身 `d_k` と分母が抜け落ちた）。PDF は `Tagged: no`（構造タグが無い）。
+- **`pdftotext` は数式を正しく取り出せない**（Attention の式で、√ の中身 `d_k` と分母が抜け落ちた）。PDF は `Tagged: no`（構造タグが無い）。
 - 環境: poppler 系の CLI（pdftotext/pdftocairo/pdfimages/pdffonts/pdfinfo）と PIL は使える。PyMuPDF・pdfplumber・nougat は入っていない。
 
 PDF-only の論文で、対象ごとに最もよい手段（役割分担）は次のとおり。
@@ -69,8 +69,8 @@ PDF-only の論文で、対象ごとに最もよい手段（役割分担）は�
 
 - Nougat は、Meta の学術 PDF 用のニューラル OCR。ページ画像を Markdown と LaTeX の数式（`.mmd`）へ変換する。数式を LaTeX にする手段として、現状で最良。
 - その出力（クリーンな Markdown と LaTeX の数式）は、そのまま §2 の「AI へ渡すクリーンな生の文」になる（座標の JSON は要らない）。
-- 範囲は PDF-only に限る。source がある論文には Nougat は要らない。
-- 代償: ①幻覚・繰り返しのループ（レビューか、native との突き合わせで減らす）②重く、**GPU を推奨**（モデル ~1.4GB、CPU では遅い）③出力が Markdown なので、md→LaTeX の変換段が要る（数式は既に LaTeX）④「数式=Nougat＋本文=native＋表=専用」を 1 つに揃える **alignment（継ぎ目）のコスト**。
+- **範囲は PDF-only に限る**。source がある論文には Nougat は要らない。
+- 代償: ①幻覚・繰り返しのループ（レビューが要る。native との突き合わせで減らす）②重く、**GPU を推奨**（モデル ~1.4GB、CPU では遅い）③出力が Markdown なので、md→LaTeX の変換段が要る（数式は既に LaTeX）④「数式=Nougat＋本文=native＋表=専用」を 1 つに揃える **alignment（継ぎ目）のコスト**。
 - 段階方針: まず whole-page の Nougat 単体で始めて出力をレビューする。本文や表の幻覚が問題になったら、本文=pdftotext / 表=pdfplumber を混ぜるハイブリッドへ細かく詰める。
 
 ## 8. 自動化ロードマップ（ROI 順・**未確定の計画**）
@@ -93,7 +93,7 @@ PDF-only の論文で、対象ごとに最もよい手段（役割分担）は�
   - `extract-pdf`（PDF-only: Nougat → md+LaTeX、native で本文/表を補う）
   - `detect-figures`（pdfimages ＋ bbox → `manifest.csv` を自動で作る）
   - `render-pdf-pages` / `crop-figures`（既存を流用）
-  - `assemble-latex`（訳文＋manifest → `chapters/*.tex`, `main.tex`）※レイアウトの方針は [組版レイアウト ADR](../adr/20260710-typesetting-layout-original-first-hybrid.md)。既定では元のプリアンブルを残し（§3 の「元の LaTeX そのもの」を活かして、レイアウトを忠実に保つ）、日本語で組めない論文だけ、共通の luatexja テンプレートへ明示的にフォールバックする（§9 の共通テンプレートは、ベースライン／フォールバックとして位置づけ直す）。元→テンプレートへの切り替えは `RunSummary.layout` に記録して利用者に見せる。
+  - `assemble-latex`（訳文＋manifest → `chapters/*.tex`, `main.tex`）※レイアウトの方針は [組版レイアウト ADR](../adr/20260710-typesetting-layout-original-first-hybrid.md)。**既定では元のプリアンブルを残し（§3 の「元の LaTeX そのもの」を活かして、レイアウトを忠実に保つ）、日本語で組めない論文だけ、共通の luatexja テンプレートへ明示的にフォールバックする**（§9 の共通テンプレートは、ベースライン／フォールバックとして位置づけ直す）。元→テンプレートへの切り替えは `RunSummary.layout` に記録して利用者に見せる。
 
 ## 11. 再エントリ設計（durable = ファイルの checkpoint。ライブラリは使わない）
 
@@ -102,10 +102,10 @@ PDF-only の論文で、対象ごとに最もよい手段（役割分担）は�
 - 方式は「状態はファイル」。durable 実行のライブラリ（Temporal / Restate / DBOS）も常駐サーバーも使わない。素の TS と `fs` で、checkpoint を**エージェントの呼び出しの境界に人手で置く**。
   - Flue の「Workflow は非 durable」は、「任意のコードを**自動では** checkpoint しない」という意味であって、checkpoint そのものは置ける。境界を自分で決めるこの形は、「独立して読めるワークフロー」という要件とも両立する（イベントログと manifest で状態を持つ設計と同じ形）。
   - 常駐サーバーの案は採らない: ディスクに永続化するなら本方式の作り直しになり、メモリだけなら「サーバーが落ちたら全部失う」ことになって、再起動にも耐える本方式より弱い。サーバーが要るのは、複数のクライアントや並行のオーケストレーションが必要になったときで、単発の CLI での翻訳には当たらない。
-- 保存先: 論文ごとのフォルダの下の `article/<paper>-ja/.run/steps/<step>.json`（[UI/配置 ADR](../adr/20260709-user-interface-file-layout-and-cli.md) 決定 1。見えるが触らなくてよい trace の領域）。書き込みは tmp→rename の原子的な更新で行う。
+- 保存先: 論文ごとのフォルダの下の `article/<paper>-ja/.run/steps/<step>.json`（[UI/配置 ADR](../adr/20260709-user-interface-file-layout-and-cli.md) 決定 1。見えるが触らなくてよい trace の領域）。書き込みは **tmp→rename の原子的な更新**で行う。
 - 再開: 同じ `run-id` で再実行する。各ステップを checkpoint で包み、「出力が既にあり、zod のスキーマで妥当なら、読んで skip する」（idempotent-skip）。
 - 編集による無効化: ユーザーが `glossary.md`／`brief.md`／`style.md` を編集して再実行したときは、これらを注入する**下流の翻訳ステップの checkpoint を無効化**して訳し直す（checkpoint のキーに、注入するコンテキストのハッシュを含める）。取り込み・用語の収集など、影響を受けないステップは skip のまま。
-- リトライは一時的なエラーだけ（API のタイムアウト・429・瞬断を、数回バックオフして）。ビルドの失敗・図の欠落・品質の未達など、タスク自体の失敗はリトライせず、明示的にエラーにする（境界は [品質ゲート ADR](../adr/20260708-quality-gate-machine-vs-llm-and-explicit-failure.md) 決定 3）。
+- **リトライは一時的なエラーだけ**（API のタイムアウト・429・瞬断を、数回バックオフして）。ビルドの失敗・図の欠落・品質の未達など、タスク自体の失敗はリトライせず、明示的にエラーにする（境界は [品質ゲート ADR](../adr/20260708-quality-gate-machine-vs-llm-and-explicit-failure.md) 決定 3）。
 - 実装のイメージ:
 
 ```ts
@@ -151,7 +151,7 @@ async function checkpoint<T>(runDir, stepId, schema, fn: () => Promise<T>): Prom
 
 1. 役割の定義: translator / evaluator / glossary-builder それぞれが何をする役か（「本文だけ訳す」など）
 2. 共通の規約: 責務の境界（構造・数式・図・引用はコードが持ち、AI は本文だけ）と、出力の契約（zod に載る JSON）。全 agent で重複させず、1 か所に置く。
-3. run-context: 論文のメタ情報と、**論文ごとの確定辞書・rendering のルール・文書ブリーフ(`brief.md`)・文体契約(`style.md`)**を動的に注入する（[翻訳一貫性 ADR](../adr/20260710-translation-consistency-brief-style-and-annotations.md) 決定 1。並列に翻訳しても、主張の強さと文体を文書全体で揃えるための元になる）。
+3. run-context: 論文のメタ情報と、**論文ごとの確定辞書・rendering のルール・文書ブリーフ(`brief.md`)・文体契約(`style.md`)** を動的に注入する（[翻訳一貫性 ADR](../adr/20260710-translation-consistency-brief-style-and-annotations.md) 決定 1。並列に翻訳しても、主張の強さと文体を文書全体で揃えるための元になる）。
 
 落とす 2 つ: 日時（論文の翻訳に関係なく、YAGNI）、skill の段階的な読み込み（用語 DB の retrieval がその役割を果たすので、汎用の skill の仕組みは当面要らない）。
 
@@ -174,6 +174,6 @@ async function checkpoint<T>(runDir, stepId, schema, fn: () => Promise<T>): Prom
 
 - 文書ブリーフと文体契約（決定 1）: glossary-builder が全文を 1 回読むときの副産物として、`brief.md`（主張の構造・記法の規約）と `style.md`（既定=である調・常体）を確定・ロックし、すべての translator の run-context に注入する。両者は `<paper>-ja/` にあり、見えて編集できる。研究にある「試訳で先に文体を固定する」ことを、新しいステージなしで実現する。
 - evaluator の評価軸の明文化（決定 2）: 主張の強さ・hedging・統計語（`significantly`=有意）・単位の表記を評価軸に加える。
-- 訳注（決定 3）: 採否は決定的な trigger（paper-defined の preserve／低確信=DB に confirmed が無い／evaluator の warn）、文面は LLM。データは (A) の `notes.json` と `glossary.md` の印で作り、PDF には (B) で**文書の初出だけ脚注にし、巻末に「訳注一覧」**を描く。PDF しか読まない使い方でも訳注が届く。
+- 訳注（決定 3）: 採否は決定的な trigger（paper-defined の preserve／低確信=DB に confirmed が無い／evaluator の warn）、文面は LLM。データは (A) の `notes.json` と `glossary.md` の印で作り、PDF には (B) で**文書の初出だけ脚注にし、巻末に「訳注一覧」を描く**。PDF しか読まない使い方でも訳注が届く。
 - 言語整合の lint（決定 4）: 単位・略語の初出・表記ゆれの決定的な検査を (B) の全文ゲートへ入れる（PerfectIt 相当まで）。
 - 落とし穴の skill（決定 5）: 統計語・SI・false friend の注意リストを [`.agents/skills/translation-pitfalls`](../../.agents/skills/translation-pitfalls/SKILL.md) に置き、**evaluator だけ**に段階的に読ませる。DB は空で始める方針を保つ。

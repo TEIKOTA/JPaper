@@ -121,7 +121,7 @@
    - `\address`: elsarticle は `[label]{}` で格納、iopart はその場で組む、MDPI は格納
    - `\author` の任意引数: authblk/PNAS/elsarticle では所属ラベル、jmlr.cls/acmart では短縮名、iopart では `cor1`。sn-jnl は星付き、CAS は後置 `[orcid=…]`
 
-   命令名から引数の仕様を読み取る処理は、プロファイルごとに変える。
+   `\` 名から引数の仕様を読み取る処理は、プロファイルごとに変える。
 8. **空白・改行を挟む引数**: `\title [mode = title]{…}`（CAS）、`\affiliations {`（AAAI 例）、`\author {`。命令と `[`/`{` の間の空白を許容する。
 9. **走行タイトルの書式が `\cmd{…}` だけではない**: `\renewcommand{\shorttitle}{…}`（arxiv.sty。ここで `{\shorttitle}` が現れる）、`\markboth{}{}`、`\ShortHeadings{}{}`、`\hypersetup{pdftitle=…}`、旧 AAAI/IJCAI の `\pdfinfo{/Title (…)}`、`\title[短縮]{…}` の任意引数、`\icmltitlerunning`（前文）。「定義命令の直後の `\title` は拾わない」という既存規則は、`\renewcommand{\shorttitle}` にも適用する必要がある。
 10. **前文での再定義**: `\let\lncsemail\email \renewcommand{\email}[1]{…}`（2605.18329）。`\newcommand`/`\let`/`\def` の直後にある front matter 命令名は、使用箇所として扱わない。
