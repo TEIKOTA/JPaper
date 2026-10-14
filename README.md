@@ -1,8 +1,8 @@
 # JPaper
 
-> English summary: JPaper translates academic papers into Japanese. It takes the LaTeX source of a paper (an arXiv ID, a zip or tar.gz archive, or a directory) and produces a typeset Japanese PDF and a landscape side-by-side PDF (original on the left, Japanese on the right), along with a per-paper glossary. Translation and quality review are done by an LLM (Claude Code CLI, Codex CLI, Ollama or OpenRouter), while the control flow, retry limits and formal checks are plain TypeScript. Japanese is the only target language, and the rest of this README and the documentation are written in Japanese. Requirements: Node.js 22.5+, pnpm 10+, LaTeX (LuaLaTeX and latexmk) and one of the LLM providers above. Licensed under the MIT License.
+> English summary: JPaper translates academic papers into Japanese. It takes the LaTeX source of a paper (an arXiv ID, a .tex file, a zip or tar.gz archive, or a directory) and produces a typeset Japanese PDF and a landscape side-by-side PDF (original on the left, Japanese on the right), along with a per-paper glossary. Translation and quality review are done by an LLM (Claude Code CLI, Codex CLI, Ollama or OpenRouter), while the control flow, retry limits and formal checks are plain TypeScript. Japanese is the only target language, and the rest of this README and the documentation are written in Japanese. Requirements: Node.js 22.5+, pnpm 10+, LaTeX (LuaLaTeX and latexmk) and one of the LLM providers above. Licensed under the MIT License.
 
-学術論文の和訳に最適化した、決定的に動く専用のエージェント。agent-native な設計の原則（配線はコード、内容の判断は LLM）に従い、配線は YAML ではなく素の TypeScript のワークフローとして書く。Flue の Agent と Workflow の分け方を参考に、薄い自作のランタイムで実装している。
+学術論文の**和訳に最適化した決定的専門エージェント**。agent-native な設計の原則（**配線はコード、内容の判断は LLM**）に従い、配線は YAML ではなく素の TypeScript のワークフローとして書く。Flue の Agent と Workflow の分け方を参考に、薄い自作のランタイムで実装している。
 
 採用したアーキテクチャの方針は [`docs/adr/`](./docs/adr/) を参照。
 
@@ -58,7 +58,7 @@ claude・codex では、翻訳の前に用語集の訳を CLI の Web 検索で�
 
 ### LLM プロバイダ
 
-LLM プロバイダは `LlmClient` の境界で差し替えられる。ローカルの Ollama、公式 CLI を子プロセスで動かすクラウド（`claude -p` / `codex exec`）、OpenRouter（OpenAI 互換 API）の 4 つの実装があり、`--provider {ollama|claude|codex|openrouter}` は必須で既定は無い。claude と codex には `--model` / `--effort` を渡せて、指定しなければ最新の中位モデル（claude は Sonnet、codex は Sol）と effort medium を使う。LLM クライアントは薄い自作のランタイムの中に閉じ込めている（[プロバイダ ADR](./docs/adr/20260709-llm-provider-abstraction-local-ollama-and-cloud-cli.md)）。
+LLM プロバイダは `LlmClient` の境界で差し替えられる。ローカルの Ollama、公式 CLI を子プロセスで動かすクラウド（`claude -p` / `codex exec`）、OpenRouter（OpenAI 互換 API）の 4 つの実装があり、`--provider {ollama|claude|codex|openrouter}` は**必須（既定なし）**。claude と codex では `--model` / `--effort` を CLI に渡し、指定しなければ最新の中位モデル（claude は Sonnet、codex は Sol）と effort medium を使う。LLM クライアントは薄い自作のランタイムの中に閉じ込める（[プロバイダ ADR](./docs/adr/20260709-llm-provider-abstraction-local-ollama-and-cloud-cli.md)）。
 
 ### Web アプリ（検索・翻訳・用語集）
 
@@ -66,7 +66,7 @@ LLM プロバイダは `LlmClient` の境界で差し替えられる。ローカ
 pnpm dev:web
 ```
 
-ブラウザで `http://127.0.0.1:5173` を開くと、`article/` の論文と用語集、全体の用語 DB を見られる。用語の行から訳語を直すと、訳文での出現箇所を原文の対応箇所と並べて確かめてから置換し、和訳 PDF と対訳 PDF を組み直す。この置換に LLM は使わず、直前の 1 回は元に戻せる。データの場所は CLI と同じ既定（CWD の `article/` と `~/.jpaper/glossary.db`）で、`JPAPER_ARTICLE_DIR`・`JPAPER_GLOSSARY_DB` で変えられる。`127.0.0.1` だけで待ち受け、認証は持たない。仕様の正本は [契約付録 §9](./docs/design/contract-appendix.md)。
+ブラウザで `http://127.0.0.1:5173` を開くと、`article/` の論文と用語集、全体の用語 DB を見られる。用語の行から訳語を直すと、訳文での出現箇所を原文の対応箇所と合わせて確かめてから置換し、和訳 PDF と対訳 PDF を組み直す。置換にも組み直しにも LLM は使わず、直前の 1 回は元に戻せる。データの場所は CLI と同じ既定（CWD の `article/` と `~/.jpaper/glossary.db`）で、`JPAPER_ARTICLE_DIR`・`JPAPER_GLOSSARY_DB` で変えられる。`127.0.0.1` だけで待ち受け、認証は持たない。仕様の正本は [契約付録 §9](./docs/design/contract-appendix.md)。
 
 画面は次の 3 つ。
 
