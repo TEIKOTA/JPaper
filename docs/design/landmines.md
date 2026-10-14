@@ -266,3 +266,9 @@
 - **おかしく見える点**: ほかの箇所は行コメントを先に落とすのに、抜粋の `proseOnly` は verbatim（`\verb|…|` を含む）を先に外してから行コメントを落とす。
 - **なぜ意図的か**: 先にコメントを落とすと、`\verb|50%|` の `%|` 以降が行コメントとして消えて `\verb` の閉じが失われ、次の `|`（表の書式や `$|x|$`）まで、無ければ本文の末尾までが verbatim とみなされて、その間の見出しが抜粋から消える。
 - **正本ポインタ**: 契約付録 §4（glossary-builder に渡す本文の抜粋）。回帰テストは `src/terminology/paper-excerpt.test.ts`。
+
+## `bin/jpaper.mjs` — tsx の `register()` に repo の `tsconfig.json` を明示して渡す
+
+- **おかしく見える点**: `register()` を引数なしで呼べば tsx が tsconfig を探してくれるのに、わざわざ repo の `tsconfig.json` の path を渡している。
+- **なぜ意図的か**: tsx は既定で、起動した場所（cwd）から上へ tsconfig.json を探し、その設定を repo の `src/*.ts` にも当てる。`jpaper` は任意のディレクトリで起動するので、そこにある tsconfig の `paths`（例: `{"zod": ["./evil.ts"]}`）で repo の依存を差し替えられ、clone しただけの信頼できないディレクトリで `jpaper` を実行するだけで任意のコードが走る（独立レビューで再現: `EVIL LOADED` の後に `z.enum is not a function`）。悪意が無くても、`paths` を持つ別の TS プロジェクトの中で起動すると CLI が動かなくなる。repo の tsconfig に固定すると、起動した場所に依らず同じ設定で読む。
+- **正本ポインタ**: 契約付録 §5（jpaper コマンド）、issue #367。回帰テストは `src/cli-bin.test.ts`（cwd に細工した tsconfig を置く）。

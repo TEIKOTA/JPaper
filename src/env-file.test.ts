@@ -142,9 +142,12 @@ describe("CLI の入口", () => {
     const src = readFileSync(path.join(import.meta.dirname, "cli.ts"), "utf8");
     const main = src.indexOf("export async function main(");
     expect(main).toBeGreaterThan(-1);
+    const guard = src.indexOf("if (import.meta.url === `file://${process.argv[1]}`)");
+    expect(guard).toBeGreaterThan(main);
     const calls = [...src.matchAll(/loadDotEnv\(/g)].map((m) => m.index);
     expect(calls).toHaveLength(1);
     expect(calls[0]).toBeGreaterThan(main);
+    expect(calls[0]).toBeLessThan(guard);
     expect(src.indexOf("export async function runCli(")).toBeLessThan(main);
   });
 });
