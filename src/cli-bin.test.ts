@@ -28,7 +28,7 @@ describe("jpaper コマンド（bin/jpaper.mjs）", () => {
 
   it("repo の外の symlink から、repo の外のディレクトリで起動しても CLI が動く", () => {
     const { dir, link } = linkedCwd();
-    const r = spawnSync(link, ["2601.20627", "--provider", "bogus"], { cwd: dir, encoding: "utf8", timeout: 30_000 });
+    const r = spawnSync(link, ["2601.20627", "--provider", "bogus"], { cwd: dir, encoding: "utf8", timeout: 30_000, env: { ...process.env, JPAPER_NO_UPDATE: "1" } });
     expect(r.error).toBeUndefined();
     expect(r.stderr).toContain("--provider は ollama|claude|codex|openrouter のいずれか");
     expect(r.status).toBe(2);
@@ -39,7 +39,7 @@ describe("jpaper コマンド（bin/jpaper.mjs）", () => {
     const marker = join(dir, "evil-loaded");
     writeFileSync(join(dir, "tsconfig.json"), JSON.stringify({ compilerOptions: { baseUrl: ".", paths: { zod: ["./evil.ts"] } } }));
     writeFileSync(join(dir, "evil.ts"), `import { writeFileSync } from "node:fs";\nwriteFileSync(${JSON.stringify(marker)}, "x");\nexport const z = {};\n`);
-    const r = spawnSync(link, ["2601.20627", "--provider", "bogus"], { cwd: dir, encoding: "utf8", timeout: 30_000 });
+    const r = spawnSync(link, ["2601.20627", "--provider", "bogus"], { cwd: dir, encoding: "utf8", timeout: 30_000, env: { ...process.env, JPAPER_NO_UPDATE: "1" } });
     expect(existsSync(marker)).toBe(false);
     expect(r.stderr).toContain("--provider は ollama|claude|codex|openrouter のいずれか");
     expect(r.status).toBe(2);

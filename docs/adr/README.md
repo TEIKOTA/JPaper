@@ -105,3 +105,4 @@
 | 2026-10-15 | [PDF 入力は、本文の語句をテキスト層から取り、数式と構造だけを LLM にページ画像から起こさせる](./20261015-pdf-input-text-layer-as-source-llm-rebuilds-math.md) | accepted |
 | 2026-10-15 | [指定した文字列は取り込みの段で *** に置き換え、どの LLM 呼び出しにも渡さない](./20261015-redact-terms-at-ingest-never-send-to-llm.md) | accepted |
 | 2026-10-15 | [public の repo では、main への merge に CI の全ジョブの成功を要する](./20261015-require-ci-checks-on-public-repo.md) | accepted |
+| 2026-10-15 | [jpaper の起動時に、早送りで追いつける repo の更新を取り込んでから動かす](./20261015-pull-updates-on-jpaper-launch.md) | accepted |
