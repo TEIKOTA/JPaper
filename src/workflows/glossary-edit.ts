@@ -83,7 +83,7 @@ import {
   titleSlice,
   type StepContext,
 } from "./step-keys.js";
-import { inputSignature, translatePaper, VERIFY_STEP } from "./translate-paper.js";
+import { inputSignature, SHARED_DEFAULT_NOTICE, translatePaper, VERIFY_STEP } from "./translate-paper.js";
 
 // 節の checkpoint と分割が一致する文脈長を探す候補。契約付録 §9
 export const CONTEXT_WINDOW_CANDIDATES: readonly number[] = [
@@ -642,8 +642,6 @@ export interface RetypesetOutcome {
   llmCalls: string[];
   notices: string[];
 }
-
-const SHARED_DEFAULT_NOTICE = "単一ユーザ既定を使用";
 
 // 契約付録 §9。呼ばれたら失敗するクライアントで translatePaper を回し、checkpoint から組版だけを行う。
 export async function retypesetWithoutLlm(state: PaperState, deps: EditDeps = {}): Promise<RetypesetOutcome> {

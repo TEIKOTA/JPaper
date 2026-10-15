@@ -4,7 +4,7 @@ import path from "node:path";
 import { describe, it, expect } from "vitest";
 import { runCli, formatProgress, USAGE, wantsHelp } from "./cli.js";
 import type { Result } from "./types/contract.js";
-import type { TranslateOptions } from "./workflows/translate-paper.js";
+import { SHARED_DEFAULT_NOTICE, type TranslateOptions } from "./workflows/translate-paper.js";
 
 const okResult: Result = {
   status: "ok",
@@ -99,6 +99,24 @@ describe("--help（契約付録 §5・issue #371）", () => {
 });
 
 describe("runCli", () => {
+  it("単一ユーザ既定の通知は stderr に出さず、他の通知は「エラー: 」を付けて出す（issue #412）", async () => {
+    let err = "";
+    const code = await runCli(["node", "jpaper", "1706.03762", "--provider", "claude"], {
+      stdout: () => {},
+      stderr: (s) => (err += s),
+      translate: async (_input, _opts, deps) => {
+        deps?.onError?.(
+          `${SHARED_DEFAULT_NOTICE}: db, cacheKey, limits, work（マルチテナントでは dbPath / cacheKey / outDir / limits / work を明示的に渡すこと）`,
+        );
+        deps?.onError?.("checkpoint を読めません");
+        return okResult;
+      },
+    });
+    expect(code).toBe(0);
+    expect(err).not.toContain(SHARED_DEFAULT_NOTICE);
+    expect(err).toContain("エラー: checkpoint を読めません\n");
+  });
+
   it("--provider 未指定は exit 2", async () => {
     const code = await runCli(["node", "jpaper", "1706.03762"], {
       stderr: () => {},
