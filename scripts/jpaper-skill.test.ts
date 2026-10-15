@@ -4,6 +4,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { parse } from "yaml";
 import { BOOL_FLAGS, VALUE_FLAGS } from "../src/cli.js";
+import { RunSummary } from "../src/types/contract.js";
 import { checkSkill, splitFrontmatter } from "./check-skill-frontmatter.js";
 
 const ROOT = path.join(import.meta.dirname, "..");
@@ -48,7 +49,9 @@ describe("/jpaper skill（issue #424）", () => {
     expect(failure).toContain("gh issue list --repo TEIKOTA/JPaper --state all");
     expect(failure).toContain("gh pr list --repo TEIKOTA/JPaper --state all");
     expect(failure).toContain("失敗したときに消えるので残らない");
-    expect(failure).toContain("`bilingual`");
+    const keys = /RunSummary`）の ((?:`[A-Za-z]+`・?)+)/.exec(failure)?.[1];
+    expect(keys).toBeDefined();
+    for (const k of [...keys!.matchAll(/`([A-Za-z]+)`/g)].map((m) => m[1]!)) expect(Object.keys(RunSummary.shape), k).toContain(k);
     expect(existsSync(path.join(ROOT, ".github", "ISSUE_TEMPLATE", "bug-report.md"))).toBe(true);
   });
 
