@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { makeRedactor, redactText } from "../../../../src/ingest/redact.js";
 import { hyphenated as cliHyphenated, joinWords, spaceBetween as cliSpaceBetween, JOIN_GAP as CLI_JOIN_GAP } from "../../../../src/ingest/pdf/redact-pdf.js";
 import { hyphenated, JOIN_GAP, spaceBetween, termFromWords, validTerm, wordsInRect } from "./RedactPanel.js";
 import { dropAction, droppedPdf, formReady, parseTermLines } from "./TranslatePage.js";
@@ -18,6 +19,8 @@ describe("伏せ字の範囲選択（画面）", () => {
     expect(validTerm("Y")).toBe(false);
     expect(validTerm("a\tb")).toBe(false);
     expect(validTerm("#ProjectX")).toBe(false);
+    expect(validTerm("a-")).toBe(false);
+    expect(validTerm("a-b")).toBe(true);
   });
 
   it("伏せ字のファイルは 1 行 1 語。空行と # の行は読まず、形が違えば undefined", () => {
@@ -52,15 +55,17 @@ describe("伏せ字の範囲選択（画面）", () => {
     }
   });
 
-  it("行末で分綴した語は、- を落としてつなぐ（CLI の joinWords と同じ文字列）", () => {
+  it("行末で分綴した語は - を残して空白なしでつなぎ、CLI の joinWords の文字列に当たる", () => {
     const words = [
       { text: "deep", x0: 385.7, y0: 641.8, x1: 407.7, y1: 652.8 },
       { text: "neu-", x0: 410.2, y0: 641.8, x1: 431.3, y1: 652.8, eol: true },
       { text: "ral", x0: 72.7, y0: 655.3, x1: 85.0, y1: 666.2 },
       { text: "network", x0: 87.4, y0: 655.3, x1: 126.1, y1: 666.2 },
     ];
-    expect(termFromWords(words)).toBe("deep neural network");
-    expect(termFromWords(words)).toBe(joinWords(words).joined);
+    expect(termFromWords(words)).toBe("deep neu-ral network");
+    const r = makeRedactor([termFromWords(words)], Buffer.alloc(32))!;
+    expect(redactText(joinWords(words).joined, r).replaced).toBe(1);
+    expect(redactText("a deep neu-ral network", r).replaced).toBe(1);
   });
 
   it("伏せ字の語のファイルを読んでいる間・形が誤りの間、テキスト層と合わない間は、翻訳を始めない", () => {

@@ -13,7 +13,7 @@ const MIN_CHARS = 2;
 const MAX_CHARS = 200;
 const DEBOUNCE_MS = 250;
 
-// この幅（pt）未満の隙間で縦に重なる隣の語は空白なしで、行末（段の最後の行を除く。eol）が - の語は - を落として次の語へ空白なしでつなぐ。
+// この幅（pt）未満の隙間で縦に重なる隣の語は空白なしで、行末（段の最後の行を除く。eol）が - の語は次の語へ空白なしでつなぐ。
 // ⚠ CLI の src/ingest/pdf/redact-pdf.ts の JOIN_GAP・spaceBetween・hyphenated と同じ規則（RedactPanel.test.ts で突き合わせる）。
 export const JOIN_GAP = 0.25;
 
@@ -25,13 +25,14 @@ export function hyphenated(w: { text: string; eol?: boolean }): boolean {
   return w.eol === true && w.text.endsWith("-");
 }
 
-// 選んだ語をテキスト層と同じようにつないだ文字列から、前後の句読点・括弧を落とす。
+// 選んだ語をテキスト層と同じようにつないだ文字列（行末の分綴の - は残す）から、前後の句読点・括弧を落とす。
 export function termFromWords(words: readonly (WordBox & { text: string; eol?: boolean })[]): string {
   return words
     .map((w, i) => {
       const prev = words[i - 1];
       const sep = prev !== undefined && !hyphenated(prev) && spaceBetween(prev, w) ? " " : "";
-      return sep + (hyphenated(w) && i < words.length - 1 ? w.text.slice(0, -1) : w.text);
+      // 行末で分綴した語は - を残す（語の中の - は無くても当たるので、分綴で落ちた形にもハイフン入りの語の形にも当たる）。
+      return sep + w.text;
     })
     .join("")
     .replace(/^[\s,.;:!?()[\]{}"'“”‘’]+|[\s,.;:!?()[\]{}"'“”‘’]+$/g, "");
@@ -39,8 +40,9 @@ export function termFromWords(words: readonly (WordBox & { text: string; eol?: b
 
 export function validTerm(term: string): boolean {
   const n = [...term].length;
-  // # で始まる語は --redact-file でコメントの行になるので受けない。
-  return n >= MIN_CHARS && n <= MAX_CHARS && !/[\x00-\x1f\x7f]/.test(term) && !term.startsWith("#");
+  // # で始まる語は --redact-file でコメントの行になるので受けない。- と空白を除いても MIN_CHARS 以上（CLI と同じ）。
+  const core = [...term.replace(/[-\s]/g, "")].length;
+  return n >= MIN_CHARS && n <= MAX_CHARS && core >= MIN_CHARS && !/[\x00-\x1f\x7f]/.test(term) && !term.startsWith("#");
 }
 
 // 範囲（pt）に重なる語を、上から・左から順に返す。
