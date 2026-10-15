@@ -8,7 +8,7 @@
 
 ## 何をするか
 
-- **入力**: 学術論文の LaTeX ソース（arXiv、zip・tar.gz）を最優先で扱う。ソースが無く PDF しか無い論文は Phase2（Nougat などによる抽出）で対応する。
+- **入力**: 学術論文の LaTeX ソース（arXiv、zip・tar.gz）を最優先で扱う。ソースが無く PDF しか無い論文・書籍（テキスト層のあるもの）は、本文の語句をテキスト層から取り、数式と構造を LLM にページ画像から起こさせて訳す方針で、実装はこれから（[PDF 入力 ADR](./docs/adr/20261015-pdf-input-text-layer-as-source-llm-rebuilds-math.md)、#385）。
 - **出力**: 日本語 PDF（LuaLaTeX で組版）と、横長（A4 縦 2 枚分）で左に原文、右に和訳を並べた対訳 PDF。
   - ファイル名は `<ID>_<短い英語名>-ja.pdf`・`<ID>_<短い英語名>-bilingual.pdf` で、出力先の直下に置く（例 `2507.17845_pathorob-ja.pdf`）。短い英語名はタイトルを訳すときに LLM が決め、決まらなければ `2507.17845-ja.pdf` になる（[成果物 PDF の名前 ADR](./docs/adr/20261007-name-deliverable-pdfs-by-id-and-slug.md)）。
   - 対訳 PDF は `--no-bilingual` を付けると作らない。対訳の組版だけが失敗しても run は成功し、`RunSummary.bilingual` とエラー出力に理由が出る（[対訳 PDF ADR](./docs/adr/20261006-bilingual-side-by-side-pdf.md)）。

@@ -1,7 +1,7 @@
 # 契約付録（実装契約の正本）— source-first コア v1
 
 > 会社B（実装ベンダー）へ渡す**実装契約の正本**。ADR が「なぜ」を、本書が「何を・どの形で・どの値で」を固定する。zod は実装時に `src/` へ写し、ここを唯一の参照元とする。乖離は変更管理の対象。
-> スコープ: **v1 = source-first（arXiv LaTeX ソース有り）に限定**。PDF-only 抽出（Nougat/GPU/Docker/Python 依存）は **Phase2（別フェーズ・T&M）**。関連 ADR: [基盤](../adr/20260708-adopt-deterministic-agent-architecture.md) / [品質ゲート](../adr/20260708-quality-gate-machine-vs-llm-and-explicit-failure.md) / [2層化](../adr/20260709-quality-gate-two-layer-and-build-error-triage.md) / [用語](../adr/20260709-terminology-architecture-two-tier-classified-glossary.md) / [プロバイダ](../adr/20260709-llm-provider-abstraction-local-ollama-and-cloud-cli.md) / [UI/配置](../adr/20260709-user-interface-file-layout-and-cli.md)。
+> スコープ: **v1 = source-first（arXiv LaTeX ソース有り）に限定**。PDF 入力は [PDF 入力 ADR](../adr/20261015-pdf-input-text-layer-as-source-llm-rebuilds-math.md) で方針を決めた（本文の語句はテキスト層、数式と構造は LLM がページ画像から起こす。Nougat は使わない）。契約は実装（#385）と同時に本書へ追記する。関連 ADR: [基盤](../adr/20260708-adopt-deterministic-agent-architecture.md) / [品質ゲート](../adr/20260708-quality-gate-machine-vs-llm-and-explicit-failure.md) / [2層化](../adr/20260709-quality-gate-two-layer-and-build-error-triage.md) / [用語](../adr/20260709-terminology-architecture-two-tier-classified-glossary.md) / [プロバイダ](../adr/20260709-llm-provider-abstraction-local-ollama-and-cloud-cli.md) / [UI/配置](../adr/20260709-user-interface-file-layout-and-cli.md)。
 
 ## 1. エージェント I/O（zod スキーマ）
 
@@ -187,7 +187,7 @@ CREATE INDEX idx_term_src ON term(src);
 
 - **(A) 固定価格 = コア**: 用語 DB（`node:sqlite`）／薄いランタイム＋エージェント配線／節ループ品質ゲート（形式検査＋evaluator＋再訳）／durable checkpoint／CLI・プロバイダ。§1–6・§8 の契約で確定。
 - **(B) 上限付き T&M = 組版・図・引用レイヤ**: `assemble-latex`（訳文＋manifest→`main.tex`/chapters。**既定は原プリアンブル温存＝レイアウト忠実、日本語で組めない論文は共通 luatexja テンプレへ明示的フォールバックし `RunSummary.layout` に記録**。[組版レイアウト ADR](../adr/20260710-typesetting-layout-original-first-hybrid.md)）／共通プリアンブル・引用マクロ・日本語フォント設定は原プリアンブルへ注入する共有部品（luatexja は `\documentclass` の直後、ほかは前文の末尾。組立時に `\caption` 内の空行を `%` 行にし、論文の `\newcommand{\mc}` / `{\gt}` を `\DeclareRobustCommand` に替える。issue #320）／全文組版ゲートのビルドエラー分類＋エラー行→セグメント逆引き／`.bbl` 番号順パース＋`\cite`→番号対応表／図 manifest／**言語整合 lint（[翻訳一貫性 ADR](../adr/20260710-translation-consistency-brief-style-and-annotations.md) 決定4: 単位 SI 表記・略語初出定義・glossary 外の訳語表記ゆれ・数字表記を決定的に検査。PerfectIt 相当まで許容）**／**訳注レンダリング（決定3: `notes.json`→本文の文書初出のみ `\footnote`＋巻末「訳注一覧」）**。工数の幅が大きいため実費上限方式。
-- **Phase2（別フェーズ）**: PDF-only 抽出（Nougat/GPU/Docker/`nougat-ocr`/`pymupdf`/`pdfplumber`）／`.bbl` 著者年スタイル／`glossary.db` 並行実行。
+- **Phase2（別フェーズ）**: `.bbl` 著者年スタイル／`glossary.db` 並行実行。PDF-only 抽出は Phase2 から外し、[PDF 入力 ADR](../adr/20261015-pdf-input-text-layer-as-source-llm-rebuilds-math.md)（Nougat・`pymupdf`・`pdfplumber` を使わない）で扱う。
 
 ## 7.5 (A) コアの受け入れ条件（(B) 非依存で定義）
 
