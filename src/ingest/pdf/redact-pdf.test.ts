@@ -70,4 +70,15 @@ describe("テキスト層と同じつなぎ方", () => {
     const hx = `<flow><block><line>${W("Kobaya-", 300, 700, 330, 710)}</line></block></flow><flow><block><line>${W("shi", 72, 100, 85, 110)}</line></block></flow>`;
     expect(joinWords(pageWords(hx)).joined).toBe("Kobaya- shi");
   });
+
+  it("行末で分綴したハイフン入りの語（Jean- / Pierre）も当て、両方の語を塗る", () => {
+    const hx = [
+      `<line>${W("by", 300, 100, 310, 110)}${W("Jean-", 312, 100, 340, 110)}</line>`,
+      `<line>${W("Pierre", 72, 112, 100, 122)}${W("here", 104, 112, 120, 122)}</line>`,
+    ].join("");
+    const r = makeRedactor(["Jean-Pierre"], Buffer.alloc(32, 1))!;
+    const { boxes, hits } = redactionBoxes(pageWords(hx), r, 0);
+    expect(hits).toBe(1);
+    expect(boxes.map((b) => b.x0)).toEqual([312, 72]);
+  });
 });

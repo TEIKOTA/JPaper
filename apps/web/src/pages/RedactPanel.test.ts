@@ -18,6 +18,8 @@ describe("伏せ字の範囲選択（画面）", () => {
     expect(validTerm("Y")).toBe(false);
     expect(validTerm("a\tb")).toBe(false);
     expect(validTerm("#ProjectX")).toBe(false);
+    expect(validTerm("a-")).toBe(false);
+    expect(validTerm("a-b")).toBe(true);
   });
 
   it("伏せ字のファイルは 1 行 1 語。空行と # の行は読まず、形が違えば undefined", () => {

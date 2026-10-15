@@ -28,6 +28,9 @@ export interface RedactCount {
   replaced: number;
 }
 
+// - と空白を除いた文字数（語の中の - は無くても当てるので、これも MIN_TERM_CHARS 以上を求める）。
+const coreChars = (s: string): number => [...s.replace(/[-\s]/g, "")].length;
+
 const escape = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 // 伏せ字のファイル（1 行 1 語。空行と # で始まる行は読まない）を読む。誤りの文には語を載せない（行番号だけ）。
@@ -38,8 +41,8 @@ export function checkRedactTerms(terms: readonly unknown[]): string[] {
   const checked = terms.map((t, i) => {
     const s = typeof t === "string" ? t.trim() : "";
     const chars = [...s].length;
-    if (chars < MIN_TERM_CHARS || chars > MAX_TERM_CHARS || /[\x00-\x1f\x7f]/.test(s) || s.startsWith("#")) {
-      throw new JpaperError(2, "input", `redact の ${String(i + 1)} 語目は ${String(MIN_TERM_CHARS)}〜${String(MAX_TERM_CHARS)} 文字の、改行を含まず # で始まらない文字列にしてください`);
+    if (chars < MIN_TERM_CHARS || chars > MAX_TERM_CHARS || coreChars(s) < MIN_TERM_CHARS || /[\x00-\x1f\x7f]/.test(s) || s.startsWith("#")) {
+      throw new JpaperError(2, "input", `redact の ${String(i + 1)} 語目は ${String(MIN_TERM_CHARS)}〜${String(MAX_TERM_CHARS)} 文字（- を除いて ${String(MIN_TERM_CHARS)} 文字以上）の、改行を含まず # で始まらない文字列にしてください`);
     }
     return s;
   });
@@ -52,11 +55,11 @@ export function parseRedactTerms(text: string): string[] {
     const line = raw.trim();
     if (line === "" || line.startsWith("#")) continue;
     const chars = [...line].length;
-    if (chars < MIN_TERM_CHARS || chars > MAX_TERM_CHARS || /[\x00-\x1f\x7f]/.test(line)) {
+    if (chars < MIN_TERM_CHARS || chars > MAX_TERM_CHARS || coreChars(line) < MIN_TERM_CHARS || /[\x00-\x1f\x7f]/.test(line)) {
       throw new JpaperError(
         2,
         "input",
-        `--redact-file の ${String(i + 1)} 行目の語は ${String(MIN_TERM_CHARS)}〜${String(MAX_TERM_CHARS)} 文字にしてください`,
+        `--redact-file の ${String(i + 1)} 行目の語は ${String(MIN_TERM_CHARS)}〜${String(MAX_TERM_CHARS)} 文字（- を除いて ${String(MIN_TERM_CHARS)} 文字以上）にしてください`,
       );
     }
     terms.add(line);
@@ -69,7 +72,9 @@ export function makeRedactor(terms: readonly string[], key: Buffer): Redactor | 
   if (terms.length === 0) return undefined;
   // 長い語から当てる（"Taro Yamada" を "Yamada" より先に）。語の中の空白は改行を含む空白の並びに当てる。
   // 語の中の - は無くても当てる（行末で分綴すると PDF のテキスト層では - が落ちる）。契約付録 §8（伏せ字）
-  const sorted = [...terms].sort((a, b) => b.length - a.length || (a < b ? -1 : 1));
+  // 長さは語の中の - を除いて数える（- を省いて当たる長さ）。
+  const len = (t: string): number => t.replace(/(?<=.)-(?=.)/g, "").length;
+  const sorted = [...terms].sort((a, b) => len(b) - len(a) || b.length - a.length || (a < b ? -1 : 1));
   const word = (w: string): string => w.split(/(?<=.)-(?=.)/).map(escape).join("-?");
   const pattern = new RegExp(sorted.map((t) => t.split(/\s+/).map(word).join(GAP)).join("|"), "g");
   const h = createHmac("sha256", key).update("jpaper-redact\0").update(REDACT_RULES_VERSION).update("\0");

@@ -39,8 +39,9 @@ export function termFromWords(words: readonly (WordBox & { text: string; eol?: b
 
 export function validTerm(term: string): boolean {
   const n = [...term].length;
-  // # で始まる語は --redact-file でコメントの行になるので受けない。
-  return n >= MIN_CHARS && n <= MAX_CHARS && !/[\x00-\x1f\x7f]/.test(term) && !term.startsWith("#");
+  // # で始まる語は --redact-file でコメントの行になるので受けない。- と空白を除いても MIN_CHARS 以上（CLI と同じ）。
+  const core = [...term.replace(/[-\s]/g, "")].length;
+  return n >= MIN_CHARS && n <= MAX_CHARS && core >= MIN_CHARS && !/[\x00-\x1f\x7f]/.test(term) && !term.startsWith("#");
 }
 
 // 範囲（pt）に重なる語を、上から・左から順に返す。

@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { controlWordHits, makeRedactor, parseRedactTerms, redactText, redactTree } from "./redact.js";
+import { checkRedactTerms, controlWordHits, makeRedactor, parseRedactTerms, redactText, redactTree } from "./redact.js";
 import { ingest } from "./index.js";
 import { JpaperError } from "../types/errors.js";
 
@@ -60,6 +60,17 @@ describe("置き換え", () => {
     const h = makeRedactor(["Jean-Pierre", "-ab-"], KEY)!;
     expect(redactText("Jean-Pierre JeanPierre Jean Pierre", h)).toEqual({ text: "*** *** Jean Pierre", replaced: 2 });
     expect(redactText("-ab- ab -ab", h).text).toBe("*** ab -ab");
+  });
+
+  it("長い語から当てるときの長さは、語の中の - を除いて数える", () => {
+    expect(redactText("KLabs", makeRedactor(["K-Lab", "KLabs"], KEY)!).text).toBe("***");
+  });
+
+  it("- と空白を除いて 2 文字に満たない語は受けない", () => {
+    expect(() => parseRedactTerms("a-\n")).toThrow(/- を除いて/);
+    expect(() => parseRedactTerms("---\n")).toThrow(/- を除いて/);
+    expect(() => checkRedactTerms(["a - "])).toThrow(/- を除いて/);
+    expect(parseRedactTerms("a-b\n")).toEqual(["a-b"]);
   });
 
   it("LaTeX の空白（~・\\ ・\\,）とコメントでの継ぎにも当てる", () => {
