@@ -22,7 +22,7 @@
 - `scripts/` — 規約の検証（commit 件名・branch 名・PR body・PR 全体）と repo 初期設定
 - `tests/` — ローカル検査 script の self-test
 - `.github/` — PR / issue テンプレート、ラベル定義（`labels.yml` が正本）、CI 定義（`workflows/` の node-checks・pr-checks・self-test）
-- `.claude/` — Claude Code 設定（`settings.json`: 権限・hook 配線）と共有 skill（`skills/`。開発運用: 一覧は各ディレクトリの `SKILL.md` を参照。翻訳の運用: `translation-pitfalls` は evaluator 向けの誤訳チェックリスト）。`.agents` は `.claude` への symlink（agents.md / Codex 互換パス。`.claude` を symlink にすると Claude Code の worktree 機能が拒否するため実ディレクトリが正本）
+- `.claude/` — Claude Code 設定（`settings.json`: 権限・hook 配線）と共有 skill（`skills/`。開発運用: 一覧は各ディレクトリの `SKILL.md` を参照。翻訳の運用: `translation-pitfalls` は evaluator 向けの誤訳チェックリスト。利用者向け: `jpaper` は `/jpaper`・`$jpaper` で呼んだときだけ動くセットアップと和訳の入口）。`.agents` は `.claude` への symlink（agents.md / Codex 互換パス。`.claude` を symlink にすると Claude Code の worktree 機能が拒否するため実ディレクトリが正本）
 - `.codex/` — Codex 用の project-local hook 設定（trust 後に有効）
 
 ## 検索ポリシー

@@ -42,21 +42,30 @@ agent-native の考え方と Flue の設計に沿って、次のように分け�
 
 ## セットアップ
 
-### 前提ツール
+Claude Code か Codex を使っているなら、セットアップも下の「[Coding AI から使う](#coding-ai-から使う)」で任せられる。
 
-- Node.js（22.5 以上）と pnpm（10 以上。`brew install pnpm` か `corepack enable`）: 本体の実行とテスト
-- LaTeX（`latexmk`・LuaLaTeX）: 組版
+### 使うのに要るもの
+
+- Node.js（22.5 以上）と pnpm（10 以上。`brew install pnpm` か `corepack enable`）: 本体の実行
+- LaTeX（`latexmk`・LuaLaTeX と luatexja）: 組版。論文ごとに使うパッケージが違うので、フルの TeX Live を入れる（macOS なら `brew install --cask mactex-no-gui`。管理者のパスワードが要る）
 - poppler（`pdfinfo`・`pdftotext`・`pdftocairo`。`brew install poppler`）: PDF を入力にするときだけ
-- `gh`（GitHub CLI）: issue / PR の確認と初期設定
-- Python 3（`python3`）: hook の設定と一部の self-test
-- Ruby（`ruby`）: 一部の self-test
-- lefthook（commit-msg / pre-push のローカル hook）
+- LLM プロバイダのどれか 1 つ（下の「[LLM プロバイダ](#llm-プロバイダ)」）
 
 ```sh
 pnpm install
 pnpm setup         # PATH を通す設定をシェルの設定ファイル（~/.zshrc など）に書き足す（初回だけ）
 source ~/.zshrc    # pnpm setup が書き足した設定を読み込む（zsh なら新しいターミナルを開いてもよい）
 pnpm link --global # jpaper コマンドをどこからでも使えるようにする（初回だけ）
+```
+
+### 開発するときだけ要るもの
+
+- `gh`（GitHub CLI）: issue / PR の確認と初期設定
+- Python 3（`python3`）: hook の設定と一部の self-test
+- Ruby（`ruby`）: 一部の self-test
+- lefthook（commit-msg / pre-push のローカル hook）
+
+```sh
 lefthook install   # commit-msg / pre-push フック（未導入なら brew install lefthook）
 ```
 
@@ -68,7 +77,7 @@ OpenRouter の API キーなどは、`.env.example` を `.env` に写して書�
 
 ## 使い方
 
-手軽なのは Web アプリ。同じ翻訳は CLI からも実行できる（下の「CLI」）。
+手軽なのは Web アプリ。同じ翻訳は CLI からも実行できる（下の「CLI」）。Claude Code や Codex に頼んで訳すこともできる（下の「Coding AI から使う」）。
 
 ### Web アプリ
 
@@ -128,6 +137,19 @@ LLM に渡したくない語（自分の名前など）は、1 行 1 語のフ�
 和訳 PDF（例 `article/2507.17845-ja/2507.17845_pathorob-ja.pdf`）と対訳 PDF（例 `article/2507.17845-ja/2507.17845_pathorob-bilingual.pdf`）のパスを標準出力に出し、`RunSummary` を JSON で出す。
 
 claude・codex では、翻訳の前に用語集の訳を CLI の Web 検索で既存の日本語の用例と照らし、出典の取れた表記に差し替える。用例を確かめられない語は「未確認」の訳注になる。`--no-verify-terms` で止められる（[用語の検証 ADR](./docs/adr/20261013-verify-unconfirmed-terms-with-cli-web-search.md)）。オプションの一覧は `jpaper --help` で表示できる。オプションの正本は [契約付録 §5](./docs/design/contract-appendix.md)。
+
+### Coding AI から使う
+
+jpaper の repo のディレクトリで Claude Code（`claude`）か Codex（`codex`）を起動し、次のように打つ。
+
+| したいこと | Claude Code | Codex |
+|---|---|---|
+| セットアップ | `/jpaper セットアップして` | `$jpaper セットアップして` |
+| 論文を和訳する | `/jpaper 2606.22649 を和訳して` | `$jpaper 2606.22649 を和訳して` |
+
+和訳の依頼では、セットアップが済んでいなければ先にセットアップしてから訳す。論文は arXiv ID のほか、URL・タイトル・手元のファイル（PDF も可）でも指定できる。provider を言わなければ、Claude Code では `claude`、Codex では `codex` を使う。訳し終えると、和訳 PDF と対訳 PDF のパスを伝える。
+
+LaTeX（MacTeX）のように管理者のパスワードが要るものは、AI は入れずに、実行するコマンドを示す。この skill（[`.claude/skills/jpaper/SKILL.md`](./.claude/skills/jpaper/SKILL.md)）は、`/jpaper`・`$jpaper` で呼んだときだけ動く。
 
 ### LLM プロバイダ
 
