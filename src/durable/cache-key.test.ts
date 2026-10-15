@@ -1,7 +1,6 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { mkdtempSync, readFileSync, rmSync, statSync, existsSync, writeFileSync } from "node:fs";
 import { spawn } from "node:child_process";
-import { pathToFileURL } from "node:url";
 import os from "node:os";
 import path from "node:path";
 import { loadCacheKey } from "./cache-key.js";
@@ -42,12 +41,12 @@ describe("loadCacheKey の同時作成（issue #395）", () => {
   it("鍵の無い home で複数のプロセスが同時に作っても落ちず、全員が同じ鍵を返す", async () => {
     const home = mkdtempSync(path.join(os.tmpdir(), "jpaper-key-race-"));
     dirs.push(home);
-    const mod = pathToFileURL(path.resolve("src/durable/cache-key.ts")).href;
+    const mod = new URL("./cache-key.ts", import.meta.url).href;
     // 全プロセスが揃ってから一斉に作らせる（start のファイルが現れるまで待つ）。
     const start = path.join(home, "start");
     const script = `const { existsSync } = await import("node:fs");
-while (!existsSync(${JSON.stringify(start)})) {}
 const { loadCacheKey } = await import(${JSON.stringify(mod)});
+while (!existsSync(${JSON.stringify(start)})) {}
 process.stdout.write(loadCacheKey(${JSON.stringify(home)}).toString("hex"));`;
     const runs = Array.from({ length: 12 }, () =>
       new Promise<{ code: number | null; out: string; err: string }>((resolve) => {

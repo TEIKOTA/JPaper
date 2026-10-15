@@ -9,6 +9,8 @@ const KEY_BYTES = 32;
 
 // 鍵は .run/ ではなく JPAPER_HOME に置く。.run/ に書ける主体が署名を作れてはならない。
 // 鍵の無い home で複数のプロセスが同時に作っても、link で 1 つだけが置き、全員がその鍵を返す（issue #395）。
+// 短すぎる鍵（壊れたファイル）の置き換えと、link を作れないファイルシステムでは rename で置くので、
+// 同時に作ったプロセスの鍵が割れることがある（署名が合わない checkpoint は作り直しになる）。
 export function loadCacheKey(home: string = resolveJpaperHome()): Buffer {
   const file = path.join(home, KEY_FILE);
   const existing = readKey(file);
@@ -21,8 +23,13 @@ export function loadCacheKey(home: string = resolveJpaperHome()): Buffer {
     try {
       linkSync(tmp, file);
     } catch (e) {
+      const code = (e as NodeJS.ErrnoException).code;
+      if (code === "EPERM" || code === "ENOTSUP" || code === "ENOSYS" || code === "EXDEV") {
+        renameSync(tmp, file);
+        return readKey(file) ?? readFileSync(file);
+      }
       // 先に置いたプロセスの鍵を使う。短すぎる鍵（壊れたファイル）だけは置き換える。
-      if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
+      if (code !== "EEXIST") throw e;
       const theirs = readKey(file);
       if (theirs !== undefined) return theirs;
       renameSync(tmp, file);
