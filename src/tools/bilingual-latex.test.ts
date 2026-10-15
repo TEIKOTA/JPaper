@@ -322,6 +322,19 @@ describe("タイトル", () => {
   });
 });
 
+describe("assembleBilingual: カウンタのアンカー名", () => {
+  it("前文の \\newcommand{\\theH…} を \\providecommand にする", () => {
+    const out = assembleBilingual({
+      cleanLatex: "\\documentclass{article}\\begin{document}\\end{document}",
+      translatedMainTex: "\\documentclass{article}\n\\newcommand{\\theHalgorithm}{\\arabic{algorithm}}\n\\begin{document}\n\\end{document}\n",
+      source: [{ id: "seg-0000", tex: "A" }],
+      translated: [{ id: "seg-0000", tex: "和" }],
+    });
+    expect(out.mainTex).toContain("\\providecommand{\\theHalgorithm}");
+    expect(out.mainTex).not.toContain("\\newcommand{\\theHalgorithm}");
+  });
+});
+
 describe("elsarticle の frontmatter", () => {
   const front = (title: string) =>
     `\\begin{frontmatter}\n\\title{${title}}\n\\author[a]{Ann\\corref{c1}}\n\\cortext[c1]{Corr}\n\n\\begin{abstract}\nX\n\\end{abstract}\n\\end{frontmatter}`;

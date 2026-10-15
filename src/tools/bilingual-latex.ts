@@ -1,5 +1,11 @@
 // 契約付録 §7・対訳 PDF ADR(20261006)。原文と訳文を段落ペアにして paracol の対訳 main.tex を組み立てる。
-import { extractPreamble, releaseLuatexjaNames, sanitizeMath, separateCjkAfterControlWords } from "./assemble-latex.js";
+import {
+  extractPreamble,
+  releaseCounterAnchorNames,
+  releaseLuatexjaNames,
+  sanitizeMath,
+  separateCjkAfterControlWords,
+} from "./assemble-latex.js";
 import { DEFAULT_PROFILE, detectProfile, packageNames, type FrontMatterProfile } from "./frontmatter.js";
 import { findTitleArg } from "./paper-title.js";
 
@@ -648,7 +654,9 @@ export function assembleBilingual(input: {
   const profile = detectProfile(input.cleanLatex);
   const { pairs, fallbackSegments } = pairSegments(input.source, input.translated, profile);
   const { blocks, titled } = renderPairs(pairs, { left: extractPreamble(input.cleanLatex), right: preamble }, profile);
-  const mainTex = releaseLuatexjaNames(`${bilingualPreamble(preamble, profile)}${BEGIN}\n${paracolBody(blocks)}\\end{document}\n`);
+  const mainTex = releaseCounterAnchorNames(
+    releaseLuatexjaNames(`${bilingualPreamble(preamble, profile)}${BEGIN}\n${paracolBody(blocks)}\\end{document}\n`),
+  );
   const titleUnplaced = profile.maketitle && !titled && input.source.some((s) => TITLE_COMMANDS.test(stripComments(s.tex)));
   return { mainTex, pairs: blocks.length, fallbackSegments, titleUnplaced };
 }
