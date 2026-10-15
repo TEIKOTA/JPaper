@@ -1,7 +1,7 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { DOTENV_KEYS, describeDotEnv, loadDotEnv } from "./env-file.js";
@@ -147,11 +147,25 @@ describe("CLI の入口", () => {
     expect(r.stderr).toBe("");
   });
 
+  it("repo を空白・日本語を含むパスから起動しても、直接起動の main() が動く（issue #422）", () => {
+    const d = tmp();
+    const via = path.join(d, "論文 ツール", "JPaper");
+    mkdirSync(path.dirname(via));
+    symlinkSync(root, via);
+    const r = spawnSync(process.execPath, [createRequire(import.meta.url).resolve("tsx/cli"), path.join(via, "src", "cli.ts"), "--help"], {
+      cwd: d,
+      encoding: "utf8",
+      env: { PATH: process.env.PATH, HOME: process.env.HOME },
+    });
+    expect(r.status).toBe(0);
+    expect(r.stdout).toContain("使い方: jpaper");
+  });
+
   it("runCli では読まず、入口の main() の中の 1 か所だけで読む", () => {
     const src = readFileSync(path.join(import.meta.dirname, "cli.ts"), "utf8");
     const main = src.indexOf("export async function main(");
     expect(main).toBeGreaterThan(-1);
-    const guard = src.indexOf("if (import.meta.url === `file://${process.argv[1]}`)");
+    const guard = src.indexOf("if (isMainModule(import.meta.url, process.argv[1]))");
     expect(guard).toBeGreaterThan(main);
     const calls = [...src.matchAll(/loadDotEnv\(/g)].map((m) => m.index);
     expect(calls).toHaveLength(1);
