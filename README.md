@@ -62,7 +62,7 @@ lefthook install   # commit-msg / pre-push フック（未導入なら brew inst
 
 `pnpm setup` の後に同じターミナルで設定を読み直さないと、`pnpm link --global` は `ERR_PNPM_NO_GLOBAL_BIN_DIR` で失敗する。zsh 以外のシェルを使っている場合や `ZDOTDIR` を設定している場合は、`source ~/.zshrc` の代わりに、`pnpm setup` が最後に表示する `source …` の行を実行する。
 
-`jpaper` コマンドは repo のソース（`src/cli.ts`）を tsx で直接動かすので、build は要らず、`git pull` するとそのまま新しい版で動く（`bin/jpaper.mjs`）。起動のたびに GitHub の main を確かめ、repo が main にいて未コミットの変更が無ければ、更新を取り込んでから動く（依存が変わっていれば `pnpm install` も行う）。止めるには `JPAPER_NO_UPDATE=1` を設定する（[起動時の更新 ADR](./docs/adr/20261015-pull-updates-on-jpaper-launch.md)）。link した `jpaper` は、repo でその時 checkout している branch のコードを動かす。`pnpm link --global` を使わない場合は、repo の中で `pnpm dev` を `jpaper` の代わりに使える（ただし作業ディレクトリが repo 直下になるので、読む `.env` と、相対パスの `<input>`・`--out` の基準が repo 直下になる）。
+`jpaper` コマンドは repo のソース（`src/cli.ts`）を tsx で直接動かすので、build は要らず、`git pull` するとそのまま新しい版で動く（`bin/jpaper.mjs`）。起動のたびに `origin` の main を確かめ、repo が main にいて未コミットの変更が無く、Web アプリが動いていなければ、更新を取り込んでから動く（依存が変わっていれば `pnpm install` も行う）。止めるには `JPAPER_NO_UPDATE=1` を設定する（[起動時の更新 ADR](./docs/adr/20261015-pull-updates-on-jpaper-launch.md)）。link した `jpaper` は、repo でその時 checkout している branch のコードを動かす。`pnpm link --global` を使わない場合は、repo の中で `pnpm dev` を `jpaper` の代わりに使える（ただし作業ディレクトリが repo 直下になるので、読む `.env` と、相対パスの `<input>`・`--out` の基準が repo 直下になる）。
 
 OpenRouter の API キーなどは、`.env.example` を `.env` に写して書ける。CLI は作業ディレクトリの `.env` を、Web は repo 直下の `.env` を読み、シェルの環境変数のほうが優先される（詳細は [契約付録 §8](./docs/design/contract-appendix.md)）。
 

@@ -52,3 +52,5 @@ coverage/
 # Python のバイトコード（hook の判定器を import した検証などで生成される）
 __pycache__/
 *.pyc
+# jpaper web が動いている間の目印（bin/self-update.mjs）
+.jpaper-web/
