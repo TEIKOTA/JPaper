@@ -23,7 +23,7 @@ check_contributor_structure() {
   grep -Fq -- 'GitHub Actions は同じ検査をもう一度走らせる確認' "$root/AGENTS.md" || return 1
   grep -Fq -- 'ローカル script が正本' "$root/README.md" || return 1
   prereqs="$(awk '
-    /^### 前提ツール$/ { in_prereqs = 1; next }
+    /^### 開発するときだけ要るもの$/ { in_prereqs = 1; next }
     /^# / || /^## / || /^### / { in_prereqs = 0 }
     in_prereqs && /^- / { print }
   ' "$root/README.md")"
@@ -65,12 +65,12 @@ for fixture_path in AGENTS.md .gitignore .github docs; do
 done
 for missing_tool in gh Python Ruby lefthook; do
   awk -v tool="$missing_tool" '
-    /^### 前提ツール$/ { in_prereqs = 1; print; next }
+    /^### 開発するときだけ要るもの$/ { in_prereqs = 1; print; next }
     /^# / || /^## / || /^### / { in_prereqs = 0 }
     in_prereqs && /^- / && index($0, tool) { next }
     { print }
   ' "$ROOT/README.md" > "$prereq_fixture/README.md"
-  expect 1 "issue #93: 前提ツールの ${missing_tool} 項目だけを欠く fixture を拒否" \
+  expect 1 "issue #93: 開発するときだけ要るものの ${missing_tool} 項目だけを欠く fixture を拒否" \
     check_contributor_structure "$prereq_fixture"
 done
 rm -f "$prereq_fixture/README.md" "$prereq_fixture/AGENTS.md" \
