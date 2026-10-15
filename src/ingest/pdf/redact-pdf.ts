@@ -89,6 +89,14 @@ function matchSequence(s: string, r: Redactor): string[] {
   return [...s.matchAll(loosePattern(r))].map((m) => `${strict.has(`${String(m.index)}:${String(m.index + m[0].length)}`) ? "+" : "-"}${squeeze(m[0])}`);
 }
 
+// 緩い当たりのうち伏せ字に当たらなかった所（空白・改行などの入り方だけが語と違う形）。空白の並びは空白 1 つに、書字方向の制御文字は落として返す。
+export function unmatchedVariants(s: string, r: Redactor): string[] {
+  const strict = new Set([...s.matchAll(r.pattern)].map((m) => `${String(m.index)}:${String(m.index + m[0].length)}`));
+  return [...s.matchAll(loosePattern(r))]
+    .filter((m) => !strict.has(`${String(m.index)}:${String(m.index + m[0].length)}`))
+    .map((m) => m[0].replace(/[\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, "").replace(/\s+/g, " "));
+}
+
 // テキスト層とつないだ語の文字列で、伏せ字の当たりが食い違っていないか（どちらかに語が残らないか）。
 // 空白などの入り方だけが違う同じ語（緩い当たり）を文書の順に並べ、どれが伏せ字の当たりかまで両方で同じなら食い違いなし。
 // ⚠ landmines.md

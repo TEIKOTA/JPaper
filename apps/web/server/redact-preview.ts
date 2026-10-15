@@ -3,7 +3,7 @@
 import { execFile } from "node:child_process";
 import { JpaperError } from "../../../src/types/errors.js";
 import { makeRedactor, type Redactor } from "../../../src/ingest/redact.js";
-import { pageWords, redactionBoxes, sameMatches } from "../../../src/ingest/pdf/redact-pdf.js";
+import { pageWords, redactionBoxes, sameMatches, unmatchedVariants } from "../../../src/ingest/pdf/redact-pdf.js";
 import { normalizePageText } from "../../../src/ingest/pdf/text-layer.js";
 import type { Box } from "../../../src/ingest/pdf/poppler.js";
 
@@ -25,6 +25,8 @@ export interface MatchSummary {
   totalHits: number;
   // テキスト層とページ上の位置で当たった数が違うページ（CLI はここで止まる）。
   mismatchPages: number[];
+  // 空白の入り方だけ違って伏せ字に当たらなかった形（数の多い順）。
+  unmatched: { text: string; count: number; pages: number[] }[];
 }
 
 // まとめて読むページ数（pdftotext -bbox-layout の 1 回分）。
@@ -130,7 +132,8 @@ export class UploadWords {
     const all = makeRedactor(terms, KEY);
     let totalHits = 0;
     const mismatchPages: number[] = [];
-    if (all === undefined) return { terms: [], totalHits, mismatchPages };
+    const unmatched = new Map<string, { text: string; count: number; pages: number[] }>();
+    if (all === undefined) return { terms: [], totalHits, mismatchPages, unmatched: [] };
     for (let p = 1; p <= total; p++) {
       const { words, text } = await this.data(id, file, p, total);
       for (const e of each) {
@@ -144,8 +147,19 @@ export class UploadWords {
       const { hits, joined } = redactionBoxes(words, all);
       totalHits += hits;
       if (!sameMatches(text, joined, all)) mismatchPages.push(p);
+      for (const v of unmatchedVariants(text, all)) {
+        const u = unmatched.get(v) ?? { text: v, count: 0, pages: [] };
+        u.count++;
+        if (u.pages[u.pages.length - 1] !== p) u.pages.push(p);
+        unmatched.set(v, u);
+      }
     }
-    return { terms: each.map(({ term, count, pages }) => ({ term, count, pages })), totalHits, mismatchPages };
+    return {
+      terms: each.map(({ term, count, pages }) => ({ term, count, pages })),
+      totalHits,
+      mismatchPages,
+      unmatched: [...unmatched.values()].sort((a, b) => b.count - a.count || (a.text < b.text ? -1 : 1)),
+    };
   }
 
   // そのページで白く塗る矩形（すべての語をまとめて当てる。CLI と同じ）。

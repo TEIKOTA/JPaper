@@ -245,6 +245,8 @@ export interface Matches {
   totalHits: number;
   // テキスト層とページ上の位置で当たった数が違うページ（このままでは翻訳を始められない）。
   mismatchPages: number[];
+  // 空白の入り方だけ違って伏せ字に当たらなかった形（数の多い順）。
+  unmatched: { text: string; count: number; pages: number[] }[];
   page?: number;
   boxes?: WordBox[];
 }

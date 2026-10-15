@@ -136,6 +136,13 @@ describe("伏せ字の範囲選択の API（契約付録 §9）", () => {
     expect(r.body).toMatchObject({ mismatchPages: [1] });
   });
 
+  it("空白の入り方だけ違って当たらなかった形を、数とページつきで返す", async () => {
+    const t = setup(["Work by Hanako Yamada on alpha", "Nothing HanakoYamada here", "Thanks to Hanako Yamada again and HanakoYamada"]);
+    const id = await t.upload();
+    const r = await t.post(`/api/uploads/${id}/matches`, { terms: ["Hanako Yamada"] });
+    expect((r.body as Record<string, any>).unmatched).toEqual([{ text: "HanakoYamada", count: 2, pages: [2, 3] }]);
+  });
+
   it("同じまとまりを同時に求めても、語は 1 回だけ読む。同じ語を 2 回送っても 1 語として数える", async () => {
     const t = setup();
     const id = await t.upload();
