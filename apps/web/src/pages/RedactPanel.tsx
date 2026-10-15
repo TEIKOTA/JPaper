@@ -13,7 +13,7 @@ const MIN_CHARS = 2;
 const MAX_CHARS = 200;
 const DEBOUNCE_MS = 250;
 
-// この幅（pt）未満の隙間で縦に重なる隣の語は空白なしで、行末が - の語は - を落として次の語へ空白なしでつなぐ。
+// この幅（pt）未満の隙間で縦に重なる隣の語は空白なしで、行末（段の最後の行を除く。eol）が - の語は - を落として次の語へ空白なしでつなぐ。
 // ⚠ CLI の src/ingest/pdf/redact-pdf.ts の JOIN_GAP・spaceBetween・hyphenated と同じ規則（RedactPanel.test.ts で突き合わせる）。
 export const JOIN_GAP = 0.25;
 
@@ -39,7 +39,8 @@ export function termFromWords(words: readonly (WordBox & { text: string; eol?: b
 
 export function validTerm(term: string): boolean {
   const n = [...term].length;
-  return n >= MIN_CHARS && n <= MAX_CHARS && !/[\x00-\x1f\x7f]/.test(term);
+  // # で始まる語は --redact-file でコメントの行になるので受けない。
+  return n >= MIN_CHARS && n <= MAX_CHARS && !/[\x00-\x1f\x7f]/.test(term) && !term.startsWith("#");
 }
 
 // 範囲（pt）に重なる語を、上から・左から順に返す。
@@ -109,7 +110,7 @@ export function RedactPanel(props: {
   const add = (term: string): void => {
     const t = term.trim();
     if (!validTerm(t)) {
-      setError(`語は ${String(MIN_CHARS)}〜${String(MAX_CHARS)} 文字にしてください`);
+      setError(`語は ${String(MIN_CHARS)}〜${String(MAX_CHARS)} 文字で、# で始まらないものにしてください`);
       return;
     }
     setError(undefined);

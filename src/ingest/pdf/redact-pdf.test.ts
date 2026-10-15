@@ -65,4 +65,9 @@ describe("テキスト層と同じつなぎ方", () => {
   it("ページの最後の語の - は落とさない", () => {
     expect(joinWords(pageWords(`<line>${W("pre-", 72, 100, 90, 110)}</line>`)).joined).toBe("pre-");
   });
+
+  it("段の最後の行の - は落とさない（pdftotext は段をまたいで分綴を外さない）", () => {
+    const hx = `<flow><block><line>${W("Kobaya-", 300, 700, 330, 710)}</line></block></flow><flow><block><line>${W("shi", 72, 100, 85, 110)}</line></block></flow>`;
+    expect(joinWords(pageWords(hx)).joined).toBe("Kobaya- shi");
+  });
 });

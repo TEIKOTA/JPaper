@@ -4,7 +4,7 @@ import type { Redactor } from "../redact.js";
 
 interface Word extends Box {
   text: string;
-  // 行の最後の語か。
+  // 行の最後の語か（段の最後の行は除く。pdftotext はそこで分綴を外さない）。
   eol?: boolean;
 }
 
@@ -21,10 +21,10 @@ function decode(s: string): string {
 
 export function pageWords(xhtml: string): Word[] {
   const words: Word[] = [];
-  for (const m of xhtml.matchAll(/<word ([^>]*)>([\s\S]*?)<\/word>|<\/line>/g)) {
+  for (const m of xhtml.matchAll(/<word ([^>]*)>([\s\S]*?)<\/word>|<\/line>|<\/flow>/g)) {
     if (m[1] === undefined) {
       const last = words[words.length - 1];
-      if (last !== undefined) last.eol = true;
+      if (last !== undefined) last.eol = m[0] === "</line>" ? true : undefined;
       continue;
     }
     words.push({ x0: attr(m[1], "xMin"), y0: attr(m[1], "yMin"), x1: attr(m[1], "xMax"), y1: attr(m[1], "yMax"), text: decode(m[2]!) });

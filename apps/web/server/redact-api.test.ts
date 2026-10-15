@@ -175,7 +175,8 @@ describe("伏せ字つきの翻訳ジョブ（契約付録 §9）", () => {
     const ok = await t.post("/api/jobs", { arxivId: "2601.20627", provider: "claude", redact: ["Taro Yamada"] });
     expect(ok.status).toBe(201);
     expect(t.specs[0]).toContain("--redact-file");
-    for (const bad of [["Y"], "Taro", ["a\nb"]]) {
+    // # で始まる語は --redact-file でコメントの行になり、黙って伏せられなくなる。
+    for (const bad of [["Y"], "Taro", ["a\nb"], ["Taro Yamada", "#ProjectX"]]) {
       expect((await t.post("/api/jobs", { arxivId: "2601.20628", provider: "claude", redact: bad })).status, JSON.stringify(bad)).toBe(400);
     }
     expect(t.specs).toHaveLength(1);

@@ -75,6 +75,8 @@ function TranslateForm(props: {
   const [termsFile, setTermsFile] = useState<{ loading: boolean; error?: string }>({ loading: false });
   // PDF の伏せ字: 当たりを数え終え、テキスト層と合わないページが無いか。
   const [redactReady, setRedactReady] = useState(true);
+  // 最後に選んだ語のファイルの番号。古い読み込みの結果は捨てる。
+  const termsSeq = useRef(0);
   const [large, setLarge] = useState<LargePdf>();
   const [provider, setProvider] = useState(settings.provider ?? "");
   const [model, setModel] = useState(defaultsFor(settings.provider ?? "").model ?? "");
@@ -186,6 +188,7 @@ function TranslateForm(props: {
                 accept=".txt,text/plain"
                 onChange={(e) => {
                   const file = e.target.files?.[0];
+                  const seq = ++termsSeq.current;
                   setRedact([]);
                   if (file === undefined) {
                     setTermsFile({ loading: false });
@@ -194,14 +197,17 @@ function TranslateForm(props: {
                   setTermsFile({ loading: true });
                   file.text().then(
                     (text) => {
+                      if (seq !== termsSeq.current) return;
                       const terms = parseTermLines(text);
-                      if (terms === undefined) setTermsFile({ loading: false, error: "伏せ字の語は 1 行 1 語、2〜200 文字にしてください" });
+                      if (terms === undefined) setTermsFile({ loading: false, error: "伏せ字の語は 1 行 1 語、2〜200 文字で 1 語以上にしてください" });
                       else {
                         setTermsFile({ loading: false });
                         setRedact(terms.map((term) => ({ term, on: true })));
                       }
                     },
-                    () => setTermsFile({ loading: false, error: "伏せ字の語のファイルを読めません" }),
+                    () => {
+                      if (seq === termsSeq.current) setTermsFile({ loading: false, error: "伏せ字の語のファイルを読めません" });
+                    },
                   );
                 }}
               />
@@ -364,10 +370,10 @@ export function formReady(f: {
   return f.uploaded && (f.redact.every((t) => !t.on) || f.redactReady);
 }
 
-// 伏せ字の語のファイル（CLI の --redact-file と同じ形: 1 行 1 語、空行と # の行は読まない）。形が違えば undefined。
+// 伏せ字の語のファイル（CLI の --redact-file と同じ形: 1 行 1 語、空行と # の行は読まない）。形が違う・語が無ければ undefined。
 export function parseTermLines(text: string): string[] | undefined {
   const terms = [...new Set(text.split(/\r?\n/).map((l) => l.trim()).filter((l) => l !== "" && !l.startsWith("#")))];
-  return terms.every(validTerm) ? terms : undefined;
+  return terms.length > 0 && terms.every(validTerm) ? terms : undefined;
 }
 
 // 範囲の指定（"1-72,80"）が選ぶページ数。形が違えば undefined。数えるのは目安の表示のためだけ（検査は API）。

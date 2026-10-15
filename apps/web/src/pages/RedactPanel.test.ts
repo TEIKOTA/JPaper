@@ -17,11 +17,13 @@ describe("伏せ字の範囲選択（画面）", () => {
     expect(validTerm("Yamada")).toBe(true);
     expect(validTerm("Y")).toBe(false);
     expect(validTerm("a\tb")).toBe(false);
+    expect(validTerm("#ProjectX")).toBe(false);
   });
 
   it("伏せ字のファイルは 1 行 1 語。空行と # の行は読まず、形が違えば undefined", () => {
     expect(parseTermLines("# me\n Taro Yamada \n\nTaro Yamada\n")).toEqual(["Taro Yamada"]);
     expect(parseTermLines("X\n")).toBeUndefined();
+    expect(parseTermLines("# only\n\n")).toBeUndefined();
   });
 
   it("上付きの番号のように隙間なく続く語は、空白なしでつなぐ（テキスト層と同じ）", () => {
