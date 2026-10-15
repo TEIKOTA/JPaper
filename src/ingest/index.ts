@@ -134,6 +134,7 @@ async function materialize(
 function copyTreeInto(src: string, dest: string, limits: IngestLimits): string {
   const skip = path.resolve(path.dirname(dest));
   const root = realpathSync(src);
+  const seen = new Set<string>([root]);
   const inside = (p: string, dir: string): boolean => p === dir || p.startsWith(`${dir}${path.sep}`);
   if (inside(root, skip) || inside(path.resolve(src), skip)) {
     throw new JpaperError(2, "input", "入力が出力先の作業領域の中にあります。別の場所に置いてから訳してください");
@@ -160,8 +161,9 @@ function copyTreeInto(src: string, dest: string, limits: IngestLimits): string {
         } catch {
           continue;
         }
-        if (!inside(real, root) || inside(real, skip)) continue;
+        if (!inside(real, root) || inside(real, skip) || seen.has(real)) continue;
         const st = statSync(real);
+        if (st.isDirectory()) seen.add(real);
         isDir = st.isDirectory();
         isFile = st.isFile();
       }

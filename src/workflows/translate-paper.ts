@@ -335,7 +335,12 @@ async function loadOrBuildContext(
   const adopt = (file: string): boolean =>
     !foreign &&
     existsSync(file) &&
-    (redact === undefined || (stamp?.sourceDigest === digest && !matches(readFileSync(file, "utf8"), redact)));
+    (redact === undefined || adoptRedacted(file));
+  const adoptRedacted = (file: string): boolean => {
+    const ok = stamp?.sourceDigest === digest && !matches(readFileSync(file, "utf8"), redact!);
+    if (!ok) warn?.(`伏せ字の run なので、本文が同じと確かめられないか語を含む ${path.basename(file)} は使いません`);
+    return ok;
+  };
 
   const pending: PaperContext["pending"] = {};
   let resolved: ResolvedRow[] = built.resolved;
@@ -1055,7 +1060,16 @@ export async function translatePaper(
   let outDir: string;
   let runDir: string;
   let sharedDefaults: SharedDefault[];
+  let redactor: Redactor | undefined;
   try {
+    // 伏せ字の語の一覧の鍵付きの値を、取り込みの無効化キーに入れる（語そのものは入れない）。
+    // 論文 ID（入力の名前から作る）は用語集作り・用語の検証のプロンプト・全体の用語 DB・実行の要約に載るので、
+    // 語を含む名前は論文 ID を作る前に止める。契約付録 §8（伏せ字）
+    redactor =
+      opts.redact === undefined ? undefined : makeRedactor(checkRedactTerms(opts.redact), deps.cacheKey ?? loadCacheKey());
+    if (redactor !== undefined && matches(path.basename(ingestPaperIdSource(input)), redactor)) {
+      throw new JpaperError(2, "input", "入力のファイル名・ディレクトリ名に伏せ字の語が含まれます。名前を変えてから訳してください");
+    }
     paperId = derivePaperId(input);
     outDir = paperOutDir(paperId, opts.outDir);
     runDir = path.join(outDir, ".run");
@@ -1167,13 +1181,6 @@ export async function translatePaper(
     }
     let pdf: PdfExtracted | undefined;
     const signature = inputSignature(input);
-    // 伏せ字の語の一覧の鍵付きの値を、取り込みの無効化キーに入れる（語そのものは入れない）。契約付録 §8（伏せ字）
-    const redactor =
-      opts.redact === undefined ? undefined : makeRedactor(checkRedactTerms(opts.redact), deps.cacheKey ?? loadCacheKey());
-    // 論文 ID（入力の名前から作る）は用語集作り・用語の検証のプロンプトと全体の用語 DB に載るので、語を含む名前は止める。
-    if (redactor !== undefined && matches(path.basename(ingestPaperIdSource(input)), redactor)) {
-      throw new JpaperError(2, "input", "入力のファイル名・ディレクトリ名に伏せ字の語が含まれます。名前を変えてから訳してください");
-    }
     if (isPdf) {
       const canSee = deps.client === undefined ? IMAGE_PROVIDERS.includes(opts.provider) : deps.images === true;
       if (!canSee) {

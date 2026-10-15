@@ -170,6 +170,7 @@ describe("伏せ字（契約付録 §8）: LaTeX の書き方の違いと、拡�
     const r = await run(tex, { redact: TERMS }, { client: c });
     expect(r.exitCode).toBe(2);
     expect(r.error?.message).not.toContain("Yamada");
+    expect(JSON.stringify(r.summary)).not.toContain("Yamada");
     expect(c.calls).toHaveLength(0);
   });
 
@@ -247,6 +248,16 @@ describe("伏せ字（契約付録 §8）: PDF 入力", () => {
     const c = client();
     const r = await run(pdf, { redact: TERMS, bilingual: false }, { client: c, pdfTools: tools });
     expect(r.error?.message).toContain("名前");
+    expect(r.exitCode).toBe(2);
+    expect(c.calls).toHaveLength(0);
+  });
+
+  it("テキスト層で当たった数より位置の分かる数が少なければ、LLM を呼ぶ前に exit 2", async () => {
+    const pdf = path.join(tmp(), "book.pdf");
+    writeFileSync(pdf, "%PDF-1.4\n% fake\n");
+    const twice = { ...tools, pageText: (_p: string, page: number) => Promise.resolve(page === 1 ? `${PAGES[0]!} Yamada again.` : PAGES[1]!) };
+    const c = client();
+    const r = await run(pdf, { redact: TERMS, bilingual: false }, { client: c, pdfTools: twice });
     expect(r.exitCode).toBe(2);
     expect(c.calls).toHaveLength(0);
   });

@@ -135,9 +135,9 @@ export async function extractPdf(pdf: string, opts: PdfReadOptions, deps: PdfExt
       const r = redactText(text, deps.redact);
       text = r.text;
       redacted += r.replaced;
-      const boxes = redactionBoxes(pageWords(await tools.pageLayout(pdf, p, deps.signal)), deps.redact);
-      // テキスト層で当たったのに画像の位置が分からなければ、画像に語が残るので止める。
-      if (r.replaced > 0 && boxes.length === 0) {
+      const { boxes, hits } = redactionBoxes(pageWords(await tools.pageLayout(pdf, p, deps.signal)), deps.redact);
+      // テキスト層で当たった数だけ画像の位置が分からなければ、画像に語が残るので止める。
+      if (hits < r.replaced) {
         throw new JpaperError(
           2,
           "input",

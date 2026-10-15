@@ -9,13 +9,16 @@ describe("PDF の語の位置", () => {
 
   it("語をまたぐ一致は当たった語ごとの矩形、句読点が付いた語は語ごと塗る", () => {
     const r = makeRedactor(["Taro Yamada"], Buffer.alloc(32, 1))!;
-    expect(redactionBoxes(pageWords(xml), r, 0)).toEqual([
-      { x0: 20, y0: 5, x1: 28, y1: 9 },
-      { x0: 30, y0: 5, x1: 38, y1: 9 },
-    ]);
+    expect(redactionBoxes(pageWords(xml), r, 0)).toEqual({
+      boxes: [
+        { x0: 20, y0: 5, x1: 28, y1: 9 },
+        { x0: 30, y0: 5, x1: 38, y1: 9 },
+      ],
+      hits: 1,
+    });
   });
 
   it("当たらなければ空", () => {
-    expect(redactionBoxes(pageWords(xml), makeRedactor(["Suzuki"], Buffer.alloc(32, 1))!)).toEqual([]);
+    expect(redactionBoxes(pageWords(xml), makeRedactor(["Suzuki"], Buffer.alloc(32, 1))!)).toEqual({ boxes: [], hits: 0 });
   });
 });

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { controlWordHits, makeRedactor, parseRedactTerms, redactText, redactTree } from "./redact.js";
@@ -97,5 +97,21 @@ describe("取り込みの最後の置き換え", () => {
     const out = await ingest({ kind: "path", path: path.join(src, "paper.tex") }, path.join(d, "run", "source"), { redact: r });
     expect(out.cleanLatex).not.toContain("Yamada");
     expect(out.redacted).toBe(1);
+  });
+});
+
+describe("伏せ字のための複写", () => {
+  it("自分を指すシンボリックリンクがあっても止まらずに複写し、. で始まる名前は複写しない", async () => {
+    const d = mkdtempSync(path.join(os.tmpdir(), "jpaper-redact-copy-"));
+    dirs.push(d);
+    const src = path.join(d, "src");
+    mkdirSync(src);
+    writeFileSync(path.join(src, "paper.tex"), "\\documentclass{article}\\begin{document}\nby Hanako Yamada.\n\\end{document}\n");
+    writeFileSync(path.join(src, ".env"), "SECRET=1");
+    symlinkSync(".", path.join(src, "self"));
+    const work = path.join(d, "run", "source");
+    const out = await ingest({ kind: "path", path: path.join(src, "paper.tex") }, work, { redact: makeRedactor(["Hanako Yamada"], KEY)! });
+    expect(out.cleanLatex).not.toContain("Yamada");
+    expect(() => readFileSync(path.join(work, ".env"))).toThrow();
   });
 });

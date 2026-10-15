@@ -8,6 +8,8 @@ export const REDACTED = "***";
 // 語の最小の長さ（文字数）。
 export const MIN_TERM_CHARS = 2;
 export const MAX_TERMS = 1000;
+// 書き換えないファイルの先頭の印（PDF・PNG・JPEG・GIF。バイト数が変わると壊れる）。
+const BINARY_MAGIC = [Buffer.from("%PDF-"), Buffer.from([0x89, 0x50, 0x4e, 0x47]), Buffer.from([0xff, 0xd8, 0xff]), Buffer.from("GIF8")];
 const MAX_TERM_CHARS = 200;
 // 語の中の空白に当てる並び: 空白・改行、LaTeX の空白（~・\ ・\,・\;・\:・\!）、行末のコメントでの継ぎ。
 const GAP = String.raw`(?:\s|~|\\[ ,;:!]|%[^\n]*\n)+`;
@@ -112,7 +114,7 @@ export function redactTree(dir: string, r: Redactor): number {
       if (e.isDirectory()) walk(abs);
       else if (e.isFile() && statSync(abs).size > 0) {
         const buf = readFileSync(abs);
-        if (buf.includes(0)) continue;
+        if (buf.includes(0) || BINARY_MAGIC.some((m) => buf.subarray(0, m.length).equals(m))) continue;
         // UTF-8 として往復できないファイル（latin1 の .bib など）は 1 バイト 1 文字で扱う。
         const utf8 = buf.toString("utf8");
         const encoding: BufferEncoding = Buffer.from(utf8, "utf8").equals(buf) ? "utf8" : "latin1";

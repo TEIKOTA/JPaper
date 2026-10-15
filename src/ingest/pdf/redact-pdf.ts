@@ -27,8 +27,8 @@ export function pageWords(xhtml: string): Word[] {
   }));
 }
 
-// 語を空白 1 つでつないだ文字列で当て、当たった範囲に重なる語の矩形を返す（少し広げる）。
-export function redactionBoxes(words: readonly Word[], r: Redactor, pad = 1): Box[] {
+// 語を空白 1 つでつないだ文字列で当て、当たった範囲に重なる語の矩形（少し広げる）と当たった数を返す。
+export function redactionBoxes(words: readonly Word[], r: Redactor, pad = 1): { boxes: Box[]; hits: number } {
   let joined = "";
   const starts: number[] = [];
   for (const w of words) {
@@ -37,8 +37,10 @@ export function redactionBoxes(words: readonly Word[], r: Redactor, pad = 1): Bo
     joined += w.text;
   }
   const boxes: Box[] = [];
+  let hits = 0;
   r.pattern.lastIndex = 0;
   for (const m of joined.matchAll(r.pattern)) {
+    hits++;
     const a = m.index;
     const b = a + m[0].length;
     for (const [i, w] of words.entries()) {
@@ -46,5 +48,5 @@ export function redactionBoxes(words: readonly Word[], r: Redactor, pad = 1): Bo
       if (s < b && s + w.text.length > a) boxes.push({ x0: w.x0 - pad, y0: w.y0 - pad, x1: w.x1 + pad, y1: w.y1 + pad });
     }
   }
-  return boxes;
+  return { boxes, hits };
 }
