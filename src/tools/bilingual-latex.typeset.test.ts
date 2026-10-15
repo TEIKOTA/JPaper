@@ -86,7 +86,7 @@ const CASES: Case[] = [
   {
     name: "段落をまたぐ条件分岐の中の、1 行で閉じた \\ifx … \\else … \\fi の行",
     pairs: mirror(["\\ifdraft\n\\mk{AL}", "\\ifx\\relax\\relax \\mk{XL}\\else \\mk{YL}\\fi\n\\fi", "\\mk{AfterL}"]),
-    split: true,
+    split: false,
     expected: { false: after, true: ["AL:0", "AR:1", "XL:0", "XR:1", ...after] },
   },
   {
@@ -151,6 +151,32 @@ const CASES: Case[] = [
       false: ["Shared:0", "PosL:0", "Shared:1", "PosR:1", ...after],
       true: ["Shared:0", "PosL:0", "Shared:1", "PosR:1", ...after],
     },
+  },
+  {
+    name: "状況で真偽が変わる \\ifhmode の段落をまたぐ条件分岐（5 回目のレビューの blocking）",
+    pairs: mirror(["Text\n\\ifhmode\n\\mk{HL}", "\\mk{GL}\n\\fi", "\\mk{AfterL}"]),
+    split: false,
+    expected: {
+      false: ["HL:0", "HR:1", "GL:0", "GR:1", ...after],
+      true: ["HL:0", "HR:1", "GL:0", "GR:1", ...after],
+    },
+  },
+  {
+    name: "前の行の \\unless が次の行の \\ifdraft を取る（5 回目のレビューの blocking）",
+    pairs: mirror(["Intro\n\\unless\n\\ifdraft\n\\mk{XL}", "\\fi", "\\mk{AfterL}"]),
+    split: false,
+    expected: { false: ["XL:0", "XR:1", ...after], true: after },
+  },
+  {
+    name: "開きがマクロに隠れた条件分岐と、それだけの行の条件分岐が混ざる（5 回目のレビュー）",
+    pairs: [
+      { left: "\\def\\begindraft{\\ifdraft}\\def\\enddraft{\\fi}", right: "\\def\\begindraft{\\ifdraft}\\def\\enddraft{\\fi}" },
+      { left: "\\ifdraft\n\\mk{AL}\n\\enddraft", right: "\\ifdraft\n\\mk{AR}\n\\enddraft" },
+      { left: "\\begindraft\n\\mk{BL}\n\\fi", right: "\\begindraft\n\\mk{BR}\n\\fi" },
+      { left: "\\mk{AfterL}", right: "\\mk{AfterR}" },
+    ],
+    split: false,
+    expected: { false: after, true: ["AL:0", "AR:1", "BL:0", "BR:1", ...after] },
   },
   {
     name: "左右で条件分岐の行が違う段落",
@@ -223,7 +249,7 @@ const mainBody = (pairs: Pair[]): string =>
 const prBody = (pairs: Pair[]): string =>
   renderPairs(
     pairs.map((p) => ({ segmentId: "s", ...p })),
-    { left: "", right: "" },
+    { left: "\\newif\\ifdraft\n\\newif\\ifpeerreview", right: "" },
     IOPART,
   ).blocks.join("\n\n");
 

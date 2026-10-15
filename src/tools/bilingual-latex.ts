@@ -403,7 +403,12 @@ export function splitAtConditionals(tex: string): { runs: string[]; conds: strin
   let buf: string[] = [];
   lines.forEach((line, i) => {
     const bare = stripComments(line).trim();
-    if (env[i] === envMin[i] && brace[i] === braceMin[i] && isConditionalLine(bare)) {
+    if (
+      env[i] === envMin[i] &&
+      brace[i] === braceMin[i] &&
+      isConditionalLine(bare) &&
+      endsWithoutPrefix(lines[i - 1] ?? "")
+    ) {
       runs.push(buf.join("\n").trim());
       conds.push(bare);
       buf = [];
@@ -413,6 +418,11 @@ export function splitAtConditionals(tex: string): { runs: string[]; conds: strin
   });
   runs.push(buf.join("\n").trim());
   return runs.every(conditionalsClosed) ? { runs, conds } : whole;
+}
+
+// 行の末尾が命令（\unless・\expandafter など次のトークンを取りうるもの）でも、行をつなぐコメントでもない。
+function endsWithoutPrefix(line: string): boolean {
+  return stripComments(line) === line && !/\\(?:[A-Za-z@]+|[^A-Za-z@])\s*$/.test(line);
 }
 
 type ConditionalPlan = "closed" | { left: { runs: string[]; conds: string[] }; right: { runs: string[]; conds: string[] } };
@@ -427,9 +437,9 @@ function planConditionals(left: string, right: string): ConditionalPlan | undefi
   return { left: l, right: r };
 }
 
-// 条件分岐の行の並びが入れ子として閉じるか（\else は 1 つの条件分岐に 1 回、\or は \ifcase の中だけ）。
+// 条件分岐の行の並びが入れ子として閉じるか（\else は 1 つの条件分岐に 1 回）。
 export function conditionalLinesNest(conds: readonly string[]): boolean {
-  const open: { ifcase: boolean; sawElse: boolean }[] = [];
+  const open: { sawElse: boolean }[] = [];
   for (const c of conds) {
     const top = open[open.length - 1];
     if (c === "\\fi") {
@@ -438,25 +448,51 @@ export function conditionalLinesNest(conds: readonly string[]): boolean {
     } else if (c === "\\else") {
       if (top === undefined || top.sawElse) return false;
       top.sawElse = true;
-    } else if (c === "\\or") {
-      if (top === undefined || !top.ifcase || top.sawElse) return false;
     } else {
-      open.push({ ifcase: /^\\ifcase(?![A-Za-z@])/.test(c), sawElse: false });
+      open.push({ sawElse: false });
     }
   }
   return open.length === 0;
 }
 
+// 割る \if… の名前は、文書の中で \newif で宣言され、宣言とそれだけの行の外に現れない。
+export function conditionalNamesDeclared(conds: readonly string[], doc: string): boolean {
+  const lines = doc.split("\n").map((l) => stripComments(l));
+  return conds
+    .filter((c) => c.startsWith("\\if"))
+    .every((c) => {
+      const name = c.slice(1);
+      const use = new RegExp(`\\\\${name}(?![A-Za-z@])`, "g");
+      const decl = new RegExp(`\\\\newif\\s*\\\\${name}(?![A-Za-z@])`);
+      let declared = false;
+      for (const line of lines) {
+        const uses = line.match(use)?.length ?? 0;
+        if (uses === 0) continue;
+        if (decl.test(line)) {
+          declared = true;
+          if (uses > 1 || line.replace(decl, "").trim() !== "") return false;
+        } else if (line.trim() !== c) {
+          return false;
+        }
+      }
+      return declared;
+    });
+}
+
 // 文書のすべての段落の対が、条件分岐が段落の中で閉じるか左右が同じ条件分岐の行で割れ、割った条件分岐の行を
 // 文書の順に並べると入れ子として閉じるか。⚠ landmines.md
-export function conditionalsSplittable(pairs: readonly { left: string; right: string }[]): boolean {
+export function conditionalsSplittable(
+  pairs: readonly { left: string; right: string }[],
+  preamble = "",
+): boolean {
   const conds: string[] = [];
   for (const p of pairs) {
     const plan = planConditionals(p.left, p.right);
     if (plan === undefined) return false;
     if (plan !== "closed") conds.push(...plan.left.conds);
   }
-  return conditionalLinesNest(conds);
+  const doc = [preamble, ...pairs.flatMap((p) => [p.left, p.right])].join("\n");
+  return conditionalLinesNest(conds) && conditionalNamesDeclared(conds, doc);
 }
 
 // 左右が同じ条件分岐の行で割れれば、条件分岐の行を段の切り替えの外に 1 回だけ置く。⚠ landmines.md
@@ -520,7 +556,7 @@ export function renderPairs(
     push(p.left.slice(l.end), r === undefined ? "" : p.right.slice(r.end));
   }
   const paired = entries.filter((e) => typeof e !== "string");
-  const split = conditionalsSplittable(paired);
+  const split = conditionalsSplittable(paired, preambles.left);
   return {
     blocks: entries.map((e) =>
       typeof e === "string" ? e : split ? pairAcrossConditionals(e.left, e.right) : pairBlock(e.left, e.right),

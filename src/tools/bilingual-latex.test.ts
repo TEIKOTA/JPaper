@@ -22,6 +22,7 @@ import {
   conditionalsSplittable,
   conditionalLinesNest,
   isConditionalLine,
+  conditionalNamesDeclared,
 } from "./bilingual-latex.js";
 import { findUnsafeTexCommands } from "./tex-safety.js";
 import { fastestMs } from "../testing/timing.js";
@@ -754,7 +755,7 @@ describe("段落の境目の条件分岐（issue #378）", () => {
         { segmentId: "b", left: "\\fi\n\\end{credits}", right: "\\fi\n\\end{credits}" },
         { segmentId: "b", left: "After.", right: "後。" },
       ],
-      { left: "", right: "" },
+      { left: "\\newif\\ifpeerreview", right: "" },
       detectProfile("\\documentclass{iopart}\n\\begin{document}\n\\end{document}"),
     );
     const run = runColumns(blocks.join("\n\n"));
@@ -785,6 +786,14 @@ describe("段落の境目の条件分岐（issue #378）", () => {
     expect(pairAcrossConditionals(l, r)).toBe(`${l}\n\\switchcolumn\n${r}\n\\switchcolumn*`);
   });
 
+  it("前の行が命令か行をつなぐコメントで終わる条件分岐の行では割らない（\\unless・\\expandafter が次の行の \\if… を取る）", () => {
+    expect(splitAtConditionals("Intro\n\\unless\n\\ifdraft\nA").conds).toEqual([]);
+    expect(splitAtConditionals("Intro\n\\expandafter\n\\ifdraft\nA").conds).toEqual([]);
+    expect(splitAtConditionals("Intro %\n\\ifdraft\nA").conds).toEqual([]);
+    expect(splitAtConditionals("Intro\n\\ifdraft\nA").conds).toEqual(["\\ifdraft"]);
+    expect(splitAtConditionals("\\author{X}\n\\fi").conds).toEqual(["\\fi"]);
+  });
+
   it("割った後の部分で条件分岐が閉じない段落は割らない（\\fi が本文と同じ行・\\unless\\if…・\\ifbool{…}）", () => {
     expect(splitAtConditionals("\\else\nFinalL\\fi").conds).toEqual([]);
     expect(splitAtConditionals("\\unless\\ifdraft\nA").conds).toEqual([]);
@@ -793,8 +802,8 @@ describe("段落の境目の条件分岐（issue #378）", () => {
   });
 
   it("1 行で閉じた \\ifx … \\else … \\fi の行と \\ifbool{…} の行は、条件分岐の行として割らない", () => {
-    expect(splitAtConditionals("\\ifx\\a\\b X\\else Y\\fi\n\\fi")).toEqual({
-      runs: ["\\ifx\\a\\b X\\else Y\\fi", ""],
+    expect(splitAtConditionals("\\ifx\\a\\b X\\else Y\\fi.\n\\fi")).toEqual({
+      runs: ["\\ifx\\a\\b X\\else Y\\fi.", ""],
       conds: ["\\fi"],
     });
     expect(isConditionalLine("\\ifx\\a\\b X\\else Y\\fi")).toBe(false);
@@ -826,26 +835,39 @@ describe("段落の境目の条件分岐（issue #378）", () => {
     expect(isConditionalLine("\\iff")).toBe(false);
   });
 
-  it("割った条件分岐の行の並びは、\\else が 1 つの条件分岐に 1 回、\\or が \\ifcase の中だけのときに入れ子として閉じる", () => {
+  it("割った条件分岐の行の並びは、\\else が 1 つの条件分岐に 1 回のときに入れ子として閉じる", () => {
     expect(conditionalLinesNest(["\\ifdraft", "\\else", "\\fi"])).toBe(true);
-    expect(conditionalLinesNest(["\\ifcase\\x", "\\or", "\\else", "\\fi"])).toBe(true);
+    expect(conditionalLinesNest(["\\ifdraft", "\\ifpeerreview", "\\fi", "\\else", "\\fi"])).toBe(true);
     expect(conditionalLinesNest(["\\ifdraft", "\\else", "\\else", "\\fi"])).toBe(false);
-    expect(conditionalLinesNest(["\\ifdraft", "\\or", "\\fi"])).toBe(false);
-    expect(conditionalLinesNest(["\\ifcase\\x", "\\else", "\\or", "\\fi"])).toBe(false);
     expect(conditionalLinesNest(["\\fi"])).toBe(false);
     expect(conditionalLinesNest(["\\else"])).toBe(false);
     expect(conditionalLinesNest(["\\ifdraft"])).toBe(false);
+  });
+
+  it("割る \\if… の名前が文書の中で \\newif で宣言されていないか、宣言とそれだけの行の外に現れれば割らない", () => {
+    const open = { left: "\\ifdraft\nA", right: "\\ifdraft\n甲" };
+    const close = { left: "\\fi", right: "\\fi" };
+    expect(conditionalsSplittable([open, close])).toBe(false);
+    expect(conditionalsSplittable([{ left: "\\newif\\ifdraft", right: "\\newif\\ifdraft" }, open, close])).toBe(true);
+    expect(conditionalsSplittable([open, close], "\\newif\\ifdraft\n\\def\\begindraft{\\ifdraft}")).toBe(false);
+    expect(conditionalsSplittable([open, close], "\\newif\\ifdraft \\drafttrue")).toBe(false);
+    expect(conditionalsSplittable([open, close], "% \\def\\x{\\ifdraft}\n\\newif\\ifdraft")).toBe(true);
+    expect(conditionalsSplittable([{ left: "\\ifhmode\nA", right: "\\ifhmode\n甲" }, close])).toBe(false);
+    expect(conditionalNamesDeclared(["\\ifdraft", "\\else", "\\fi"], "\\newif\\ifdraft\n\\ifdraft")).toBe(true);
   });
 
   it("文書のどこかに割れない段落があるか、割った行の並びが閉じなければ、文書のどの段落も割らない", () => {
     const open = { left: "\\ifdraft\nA", right: "\\ifdraft\n甲" };
     const close = { left: "\\fi", right: "\\fi" };
     const plain = { left: "B", right: "乙" };
-    expect(conditionalsSplittable([open, plain, close])).toBe(true);
-    expect(conditionalsSplittable([open, plain])).toBe(false);
-    expect(conditionalsSplittable([open, { left: "\\else\nF\\fi", right: "\\else\n丙\\fi" }])).toBe(false);
-    expect(conditionalsSplittable([{ left: "X\n\\ifdraft{N}\n\\fi", right: "X\n\\ifdraft{N}\n\\fi" }, open, close])).toBe(false);
-    expect(conditionalsSplittable([{ left: "\\ifdraft\nA", right: "\\ifdraft 甲" }, close])).toBe(false);
+    const decl = "\\newif\\ifdraft";
+    expect(conditionalsSplittable([open, plain, close], decl)).toBe(true);
+    expect(conditionalsSplittable([open, plain], decl)).toBe(false);
+    expect(conditionalsSplittable([open, { left: "\\else\nF\\fi", right: "\\else\n丙\\fi" }], decl)).toBe(false);
+    expect(
+      conditionalsSplittable([{ left: "X\n\\ifdraft{N}\n\\fi", right: "X\n\\ifdraft{N}\n\\fi" }, open, close], decl),
+    ).toBe(false);
+    expect(conditionalsSplittable([{ left: "\\ifdraft\nA", right: "\\ifdraft 甲" }, close], decl)).toBe(false);
     const pairs = [open, { left: "\\else\nF\\fi", right: "\\else\n丙\\fi" }, plain].map((p) => ({ segmentId: "s", ...p }));
     const iopart = detectProfile("\\documentclass{iopart}\n\\begin{document}\n\\end{document}");
     expect(renderPairs(pairs, { left: "", right: "" }, iopart).blocks).toEqual(
