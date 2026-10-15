@@ -695,8 +695,8 @@ describe("段落の境目の条件分岐（issue #378）", () => {
     expect(splitAtConditionals("\\twocolumn[\n\\ifarxiv\nX\n\\else\nY\n\\fi\n]").conds).toEqual([]);
   });
 
-  it("段落をまたぐ \\ifnum\\x>0 / \\ifcase の条件分岐は、条件の行と \\or の行を 1 回だけ置く", () => {
-    expect(splitAtConditionals("\\ifcase\\x\nA\n\\or\nB")).toEqual({ runs: ["", "A", "B"], conds: ["\\ifcase\\x", "\\or"] });
+  it("比較の対象を取る \\ifnum\\x>0 / \\ifcase の段落をまたぐ条件分岐は割らず、修正前と同じく左右に置く", () => {
+    expect(splitAtConditionals("\\ifcase\\x\nA\n\\or\nB").conds).toEqual([]);
     const { blocks } = renderPairs(
       [
         { segmentId: "s", left: "\\ifnum\\x>0\nPositiveL", right: "\\ifnum\\x>0\nPositiveR" },
@@ -706,23 +706,13 @@ describe("段落の境目の条件分岐（issue #378）", () => {
       detectProfile("\\documentclass{iopart}\n\\begin{document}\n\\end{document}"),
     );
     const body = blocks.join("\n\n");
-    expect(body.match(/^\\ifnum\\x>0$/gm)).toHaveLength(1);
-    expect(runColumns(body)).toEqual([
-      { col: 0, line: "AfterL" },
-      { col: 1, line: "AfterR" },
-    ]);
-    expect(runColumns(body, { "\\ifnum\\x>0": true }).map((x) => `${x.col}:${x.line}`)).toEqual([
-      "0:PositiveL",
-      "1:PositiveR",
-      "0:MoreL",
-      "1:MoreR",
-      "0:AfterL",
-      "1:AfterR",
-    ]);
+    expect(body.match(/^\\ifnum\\x>0$/gm)).toHaveLength(2);
+    expect(body.match(/^\\fi$/gm)).toHaveLength(2);
   });
 
   it("コメント付きの行・\\ifx の比較・\\fi の後の空の残りを扱う", () => {
-    expect(splitAtConditionals("\\ifx\\a\\b % note\nA")).toEqual({ runs: ["", "A"], conds: ["\\ifx\\a\\b"] });
+    expect(splitAtConditionals("\\ifdraft % note\nA")).toEqual({ runs: ["", "A"], conds: ["\\ifdraft"] });
+    expect(splitAtConditionals("\\ifx\\a\\b % note\nA").conds).toEqual([]);
     expect(splitAtConditionals("A\n\\fi  % end")).toEqual({ runs: ["A", ""], conds: ["\\fi"] });
   });
 
@@ -811,11 +801,19 @@ describe("段落の境目の条件分岐（issue #378）", () => {
     expect(isConditionalLine("\\ifbool{x}{a}{b}")).toBe(false);
   });
 
-  it("\\if… の行の後ろに書けるのは、比較を取る条件分岐の、波括弧の釣り合った比較の対象だけ", () => {
+  it("条件分岐の行は、比較の対象を取らない \\if… だけの行と \\else・\\fi だけの行（比較の対象を取る条件分岐は割らない）", () => {
     expect(isConditionalLine("\\ifdraft")).toBe(true);
     expect(isConditionalLine("\\if@twocolumn")).toBe(true);
-    expect(isConditionalLine("\\ifnum\\value{page}>1")).toBe(true);
-    expect(isConditionalLine("\\ifdim\\linewidth>3in")).toBe(true);
+    expect(isConditionalLine("\\iftrue")).toBe(true);
+    expect(isConditionalLine("\\else")).toBe(true);
+    expect(isConditionalLine("\\fi")).toBe(true);
+    expect(isConditionalLine("\\or")).toBe(false);
+    expect(isConditionalLine("\\ifnum\\value{page}>1")).toBe(false);
+    expect(isConditionalLine("\\ifdim\\linewidth>3in")).toBe(false);
+    expect(isConditionalLine("\\ifx\\nodef")).toBe(false);
+    expect(isConditionalLine("\\ifnum")).toBe(false);
+    expect(isConditionalLine("\\ifcase\\x")).toBe(false);
+    expect(isConditionalLine("\\ifx\\relax\\relax\\mk{Shared}")).toBe(false);
     expect(isConditionalLine("\\ifdraft\\relax")).toBe(false);
     expect(isConditionalLine("\\ifdraft{")).toBe(false);
     expect(isConditionalLine("\\ifnum\\x>0 Positive")).toBe(false);

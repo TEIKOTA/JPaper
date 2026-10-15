@@ -368,23 +368,12 @@ function conditionalsClosed(tex: string): boolean {
   return conditionalsBalanced(tex) && conditionalsBalanced(tex, true);
 }
 
-// コメントを除いて \else / \or / \fi だけの行か、\if…（\iff を除く）だけの行。\if… の後ろには、
-// OPERAND_CONDITIONALS の比較の対象（波括弧と環境が釣り合い、空白の後に英字が来ず、条件分岐を含まない）
-// だけを許す。
+// コメントを除いて \else / \fi だけの行か、比較の対象を取らない \if…（\iff と OPERAND_CONDITIONALS を除く）
+// だけの行。⚠ landmines.md
 export function isConditionalLine(bare: string): boolean {
-  if (/^\\(?:else|or|fi)$/.test(bare)) return true;
-  const m = /^\\(if[A-Za-z@]*)(.*)$/.exec(bare);
-  if (m === null || m[1] === "iff") return false;
-  const rest = m[2]!;
-  if (rest === "") return true;
-  const n = nestingOf(rest);
-  return (
-    OPERAND_CONDITIONALS.has(m[1]!) &&
-    n.env === 0 &&
-    n.brace === 0 &&
-    !/\s\S/.test(rest) &&
-    conditionalTokens(rest).length === 0
-  );
+  if (/^\\(?:else|fi)$/.test(bare)) return true;
+  const m = /^\\(if[A-Za-z@]*)$/.exec(bare);
+  return m !== null && m[1] !== "iff" && !OPERAND_CONDITIONALS.has(m[1]!);
 }
 
 // 条件分岐が段落の中で閉じない段落だけを条件分岐の行で割る。段落の中で開いて段落の中で閉じる

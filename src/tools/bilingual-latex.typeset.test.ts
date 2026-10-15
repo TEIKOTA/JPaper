@@ -68,7 +68,7 @@ const CASES: Case[] = [
   {
     name: "段落をまたぐ \\ifnum\\x>0 の行",
     pairs: mirror(["\\ifnum\\x>0\n\\mk{PosL}", "\\mk{MoreL}\n\\fi\n\\mk{AfterL}"]),
-    split: true,
+    split: false,
     expected: { false: after, true: ["PosL:0", "PosR:1", "MoreL:0", "MoreR:1", ...after] },
   },
   {
@@ -80,7 +80,7 @@ const CASES: Case[] = [
   {
     name: "段落をまたぐ \\ifcase と \\or",
     pairs: mirror(["\\ifcase\\x\n\\mk{ZeroL}", "\\or\n\\mk{OneL}", "\\fi\n\\mk{AfterL}"]),
-    split: true,
+    split: false,
     expected: { false: ["ZeroL:0", "ZeroR:1", ...after], true: ["OneL:0", "OneR:1", ...after] },
   },
   {
@@ -136,6 +136,21 @@ const CASES: Case[] = [
     pairs: mirror(["\\ifnum\\x>0 \\mk{Shared}\n\\mk{PosL}", "\\fi", "\\mk{AfterL}"]),
     split: false,
     expected: { false: after, true: ["Shared:0", "PosL:0", "Shared:1", "PosR:1", ...after] },
+  },
+  {
+    name: "比較の対象が次の行に続く \\ifx の行（4 回目のレビューの blocking）",
+    pairs: mirror(["\\ifx\\nodef\n\\undefined \\mk{PosL}", "\\fi", "\\mk{AfterL}"]),
+    split: false,
+    expected: { false: ["PosL:0", "PosR:1", ...after], true: ["PosL:0", "PosR:1", ...after] },
+  },
+  {
+    name: "比較の対象の後に空白を挟まず命令が続く \\ifx の行",
+    pairs: mirror(["\\ifx\\relax\\relax\\mk{Shared}\n\\mk{PosL}", "\\fi", "\\mk{AfterL}"]),
+    split: false,
+    expected: {
+      false: ["Shared:0", "PosL:0", "Shared:1", "PosR:1", ...after],
+      true: ["Shared:0", "PosL:0", "Shared:1", "PosR:1", ...after],
+    },
   },
   {
     name: "左右で条件分岐の行が違う段落",
