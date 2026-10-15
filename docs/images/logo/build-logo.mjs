@@ -21,7 +21,7 @@ const OUTLINE_WIDTH = 8;
 const MARGIN = 8 + OUTLINE_WIDTH / 2;
 
 const height = ROWS * CELL_H;
-// 字間は縁 1 本分。隣の字の縁と重ならずに接する。
+// 字間は水平方向に縁 1 本分。
 const GAP = OUTLINE_WIDTH;
 let shift = 0;
 const pt = ([x, y]) => `${(x * CELL_W + shift + SLANT * (height - y * CELL_H) + MARGIN).toFixed(1)} ${(y * CELL_H + MARGIN).toFixed(1)}`;
@@ -31,7 +31,11 @@ function outline(cells) {
   const filled = new Set(cells.map(([x, y]) => `${x},${y}`));
   const has = (x, y) => filled.has(`${x},${y}`);
   const next = new Map();
-  const add = (a, b) => next.set(`${a[0]},${a[1]}`, b);
+  const add = (a, b) => {
+    const key = `${a[0]},${a[1]}`;
+    if (next.has(key)) throw new Error(`斜めにだけ接するマスは描けない: ${key}`);
+    next.set(key, b);
+  };
   for (const [x, y] of cells) {
     if (!has(x, y - 1)) add([x, y], [x + 1, y]);
     if (!has(x + 1, y)) add([x + 1, y], [x + 1, y + 1]);
