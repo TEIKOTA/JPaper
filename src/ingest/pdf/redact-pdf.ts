@@ -91,6 +91,7 @@ function matchSequence(s: string, r: Redactor): string[] {
 
 // テキスト層とつないだ語の文字列で、伏せ字の当たりが食い違っていないか（どちらかに語が残らないか）。
 // 空白などの入り方だけが違う同じ語（緩い当たり）を文書の順に並べ、どれが伏せ字の当たりかまで両方で同じなら食い違いなし。
+// ⚠ landmines.md
 export function sameMatches(text: string, joined: string, r: Redactor): boolean {
   const a = matchSequence(text, r);
   const b = matchSequence(joined, r);
