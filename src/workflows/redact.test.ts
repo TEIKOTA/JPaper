@@ -252,6 +252,25 @@ describe("伏せ字（契約付録 §8）: PDF 入力", () => {
     expect(c.calls).toHaveLength(0);
   });
 
+  it("当たりの数は同じでも、テキスト層と画像で当たった場所が違えば（どちらにも語が残る）、LLM を呼ぶ前に exit 2", async () => {
+    const pdf = path.join(tmp(), "book.pdf");
+    writeFileSync(pdf, "%PDF-1.4\n% fake\n");
+    // テキスト層は末尾の 1 か所、ページ上の位置は本文の 1 か所でだけ当たる。
+    const swapped = {
+      ...tools,
+      pageText: (_p: string, page: number) => Promise.resolve(page === 1 ? `${PAGES[0]!.replace(NAME, "HanakoYamada")} ${NAME} end.` : PAGES[1]!),
+      pageLayout: (_p: string, page: number) =>
+        Promise.resolve(
+          `<doc><page width="504" height="720"><flow><block><line>${words(page === 1 ? `${PAGES[0]!} HanakoYamada end.` : PAGES[1]!)}</line></block></flow></page></doc>`,
+        ),
+    };
+    const c = client();
+    const r = await run(pdf, { redact: [NAME], bilingual: false }, { client: c, pdfTools: swapped });
+    expect(r.exitCode).toBe(2);
+    expect(r.error?.message).toContain("食い違う");
+    expect(c.calls).toHaveLength(0);
+  });
+
   it("画像の上でだけ当たり、テキスト層では当たらなければ（文字が残る）、LLM を呼ぶ前に exit 2", async () => {
     const pdf = path.join(tmp(), "book.pdf");
     writeFileSync(pdf, "%PDF-1.4\n% fake\n");
@@ -259,7 +278,7 @@ describe("伏せ字（契約付録 §8）: PDF 入力", () => {
     const c = client();
     const r = await run(pdf, { redact: [NAME], bilingual: false }, { client: c, pdfTools: glued });
     expect(r.exitCode).toBe(2);
-    expect(r.error?.message).toContain("合わない");
+    expect(r.error?.message).toContain("食い違う");
     expect(c.calls).toHaveLength(0);
   });
 

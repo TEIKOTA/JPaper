@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { joinWords, pageWords, redactionBoxes } from "./redact-pdf.js";
+import { joinWords, pageWords, redactionBoxes, sameMatches } from "./redact-pdf.js";
 import { makeRedactor } from "../redact.js";
 
 describe("PDF の語の位置", () => {
@@ -9,7 +9,7 @@ describe("PDF の語の位置", () => {
 
   it("語をまたぐ一致は当たった語ごとの矩形、句読点が付いた語は語ごと塗る", () => {
     const r = makeRedactor(["Taro Yamada"], Buffer.alloc(32, 1))!;
-    expect(redactionBoxes(pageWords(xml), r, 0)).toEqual({
+    expect(redactionBoxes(pageWords(xml), r, 0)).toMatchObject({
       boxes: [
         { x0: 20, y0: 5, x1: 28, y1: 9 },
         { x0: 30, y0: 5, x1: 38, y1: 9 },
@@ -19,7 +19,7 @@ describe("PDF の語の位置", () => {
   });
 
   it("当たらなければ空", () => {
-    expect(redactionBoxes(pageWords(xml), makeRedactor(["Suzuki"], Buffer.alloc(32, 1))!)).toEqual({ boxes: [], hits: 0 });
+    expect(redactionBoxes(pageWords(xml), makeRedactor(["Suzuki"], Buffer.alloc(32, 1))!)).toMatchObject({ boxes: [], hits: 0 });
   });
 });
 
@@ -80,5 +80,23 @@ describe("テキスト層と同じつなぎ方", () => {
     const { boxes, hits } = redactionBoxes(pageWords(hx), r, 0);
     expect(hits).toBe(1);
     expect(boxes.map((b) => b.x0)).toEqual([312, 72]);
+  });
+
+  it("当たりの数が同じでも、空白の入り方だけが違って当たらない語がどちらかにあれば、食い違いとみなす", () => {
+    const r = makeRedactor(["Hanako Yamada"], Buffer.alloc(32, 1))!;
+    // テキスト層は 2 つ目、つないだ語は 1 つ目の場所でだけ当たる（同じ定型文に挟まれていても見分ける）。
+    const line = (name: string): string => `Thanks to the reviewers and to ${name} for the comments on this draft.`;
+    const text = `${line("HanakoYamada")}\n${line("Hanako Yamada")}`;
+    const joined = `${line("Hanako Yamada")} ${line("HanakoYamada")}`;
+    expect(sameMatches(text, joined, r)).toBe(false);
+    // テキスト層とつないだ語で、空白・改行・書字方向の制御文字の入り方だけが違う同じ当たりは、食い違いとみなさない。
+    expect(sameMatches("a Hanako\nYamada1, b \u202bx\u202c", "a Hanako Yamada 1 , b x", r)).toBe(true);
+    // 語の中で空白が入り、当たらずに残る語（Yama da）があれば食い違い。
+    expect(sameMatches("a Hanako Yamada b", "a Hanako Yama da b", r)).toBe(false);
+  });
+
+  it("語の文字はテキスト層と同じにする（&apos; などの実体参照を戻し、制御文字を落とす）", () => {
+    const xml = `<line>${W("O&apos;Brien&#8217;s", 72, 100, 120, 110)}${W("in\u0002es", 124, 100, 150, 110)}</line>`;
+    expect(pageWords(xml).map((w) => w.text)).toEqual(["O'Brien’s", "ines"]);
   });
 });

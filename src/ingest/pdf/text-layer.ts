@@ -9,7 +9,8 @@ const EDGE_LINES = 3;
 // 同じ位置に同じ行が現れるページの割合がこれ以上なら、柱・ノンブル・購入者表示として落とす。
 const REPEAT_RATIO = 0.5;
 
-const CONTROL = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g;
+// テキスト層から落とす制御文字（タブ・改行は残す）。
+export const CONTROL = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g;
 
 // pdftotext の出力を整える（改ページ文字・制御文字を落とし、行末の空白を詰める）。
 export function normalizePageText(raw: string): string {
