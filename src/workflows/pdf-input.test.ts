@@ -37,6 +37,11 @@ const tools: PdfTools = {
     writeFileSync(`${prefix}.png`, "png");
     return Promise.resolve(`${prefix}.png`);
   },
+  pageLayout: () => Promise.resolve(""),
+  renderRegion: (_p, _page, _box, prefix) => {
+    writeFileSync(`${prefix}.png`, "png");
+    return Promise.resolve(`${prefix}.png`);
+  },
 };
 
 function makePdf(): string {
@@ -75,7 +80,7 @@ describe("PDF 入力（契約付録 §8）", () => {
     const c = client();
     const r = await run(makePdf(), {}, { client: c });
     expect(r.exitCode).toBe(0);
-    expect(r.summary.pdf).toEqual({ pages: 2, fallbackPages: [] });
+    expect(r.summary.pdf).toEqual({ pages: 2, fallbackPages: [], figures: 0 });
     // 拡張子 .pdf を落とし、空白を潰した名前にダイジェストを付ける（paperId の単射）。
     expect(r.summary.paperId).toMatch(/^my_paper-[0-9a-f]{8}$/);
     const main = readFileSync(path.join(r.summary.outDir, ".run", "pdf-source", "main.tex"), "utf8");

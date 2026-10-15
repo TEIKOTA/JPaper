@@ -1597,7 +1597,7 @@ export async function translatePaper(
       sharedDefaults,
       llmCalls: llmCalls(),
       title: titleStatus,
-      pdf: pdf === undefined ? null : { pages: pdf.pages.length, fallbackPages: pdf.fallbackPages },
+      pdf: pdf === undefined ? null : { pages: pdf.pages.length, fallbackPages: pdf.fallbackPages, figures: pdf.figures },
       exitCode,
     });
     if (exitCode === 0) return { status: "ok", exitCode, pdfPath, summary };

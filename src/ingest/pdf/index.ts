@@ -9,14 +9,15 @@ import type { LatexRunner } from "../../tools/build-gate.js";
 import { popplerTools, type PdfTools } from "./poppler.js";
 import { hasTextLayer, normalizePageText, parsePageRange, stripRepeatedLines } from "./text-layer.js";
 import { readPage } from "./page-reader.js";
-import { assembleMainTex, type AssembledPage } from "./assemble.js";
+import { assembleMainTex, placeFigures, type AssembledPage } from "./assemble.js";
+import { documentTextBox, figureKey, figureRegions, parseBboxLayout, type PageLayout } from "./figures.js";
 
 // これを超えるページ数を読むときは利用者の同意（--yes）が要る。
 export const LARGE_PDF_PAGES = 100;
 // 読み取りの目安（claude-sonnet・effort medium の 1 ページあたり。契約付録 §8 PDF 入力）。
 export const ESTIMATED_USD_PER_PAGE = 0.035;
 export const ESTIMATED_SECONDS_PER_PAGE = 8;
-// プロンプト・検査・組み立てを変えたら上げる（ページの checkpoint を無効にする）。
+// プロンプト・ページの検査を変えたら上げる（ページの checkpoint を無効にする）。
 export const PDF_READER_VERSION = "2";
 export const PDF_STEP_PREFIX = "pdf-p";
 // テキスト層の語をこれ以上「省いた」としたページは警告する。
@@ -60,6 +61,8 @@ export interface PdfExtracted {
   dir: string;
   pages: number[];
   fallbackPages: number[];
+  // 切り出して貼った図の数。
+  figures: number;
   stepIds: string[];
 }
 
@@ -182,6 +185,49 @@ export async function extractPdf(pdf: string, opts: PdfReadOptions, deps: PdfExt
 
   rmSync(deps.outDir, { recursive: true, force: true });
   mkdirSync(path.join(deps.outDir, "pages"), { recursive: true });
+  mkdirSync(path.join(deps.outDir, "figures"), { recursive: true });
+  // 図: 読めたページのキャプションの上の空白を切り出し、番号の合う目印を置き換える。契約付録 §8（PDF 入力・図）
+  const layouts = new Map<number, PageLayout>();
+  const figureTex = new Map<number, string>();
+  let figureCount = 0;
+  const okPages = pages.filter((page) => results.get(page)!.status === "ok");
+  const failed = new Set<number>();
+  for (const page of okPages) {
+    try {
+      const layout = parseBboxLayout(await tools.pageLayout(pdf, page, deps.signal));
+      if (layout !== undefined) layouts.set(page, layout);
+    } catch (e) {
+      if (deps.signal?.aborted === true) throw e;
+      failed.add(page);
+    }
+  }
+  const docBox = documentTextBox([...layouts.values()]);
+  for (const page of okPages) {
+    const tex = results.get(page)!.tex;
+    const figures: { key: string; file: string }[] = [];
+    const layout = layouts.get(page);
+    try {
+      for (const [k, region] of (layout === undefined ? [] : figureRegions(layout, docBox)).entries()) {
+        const key = figureKey(region.label);
+        if (key === undefined) continue;
+        const rel = `figures/p-${String(page).padStart(4, "0")}-${String(k + 1)}`;
+        await tools.renderRegion(pdf, page, region, path.join(deps.outDir, rel), deps.signal);
+        figures.push({ key, file: `${rel}.png` });
+      }
+    } catch (e) {
+      if (deps.signal?.aborted === true) throw e;
+      failed.add(page);
+      figures.length = 0;
+    }
+    const r = placeFigures(tex, figures);
+    figureTex.set(page, r.tex);
+    figureCount += r.placed;
+    if (r.placed < r.marks) {
+      deps.notify?.(
+        `PDF の ${String(page)} ページ目は、図の目印 ${String(r.marks)} 個のうち ${String(r.marks - r.placed)} 個に図を貼れず、目印のままにします（${failed.has(page) ? "ページの座標・図を描けない" : `キャプションから切り出した図 ${String(figures.length)} 個と番号が合わない`}）`,
+      );
+    }
+  }
   const assembled: AssembledPage[] = [];
   for (const [i, page] of pages.entries()) {
     const r = results.get(page)!;
@@ -191,9 +237,16 @@ export async function extractPdf(pdf: string, opts: PdfReadOptions, deps: PdfExt
       await tools.renderPage(pdf, page, path.join(deps.outDir, rel), deps.signal);
       image = `${rel}.png`;
     }
-    assembled.push({ page, text: texts[i]!, status: r.status, tex: r.tex, continues: r.continues, image });
+    assembled.push({
+      page,
+      text: texts[i]!,
+      status: r.status,
+      tex: figureTex.get(page) ?? r.tex,
+      continues: r.continues,
+      image,
+    });
   }
   writeFileSync(path.join(deps.outDir, "main.tex"), assembleMainTex(assembled));
   rmSync(workDir, { recursive: true, force: true });
-  return { dir: deps.outDir, pages, fallbackPages, stepIds: pages.map(pdfStepId) };
+  return { dir: deps.outDir, pages, fallbackPages, figures: figureCount, stepIds: pages.map(pdfStepId) };
 }

@@ -1,6 +1,7 @@
 // 契約付録 §8（PDF 入力）・PDF 入力 ADR(20261015) 決定 3・7。ページごとの LaTeX を 1 本の main.tex にする。
 import { OMITTED_MARK } from "./word-check.js";
 import { PAGE_PREAMBLE, splitContinues } from "./page-reader.js";
+import { figureKey } from "./figures.js";
 
 export interface AssembledPage {
   page: number;
@@ -11,6 +12,35 @@ export interface AssembledPage {
   continues: boolean;
   // fallback のページ画像（main.tex からの相対パス）。
   image?: string;
+}
+
+// LLM が図の代わりに置く目印。契約付録 §8（PDF 入力・図）
+export const FIGURE_PLACEHOLDER = /(\\noindent\s*)?\\fbox\{Figure omitted[^{}]*\}/g;
+// 目印の後ろでキャプションの番号を探す範囲（文字数）。
+const CAPTION_LOOKAHEAD = 400;
+
+// 目印ごとに、後ろ（次の目印まで）に最初に現れる図の番号と同じ番号の図を貼る。番号が無い・合う図が無い目印はそのまま残す。
+export function placeFigures(
+  tex: string,
+  figures: readonly { key: string; file: string }[],
+): { tex: string; placed: number; marks: number } {
+  const used = new Set<string>();
+  let placed = 0;
+  let marks = 0;
+  const out = tex.replace(FIGURE_PLACEHOLDER, (m: string, noindent: string | undefined, offset: number) => {
+    marks++;
+    const rest = tex.slice(offset + m.length, offset + m.length + CAPTION_LOOKAHEAD);
+    const next = rest.search(/\\fbox\{Figure omitted/);
+    const key = figureKey(next < 0 ? rest : rest.slice(0, next));
+    const f = figures.find((x) => x.key === key && !used.has(x.file));
+    if (key === undefined || f === undefined) return m;
+    used.add(f.file);
+    placed++;
+    const graphic = `\\includegraphics[width=\\linewidth,height=0.45\\textheight,keepaspectratio]{${f.file}}`;
+    // 段落の頭（\noindent の直後）の目印だけを center で包む。
+    return noindent === undefined ? graphic : `\\begin{center}${graphic}\\end{center}`;
+  });
+  return { tex: out, placed, marks };
 }
 
 // 文末として扱う終わり方（閉じ括弧・引用符が後ろに付いてよい）。
