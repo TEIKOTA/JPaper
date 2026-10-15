@@ -189,7 +189,7 @@ describe("ページをつなぐ", () => {
   });
 });
 
-function fakeTools(texts: string[]): PdfTools & { rendered: number[] } {
+function fakeTools(texts: string[], layouts: string[] = []): PdfTools & { rendered: number[] } {
   const rendered: number[] = [];
   return {
     rendered,
@@ -198,6 +198,11 @@ function fakeTools(texts: string[]): PdfTools & { rendered: number[] } {
     renderPage: (_pdf, page, prefix) => {
       rendered.push(page);
       writeFileSync(`${prefix}.png`, `png-${String(page)}`);
+      return Promise.resolve(`${prefix}.png`);
+    },
+    pageLayout: (_pdf, page) => Promise.resolve(layouts[page - 1] ?? ""),
+    renderRegion: (_pdf, page, _box, prefix) => {
+      writeFileSync(`${prefix}.png`, `fig-${String(page)}`);
       return Promise.resolve(`${prefix}.png`);
     },
   };
@@ -291,6 +296,37 @@ describe("PDF 抽出の段", () => {
     const client = new FakeLlmClient("nothing at all");
     const err = await extractPdf("x.pdf", {}, extractDeps(client, fakeTools([same, same, same]))).catch((e: unknown) => e);
     expect((err as JpaperError).code).toBe(3);
+  });
+
+  it("キャプションの上を切り出して図の目印を置き換え、数が合わなければ警告する", async () => {
+    const bbox = (blocks: string): string =>
+      `<doc><page width="504" height="720"><flow>${blocks}</flow></page></doc>`;
+    const blk = (x0: number, y0: number, x1: number, y1: number, text: string): string =>
+      `<block xMin="${String(x0)}" yMin="${String(y0)}" xMax="${String(x1)}" yMax="${String(y1)}"><line xMin="${String(x0)}" yMin="${String(y0)}" xMax="${String(x1)}" yMax="${String(y1)}">${text
+        .split(" ")
+        .map((w) => `<word xMin="0">${w}</word>`)
+        .join("")}</line></block>`;
+    const body = blk(72.7, 100, 431.3, 200, "body text of the paragraph that spans the full width");
+    const layouts = [
+      bbox(body + blk(150, 400, 350, 410, "Figure 1.1. A plot.")),
+      bbox(body),
+      bbox(body + blk(150, 400, 350, 410, "Figure 3.1. Another.")),
+    ];
+    const mark = "\\fbox{Figure omitted (see page N of the original PDF)}";
+    const client = new FakeLlmClient((req) => {
+      const text = echoReader(req);
+      return /Page 1 /.test(text) || /Page 2 /.test(text) ? `${mark}\n\n${text}` : text;
+    });
+    const notes: string[] = [];
+    const deps = { ...extractDeps(client, fakeTools([1, 2, 3].map(PAGE_TEXT), layouts)), notify: (m: string) => notes.push(m) };
+    const r = await extractPdf("x.pdf", {}, deps);
+    expect(r.figures).toBe(1);
+    const main = readFileSync(path.join(r.dir, "main.tex"), "utf8");
+    expect(main).toContain("{figures/p-0001-1.png}");
+    expect(existsSync(path.join(r.dir, "figures", "p-0001-1.png"))).toBe(true);
+    // 2 ページ目は目印があるのに図が無く、3 ページ目は図があるのに目印が無い。
+    expect(main.match(/Figure omitted/g)).toHaveLength(1);
+    expect(notes.filter((n) => n.includes("図の目印")).map((n) => n.slice(0, 12))).toEqual(["PDF の 2 ページ目", "PDF の 3 ページ目"]);
   });
 
   it("画像に落ちたページがちょうど半数なら進む", async () => {

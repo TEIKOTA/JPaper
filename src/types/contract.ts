@@ -275,6 +275,8 @@ export const RunSummary = z.object({
       pages: z.number().int().nonnegative(),
       // 原本のページ画像を貼って未訳にしたページ（PDF の何枚目か）。
       fallbackPages: z.array(z.number().int().positive()),
+      // 切り出して貼った図の数。
+      figures: z.number().int().nonnegative().default(0),
     })
     .nullable()
     .default(null),

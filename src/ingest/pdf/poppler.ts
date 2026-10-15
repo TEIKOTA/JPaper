@@ -5,6 +5,8 @@ import { JpaperError } from "../../types/errors.js";
 import { canceledError } from "../../runtime/cancellation.js";
 
 export const RENDER_DPI = 150;
+// 図を切り出す解像度。
+export const FIGURE_DPI = 200;
 const TIMEOUT_MS = 60_000;
 const MAX_BUFFER = 64 * 1024 * 1024;
 
@@ -13,6 +15,16 @@ export interface PdfTools {
   pageText(pdf: string, page: number, signal?: AbortSignal): Promise<string>;
   // outPrefix に .png を付けたファイルへ書く。
   renderPage(pdf: string, page: number, outPrefix: string, signal?: AbortSignal): Promise<string>;
+  // pdftotext -bbox-layout の出力（1 ページ分）。
+  pageLayout(pdf: string, page: number, signal?: AbortSignal): Promise<string>;
+  // ページの一部（pt 単位）を FIGURE_DPI で描く。outPrefix に .png を付けたファイルへ書く。
+  renderRegion(
+    pdf: string,
+    page: number,
+    box: { x0: number; y0: number; x1: number; y1: number },
+    outPrefix: string,
+    signal?: AbortSignal,
+  ): Promise<string>;
 }
 
 // 先頭 5 バイトが %PDF- か。
@@ -63,6 +75,38 @@ export const popplerTools: PdfTools = {
     await run(
       "pdftocairo",
       ["-png", "-singlefile", "-r", String(RENDER_DPI), "-f", String(page), "-l", String(page), pdf, outPrefix],
+      signal,
+    );
+    return `${outPrefix}.png`;
+  },
+  pageLayout(pdf, page, signal) {
+    return run("pdftotext", ["-bbox-layout", "-f", String(page), "-l", String(page), "-enc", "UTF-8", pdf, "-"], signal);
+  },
+  async renderRegion(pdf, page, box, outPrefix, signal) {
+    const s = FIGURE_DPI / 72;
+    const px = (v: number): string => String(Math.max(0, Math.round(v * s)));
+    await run(
+      "pdftocairo",
+      [
+        "-png",
+        "-singlefile",
+        "-r",
+        String(FIGURE_DPI),
+        "-f",
+        String(page),
+        "-l",
+        String(page),
+        "-x",
+        px(box.x0),
+        "-y",
+        px(box.y0),
+        "-W",
+        px(box.x1 - box.x0),
+        "-H",
+        px(box.y1 - box.y0),
+        pdf,
+        outPrefix,
+      ],
       signal,
     );
     return `${outPrefix}.png`;

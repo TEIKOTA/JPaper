@@ -11,6 +11,25 @@ export interface AssembledPage {
   continues: boolean;
   // fallback のページ画像（main.tex からの相対パス）。
   image?: string;
+  // ページの図（上から順。main.tex からの相対パス）。図の目印を前から順に置き換える。
+  figures?: readonly string[];
+}
+
+// LLM が図の代わりに置く目印。契約付録 §8（PDF 入力）
+export const FIGURE_PLACEHOLDER = /\\fbox\{Figure omitted[^{}]*\}/g;
+
+// 図の目印を前から順に切り出した図へ置き換える。置き換えた数を返す。
+export function placeFigures(tex: string, figures: readonly string[]): { tex: string; placed: number; marks: number } {
+  let k = 0;
+  let marks = 0;
+  const out = tex.replace(FIGURE_PLACEHOLDER, (m) => {
+    marks++;
+    const f = figures[k];
+    if (f === undefined) return m;
+    k++;
+    return `\\begin{center}\\includegraphics[width=\\linewidth,height=0.45\\textheight,keepaspectratio]{${f}}\\end{center}`;
+  });
+  return { tex: out, placed: k, marks };
 }
 
 // 文末として扱う終わり方（閉じ括弧・引用符が後ろに付いてよい）。
@@ -80,7 +99,7 @@ export function assembleMainTex(pages: readonly AssembledPage[]): string {
   for (const p0 of pages) {
     const split = splitContinues(p0.tex);
     const p = { ...p0, continues: p0.continues || split.continues };
-    let tex = p.status === "ok" ? dropOmitted(split.tex) : fallbackTex(p);
+    let tex = p.status === "ok" ? placeFigures(dropOmitted(split.tex), p.figures ?? []).tex : fallbackTex(p);
     if (p.status === "ok") {
       // 最初に現れた \title・\author を前文へ移し、\title の位置に \maketitle を置く。
       for (const name of ["title", "author"] as const) {
