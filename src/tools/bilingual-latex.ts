@@ -192,27 +192,41 @@ export function muteBibliography(tex: string): string {
 
 // 右の段の略語（acronym パッケージ）のキーに付ける接頭辞。契約付録 §8（対訳 PDF）
 export const ACRONYM_PREFIX = "jpR";
-// acronym パッケージで略語のキーを取る命令。
+// acronym パッケージで略語のキーを取る命令（acronym.sty）。
 const ACRONYM_KEY_COMMANDS =
-  "ac|acs|acl|acf|acp|acsp|aclp|acfp|acfi|acsu|aclu|iac|Iac|Ac|Acs|Acl|Acf|Acp|Acsp|Aclp|Acfp|acused|acro|acrodef|acroplural|acrodefplural|acroindefinite|acrodefindefinite";
-const ACRONYM_KEY = new RegExp(`\\\\(${ACRONYM_KEY_COMMANDS})(\\*?)(\\s*)\\{([^{}]*)\\}`, "g");
+  "ac|acs|acl|acf|acp|acsp|aclp|acfp|acfi|acfip|acsu|aclu|iac|Iac|Ac|Acs|Acl|Acf|Acp|Acsp|Aclp|Acfp|Acfi|Acfip|Aclu|acused|acro|acrodef|acroplural|acrodefplural|acroindefinite|acrodefindefinite";
+// 命令・星・（\ac[2]{…} の改行のペナルティなどの）任意引数・キー。
+const ACRONYM_KEY = new RegExp(`\\\\(${ACRONYM_KEY_COMMANDS})(\\*?)(\\s*(?:\\[[^\\]]*\\])?\\s*)\\{([^{}]*)\\}`, "g");
+// 略語を定義する命令とキー。
+const ACRONYM_DEFINITION = /\\(acro|acrodef|acroplural|acrodefplural)\*?\s*\{([^{}]*)\}/g;
 
 export function usesAcronymPackage(preamble: string): boolean {
-  return /\\usepackage\s*(?:\[[^\]]*\])?\s*\{[^}]*\bacronym\b[^}]*\}/.test(preamble);
+  return /\\usepackage\s*(?:\[[^\]]*\])?\s*\{[^}]*\bacronym\b[^}]*\}/.test(stripComments(preamble));
 }
 
-// ⚠ landmines.md
-export function separateAcronyms(tex: string): string {
-  return japanesePlurals(prefixAcronymKeys(tex));
+// 右の段の本文で \acro / \acrodef が定義するキーと、作者が複数形を定めたキー。
+export function acronymKeysOf(texs: readonly string[]): { defined: Set<string>; plural: Set<string> } {
+  const defined = new Set<string>();
+  const plural = new Set<string>();
+  for (const tex of texs) {
+    for (const m of stripComments(tex).matchAll(ACRONYM_DEFINITION)) (m[1]!.includes("plural") ? plural : defined).add(m[2]!);
+  }
+  return { defined, plural };
 }
 
-// 和訳の略語の定義の直後に、正式名の複数形を正式名のまま（s を付けない）と定める。後に書いた \acroplural が優先する。
-function japanesePlurals(tex: string): string {
-  const def = new RegExp(`\\\\(?:acro|acrodef)\\{(${ACRONYM_PREFIX}[^{}]*)\\}\\s*\\[([^\\]]*)\\]\\s*\\{`, "g");
+// 右の段の本文で定義する略語のキーに接頭辞を付け、左の段の定義・初出と分ける（前文やマクロで定義する略語は変えない）。⚠ landmines.md
+export function separateAcronyms(tex: string, keys: { defined: Set<string>; plural: Set<string> }): string {
+  return japanesePlurals(prefixAcronymKeys(tex, keys.defined), keys.plural);
+}
+
+// 和訳の略語の定義の直後に、正式名の複数形を正式名のまま（s を付けない）と定める（作者が複数形を定めたキーは除く）。
+// \acroplural は acronym 環境の中でだけ使えるので、\acrodef には \acrodefplural を足す。
+function japanesePlurals(tex: string, authored: Set<string>): string {
+  const def = new RegExp(`\\\\(acro|acrodef)\\{${ACRONYM_PREFIX}([^{}]*)\\}\\s*\\[([^\\]]*)\\]\\s*\\{`, "g");
   let out = "";
   let from = 0;
   for (const m of tex.matchAll(def)) {
-    if (m.index < from) continue;
+    if (m.index < from || authored.has(m[2]!)) continue;
     let depth = 1;
     let i = m.index + m[0].length;
     for (; i < tex.length && depth > 0; i++) {
@@ -222,20 +236,20 @@ function japanesePlurals(tex: string): string {
     }
     if (depth !== 0) continue;
     const long = tex.slice(m.index + m[0].length, i - 1);
-    out += `${tex.slice(from, i)}\\acroplural{${m[1]!}}[${m[2]!}s]{${long}}`;
+    const cmd = m[1] === "acro" ? "acroplural" : "acrodefplural";
+    out += `${tex.slice(from, i)}\\${cmd}{${ACRONYM_PREFIX}${m[2]!}}[${m[3]!}s]{${long}}`;
     from = i;
   }
   return out + tex.slice(from);
 }
 
-function prefixAcronymKeys(tex: string): string {
-  return tex.replace(ACRONYM_KEY, (_m, cmd: string, star: string, sp: string, key: string, offset: number, all: string) => {
+function prefixAcronymKeys(tex: string, defined: Set<string>): string {
+  return tex.replace(ACRONYM_KEY, (m, cmd: string, star: string, sp: string, key: string, offset: number, all: string) => {
+    if (!defined.has(key)) return m;
     const head = `\\${cmd}${star}${sp}{${ACRONYM_PREFIX}${key}}`;
-    // 定義で略称（[…]）を省くとキーが略称になるので、元のキーを略称として書く。
-    if (!/^(?:acro|acrodef|acroplural|acrodefplural)$/.test(cmd)) return head;
-    const rest = all.slice(offset + _m.length);
-    if (/^\s*\[/.test(rest)) return head;
-    return `${head}[${key}${cmd.includes("plural") ? "s" : ""}]`;
+    // 定義で略称（[…]）を省くとキーが略称になるので、元のキーを略称として書く（複数形の定義は単数の略称を引くので補わない）。
+    if (cmd !== "acro" && cmd !== "acrodef") return head;
+    return /^\s*\[/.test(all.slice(offset + m.length)) ? head : `${head}[${key}]`;
   });
 }
 
@@ -564,12 +578,12 @@ export function renderPairs(
   profile: FrontMatterProfile = DEFAULT_PROFILE,
 ): { blocks: string[]; titled: boolean } {
   const entries: (string | { left: string; right: string })[] = [];
-  const acronyms = usesAcronymPackage(preambles.right);
+  const acronyms = usesAcronymPackage(preambles.right) ? acronymKeysOf(pairs.map((p) => p.right)) : undefined;
   const push = (left: string, right: string): void => {
     if (left.trim() === "" && right.trim() === "") return;
     const l = replaceFrontmatter(left, "left");
     const r0 = muteBibliography(dropLabels(provideCommands(replaceFrontmatter(right, "right"))));
-    const r = acronyms ? separateAcronyms(r0) : r0;
+    const r = acronyms === undefined ? r0 : separateAcronyms(r0, acronyms);
     entries.push({ left: l, right: r });
   };
   let seenLeft = preambles.left;
