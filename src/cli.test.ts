@@ -56,7 +56,7 @@ describe("--help（契約付録 §5・issue #371）", () => {
 
   it("使い方に全てのオプションが載っている", () => {
     const src = readFileSync(new URL("./cli.ts", import.meta.url), "utf8");
-    const flags = [...src.matchAll(/^const (?:VALUE|BOOL|HELP)_FLAGS = \[(.*)\];$/gm)]
+    const flags = [...src.matchAll(/^(?:export )?const (?:VALUE|BOOL|HELP)_FLAGS = \[(.*)\];$/gm)]
       .flatMap((m) => [...(m[1] ?? "").matchAll(/"(-[^"]+)"/g)].map((f) => f[1]));
     expect(flags.length).toBeGreaterThan(10);
     for (const f of flags) expect(USAGE).toContain(f);

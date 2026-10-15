@@ -37,8 +37,8 @@ export interface CliDeps {
   web?: WebDeps;
 }
 
-const VALUE_FLAGS = ["--provider", "--out", "--model", "--context-window", "--effort", "--concurrency", "--pages", "--redact-file"];
-const BOOL_FLAGS = ["--think", "--no-think", "--no-bilingual", "--no-verify-terms", "--yes"];
+export const VALUE_FLAGS = ["--provider", "--out", "--model", "--context-window", "--effort", "--concurrency", "--pages", "--redact-file"];
+export const BOOL_FLAGS = ["--think", "--no-think", "--no-bilingual", "--no-verify-terms", "--yes"];
 const HELP_FLAGS = ["--help", "-h"];
 const HELP_HINT = "使い方は jpaper --help で表示できます\n";
 
