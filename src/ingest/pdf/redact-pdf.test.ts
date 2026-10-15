@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { joinWords, pageWords, redactionBoxes, sameMatches, unmatchedVariants } from "./redact-pdf.js";
+import { joinWords, pageWords, redactionBoxes, sameMatches, unmatchedVariants, variantBoxes } from "./redact-pdf.js";
 import { makeRedactor } from "../redact.js";
 
 describe("PDF の語の位置", () => {
@@ -107,5 +107,12 @@ describe("テキスト層と同じつなぎ方", () => {
       "Hanako- Yamada",
       "Hanako Yamada",
     ]);
+  });
+
+  it("空白の入り方だけ違って当たらなかった所の語の矩形を返す（重なる語は長い方の形）", () => {
+    const xml = `<line>${W("by", 72, 100, 82, 110)}${W("HanakoYamada", 86, 100, 150, 110)}${W("and", 154, 100, 170, 110)}${W("Hanako", 174, 100, 200, 110)}${W("Yamada", 204, 100, 230, 110)}</line>`;
+    const r = makeRedactor(["Yamada", "Hanako Yamada"], Buffer.alloc(32, 1))!;
+    expect(unmatchedVariants(joinWords(pageWords(xml)).joined, r)).toEqual(["HanakoYamada"]);
+    expect(variantBoxes(pageWords(xml), r, 0).map((b) => b.x0)).toEqual([86]);
   });
 });

@@ -141,6 +141,9 @@ describe("伏せ字の範囲選択の API（契約付録 §9）", () => {
     const id = await t.upload();
     const r = await t.post(`/api/uploads/${id}/matches`, { terms: ["Hanako Yamada"] });
     expect((r.body as Record<string, any>).unmatched).toEqual([{ text: "HanakoYamada", count: 2, pages: [2, 3] }]);
+    // page を付ければ、そのページで空白の入り方だけ違う所の矩形も返す（ページ上の語の並びで求める）。
+    const p1 = await t.post(`/api/uploads/${id}/matches`, { terms: ["Hanako Yamada"], page: 1 });
+    expect((p1.body as Record<string, any>).variantBoxes).toEqual([]);
   });
 
   it("同じまとまりを同時に求めても、語は 1 回だけ読む。同じ語を 2 回送っても 1 語として数える", async () => {

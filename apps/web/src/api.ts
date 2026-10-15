@@ -249,6 +249,8 @@ export interface Matches {
   unmatched: { text: string; count: number; pages: number[] }[];
   page?: number;
   boxes?: WordBox[];
+  // page で、空白の入り方だけ違って当たらなかった所の矩形。
+  variantBoxes?: WordBox[];
 }
 
 const post = (body: unknown): RequestInit => ({

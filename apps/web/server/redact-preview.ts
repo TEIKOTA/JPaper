@@ -3,7 +3,7 @@
 import { execFile } from "node:child_process";
 import { JpaperError } from "../../../src/types/errors.js";
 import { makeRedactor, type Redactor } from "../../../src/ingest/redact.js";
-import { pageWords, redactionBoxes, sameMatches, unmatchedVariants } from "../../../src/ingest/pdf/redact-pdf.js";
+import { pageWords, redactionBoxes, sameMatches, unmatchedVariants, variantBoxes } from "../../../src/ingest/pdf/redact-pdf.js";
 import { normalizePageText } from "../../../src/ingest/pdf/text-layer.js";
 import type { Box } from "../../../src/ingest/pdf/poppler.js";
 
@@ -163,9 +163,11 @@ export class UploadWords {
   }
 
   // そのページで白く塗る矩形（すべての語をまとめて当てる。CLI と同じ）。
-  async boxes(id: string, file: string, total: number, page: number, terms: readonly string[]): Promise<Box[]> {
+  // そのページで白く塗る矩形と、空白の入り方だけ違って当たらなかった所の矩形。
+  async boxes(id: string, file: string, total: number, page: number, terms: readonly string[]): Promise<{ boxes: Box[]; variantBoxes: Box[] }> {
     const r: Redactor | undefined = makeRedactor(terms, KEY);
-    if (r === undefined) return [];
-    return redactionBoxes((await this.data(id, file, page, total)).words, r).boxes;
+    if (r === undefined) return { boxes: [], variantBoxes: [] };
+    const { words } = await this.data(id, file, page, total);
+    return { boxes: redactionBoxes(words, r).boxes, variantBoxes: variantBoxes(words, r) };
   }
 }

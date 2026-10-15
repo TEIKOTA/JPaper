@@ -357,7 +357,7 @@ export function createApp(config: WebConfig, services: Services = createServices
       return c.json({
         total,
         ...(await words.matches(id, file, total, terms)),
-        ...(page === undefined ? {} : { page, boxes: await words.boxes(id, file, total, page, terms) }),
+        ...(page === undefined ? {} : { page, ...(await words.boxes(id, file, total, page, terms)) }),
       });
     } catch (e) {
       return errorResponse(c, e);

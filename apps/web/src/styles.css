@@ -1011,3 +1011,17 @@ input {
   color: var(--error);
   font-size: 14px;
 }
+
+.redact-variant-note {
+  grid-column: 1 / -1;
+  color: var(--sub);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.redact-variant-box {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 1.6;
+  stroke-dasharray: 3 2;
+}

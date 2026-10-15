@@ -47,6 +47,25 @@ export function validTerm(term: string): boolean {
   return n >= MIN_CHARS && n <= MAX_CHARS && core >= MIN_CHARS && !/[\x00-\x1f\x7f]/.test(term) && !term.startsWith("#");
 }
 
+// 空白の入り方だけ違う形を語に足せるか。有効な語と（空白の並びを 1 つにして）同じ形は足しても当たらない（文字の間の見えない制御文字など）。
+// 外した語と同じ形は、足せばその語を有効に戻す。
+export function variantAction(text: string, terms: readonly RedactTerm[]): "add" | "same" | "invalid" {
+  if (terms.some((t) => t.on && t.term.replace(/\s+/g, " ") === text)) return "same";
+  return validTerm(text) ? "add" : "invalid";
+}
+
+// 空白・- を除いて SHORT_VARIANT 文字以下で、空白をまたぐ英数字の形（"a new" の中の "a n" など）。語の境目をまたいだ偶然の並びのことが多い。
+const SHORT_VARIANT = 3;
+export function crossesWords(text: string): boolean {
+  return /^[A-Za-z0-9\s-]+$/.test(text) && /\s/.test(text) && [...text.replace(/[-\s]/g, "")].length <= SHORT_VARIANT;
+}
+
+// pages の中で今のページの次（dir=1）・前（dir=-1）のページ。端では反対の端へ回る。
+export function stepPage(pages: readonly number[], page: number, dir: 1 | -1): number | undefined {
+  if (pages.length === 0) return undefined;
+  return dir === 1 ? (pages.find((p) => p > page) ?? pages[0]!) : ([...pages].reverse().find((p) => p < page) ?? pages[pages.length - 1]!);
+}
+
 // 範囲（pt）に重なる語を、上から・左から順に返す。
 export function wordsInRect<T extends WordBox>(words: readonly T[], r: WordBox): T[] {
   return words
@@ -142,11 +161,9 @@ export function RedactPanel(props: {
   const countOf = (term: string) => matches?.terms.find((m) => m.term === term);
   const totalHits = matches?.totalHits ?? 0;
 
-  const jump = (term: string, dir: 1 | -1): void => {
-    const pages = countOf(term)?.pages ?? [];
-    if (pages.length === 0) return;
-    const next = dir === 1 ? (pages.find((p) => p > page) ?? pages[0]!) : ([...pages].reverse().find((p) => p < page) ?? pages[pages.length - 1]!);
-    setPage(next);
+  const jump = (pages: readonly number[], dir: 1 | -1): void => {
+    const next = stepPage(pages, page, dir);
+    if (next !== undefined) setPage(next);
   };
 
   return (
@@ -200,6 +217,9 @@ export function RedactPanel(props: {
                   height={b.y1 - b.y0}
                 />
               ))}
+              {(matches?.page === page && !white ? (matches.variantBoxes ?? []) : []).map((b, i) => (
+                <rect key={`v${String(i)}`} className="redact-variant-box" x={b.x0} y={b.y0} width={b.x1 - b.x0} height={b.y1 - b.y0} />
+              ))}
               {picked.map((w, i) => (
                 <rect key={`p${String(i)}`} className="redact-pick" x={w.x0} y={w.y0} width={w.x1 - w.x0} height={w.y1 - w.y0} />
               ))}
@@ -233,10 +253,10 @@ export function RedactPanel(props: {
                   </label>
                   <span className="redact-term-count">{t.on ? (m === undefined ? "—" : `${String(m.count)} か所`) : "外す"}</span>
                   <span className="redact-term-nav">
-                    <button type="button" className="text-button" disabled={!t.on || (m?.pages.length ?? 0) === 0} onClick={() => jump(t.term, -1)}>
+                    <button type="button" className="text-button" disabled={!t.on || (m?.pages.length ?? 0) === 0} onClick={() => jump(m?.pages ?? [], -1)}>
                       前
                     </button>
-                    <button type="button" className="text-button" disabled={!t.on || (m?.pages.length ?? 0) === 0} onClick={() => jump(t.term, 1)}>
+                    <button type="button" className="text-button" disabled={!t.on || (m?.pages.length ?? 0) === 0} onClick={() => jump(m?.pages ?? [], 1)}>
                       次
                     </button>
                     <button
@@ -282,23 +302,52 @@ export function RedactPanel(props: {
           <div className="redact-variants">
             <p className="redact-variants-title">空白の入り方だけ違って当たらなかった所（伏せ字になりません）</p>
             <ul className="redact-terms">
-              {matches!.unmatched.slice(0, MAX_VARIANTS).map((v) => (
-                <li key={v.text} className="redact-term">
-                  <span className="redact-term-text">{v.text}</span>
-                  <span className="redact-term-count">
-                    {v.count} か所（{v.pages.slice(0, 5).map((p) => `p.${String(p)}`).join(", ")}
-                    {v.pages.length > 5 ? " ほか" : ""}）
-                  </span>
-                  <span className="redact-term-nav">
-                    <button type="button" className="text-button" onClick={() => setPage(v.pages[0]!)}>
-                      見る
-                    </button>
-                    <button type="button" className="text-button" onClick={() => add(v.text)}>
-                      語に足す
-                    </button>
-                  </span>
-                </li>
-              ))}
+              {matches!.unmatched.slice(0, MAX_VARIANTS).map((v) => {
+                const action = variantAction(v.text, terms);
+                return (
+                  <li key={v.text} className="redact-term">
+                    <span className="redact-term-text">{v.text}</span>
+                    <span className="redact-term-count">
+                      {v.count} か所（{v.pages.slice(0, 5).map((p) => `p.${String(p)}`).join(", ")}
+                      {v.pages.length > 5 ? " ほか" : ""}）
+                    </span>
+                    <span className="redact-term-nav">
+                      <button
+                        type="button"
+                        className="text-button"
+                        onClick={() => {
+                          setWhite(false);
+                          jump(v.pages, -1);
+                        }}
+                      >
+                        前
+                      </button>
+                      <button
+                        type="button"
+                        className="text-button"
+                        onClick={() => {
+                          setWhite(false);
+                          jump(v.pages, 1);
+                        }}
+                      >
+                        次
+                      </button>
+                      {action === "add" && (
+                        <button type="button" className="text-button" onClick={() => add(v.text)}>
+                          語に足す
+                        </button>
+                      )}
+                    </span>
+                    {action === "same" && (
+                      <span className="redact-variant-note">語と同じ形に見えますが、文字の間に見えない文字があるなどで当たりません。語を足しても伏せ字になりません。</span>
+                    )}
+                    {action === "invalid" && <span className="redact-variant-note">2〜200 文字に収まらないため、語に足せません。</span>}
+                    {action === "add" && crossesWords(v.text) && (
+                      <span className="redact-variant-note">語の境目をまたいだ偶然の並びかもしれません。足すとこの並びも伏せ字になります。</span>
+                    )}
+                  </li>
+                );
+              })}
             </ul>
             {matches!.unmatched.length > MAX_VARIANTS && (
               <p className="form-note">ほか {matches!.unmatched.length - MAX_VARIANTS} 通りの書き方があります。</p>

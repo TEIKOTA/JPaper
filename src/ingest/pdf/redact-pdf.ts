@@ -91,10 +91,26 @@ function matchSequence(s: string, r: Redactor): string[] {
 
 // 緩い当たりのうち伏せ字に当たらなかった所（空白・改行などの入り方だけが語と違う形）。空白の並びは空白 1 つに、書字方向の制御文字は落として返す。
 export function unmatchedVariants(s: string, r: Redactor): string[] {
+  return unmatched(s, r).map((m) => m[0].replace(/[\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, "").replace(/\s+/g, " "));
+}
+
+function unmatched(s: string, r: Redactor): RegExpExecArray[] {
   const strict = new Set([...s.matchAll(r.pattern)].map((m) => `${String(m.index)}:${String(m.index + m[0].length)}`));
-  return [...s.matchAll(loosePattern(r))]
-    .filter((m) => !strict.has(`${String(m.index)}:${String(m.index + m[0].length)}`))
-    .map((m) => m[0].replace(/[\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, "").replace(/\s+/g, " "));
+  return [...s.matchAll(loosePattern(r))].filter((m) => !strict.has(`${String(m.index)}:${String(m.index + m[0].length)}`));
+}
+
+// 空白の入り方だけ違って伏せ字に当たらなかった所の語の矩形（画面で位置を示す）。
+export function variantBoxes(words: readonly Word[], r: Redactor, pad = 1): Box[] {
+  const { joined, starts, ends } = joinWords(words);
+  const boxes: Box[] = [];
+  for (const m of unmatched(joined, r)) {
+    const a = m.index;
+    const b = a + m[0].length;
+    for (const [i, w] of words.entries()) {
+      if (starts[i]! < b && ends[i]! > a) boxes.push({ x0: w.x0 - pad, y0: w.y0 - pad, x1: w.x1 + pad, y1: w.y1 + pad });
+    }
+  }
+  return boxes;
 }
 
 // テキスト層とつないだ語の文字列で、伏せ字の当たりが食い違っていないか（どちらかに語が残らないか）。

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { makeRedactor, redactText } from "../../../../src/ingest/redact.js";
 import { hyphenated as cliHyphenated, joinWords, spaceBetween as cliSpaceBetween, JOIN_GAP as CLI_JOIN_GAP } from "../../../../src/ingest/pdf/redact-pdf.js";
-import { hyphenated, JOIN_GAP, spaceBetween, termFromWords, validTerm, wordsInRect } from "./RedactPanel.js";
+import { crossesWords, hyphenated, JOIN_GAP, spaceBetween, stepPage, termFromWords, validTerm, variantAction, wordsInRect } from "./RedactPanel.js";
 import { dropAction, droppedPdf, formReady, parseTermLines } from "./TranslatePage.js";
 
 describe("伏せ字の範囲選択（画面）", () => {
@@ -95,5 +95,28 @@ describe("伏せ字の範囲選択（画面）", () => {
     expect(dropAction({ blocked: false, onFileInput: true, files: [{ name: "t.txt", type: "text/plain" }] })).toBe("native");
     expect(dropAction({ blocked: false, onFileInput: false, files: [pdf] })).toEqual({ file: pdf });
     expect(dropAction({ blocked: false, onFileInput: false, files: [pdf, pdf] })).toHaveProperty("error");
+  });
+
+  it("空白の入り方だけ違う形: 既にある語と同じ形・2〜200 文字に収まらない形は足さない。短い空白またぎには注意を付ける", () => {
+    const terms = [{ term: "Hanako Yamada", on: true }];
+    expect(variantAction("HanakoYamada", terms)).toBe("add");
+    expect(variantAction("Hanako Yamada", terms)).toBe("same");
+    expect(variantAction("x".repeat(201), terms)).toBe("invalid");
+    // 空白が並ぶ語とも同じ形とみなす。外した語と同じ形は、足せば有効に戻るので足せる。
+    expect(variantAction("Hanako Yamada", [{ term: "Hanako  Yamada", on: true }])).toBe("same");
+    expect(variantAction("HanakoYamada", [...terms, { term: "HanakoYamada", on: false }])).toBe("add");
+    expect(crossesWords("a n")).toBe(true);
+    expect(crossesWords("t he")).toBe(true);
+    expect(crossesWords("HanakoYamada")).toBe(false);
+    expect(crossesWords("Hanako Yamada")).toBe(false);
+    expect(crossesWords("山 田")).toBe(false);
+  });
+
+  it("前・次のページは端で反対の端へ回る", () => {
+    expect(stepPage([2, 5, 9], 5, 1)).toBe(9);
+    expect(stepPage([2, 5, 9], 9, 1)).toBe(2);
+    expect(stepPage([2, 5, 9], 2, -1)).toBe(9);
+    expect(stepPage([2, 5, 9], 6, -1)).toBe(5);
+    expect(stepPage([], 1, 1)).toBeUndefined();
   });
 });
