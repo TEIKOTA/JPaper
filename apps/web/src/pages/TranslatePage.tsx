@@ -80,7 +80,7 @@ function TranslateForm(props: {
   const title = props.title !== undefined && arxivId.trim() === props.id ? props.title : undefined;
   const ready = source === "arxiv" ? arxivId.trim() !== "" : upload !== undefined && !uploading;
 
-  useEffect(() => setError(undefined), [source, arxivId, upload, pages, provider, model, effort]);
+  useEffect(() => setError(undefined), [source, arxivId, pages, provider, model, effort]);
 
   const options = {
     provider,
@@ -187,6 +187,7 @@ function TranslateForm(props: {
                       if (seq !== uploadSeq.current) return;
                       setUploading(false);
                       setUpload(u);
+                      setError(undefined);
                     },
                     (err: unknown) => {
                       if (seq !== uploadSeq.current) return;
