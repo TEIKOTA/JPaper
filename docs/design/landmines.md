@@ -291,4 +291,3 @@
 - **おかしく見える点**: 1 ページの読み取りが例外で落ちても、すぐには投げず、走っている他のページの読み取りが終わるのを待ってから最初の例外を投げる。
 - **なぜ意図的か**: すぐ投げると `translatePaper` が返って run lock を解放した後も、残りの worker がページの checkpoint（`.run/steps/pdf-pNNNN`）を書き続ける。`translate-paper.ts` の `mapLimit` と同じ理由（亡霊の書き込み）。
 - **正本ポインタ**: 契約付録 §8（PDF 入力）・`src/workflows/translate-paper.ts` の `mapLimit`。
-
