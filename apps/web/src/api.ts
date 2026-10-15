@@ -148,6 +148,7 @@ export interface Job {
   label: string;
   arxivId?: string;
   pdf?: { name: string; pages?: string };
+  redactTerms?: number;
   paperId: string;
   title?: string;
   options: TranslateOptions;
@@ -212,9 +213,36 @@ export function largePdfOf(e: unknown): LargePdf | undefined {
   return e instanceof ApiError && e.status === 409 && e.body.kind === "confirm-large" ? (e.body as unknown as LargePdf) : undefined;
 }
 
-export type StartJob =
+export type StartJob = (
   | ({ arxivId: string; title?: string } & TranslateOptions)
-  | ({ upload: string; name: string; pages?: string; confirmLarge?: boolean } & TranslateOptions);
+  | ({ upload: string; name: string; pages?: string; confirmLarge?: boolean } & TranslateOptions)
+) & { redact?: string[] };
+
+export interface WordBox {
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+}
+
+export interface PageWords {
+  width: number;
+  height: number;
+  words: (WordBox & { text: string })[];
+}
+
+export interface TermMatch {
+  term: string;
+  count: number;
+  pages: number[];
+}
+
+export interface Matches {
+  total: number;
+  terms: TermMatch[];
+  page?: number;
+  boxes?: WordBox[];
+}
 
 const post = (body: unknown): RequestInit => ({
   method: "POST",
@@ -242,6 +270,11 @@ export const api = {
     call<{ total?: number; entries: ArxivEntry[] }>(`/api/arxiv?q=${encodeURIComponent(q)}`, { signal }),
   jobs: () => call<{ jobs: Job[] }>("/api/jobs").then((r) => r.jobs),
   startJob: (body: StartJob) => call<{ job: Job }>("/api/jobs", post(body)),
+  pageImageUrl: (id: string, page: number) => `/api/uploads/${encodeURIComponent(id)}/pages/${String(page)}/image`,
+  pageWords: (id: string, page: number, signal?: AbortSignal) =>
+    call<PageWords>(`/api/uploads/${encodeURIComponent(id)}/pages/${String(page)}/words`, { signal }),
+  matches: (id: string, terms: string[], page: number, signal?: AbortSignal) =>
+    call<Matches>(`/api/uploads/${encodeURIComponent(id)}/matches`, { ...post({ terms, page }), signal }),
   uploadPdf: (file: File) =>
     call<{ upload: Upload }>("/api/uploads", {
       method: "POST",
