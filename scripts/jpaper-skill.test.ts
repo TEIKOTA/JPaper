@@ -55,6 +55,24 @@ describe("/jpaper skill（issue #424）", () => {
     expect(existsSync(path.join(ROOT, ".github", "ISSUE_TEMPLATE", "bug-report.md"))).toBe(true);
   });
 
+  it("失敗の手がかりとして挙げる標準エラーの文言と置き場が、CLI のソースにある", () => {
+    const src = ["src/cli.ts", "src/workflows/translate-paper.ts"].map((f) => readFileSync(path.join(ROOT, f), "utf8")).join("\n");
+    for (const s of [
+      "失敗[",
+      "想定外エラー: ",
+      "原プリアンブルで組めず共通テンプレへフォールバック: ",
+      "組版失敗(翻訳起因・要再訳): ",
+      "組版失敗(テンプレでも不可): ",
+      "対訳 PDF の組版に失敗しました",
+      "翻訳起因: ",
+      '"translation", "chapters"',
+      '"failed-segments.json"',
+    ]) {
+      expect(src, s).toContain(s);
+      expect(text, s).toContain(s.replace(/"/g, "").replace(", ", "/").replace(/: $/, ""));
+    }
+  });
+
   it("README の「Coding AI から使う」が両方の呼び方と skill を示す", () => {
     const readme = readFileSync(path.join(ROOT, "README.md"), "utf8");
     const start = readme.indexOf("### Coding AI から使う");

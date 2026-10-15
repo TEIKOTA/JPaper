@@ -147,7 +147,7 @@ jpaper の repo のディレクトリで Claude Code（`claude`）か Codex（`c
 | セットアップ | `/jpaper セットアップして` | `$jpaper セットアップして` |
 | 論文を和訳する | `/jpaper 2606.22649 を和訳して` | `$jpaper 2606.22649 を和訳して` |
 
-和訳の依頼では、セットアップが済んでいなければ先にセットアップしてから訳す。論文は arXiv ID のほか、URL・タイトル・手元のファイル（PDF も可）でも指定できる。provider を言わなければ、Claude Code では `claude`、Codex では `codex` を使う。訳し終えると、和訳 PDF と対訳 PDF のパスを伝える。翻訳や組版が失敗したときは原因を調べ、JPaper のバグや未対応が原因なら、issue の下書きを見せて、了承を得てから GitHub に起票する。
+和訳の依頼では、セットアップが済んでいなければ先にセットアップしてから訳す。論文は arXiv ID のほか、arXiv の URL・タイトル・手元のファイル（PDF も可）でも指定できる。provider を言わなければ、Claude Code では `claude`、Codex では `codex` を使う。訳し終えると、和訳 PDF と対訳 PDF のパスを伝える。翻訳や組版が失敗したときは原因を調べ、JPaper のバグや未対応が原因なら、issue の下書きを見せて、了承を得てから GitHub に起票する。
 
 LaTeX（MacTeX）のように管理者のパスワードが要るものは、AI は入れずに、別のターミナルで実行するコマンドを示す。この skill（[`.claude/skills/jpaper/SKILL.md`](./.claude/skills/jpaper/SKILL.md)）は、`/jpaper`・`$jpaper` で呼んだときだけ動く。
 
