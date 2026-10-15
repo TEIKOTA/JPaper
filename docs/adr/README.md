@@ -39,7 +39,7 @@
 | 2026-07-06 | [issue 駆動・PR 必須の開発ワークフローの採用](./20260706-adopt-issue-driven-pr-workflow.md) | accepted |
 | 2026-07-06 | [日本語 Conventional Commits を commit と PR タイトルに適用](./20260706-adopt-commit-and-pr-message-convention.md) | accepted（CI 検査条項のみ 2026-09-01 に部分 supersede） |
 | 2026-07-06 | [GitHub デフォルトラベルを廃止しカスタムラベル体系を採用](./20260706-adopt-custom-github-labels.md) | accepted |
-| 2026-07-06 | [server-side branch protection の導入を見送る](./20260706-defer-server-side-branch-protection.md) | accepted（CI 強制手段の条項のみ 2026-09-01 に部分 supersede） |
+| 2026-07-06 | [server-side branch protection の導入を見送る](./20260706-defer-server-side-branch-protection.md) | accepted（CI 強制手段の条項のみ 2026-09-01 に部分 supersede。public の repo の branch protection は 2026-10-15 に部分 supersede） |
 | 2026-07-06 | [テンプレート版数の記録と手動更新戦略の採用](./20260706-adopt-template-versioning-and-update-strategy.md) | accepted（生成経路・形式・保証・metadata コメントを 2026-09-26 に部分 supersede） |
 | 2026-07-06 | [ラベル同期の削除を --prune オプトインに限定する](./20260706-clarify-label-sync-prune-behavior.md) | accepted |
 | 2026-07-08 | [エージェント基盤: 素の TS ワークフロー＋薄い自作ランタイム（Flue 設計準拠）](./20260708-adopt-deterministic-agent-architecture.md) | accepted |
@@ -104,3 +104,4 @@
 | 2026-10-14 | [public にした JPaper では GitHub Actions を有効にする](./20261014-enable-github-actions-on-public-repo.md) | accepted |
 | 2026-10-15 | [PDF 入力は、本文の語句をテキスト層から取り、数式と構造だけを LLM にページ画像から起こさせる](./20261015-pdf-input-text-layer-as-source-llm-rebuilds-math.md) | accepted |
 | 2026-10-15 | [指定した文字列は取り込みの段で *** に置き換え、どの LLM 呼び出しにも渡さない](./20261015-redact-terms-at-ingest-never-send-to-llm.md) | accepted |
+| 2026-10-15 | [public の repo では、main への merge に CI の全ジョブの成功を要する](./20261015-require-ci-checks-on-public-repo.md) | accepted |
