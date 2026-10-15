@@ -86,10 +86,12 @@ LLM プロバイダは `LlmClient` の境界で差し替えられる。ローカ
 ### Web アプリ（検索・翻訳・用語集）
 
 ```sh
-pnpm dev:web
+jpaper web
 ```
 
-ブラウザで `http://127.0.0.1:5173` を開くと、`article/` の論文と用語集、全体の用語 DB を見られる。用語の行から訳語を直すと、訳文での出現箇所を原文の対応箇所と合わせて確かめてから置換し、和訳 PDF と対訳 PDF を組み直す。置換にも組み直しにも LLM は使わず、直前の 1 回は元に戻せる。データの場所は CLI と同じ既定（CWD の `article/` と `~/.jpaper/glossary.db`）で、`JPAPER_ARTICLE_DIR`・`JPAPER_GLOSSARY_DB` で変えられる。`127.0.0.1` だけで待ち受け、認証は持たない。仕様の正本は [契約付録 §9](./docs/design/contract-appendix.md)。
+（`jpaper` を `pnpm link --global` で入れていなければ、repo の直下で `pnpm dev:web` でも同じ。）Web アプリの依存が無い・`git pull` で変わったときは、先に jpaper の repo で `pnpm install` を実行してから立ち上げる。`.env` は jpaper の repo のものを読む。止めるときは Ctrl+C。ポートは `JPAPER_WEB_PORT`（画面。既定 5173）・`JPAPER_WEB_API_PORT`（API。既定 5174）で変えられる。
+
+ブラウザで `http://127.0.0.1:5173` を開くと、`article/` の論文と用語集、全体の用語 DB を見られる。用語の行から訳語を直すと、訳文での出現箇所を原文の対応箇所と合わせて確かめてから置換し、和訳 PDF と対訳 PDF を組み直す。置換にも組み直しにも LLM は使わず、直前の 1 回は元に戻せる。データの場所は CLI と同じ既定（実行した場所の `article/` と `~/.jpaper/glossary.db`）で、`JPAPER_ARTICLE_DIR`・`JPAPER_GLOSSARY_DB` で変えられる。`127.0.0.1` だけで待ち受け、認証は持たない。仕様の正本は [契約付録 §9](./docs/design/contract-appendix.md)。
 
 画面は次の 3 つ。
 
@@ -105,7 +107,7 @@ pnpm dev:web
 |---|---|
 | `jpaper` | jpaper CLI（`bin/jpaper.mjs` が `src/cli.ts` を tsx で実行。`pnpm link --global` の後） |
 | `pnpm dev` | jpaper CLI（`src/cli.ts`）を tsx で実行（repo の中で） |
-| `pnpm dev:web` | Web アプリ（検索・翻訳・用語集の API と画面）を立ち上げる |
+| `pnpm dev:web` | Web アプリ（検索・翻訳・用語集の API と画面）を立ち上げる（`jpaper web` と同じ） |
 | `pnpm build` | `tsc` で `dist/` へビルドし、Web アプリの画面を `apps/web/dist/` へビルド |
 | `pnpm typecheck` | 型チェックのみ（emit しない。Web アプリも含む） |
 | `pnpm test` | vitest で単体テスト（決定的な検査で、LLM を含めない） |

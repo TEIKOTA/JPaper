@@ -10,6 +10,7 @@ import { estimatePdfRead, LARGE_PDF_PAGES, pdfPagesToRead } from "./ingest/pdf/i
 import { isPdfFile } from "./ingest/pdf/poppler.js";
 import { parseRedactTerms } from "./ingest/redact.js";
 import { readFileSync } from "node:fs";
+import { runWeb, type WebDeps } from "./web-launch.js";
 import { IMAGE_PROVIDERS } from "./providers/index.js";
 import {
   DEFAULT_OLLAMA,
@@ -31,6 +32,8 @@ export interface CliDeps {
   confirm?: (question: string) => Promise<boolean>;
   // PDF の読むページ数（テスト用）。
   pdfPages?: (pdf: string, spec: string | undefined) => Promise<number>;
+  // jpaper web（テスト用）。
+  web?: WebDeps;
 }
 
 const VALUE_FLAGS = ["--provider", "--out", "--model", "--context-window", "--effort", "--concurrency", "--pages", "--redact-file"];
@@ -40,8 +43,11 @@ const HELP_HINT = "使い方は jpaper --help で表示できます\n";
 
 // 契約付録 §5
 export const USAGE = `使い方: jpaper <input> --provider {ollama|claude|codex|openrouter} [オプション]
+       jpaper web
 
 論文の LaTeX ソース（または PDF）を和訳し、和訳 PDF と対訳 PDF を作る。
+jpaper web は Web アプリ（検索・翻訳・用語集）を http://127.0.0.1:5173 で立ち上げる（Ctrl+C で止める）。
+Web アプリの依存が無ければ、先に jpaper の repo で pnpm install を実行する。論文は実行した場所の article/ に置く。
 
 <input>
   arXiv ID（例 2606.22649）、.tex・.tex.gz・zip・tar.gz などのファイル、ディレクトリ、
@@ -249,6 +255,14 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number
     return 0;
   }
 
+  if (args[0] === "web") {
+    if (args.length > 1) {
+      stderr(`エラー: jpaper web は引数を取りません: ${args.slice(1).join(" ")}（ディレクトリ web を訳すなら ./web と書いてください）\n${HELP_HINT}`);
+      return 2;
+    }
+    return runWeb({ stderr, ...deps.web });
+  }
+
   try {
     const positional: string[] = [];
     const flags = new Map<string, string>();
@@ -378,8 +392,14 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number
 }
 
 // jpaper コマンドの入口（bin/jpaper.mjs と直接実行）。.env はここだけで読む（runCli・ライブラリ経路では読まない）。契約付録 §5・§8
+// 作業ディレクトリの .env を読むか（-h・--help と jpaper web では読まない。Web アプリは repo の .env を読む）。契約付録 §5
+export function readsDotEnv(argv: string[]): boolean {
+  const args = argv.slice(2);
+  return !wantsHelp(args) && args[0] !== "web";
+}
+
 export async function main(argv: string[]): Promise<never> {
-  if (!wantsHelp(argv.slice(2))) {
+  if (readsDotEnv(argv)) {
     const env = loadDotEnv();
     if (env.error !== undefined) {
       process.stderr.write(`エラー: .env を読めません: ${env.error}\n`);

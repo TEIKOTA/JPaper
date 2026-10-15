@@ -92,7 +92,7 @@
 - `pnpm test` — vitest の単体テスト（決定的な検査。LLM を含めない）
 - `pnpm build` / `pnpm typecheck` — tsc のビルド / 型チェック（typecheck は emit しない）
 - `pnpm dev` — `src/cli.ts`（jpaper CLI）を tsx で実行（`pnpm link --global` の後は、任意のディレクトリで `jpaper` として同じ CLI を使える。`bin/jpaper.mjs`）
-- `pnpm dev:web` — Web アプリ（API と画面）を立ち上げる（仕様の正本は契約付録 §9）
+- `pnpm dev:web` — Web アプリ（API と画面）を立ち上げる（`jpaper web` も同じ。依存が無ければ先に `pnpm install`。仕様の正本は契約付録 §9）
 - `bash tests/run-tests.sh` — 規約検査スクリプト群の self-test（scripts/ を変更したら必ず実行。`scripts/` `tests/` の編集後は PostToolUse hook が自動実行する）
 - `scripts/new-branch.sh <type> <issue番号> <slug> [--worktree <標準配置のdir>]` — 規約検証付きで topic branch を作成する（既定は fetch 後の `origin/main`。取得失敗時は local main へ fallback。`--from` で変更可）
 - `scripts/worktree.sh -h` — repo 単位の作成・一覧・保留・終了・候補確認・回収（仕様・承認・保護条件は [`docs/process/worktree-lifecycle.md`](./docs/process/worktree-lifecycle.md)）。
