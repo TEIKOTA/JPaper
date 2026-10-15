@@ -29,3 +29,5 @@
   - CI が揺れて落ちると merge できない（揺れを放置しにくくなるので、むしろ望ましい）。
   - merge の後の main への push の CI（並行して走る別の実行）の失敗は、これでは止まらない。merge の後に main の実行の結果を確かめる運用は残す（failure-patterns）。
   - 管理者も含めて止まるので、緊急の修正も CI を通す必要がある。
+  - チェックが来ないまま待ち続けるケースがある: head の commit message の `[skip ci]`、初めての外部の contributor の fork からの PR（実行の承認が要る）、issue 側だけを直した後の pr-check（PR のイベントが無いので手動で再実行する）。
+  - 必須のチェックの名前は workflow のジョブ名と手で合わせる。ずれると全 PR が止まるので、self-test（`tests/run-tests.sh`）が workflow のジョブ名（matrix の展開を含む）との一致を検査する。

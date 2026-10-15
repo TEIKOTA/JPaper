@@ -1991,6 +1991,35 @@ sed 's/-f required_status_checks\[contexts\]\[\]=pr-check //' "$log" > "$protect
 rc=0; grep -Fxq "$PROTECTION" "$protection_bad_log" && rc=1
 report 0 "$rc" "protection fixture: 必須のジョブが 1 つ欠けた設定を拒否（red）"
 rm -f "$protection_bad_log"
+# 必須のチェックの名前が .github/workflows/ のジョブ名（matrix の展開を含む）と一致する（ずれると全 PR が止まる）。
+required_checks_match_workflows() {
+  python3 - "$ROOT" <<'PY'
+import re, sys, pathlib
+root = pathlib.Path(sys.argv[1])
+script = (root / "scripts/setup-github-repo.sh").read_text()
+required = set(re.findall(r"required_status_checks\[contexts\]\[\]=([^']+)'", script))
+names = set()
+for wf in (root / ".github/workflows").glob("*.yml"):
+    text = wf.read_text()
+    jobs = text.split("\njobs:\n", 1)[1]
+    for m in re.finditer(r"^  ([A-Za-z0-9_-]+):\n((?:    .*\n|\n)*)", jobs, re.M):
+        job, body = m.group(1), m.group(2)
+        os_list = re.search(r"os: \[([^\]]*)\]", body)
+        if os_list:
+            names.update(f"{job} ({o.strip()})" for o in os_list.group(1).split(","))
+        else:
+            names.add(job)
+sys.exit(0 if required and required <= names else 1)
+PY
+}
+expect 0 "必須のチェックの名前が workflow のジョブ名と一致する" required_checks_match_workflows
+FAKE_GH_VISIBILITY=public run_setup "$log" "$out" --repo o/r; rc=$?
+grep -q '^api --silent --method PUT repos/o/r/branches/main/protection ' "$log" || rc=1
+report 0 "$rc" "public repo（--repo）: 指定した repo の main に branch protection を設定する"
+FAKE_GH_VISIBILITY=public run_setup "$log" "$out" --dry-run; rc=$?
+grep -q 'branches/main/protection' "$log" && rc=1
+grep -q '^dry-run: gh api --silent --method PUT repos/{owner}/{repo}/branches/main/protection' "$out" || rc=1
+report 0 "$rc" "public repo（--dry-run）: branch protection を設定せずに表示する"
 
 FAKE_GH_VISIBILITY=public run_setup "$log" "$out" --repo o/r; rc=$?
 report 0 "$rc" "public repo（--repo）: 実行成功"
