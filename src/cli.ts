@@ -9,7 +9,8 @@ import { createInterface } from "node:readline";
 import { estimatePdfRead, LARGE_PDF_PAGES, pdfPagesToRead } from "./ingest/pdf/index.js";
 import { isPdfFile } from "./ingest/pdf/poppler.js";
 import { parseRedactTerms } from "./ingest/redact.js";
-import { readFileSync } from "node:fs";
+import { readFileSync, realpathSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { runWeb, type WebDeps } from "./web-launch.js";
 import { IMAGE_PROVIDERS } from "./providers/index.js";
 import {
@@ -413,6 +414,16 @@ export async function main(argv: string[]): Promise<never> {
   process.exit(await runCli(argv));
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+// このファイルが直接起動されたか。実パス同士で比べる。issue #422
+export function isMainModule(moduleUrl: string, argv1: string | undefined): boolean {
+  if (argv1 === undefined) return false;
+  try {
+    return realpathSync(argv1) === realpathSync(fileURLToPath(moduleUrl));
+  } catch {
+    return false;
+  }
+}
+
+if (isMainModule(import.meta.url, process.argv[1])) {
   void main(process.argv);
 }

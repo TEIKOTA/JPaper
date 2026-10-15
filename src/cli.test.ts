@@ -1,8 +1,9 @@
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { describe, it, expect } from "vitest";
-import { runCli, formatProgress, USAGE, wantsHelp } from "./cli.js";
+import { isMainModule, runCli, formatProgress, USAGE, wantsHelp } from "./cli.js";
 import type { Result } from "./types/contract.js";
 import { SHARED_DEFAULT_NOTICE, type TranslateOptions } from "./workflows/translate-paper.js";
 
@@ -95,6 +96,32 @@ describe("--help（契約付録 §5・issue #371）", () => {
     });
     expect(code).toBe(2);
     expect(err).not.toContain("jpaper --help");
+  });
+});
+
+describe("isMainModule（issue #422）", () => {
+  it("空白・日本語を含むパスでも、同じファイルなら直接起動とみなす", () => {
+    const dir = path.join(mkdtempSync(path.join(os.tmpdir(), "jpaper-main-")), "論文 ツール");
+    mkdirSync(dir);
+    const file = path.join(dir, "cli.ts");
+    writeFileSync(file, "");
+    const url = pathToFileURL(file).href;
+    expect(url).toContain("%20");
+    expect(isMainModule(url, file)).toBe(true);
+    const link = path.join(dir, "link.ts");
+    symlinkSync(file, link);
+    expect(isMainModule(url, link)).toBe(true);
+  });
+
+  it("別のファイル・無いファイル・argv[1] が無いときは直接起動とみなさない", () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), "jpaper-main-"));
+    const a = path.join(dir, "a.ts");
+    const b = path.join(dir, "b.ts");
+    writeFileSync(a, "");
+    writeFileSync(b, "");
+    expect(isMainModule(pathToFileURL(a).href, b)).toBe(false);
+    expect(isMainModule(pathToFileURL(a).href, path.join(dir, "none.ts"))).toBe(false);
+    expect(isMainModule(pathToFileURL(a).href, undefined)).toBe(false);
   });
 });
 
