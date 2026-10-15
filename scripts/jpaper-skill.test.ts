@@ -40,6 +40,16 @@ describe("/jpaper skill（issue #424）", () => {
     for (const o of options) expect(known.has(o), o).toBe(true);
   });
 
+  it("失敗したら原因を調べ、JPaper の不具合だけを、利用者の了承を得てから起票する", () => {
+    const failure = text.slice(text.indexOf("## 4. 失敗したとき"));
+    expect(failure).not.toBe(text);
+    expect(failure).toContain("推測で起票しない");
+    expect(failure).toContain("了承を得たときだけ、`gh issue create --repo TEIKOTA/JPaper");
+    expect(failure).toContain("gh issue list --repo TEIKOTA/JPaper --state all");
+    expect(failure).toContain("伏せ字にした語");
+    expect(existsSync(path.join(ROOT, ".github", "ISSUE_TEMPLATE", "bug-report.md"))).toBe(true);
+  });
+
   it("README の「Coding AI から使う」が両方の呼び方と skill を示す", () => {
     const readme = readFileSync(path.join(ROOT, "README.md"), "utf8");
     const start = readme.indexOf("### Coding AI から使う");
