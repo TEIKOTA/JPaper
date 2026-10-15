@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { hyphenated as cliHyphenated, joinWords, spaceBetween as cliSpaceBetween, JOIN_GAP as CLI_JOIN_GAP } from "../../../../src/ingest/pdf/redact-pdf.js";
 import { hyphenated, JOIN_GAP, spaceBetween, termFromWords, validTerm, wordsInRect } from "./RedactPanel.js";
-import { formReady, parseTermLines } from "./TranslatePage.js";
+import { dropAction, droppedPdf, formReady, parseTermLines } from "./TranslatePage.js";
 
 describe("伏せ字の範囲選択（画面）", () => {
   const w = (text: string, x0: number, y0: number) => ({ text, x0, y0, x1: x0 + 30, y1: y0 + 10 });
@@ -72,5 +72,23 @@ describe("伏せ字の範囲選択（画面）", () => {
     expect(formReady(pdf)).toBe(true);
     expect(formReady({ ...pdf, redactReady: false })).toBe(false);
     expect(formReady({ ...pdf, redactReady: false, redact: [{ term: "Yamada", on: false }] })).toBe(true);
+  });
+
+  it("落としたファイルは PDF 1 つだけを受け付ける", () => {
+    const pdf = { name: "book.PDF", type: "" };
+    expect(droppedPdf([pdf])).toEqual({ file: pdf });
+    expect(droppedPdf([{ name: "x", type: "application/pdf" }])).toHaveProperty("file");
+    expect(droppedPdf([{ name: "a.png", type: "image/png" }])).toHaveProperty("error");
+    expect(droppedPdf([pdf, pdf])).toHaveProperty("error");
+    expect(droppedPdf([])).toHaveProperty("error");
+  });
+
+  it("確認のダイアログ・送信の間は落としても受け付けず、選択欄の上はブラウザに任せる", () => {
+    const pdf = { name: "b.pdf", type: "application/pdf" };
+    expect(dropAction({ blocked: true, onFileInput: false, files: [pdf] })).toBe("ignore");
+    expect(dropAction({ blocked: true, onFileInput: true, files: [pdf] })).toBe("ignore");
+    expect(dropAction({ blocked: false, onFileInput: true, files: [{ name: "t.txt", type: "text/plain" }] })).toBe("native");
+    expect(dropAction({ blocked: false, onFileInput: false, files: [pdf] })).toEqual({ file: pdf });
+    expect(dropAction({ blocked: false, onFileInput: false, files: [pdf, pdf] })).toHaveProperty("error");
   });
 });

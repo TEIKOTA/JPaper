@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { href, useRoute, type Route } from "./router.js";
 import { PapersPage } from "./pages/PapersPage.js";
 import { PaperPage } from "./pages/PaperPage.js";
@@ -25,6 +26,19 @@ function navKey(route: Route): NavKey {
 export function App() {
   const route = useRoute();
   const current = navKey(route);
+  // ファイルをどこに落としても、ブラウザがそのファイルを開いて画面を離れないようにする（受け付けるのは翻訳の画面だけ）。契約付録 §9
+  useEffect(() => {
+    const block = (e: DragEvent): void => {
+      const onFileInput = e.target instanceof HTMLInputElement && e.target.type === "file";
+      if (e.dataTransfer?.types.includes("Files") === true && !onFileInput) e.preventDefault();
+    };
+    window.addEventListener("dragover", block);
+    window.addEventListener("drop", block);
+    return () => {
+      window.removeEventListener("dragover", block);
+      window.removeEventListener("drop", block);
+    };
+  }, []);
   return (
     <>
       <header className="site-header">
