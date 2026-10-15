@@ -1,6 +1,6 @@
 // jpaper の起動時に repo の更新を取り込む。契約付録 §5（issue #420）
 import { spawnSync } from "node:child_process";
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 
 export const FETCH_TIMEOUT_MS = 5000;
@@ -10,7 +10,6 @@ const BRANCH = "main";
 export function gitEnv(env) {
   const out = { ...env, GIT_TERMINAL_PROMPT: "0" };
   for (const k of ["GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY", "GIT_COMMON_DIR"]) delete out[k];
-  if (out.GIT_SSH_COMMAND === undefined && out.GIT_SSH === undefined) out.GIT_SSH_COMMAND = "ssh -o BatchMode=yes";
   return out;
 }
 
@@ -53,7 +52,13 @@ export function webRunning(root) {
   } catch {
     return false;
   }
-  return names.some((n) => /^[0-9]+$/.test(n) && alive(Number(n)));
+  let running = false;
+  for (const n of names) {
+    if (!/^[0-9]+$/.test(n)) continue;
+    if (alive(Number(n))) running = true;
+    else rmSync(join(root, WEB_PID_DIR, n), { force: true });
+  }
+  return running;
 }
 
 export function selfUpdate({
@@ -66,8 +71,8 @@ export function selfUpdate({
   stale = () => lockStale(root),
 }) {
   if (env.JPAPER_NO_UPDATE === "1" || !hasGit) return "skipped";
-  const result = pull({ run, stderr, web });
-  if ((result === "updated" || result === "current" || result === "ahead" || result === "offline") && stale() && !web()) {
+  const result = pull({ run, stderr, web, env });
+  if (result !== "offline" && stale() && !web()) {
     stderr("jpaper: 依存が pnpm-lock.yaml と違うので pnpm install --frozen-lockfile を実行します\n");
     if (!run("pnpm", ["install", "--frozen-lockfile"], { inherit: true }).ok) {
       stderr("jpaper: pnpm install が失敗しました。jpaper の repo で pnpm install を実行してください\n");
@@ -76,15 +81,20 @@ export function selfUpdate({
   return result;
 }
 
-function pull({ run, stderr, web }) {
+function pull({ run, stderr, web, env }) {
   const git = (args, opts) => run("git", args, opts);
   const branch = git(["symbolic-ref", "--quiet", "--short", "HEAD"]).stdout;
-  if (!git(["fetch", "--quiet", "origin", BRANCH], { timeout: FETCH_TIMEOUT_MS }).ok) return "offline";
+  const ssh =
+    env.GIT_SSH_COMMAND === undefined && env.GIT_SSH === undefined && git(["config", "--get", "core.sshCommand"]).stdout === ""
+      ? ["-c", "core.sshCommand=ssh -o BatchMode=yes"]
+      : [];
+  if (!git([...ssh, "fetch", "--quiet", "origin", BRANCH], { timeout: FETCH_TIMEOUT_MS }).ok) return "offline";
   const head = git(["rev-parse", "--verify", "--quiet", `refs/heads/${BRANCH}`]);
   const remote = git(["rev-parse", "--verify", "--quiet", `refs/remotes/origin/${BRANCH}`]);
   if (!head.ok || !remote.ok || head.stdout === remote.stdout) return "current";
   if (branch !== BRANCH) {
-    if (git(["merge-base", "--is-ancestor", head.stdout, remote.stdout]).ok) {
+    const contains = git(["merge-base", "--is-ancestor", remote.stdout, "HEAD"]).ok;
+    if (!contains && git(["merge-base", "--is-ancestor", head.stdout, remote.stdout]).ok) {
       stderr(`jpaper: 更新があります。${BRANCH} 以外（${branch || "detached HEAD"}）にいるので取り込みません。今の版で起動します\n`);
     }
     return "blocked";

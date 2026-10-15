@@ -1,6 +1,6 @@
 // 契約付録 §5（起動時の更新）。issue #420
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -135,7 +135,40 @@ describe("起動時の更新（issue #420）", () => {
     git(root, "update-ref", "-d", "refs/remotes/origin/main");
     git(root, "config", "remote.origin.fetch", "+refs/heads/nothing:refs/remotes/origin/nothing");
     const r = update(root);
-    expect(r.err).not.toContain("分かれています");
+    expect(r).toMatchObject({ result: "current", err: "" });
+  });
+
+  it("main 以外の branch が origin/main を含んでいれば、手元の main が古くても何も出さない", () => {
+    const { root, upstream } = repos();
+    advance(upstream);
+    git(root, "fetch", "--quiet", "origin");
+    git(root, "checkout", "--quiet", "-b", "feat/y", "origin/main");
+    expect(update(root)).toMatchObject({ result: "blocked", err: "" });
+  });
+
+  it("取り込めないとき（未コミットの変更）でも、依存が古ければ入れ直す", () => {
+    const { root, upstream } = repos();
+    advance(upstream);
+    writeFileSync(join(root, "a.txt"), "edited");
+    writeFileSync(join(root, "node_modules", ".pnpm", "lock.yaml"), "old");
+    const r = update(root);
+    expect(r.result).toBe("blocked");
+    expect(r.calls).toContain("pnpm install --frozen-lockfile");
+  });
+
+  it("fetch に失敗したら、依存が古くても入れ直さない（ネットワークが要る）", () => {
+    const { root } = repos();
+    git(root, "remote", "set-url", "origin", join(root, "missing.git"));
+    writeFileSync(join(root, "node_modules", ".pnpm", "lock.yaml"), "old");
+    expect(update(root).calls.some((c) => c.startsWith("pnpm"))).toBe(false);
+  });
+
+  it("core.sshCommand を決めていれば、それを上書きしない", () => {
+    const { root } = repos();
+    git(root, "config", "core.sshCommand", "ssh -i mykey");
+    expect(update(root).calls.find((c) => c.includes(" fetch "))).not.toContain("BatchMode");
+    git(root, "config", "--unset", "core.sshCommand");
+    expect(update(root).calls.find((c) => c.includes(" fetch ") || c.startsWith("git -c"))).toContain("BatchMode=yes");
   });
 
   it("手元の main が分かれていれば取り込まない", () => {
@@ -163,11 +196,12 @@ describe("起動時の更新（issue #420）", () => {
 
   it("git には端末のプロンプトを出させず、GIT_DIR などを引き継がない", () => {
     const e = gitEnv({ GIT_DIR: "/x", GIT_WORK_TREE: "/y", GIT_INDEX_FILE: "i", PATH: "/bin" });
-    expect(e).toMatchObject({ GIT_TERMINAL_PROMPT: "0", GIT_SSH_COMMAND: "ssh -o BatchMode=yes", PATH: "/bin" });
+    expect(e).toMatchObject({ GIT_TERMINAL_PROMPT: "0", PATH: "/bin" });
     expect(e.GIT_DIR).toBeUndefined();
     expect(e.GIT_WORK_TREE).toBeUndefined();
     expect(e.GIT_INDEX_FILE).toBeUndefined();
     expect(gitEnv({ GIT_SSH_COMMAND: "ssh -i k" }).GIT_SSH_COMMAND).toBe("ssh -i k");
+    expect(e.GIT_SSH_COMMAND).toBeUndefined();
   });
 
   it("Web アプリの目印は、生きているプロセスのものだけを数える", () => {
@@ -177,6 +211,7 @@ describe("起動時の更新（issue #420）", () => {
     mkdirSync(join(base, WEB_PID_DIR));
     writeFileSync(join(base, WEB_PID_DIR, "999999"), "");
     expect(webRunning(base)).toBe(false);
+    expect(existsSync(join(base, WEB_PID_DIR, "999999"))).toBe(false);
     writeFileSync(join(base, WEB_PID_DIR, String(process.pid)), "");
     expect(webRunning(base)).toBe(true);
   });

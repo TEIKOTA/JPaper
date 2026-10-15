@@ -29,4 +29,4 @@ const stop = (code) => {
   process.exitCode = code;
 };
 for (const c of children) c.on("exit", (code) => stop(code ?? 0));
-for (const s of ["SIGINT", "SIGTERM"]) process.on(s, () => stop(0));
+for (const s of ["SIGINT", "SIGTERM", "SIGHUP"]) process.on(s, () => stop(0));
