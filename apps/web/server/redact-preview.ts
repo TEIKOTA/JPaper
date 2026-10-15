@@ -2,8 +2,8 @@
 // 当て方は CLI と同じ関数（makeRedactor・redactionBoxes）を使い、画面の赤枠が白く塗られる位置と一致するようにする。
 import { execFile } from "node:child_process";
 import { JpaperError } from "../../../src/types/errors.js";
-import { makeRedactor, redactText, type Redactor } from "../../../src/ingest/redact.js";
-import { pageWords, redactionBoxes } from "../../../src/ingest/pdf/redact-pdf.js";
+import { makeRedactor, type Redactor } from "../../../src/ingest/redact.js";
+import { matchPlaces, pageWords, redactionBoxes, samePlaces } from "../../../src/ingest/pdf/redact-pdf.js";
 import { normalizePageText } from "../../../src/ingest/pdf/text-layer.js";
 import type { Box } from "../../../src/ingest/pdf/poppler.js";
 
@@ -141,9 +141,9 @@ export class UploadWords {
         }
       }
       // CLI（契約付録 §8 伏せ字）と同じ比べ方。
-      const { hits } = redactionBoxes(words, all);
+      const { hits, places } = redactionBoxes(words, all);
       totalHits += hits;
-      if (redactText(text, all).replaced !== hits) mismatchPages.push(p);
+      if (!samePlaces(matchPlaces(text, all), places)) mismatchPages.push(p);
     }
     return { terms: each.map(({ term, count, pages }) => ({ term, count, pages })), totalHits, mismatchPages };
   }

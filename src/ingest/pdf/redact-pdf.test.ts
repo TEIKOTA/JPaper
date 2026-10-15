@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { joinWords, pageWords, redactionBoxes } from "./redact-pdf.js";
+import { joinWords, matchPlaces, pageWords, redactionBoxes, samePlaces } from "./redact-pdf.js";
 import { makeRedactor } from "../redact.js";
 
 describe("PDF の語の位置", () => {
@@ -9,7 +9,7 @@ describe("PDF の語の位置", () => {
 
   it("語をまたぐ一致は当たった語ごとの矩形、句読点が付いた語は語ごと塗る", () => {
     const r = makeRedactor(["Taro Yamada"], Buffer.alloc(32, 1))!;
-    expect(redactionBoxes(pageWords(xml), r, 0)).toEqual({
+    expect(redactionBoxes(pageWords(xml), r, 0)).toMatchObject({
       boxes: [
         { x0: 20, y0: 5, x1: 28, y1: 9 },
         { x0: 30, y0: 5, x1: 38, y1: 9 },
@@ -19,7 +19,7 @@ describe("PDF の語の位置", () => {
   });
 
   it("当たらなければ空", () => {
-    expect(redactionBoxes(pageWords(xml), makeRedactor(["Suzuki"], Buffer.alloc(32, 1))!)).toEqual({ boxes: [], hits: 0 });
+    expect(redactionBoxes(pageWords(xml), makeRedactor(["Suzuki"], Buffer.alloc(32, 1))!)).toMatchObject({ boxes: [], hits: 0, places: [] });
   });
 });
 
@@ -80,5 +80,22 @@ describe("テキスト層と同じつなぎ方", () => {
     const { boxes, hits } = redactionBoxes(pageWords(hx), r, 0);
     expect(hits).toBe(1);
     expect(boxes.map((b) => b.x0)).toEqual([312, 72]);
+  });
+
+  it("当たりの数が同じでも、場所が違えば同じとみなさない（テキスト層だけ・画像だけの当たりが打ち消し合う形）", () => {
+    const r = makeRedactor(["Yamada"], Buffer.alloc(32, 1))!;
+    // テキスト層は 1 つ目の場所、ページ上の位置は 2 つ目の場所でだけ当たる。
+    const text = "by Yamada here. and Yama da there.";
+    const boxes = "by Yama da here. and Yamada there.";
+    expect(matchPlaces(text, r)).toHaveLength(1);
+    expect(matchPlaces(boxes, r)).toHaveLength(1);
+    expect(samePlaces(matchPlaces(text, r), matchPlaces(boxes, r))).toBe(false);
+    // 空白の入り方だけが違う同じ場所は、同じとみなす。
+    expect(samePlaces(matchPlaces("a Yamada1, b", r), matchPlaces("a Yamada 1 , b", r))).toBe(true);
+  });
+
+  it("語の文字はテキスト層と同じにする（&apos; などの実体参照を戻し、制御文字を落とす）", () => {
+    const xml = `<line>${W("O&apos;Brien&#8217;s", 72, 100, 120, 110)}${W("in\u0002es", 124, 100, 150, 110)}</line>`;
+    expect(pageWords(xml).map((w) => w.text)).toEqual(["O'Brien’s", "ines"]);
   });
 });

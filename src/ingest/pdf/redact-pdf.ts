@@ -1,6 +1,7 @@
 // 契約付録 §8（伏せ字）。PDF のページで、指定した語の位置（pt）を pdftotext -bbox-layout の語の矩形から求める。
 import type { Box } from "./figures.js";
 import type { Redactor } from "../redact.js";
+import { CONTROL } from "./text-layer.js";
 
 interface Word extends Box {
   text: string;
@@ -10,13 +11,17 @@ interface Word extends Box {
 
 const attr = (tag: string, name: string): number => Number(new RegExp(`${name}="([-0-9.]+)"`).exec(tag)?.[1] ?? NaN);
 
+// 語の文字を、テキスト層（normalizePageText）と同じ文字にする（実体参照を戻し、制御文字を落とす）。
 function decode(s: string): string {
   return s
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">")
     .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&amp;/g, "&");
+    .replace(/&apos;/g, "'")
+    .replace(/&#(\d+);/g, (_m, d: string) => String.fromCodePoint(Number(d)))
+    .replace(/&#x([0-9a-fA-F]+);/g, (_m, h: string) => String.fromCodePoint(parseInt(h, 16)))
+    .replace(/&amp;/g, "&")
+    .replace(CONTROL, "");
 }
 
 export function pageWords(xhtml: string): Word[] {
@@ -60,8 +65,30 @@ export function joinWords(words: readonly Word[]): { joined: string; starts: num
   return { joined, starts, ends };
 }
 
-// 語をテキスト層と同じようにつないだ文字列で当て、当たった範囲に重なる語の矩形（少し広げる）と当たった数を返す。
-export function redactionBoxes(words: readonly Word[], r: Redactor, pad = 1): { boxes: Box[]; hits: number } {
+// 当たったそれぞれの場所の印（空白を除いた前後 CONTEXT 文字と当たった文字列）。テキスト層とページ上の位置で、当たった場所が同じかを比べる。
+export const CONTEXT = 16;
+
+export function matchPlaces(s: string, r: Redactor): string[] {
+  const strip = (t: string): string => t.replace(/\s+/g, "");
+  return [...s.matchAll(r.pattern)].map((m) => {
+    const a = m.index;
+    const b = a + m[0].length;
+    const before = strip(s.slice(Math.max(0, a - CONTEXT * 4), a)).slice(-CONTEXT);
+    const after = strip(s.slice(b, b + CONTEXT * 4)).slice(0, CONTEXT);
+    return `${before}\0${strip(m[0])}\0${after}`;
+  });
+}
+
+// 2 つの場所の印の並びが、順序によらず同じか。
+export function samePlaces(a: readonly string[], b: readonly string[]): boolean {
+  if (a.length !== b.length) return false;
+  const x = [...a].sort();
+  const y = [...b].sort();
+  return x.every((v, i) => v === y[i]);
+}
+
+// 語をテキスト層と同じようにつないだ文字列で当て、当たった範囲に重なる語の矩形（少し広げる）・当たった数・当たった場所の印を返す。
+export function redactionBoxes(words: readonly Word[], r: Redactor, pad = 1): { boxes: Box[]; hits: number; places: string[] } {
   const { joined, starts, ends } = joinWords(words);
   const boxes: Box[] = [];
   let hits = 0;
@@ -74,5 +101,5 @@ export function redactionBoxes(words: readonly Word[], r: Redactor, pad = 1): { 
       if (starts[i]! < b && ends[i]! > a) boxes.push({ x0: w.x0 - pad, y0: w.y0 - pad, x1: w.x1 + pad, y1: w.y1 + pad });
     }
   }
-  return { boxes, hits };
+  return { boxes, hits, places: matchPlaces(joined, r) };
 }

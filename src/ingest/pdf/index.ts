@@ -8,7 +8,7 @@ import { checkpoint, hashContext } from "../../durable/checkpoint.js";
 import type { LatexRunner } from "../../tools/build-gate.js";
 import { popplerTools, type Box, type PdfTools } from "./poppler.js";
 import { redactText, type Redactor } from "../redact.js";
-import { pageWords, redactionBoxes } from "./redact-pdf.js";
+import { matchPlaces, pageWords, redactionBoxes, samePlaces } from "./redact-pdf.js";
 import { hasTextLayer, normalizePageText, parsePageRange, stripRepeatedLines } from "./text-layer.js";
 import { readPage } from "./page-reader.js";
 import { assembleMainTex, placeFigures, type AssembledPage } from "./assemble.js";
@@ -132,16 +132,17 @@ export async function extractPdf(pdf: string, opts: PdfReadOptions, deps: PdfExt
   for (const p of pages) {
     let text = normalizePageText(await tools.pageText(pdf, p, deps.signal));
     if (deps.redact !== undefined) {
+      const textPlaces = matchPlaces(text, deps.redact);
       const r = redactText(text, deps.redact);
       text = r.text;
       redacted += r.replaced;
-      const { boxes, hits } = redactionBoxes(pageWords(await tools.pageLayout(pdf, p, deps.signal)), deps.redact);
-      // テキスト層と画像で当たった数が違えば、どちらかに語が残るので止める（画像だけで当たれば文字が、文字だけで当たれば画像が残る）。
-      if (hits !== r.replaced) {
+      const { boxes, hits, places } = redactionBoxes(pageWords(await tools.pageLayout(pdf, p, deps.signal)), deps.redact);
+      // テキスト層と画像で当たった場所（数と前後の文字）が違えば、どちらかに語が残るので止める（画像だけで当たれば文字が、文字だけで当たれば画像が残る）。
+      if (!samePlaces(textPlaces, places)) {
         throw new JpaperError(
           2,
           "input",
-          `PDF の ${String(p)} ページ目で、伏せ字の語の当たりがテキスト層（${String(r.replaced)} か所）とページ上の位置（${String(hits)} か所）で合わないため止めました（語の書き方を、ページの文字どおりにしてください）`,
+          `PDF の ${String(p)} ページ目で、伏せ字の語の当たった場所がテキスト層（${String(r.replaced)} か所）とページ上の位置（${String(hits)} か所）で合わないため止めました（語の書き方を、ページの文字どおりにしてください）`,
         );
       }
       if (boxes.length > 0) masks.set(p, boxes);
