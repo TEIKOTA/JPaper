@@ -4,7 +4,8 @@ import path from "node:path";
 import type { LlmClient } from "../../types/contract.js";
 import { findUnsafeTexCommands } from "../../tools/tex-safety.js";
 import type { LatexRunner } from "../../tools/build-gate.js";
-import { checkWords, OMITTED_MARK, type WordCheck } from "./word-check.js";
+import { checkWords, MAX_MISSING_RUN, OMITTED_MARK, type WordCheck } from "./word-check.js";
+import { withRetry, type RetryOptions } from "../../runtime/session.js";
 
 // 読み直しの回数（初回を含めず）。
 export const MAX_REREADS = 2;
@@ -45,6 +46,8 @@ export interface PageReadResult {
   calls: number;
   reason?: string;
   extraWords: number;
+  // 省いたと申告し、テキスト層の語を埋めた語の数。
+  omittedWords: number;
 }
 
 export interface ReadPageDeps {
@@ -53,6 +56,8 @@ export interface ReadPageDeps {
   // ページ単体の組版に使う作業ディレクトリ（呼び出しごとに作り直す）。
   buildDir: string;
   signal?: AbortSignal;
+  // 一時エラーの再試行（契約付録 §8。テスト用に待ち時間を差し替える）。
+  retry?: RetryOptions;
 }
 
 function userPrompt(page: number, text: string, feedback: string | undefined): string {
@@ -108,7 +113,10 @@ function describeWords(w: WordCheck): string {
   if (w.omitted > w.omittedAllowance) {
     return `you declared ${String(w.omitted)} words as omitted, more than the allowed ${String(w.omittedAllowance)}. Only running heads, page numbers, footers, and text inside figures may be omitted.`;
   }
-  return `these consecutive words from the text layer are missing from your output: "${w.missingSample}".`;
+  if (w.maxMissingRun >= MAX_MISSING_RUN) {
+    return `these consecutive words from the text layer are missing from your output: "${w.missingSample}".`;
+  }
+  return `${String(w.missing)} words from the text layer are missing from your output, for example: "${w.missingWords.slice(0, 20).join(" ")}".`;
 }
 
 export async function readPage(
@@ -121,13 +129,17 @@ export async function readPage(
   let calls = 0;
   for (let attempt = 0; attempt <= MAX_REREADS; attempt++) {
     calls++;
-    const raw = await deps.client.complete({
-      system: READER_SYSTEM,
-      user: userPrompt(page, text, feedback),
-      images: [{ mediaType: "image/png", data: image }],
-      meta: { role: "pdf-reader", phase: "read", segmentId: `p${String(page)}`, pass: attempt },
-      signal: deps.signal,
-    });
+    const raw = await withRetry(
+      () =>
+        deps.client.complete({
+          system: READER_SYSTEM,
+          user: userPrompt(page, text, feedback),
+          images: [{ mediaType: "image/png", data: image }],
+          meta: { role: "pdf-reader", phase: "read", segmentId: `p${String(page)}`, pass: attempt },
+          signal: deps.signal,
+        }),
+      deps.retry,
+    );
     const { continues, tex } = splitContinues(stripFences(raw));
     const words = checkWords(text, tex);
     if (!words.ok) {
@@ -149,7 +161,7 @@ export async function readPage(
       feedback = `the page did not compile with LuaLaTeX: ${err}`;
       continue;
     }
-    return { status: "ok", tex, continues, calls, extraWords: words.extra };
+    return { status: "ok", tex, continues, calls, extraWords: words.extra, omittedWords: words.omitted };
   }
-  return { status: "fallback", tex: "", continues: false, calls, reason: feedback, extraWords: 0 };
+  return { status: "fallback", tex: "", continues: false, calls, reason: feedback, extraWords: 0, omittedWords: 0 };
 }

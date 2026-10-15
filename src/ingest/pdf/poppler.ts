@@ -2,6 +2,7 @@
 import { execFile } from "node:child_process";
 import { closeSync, openSync, readSync } from "node:fs";
 import { JpaperError } from "../../types/errors.js";
+import { canceledError } from "../../runtime/cancellation.js";
 
 export const RENDER_DPI = 150;
 const TIMEOUT_MS = 60_000;
@@ -41,7 +42,7 @@ function run(cmd: string, args: string[], signal?: AbortSignal): Promise<string>
             new JpaperError(2, "input", `PDF の読み取りに poppler の ${cmd} が必要です（brew install poppler）`),
           );
         }
-        if (signal?.aborted === true) return reject(err);
+        if (signal?.aborted === true) return reject(canceledError(`${cmd} 実行中`, signal));
         reject(new JpaperError(2, "input", `${cmd} が PDF を読めません: ${String(stderr).slice(0, 300)}`));
       },
     );

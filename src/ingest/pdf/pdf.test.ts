@@ -53,6 +53,17 @@ describe("1 ページの読み取り", () => {
     expect(client.calls[1]!.user).toContain("remark");
   });
 
+  it("一時エラーは読み直しとは別に再試行する（契約付録 §8）", async () => {
+    let n = 0;
+    const client = new FakeLlmClient(() => {
+      if (n++ === 0) throw Object.assign(new Error("claude exited 1"), { transient: true });
+      return GOOD;
+    });
+    const r = await readPage(3, Buffer.from("png"), TEXT, { ...readerDeps(client), retry: { sleep: async () => {} } });
+    expect(r).toMatchObject({ status: "ok", calls: 1 });
+    expect(client.calls).toHaveLength(2);
+  });
+
   it("読み直しを使い切ったら原本の画像に落とす", async () => {
     const client = new FakeLlmClient("nothing");
     const r = await readPage(3, Buffer.from("png"), TEXT, readerDeps(client));
@@ -142,6 +153,22 @@ describe("ページをつなぐ", () => {
     expect(tex).toContain("\\includegraphics[width=\\linewidth,height=0.85\\textheight,keepaspectratio]{pages/p-0002.png}");
     expect(tex).toContain("We study the\n\n\\begin{center}");
     expect(tex).toContain("\\end{center}\n\nproblem");
+  });
+
+  it("行末で分綴した語がページをまたぐなら、ハイフンを除いてつなぐ", () => {
+    const tex = assembleMainTex([
+      page({ page: 1, text: "continuous time approxi-", tex: "continuous time approxi-" }),
+      page({ page: 2, text: "mation of SGD.", tex: "mation of SGD.", continues: true }),
+    ]);
+    expect(tex).toContain("continuous time approximation of SGD.");
+  });
+
+  it("ページをまたぐ enumerate を 1 つにする（番号が 1 に戻らない）", () => {
+    const tex = assembleMainTex([
+      page({ page: 1, text: "(1) a", tex: "\\begin{enumerate}\n\\item a\n\\end{enumerate}" }),
+      page({ page: 2, text: "(2) b", tex: "\\begin{enumerate}\n\\item b\n\\end{enumerate}" }),
+    ]);
+    expect(tex.match(/\\begin\{enumerate\}/g)).toHaveLength(1);
   });
 
   it("ページをまたぐ参考文献の一覧を 1 つにする", () => {

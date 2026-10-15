@@ -701,6 +701,19 @@ describe("PDF 入力の --pages・--yes と確認（契約付録 §8 PDF 入力�
     expect(small.seen[0]?.allowLargePdf).toBeUndefined();
   });
 
+  it("画像を渡せないプロバイダでは確認を出さない（translatePaper の入口で止まる）", async () => {
+    const { translate } = capture();
+    let asked = false;
+    await runCli(["node", "jpaper", pdf, "--provider", "ollama"], {
+      translate,
+      stdout: () => {},
+      stderr: () => {},
+      confirm: async () => ((asked = true), true),
+      pdfPages: async () => 412,
+    });
+    expect(asked).toBe(false);
+  });
+
   it("読み取りの進捗を 1 行で出す", () => {
     expect(formatProgress({ phase: "read", segmentId: "p3", done: 3, total: 72, passed: true })).toBe("[読み取り 3/72] p3 ok");
     expect(formatProgress({ phase: "read", segmentId: "p4", done: 4, total: 72, passed: false })).toBe(

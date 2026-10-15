@@ -68,8 +68,10 @@ function fallbackTex(p: AssembledPage): string {
   ].join("\n");
 }
 
-const BIB_END = /\\end\{thebibliography\}\s*$/;
-const BIB_BEGIN = /^\s*\\begin\{thebibliography\}\{[^}]*\}/;
+// ページをまたいで続く環境（閉じと開きを潰して 1 つにする）。
+const LIST_ENVS = ["thebibliography", "itemize", "enumerate", "description"];
+const envEnd = (env: string): RegExp => new RegExp(`\\\\end\\{${env}\\}\\s*$`);
+const envBegin = (env: string): RegExp => new RegExp(`^\\s*\\\\begin\\{${env}\\}(?:\\{[^}]*\\}|\\[[^\\]]*\\])?`);
 
 export function assembleMainTex(pages: readonly AssembledPage[]): string {
   const front: string[] = [];
@@ -90,12 +92,16 @@ export function assembleMainTex(pages: readonly AssembledPage[]): string {
       }
     }
     const adjacent = prev !== undefined && prev.page + 1 === p.page && prev.status === "ok" && p.status === "ok";
-    if (adjacent && BIB_END.test(body) && BIB_BEGIN.test(tex)) {
-      body = body.replace(BIB_END, "").trimEnd();
-      tex = tex.replace(BIB_BEGIN, "").trimStart();
+    const env = adjacent ? LIST_ENVS.find((e) => envEnd(e).test(body) && envBegin(e).test(tex)) : undefined;
+    if (env !== undefined) {
+      body = body.replace(envEnd(env), "").trimEnd();
+      tex = tex.replace(envBegin(env), "").trimStart();
       body += `\n${tex}`;
     } else if (adjacent && shouldJoin(prev!.text, p.text, p.continues)) {
-      body = `${body.trimEnd()}\n${tex.trimStart()}`;
+      // 行末で分綴した語がページをまたぐなら、ハイフンを除いてつなぐ。
+      const end = body.trimEnd();
+      const head = tex.trimStart();
+      body = /[A-Za-z]-$/.test(end) && /^[a-z]/.test(head) ? `${end.slice(0, -1)}${head}` : `${end}\n${head}`;
     } else {
       body += `${body === "" ? "" : "\n\n"}${tex}`;
     }

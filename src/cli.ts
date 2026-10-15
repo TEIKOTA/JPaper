@@ -8,6 +8,7 @@ import { forTerminal } from "./runtime/untrusted.js";
 import { createInterface } from "node:readline";
 import { estimatePdfRead, LARGE_PDF_PAGES, pdfPagesToRead } from "./ingest/pdf/index.js";
 import { isPdfFile } from "./ingest/pdf/poppler.js";
+import { IMAGE_PROVIDERS } from "./providers/index.js";
 import {
   DEFAULT_OLLAMA,
   DEFAULT_OPENROUTER,
@@ -218,7 +219,13 @@ async function defaultPdfPages(pdf: string, spec: string | undefined): Promise<n
 function askYesNo(question: string): Promise<boolean> {
   const rl = createInterface({ input: process.stdin, output: process.stderr });
   return new Promise((resolve) => {
+    let answered = false;
+    // Ctrl+C・Ctrl+D で閉じたら中止として扱う。
+    rl.on("close", () => {
+      if (!answered) resolve(false);
+    });
     rl.question(question, (answer) => {
+      answered = true;
       rl.close();
       resolve(/^y(es)?$/i.test(answer.trim()));
     });
@@ -290,7 +297,13 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number
     let allowLargePdf = flags.has("--yes");
     // 端末なら、LLM を呼ぶ前に 100 ページ超を確かめる。端末でなければ translatePaper が --yes を求めて止める。契約付録 §8（PDF 入力）
     const confirm = deps.confirm ?? (process.stdin.isTTY && process.stderr.isTTY ? askYesNo : undefined);
-    if (!allowLargePdf && confirm !== undefined && input.kind === "path" && isPdfFile(input.path)) {
+    if (
+      !allowLargePdf &&
+      confirm !== undefined &&
+      IMAGE_PROVIDERS.includes(provider) &&
+      input.kind === "path" &&
+      isPdfFile(input.path)
+    ) {
       const n = await (deps.pdfPages ?? defaultPdfPages)(input.path, pagesArg);
       if (n > LARGE_PDF_PAGES) {
         const est = estimatePdfRead(n, concurrency ?? defaultConcurrencyFor(provider));

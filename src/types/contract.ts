@@ -268,7 +268,7 @@ export const RunSummary = z.object({
     .default(null),
   // 論文タイトルの翻訳結果。null は翻訳まで到達しなかった run。契約付録 §8
   title: z.enum(["translated", "failed", "absent"]).nullable().default(null),
-  // PDF 入力の読み取り結果。null は PDF 以外の入力。契約付録 §8（PDF 入力）
+  // PDF 入力の読み取り結果。null は PDF 以外の入力と、読み取りが終わらずに失敗した run。契約付録 §8（PDF 入力）
   pdf: z
     .object({
       // 読んだページの数（--pages で絞った後）。

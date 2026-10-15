@@ -3,6 +3,9 @@ import { MATH_ENVS, mathSpans, maskChars, verbatimSpans } from "../../tools/tex-
 
 // テキスト層の語がこの数以上連続して起こした側に無ければ不合格。
 export const MAX_MISSING_RUN = 5;
+// テキスト層の語のうち、起こした側に無い語の総数の上限（ページの語数に対する割合と、最低値）。
+export const MISSING_RATIO = 0.05;
+export const MIN_MISSING_ALLOWANCE = 12;
 // LLM が「意図して省いた」と申告できる語数の上限（ページの語数に対する割合と、最低値）。
 export const OMITTED_RATIO = 0.25;
 export const MIN_OMITTED_ALLOWANCE = 30;
@@ -74,6 +77,10 @@ export interface WordCheck {
   maxMissingRun: number;
   // その連続の語（読み直しの指摘に使う）。
   missingSample: string;
+  // テキスト層の語のうち、起こした側に無い語の総数と、その上限。
+  missing: number;
+  missingAllowance: number;
+  missingWords: string[];
   // 起こした側にだけある語の数（画面に描かれない文字・LLM の付け足し）。
   extra: number;
   // 省いたと申告した語のうち、テキスト層の語を埋めた数と、その上限。
@@ -91,6 +98,7 @@ export function checkWords(textLayer: string, tex: string): WordCheck {
   for (const w of omitted) omittedPool.set(w, (omittedPool.get(w) ?? 0) + 1);
   // 省いたという申告は、テキスト層の語を埋めた分だけ数える。
   let omittedUsed = 0;
+  const missingWords: string[] = [];
   let run = 0;
   let best = { len: 0, end: 0 };
   src.forEach((w, i) => {
@@ -104,18 +112,23 @@ export function checkWords(textLayer: string, tex: string): WordCheck {
       omittedUsed++;
       run = 0;
     } else {
+      missingWords.push(w);
       run++;
       if (run > best.len) best = { len: run, end: i + 1 };
     }
   });
   const extra = [...pool.values()].reduce((a, n) => a + n, 0);
   const omittedAllowance = Math.max(MIN_OMITTED_ALLOWANCE, Math.ceil(src.length * OMITTED_RATIO));
+  const missingAllowance = Math.max(MIN_MISSING_ALLOWANCE, Math.ceil(src.length * MISSING_RATIO));
   return {
     maxMissingRun: best.len,
     missingSample: src.slice(best.end - best.len, best.end).join(" "),
+    missing: missingWords.length,
+    missingAllowance,
+    missingWords,
     extra,
     omitted: omittedUsed,
     omittedAllowance,
-    ok: best.len < MAX_MISSING_RUN && omittedUsed <= omittedAllowance,
+    ok: best.len < MAX_MISSING_RUN && missingWords.length <= missingAllowance && omittedUsed <= omittedAllowance,
   };
 }

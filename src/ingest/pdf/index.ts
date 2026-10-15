@@ -17,8 +17,10 @@ export const LARGE_PDF_PAGES = 100;
 export const ESTIMATED_USD_PER_PAGE = 0.035;
 export const ESTIMATED_SECONDS_PER_PAGE = 8;
 // プロンプト・検査・組み立てを変えたら上げる（ページの checkpoint を無効にする）。
-export const PDF_READER_VERSION = "1";
+export const PDF_READER_VERSION = "2";
 export const PDF_STEP_PREFIX = "pdf-p";
+// テキスト層の語をこれ以上「省いた」としたページは警告する。
+export const OMITTED_NOTICE_WORDS = 10;
 
 export const PdfPageCache = z.object({
   status: z.enum(["ok", "fallback"]),
@@ -27,6 +29,7 @@ export const PdfPageCache = z.object({
   calls: z.number().int().nonnegative(),
   reason: z.string().optional(),
   extraWords: z.number().int().nonnegative(),
+  omittedWords: z.number().int().nonnegative().default(0),
 });
 export type PdfPageCache = z.infer<typeof PdfPageCache>;
 
@@ -136,7 +139,7 @@ export async function extractPdf(pdf: string, opts: PdfReadOptions, deps: PdfExt
     const text = texts[i]!;
     let r: PdfPageCache;
     if (!hasTextLayer(raw[i]!)) {
-      r = { status: "fallback", tex: "", continues: false, calls: 0, reason: "テキスト層が無い", extraWords: 0 };
+      r = { status: "fallback", tex: "", continues: false, calls: 0, reason: "テキスト層が無い", extraWords: 0, omittedWords: 0 };
     } else {
       r = await checkpoint(
         deps.runDir,
@@ -159,6 +162,9 @@ export async function extractPdf(pdf: string, opts: PdfReadOptions, deps: PdfExt
       );
     }
     results.set(page, r);
+    if (r.status === "ok" && r.omittedWords >= OMITTED_NOTICE_WORDS) {
+      deps.notify?.(`PDF の ${String(page)} ページ目は、テキスト層の ${String(r.omittedWords)} 語を「省いた」として訳していません（柱・図の中の文字でなければ取りこぼし）`);
+    }
     if (r.status === "fallback") {
       deps.notify?.(`PDF の ${String(page)} ページ目を読み取れず、原本の画像を貼ります（${r.reason ?? "検査に通らない"}）`);
     }

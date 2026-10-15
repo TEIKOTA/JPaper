@@ -88,6 +88,16 @@ describe("語句の突き合わせ", () => {
     expect(r.ok).toBe(true);
   });
 
+  it("落とした文の語がページの後ろにも出ても、欠けた語の総数で不合格にする（連続の判定をすり抜ける形）", () => {
+    const p1 = "We now show that the gradient of the loss function is bounded for every step of the method.";
+    const p2 = "Moreover the step size of the method controls how the loss function decreases at every step.";
+    const p3 = "Finally we show that the method converges because the gradient of the loss function is bounded.";
+    const r = checkWords([p1, p2, p3].join("\n"), [p1, p3].join("\n\n"));
+    expect(r.maxMissingRun).toBeLessThan(MAX_MISSING_RUN);
+    expect(r.missing).toBeGreaterThan(r.missingAllowance);
+    expect(r.ok).toBe(false);
+  });
+
   it("起こした側にだけある語を数える", () => {
     expect(checkWords("alpha beta gamma", "alpha beta gamma injected words").extra).toBe(2);
   });
