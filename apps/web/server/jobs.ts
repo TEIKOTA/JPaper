@@ -253,7 +253,7 @@ export class JobQueue {
     const label = pdf === undefined ? (req as { arxivId: string }).arxivId : pdf.name;
     const active = this.jobs.find((j) => j.paperId === paperId && (j.state === "queued" || j.state === "running"));
     if (active !== undefined) {
-      throw new JpaperError(2, "conflict", `${label} は既に${active.state === "running" ? "実行中" : "待機中"}です`);
+      throw new JpaperError(2, "conflict", `${active.label} は既に${active.state === "running" ? "実行中" : "待機中"}です`);
     }
     this.seq += 1;
     const title = "title" in req ? req.title : undefined;

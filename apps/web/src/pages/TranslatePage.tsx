@@ -45,6 +45,9 @@ export function TranslatePage(props: { id?: string; title?: string }) {
 
 type Source = "arxiv" | "pdf";
 
+// アップロードの上限（API の MAX_UPLOAD_BYTES と同じ）。契約付録 §9
+const MAX_UPLOAD_BYTES = 100 * 1024 * 1024;
+
 // PDF を読める provider（CLI の IMAGE_PROVIDERS と同じ）。契約付録 §8
 const PDF_PROVIDERS = new Set(["claude", "codex"]);
 
@@ -62,6 +65,8 @@ function TranslateForm(props: {
   const [uploading, setUploading] = useState(false);
   // ジョブを加えたらファイルの選択欄を作り直して空にする。
   const [fileKey, setFileKey] = useState(0);
+  // 最後に選んだファイルの送信の番号。古い送信の応答は捨てる。
+  const uploadSeq = useRef(0);
   const [pages, setPages] = useState("");
   const [large, setLarge] = useState<LargePdf>();
   const [provider, setProvider] = useState(settings.provider ?? "");
@@ -122,152 +127,162 @@ function TranslateForm(props: {
   };
 
   return (
-    <form
-      className="translate-form"
-      onSubmit={(e) => {
-        e.preventDefault();
-        if (source === "pdf") startPdf(pages, false);
-        else start({ arxivId: arxivId.trim(), ...options, ...(title === undefined ? {} : { title }) });
-      }}
-    >
-      <div className="source-switch" role="radiogroup" aria-label="入力">
-        {(
-          [
-            ["arxiv", "arXiv ID"],
-            ["pdf", "PDF"],
-          ] as const
-        ).map(([value, label]) => (
-          <label key={value} className={`source-option${source === value ? " is-on" : ""}`}>
-            <input type="radio" name="source" value={value} checked={source === value} onChange={() => setSource(value)} />
-            {label}
-          </label>
-        ))}
-      </div>
-      {source === "arxiv" ? (
-        <>
-          <label className="field">
-            <span className="field-label">arXiv ID</span>
-            <input
-              className="text-input input-id"
-              value={arxivId}
-              placeholder="例 2601.20627"
-              onChange={(e) => setArxivId(e.target.value)}
-            />
-          </label>
-          {title !== undefined && <p className="form-title">{title}</p>}
-        </>
-      ) : (
+    <>
+      <form
+        className="translate-form"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (source === "pdf") startPdf(pages, false);
+          else start({ arxivId: arxivId.trim(), ...options, ...(title === undefined ? {} : { title }) });
+        }}
+      >
+        <div className="source-switch" role="radiogroup" aria-label="入力">
+          {(
+            [
+              ["arxiv", "arXiv ID"],
+              ["pdf", "PDF"],
+            ] as const
+          ).map(([value, label]) => (
+            <label key={value} className={`source-option${source === value ? " is-on" : ""}`}>
+              <input type="radio" name="source" value={value} checked={source === value} onChange={() => setSource(value)} />
+              {label}
+            </label>
+          ))}
+        </div>
+        {source === "arxiv" ? (
+          <>
+            <label className="field">
+              <span className="field-label">arXiv ID</span>
+              <input
+                className="text-input input-id"
+                value={arxivId}
+                placeholder="例 2601.20627"
+                onChange={(e) => setArxivId(e.target.value)}
+              />
+            </label>
+            {title !== undefined && <p className="form-title">{title}</p>}
+          </>
+        ) : (
+          <div className="form-row">
+            <label className="field">
+              <span className="field-label">PDF</span>
+              <input
+                key={fileKey}
+                className="file-input"
+                type="file"
+                accept="application/pdf,.pdf"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  const seq = ++uploadSeq.current;
+                  setUpload(undefined);
+                  setUploading(false);
+                  if (file === undefined) return;
+                  if (file.size > MAX_UPLOAD_BYTES) {
+                    setError(`PDF が上限 ${String(MAX_UPLOAD_BYTES / 1024 / 1024)}MiB を超えています`);
+                    return;
+                  }
+                  setUploading(true);
+                  api.uploadPdf(file).then(
+                    (u) => {
+                      if (seq !== uploadSeq.current) return;
+                      setUploading(false);
+                      setUpload(u);
+                    },
+                    (err: unknown) => {
+                      if (seq !== uploadSeq.current) return;
+                      setUploading(false);
+                      setError(errorText(err));
+                    },
+                  );
+                }}
+              />
+              <span className="file-status">
+                {uploading ? "送っています…" : upload !== undefined ? `${upload.name}（${String(upload.pages)} ページ）` : ""}
+              </span>
+            </label>
+            <label className="field">
+              <span className="field-label">ページの範囲（任意）</span>
+              <input
+                className="text-input input-short"
+                value={pages}
+                placeholder="例 1-72"
+                onChange={(e) => setPages(e.target.value)}
+              />
+            </label>
+          </div>
+        )}
         <div className="form-row">
           <label className="field">
-            <span className="field-label">PDF</span>
-            <input
-              key={fileKey}
-              className="file-input"
-              type="file"
-              accept="application/pdf,.pdf"
+            <span className="field-label">provider</span>
+            <select
+              className="select"
+              value={provider}
               onChange={(e) => {
-                const file = e.target.files?.[0];
-                setUpload(undefined);
-                if (file === undefined) return;
-                setUploading(true);
-                api.uploadPdf(file).then(
-                  (u) => {
-                    setUploading(false);
-                    setUpload(u);
-                  },
-                  (err: unknown) => {
-                    setUploading(false);
-                    setError(errorText(err));
-                  },
-                );
+                const p = e.target.value;
+                setProvider(p);
+                setModel(defaultsFor(p).model ?? "");
+                setEffort(defaultsFor(p).effort ?? "");
               }}
-            />
-            <span className="file-status">
-              {uploading ? "送っています…" : upload !== undefined ? `${upload.name}（${String(upload.pages)} ページ）` : ""}
-            </span>
+            >
+              <option value="">選んでください</option>
+              {providers.map((p) => (
+                <option key={p.name} value={p.name} disabled={source === "pdf" && !PDF_PROVIDERS.has(p.name)}>
+                  {providerLabel(p.name)}
+                </option>
+              ))}
+            </select>
           </label>
           <label className="field">
-            <span className="field-label">ページの範囲（任意）</span>
+            <span className="field-label">model</span>
             <input
-              className="text-input input-short"
-              value={pages}
-              placeholder="例 1-72"
-              onChange={(e) => setPages(e.target.value)}
-            />
-          </label>
-        </div>
-      )}
-      <div className="form-row">
-        <label className="field">
-          <span className="field-label">provider</span>
-          <select
-            className="select"
-            value={provider}
-            onChange={(e) => {
-              const p = e.target.value;
-              setProvider(p);
-              setModel(defaultsFor(p).model ?? "");
-              setEffort(defaultsFor(p).effort ?? "");
-            }}
-          >
-            <option value="">選んでください</option>
-            {providers.map((p) => (
-              <option key={p.name} value={p.name} disabled={source === "pdf" && !PDF_PROVIDERS.has(p.name)}>
-                {providerLabel(p.name)}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="field">
-          <span className="field-label">model</span>
-          <input
-            className="text-input input-mid"
-            value={model}
-            placeholder="未指定"
-            list="model-history"
-            onChange={(e) => setModel(e.target.value)}
-          />
-          <datalist id="model-history">
-            {(history[provider]?.models ?? []).map((m) => (
-              <option key={m} value={m} />
-            ))}
-          </datalist>
-        </label>
-        {acceptsEffort && (
-          <label className="field">
-            <span className="field-label">effort</span>
-            <input
-              className="text-input input-short"
-              value={effort}
+              className="text-input input-mid"
+              value={model}
               placeholder="未指定"
-              list="effort-history"
-              onChange={(e) => setEffort(e.target.value)}
+              list="model-history"
+              onChange={(e) => setModel(e.target.value)}
             />
-            <datalist id="effort-history">
-              {(history[provider]?.efforts ?? []).map((v) => (
-                <option key={v} value={v} />
+            <datalist id="model-history">
+              {(history[provider]?.models ?? []).map((m) => (
+                <option key={m} value={m} />
               ))}
             </datalist>
           </label>
-        )}
-      </div>
-      <div className="form-actions">
-        <button className="primary" type="submit" disabled={busy || provider === "" || !ready}>
-          {busy ? "加えています…" : "翻訳を始める"}
-        </button>
-        {error !== undefined && <span className="error">{error}</span>}
-        {started !== undefined && <span>{started}</span>}
-      </div>
-      <p className="form-note">
-        {source === "pdf" ? (
-          <>PDF はテキスト層のあるものだけを、claude・GPT で読みます。100 ページを超えると、始める前に確認します。</>
-        ) : (
-          <>
-            初期値は<a className="link" href={href.settings()}>設定</a>で決められます。訳したい論文は
-            <a className="link" href={href.search()}>探す</a>から選べます。
-          </>
-        )}
-      </p>
+          {acceptsEffort && (
+            <label className="field">
+              <span className="field-label">effort</span>
+              <input
+                className="text-input input-short"
+                value={effort}
+                placeholder="未指定"
+                list="effort-history"
+                onChange={(e) => setEffort(e.target.value)}
+              />
+              <datalist id="effort-history">
+                {(history[provider]?.efforts ?? []).map((v) => (
+                  <option key={v} value={v} />
+                ))}
+              </datalist>
+            </label>
+          )}
+        </div>
+        <div className="form-actions">
+          <button className="primary" type="submit" disabled={busy || provider === "" || !ready}>
+            {busy ? "加えています…" : "翻訳を始める"}
+          </button>
+          {error !== undefined && <span className="error">{error}</span>}
+          {started !== undefined && <span>{started}</span>}
+        </div>
+        <p className="form-note">
+          {source === "pdf" ? (
+            <>PDF はテキスト層のあるものだけを、claude・GPT で読みます。100 ページを超えると、始める前に確認します。</>
+          ) : (
+            <>
+              初期値は<a className="link" href={href.settings()}>設定</a>で決められます。訳したい論文は
+              <a className="link" href={href.search()}>探す</a>から選べます。
+            </>
+          )}
+        </p>
+      </form>
       {large !== undefined && (
         <LargePdfDialog
           info={large}
@@ -280,7 +295,7 @@ function TranslateForm(props: {
           }}
         />
       )}
-    </form>
+    </>
   );
 }
 
@@ -339,24 +354,32 @@ function LargePdfDialog(props: {
         <dd>{usd === undefined ? "—" : `約 $${String(usd)}・約 ${String(minutes)} 分`}</dd>
       </dl>
       <p className="dialog-note">翻訳の費用と時間は、これとは別にかかります。</p>
-      <label className="field">
-        <span className="field-label">ページの範囲（空なら全部）</span>
-        <input
-          className="text-input input-short"
-          value={range}
-          placeholder="例 1-72"
-          onChange={(e) => setRange(e.target.value)}
-        />
-        {n === undefined && <span className="error dialog-error">範囲は 1-72・3,5-9 のように 1〜{info.total} で指定してください</span>}
-      </label>
-      <div className="dialog-actions">
-        <button type="button" className="secondary" onClick={props.onCancel}>
-          やめる
-        </button>
-        <button type="button" className="primary" disabled={props.busy || n === undefined} onClick={() => props.onContinue(range)}>
-          {props.busy ? "加えています…" : "続ける"}
-        </button>
-      </div>
+      <form
+        method="dialog"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (!props.busy && n !== undefined) props.onContinue(range);
+        }}
+      >
+        <label className="field">
+          <span className="field-label">ページの範囲（空なら全部）</span>
+          <input
+            className="text-input input-short"
+            value={range}
+            placeholder="例 1-72"
+            onChange={(e) => setRange(e.target.value)}
+          />
+          {n === undefined && <span className="error dialog-error">範囲は 1-72・3,5-9 のように 1〜{info.total} で指定してください</span>}
+        </label>
+        <div className="dialog-actions">
+          <button type="button" className="secondary" onClick={props.onCancel}>
+            やめる
+          </button>
+          <button type="submit" className="primary" disabled={props.busy || n === undefined}>
+            {props.busy ? "加えています…" : "続ける"}
+          </button>
+        </div>
+      </form>
     </dialog>
   );
 }

@@ -8,6 +8,7 @@ import { configFromEnv, uploadDirOf } from "./config.js";
 import { JobQueue, type JobRunner, type ProcessExit } from "./jobs.js";
 import { readSettings } from "./settings.js";
 import { parsePageRange } from "../../../src/ingest/pdf/text-layer.js";
+import { JpaperError } from "../../../src/types/errors.js";
 
 const dirs: string[] = [];
 const tmp = () => {
@@ -23,7 +24,7 @@ const HOST = { host: "127.0.0.1:5174" };
 const JSON_HEADERS = { ...HOST, "content-type": "application/json" };
 const PDF = (text: string): Buffer => Buffer.from(`%PDF-1.7\n${text}\n%%EOF\n`);
 
-function setup(opts: { totalPages?: number; maxUploadBytes?: number } = {}) {
+function setup(opts: { totalPages?: number; maxUploadBytes?: number; unreadable?: boolean } = {}) {
   const root = tmp();
   const articleDir = path.join(root, "article");
   const settingsPath = path.join(root, "home", "web-settings.json");
@@ -46,7 +47,9 @@ function setup(opts: { totalPages?: number; maxUploadBytes?: number } = {}) {
     jobs,
     arxiv: new ArxivClient({ sleep: async () => {}, fetchImpl: (() => Promise.reject(new Error("no"))) as unknown as typeof fetch }),
     pdfPages: (_file, spec) =>
-      Promise.resolve({
+      opts.unreadable === true
+        ? Promise.reject(new JpaperError(2, "input", "pdfinfo が PDF を読めません"))
+        : Promise.resolve({
         total,
         pages: spec === undefined ? Array.from({ length: total }, (_, i) => i + 1) : parsePageRange(spec, total),
       }),
@@ -87,6 +90,13 @@ describe("PDF のアップロード（契約付録 §9）", () => {
     const notPdf = await t.upload(Buffer.from("<html>not a pdf</html>"));
     expect(notPdf.status).toBe(400);
     expect(notPdf.body.error).toContain("%PDF-");
+    expect(existsSync(t.uploadDir) ? readdirSync(t.uploadDir) : []).toEqual([]);
+  });
+
+  it("pdfinfo で読めない PDF は 400 で、作業フォルダに残さない", async () => {
+    const t = setup({ unreadable: true });
+    const r = await t.upload(PDF("broken"));
+    expect(r.status).toBe(400);
     expect(existsSync(t.uploadDir) ? readdirSync(t.uploadDir) : []).toEqual([]);
   });
 

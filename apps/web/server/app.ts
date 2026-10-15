@@ -1,6 +1,6 @@
 // 契約付録 §9（Web アプリ）。core を直接呼ぶ API と、翻訳ジョブ（CLI の子プロセス）・arXiv 検索の API。
 // 127.0.0.1 だけで待ち受け、認証は持たない。
-import { readFileSync } from "node:fs";
+import { readFileSync, rmSync } from "node:fs";
 import path from "node:path";
 import { Hono, type Context } from "hono";
 import { z } from "zod";
@@ -299,8 +299,15 @@ export function createApp(config: WebConfig, services: Services = createServices
   app.post("/api/uploads", async (c) => {
     try {
       const body = await readCappedBody(c.req.raw, config.maxUploadBytes ?? MAX_UPLOAD_BYTES);
-      const { id, file } = saveUpload(uploadDir, body);
-      const { total } = await pdfPages(file, undefined);
+      const { id, file, created } = saveUpload(uploadDir, body);
+      let total: number;
+      try {
+        ({ total } = await pdfPages(file, undefined));
+      } catch (e) {
+        // 読めない PDF は、この要求で書いたものなら残さない。
+        if (created) rmSync(file, { force: true });
+        throw e;
+      }
       const name = displayName(c.req.header("x-jpaper-filename")) ?? `${id}.pdf`;
       return c.json({ upload: { id, name, pages: total, bytes: body.length } }, 201);
     } catch (e) {
