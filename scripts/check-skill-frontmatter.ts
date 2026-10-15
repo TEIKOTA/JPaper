@@ -42,13 +42,23 @@ function safeLoad(text: string): { value: unknown } | { error: string } {
   return { value: doc.toJS() };
 }
 
-export function checkSkill(file: string): string[] {
-  const lines = readFileSync(file, "utf8").split("\n");
-  if (lines[0]?.replace(/\r$/, "") !== "---") return [`${file}: 1 行目に frontmatter 開始 marker (---) がありません`];
+export function splitFrontmatter(text: string): { yaml: string } | { missing: "open" | "close" } {
+  const lines = text.split("\n");
+  if (lines[0]?.replace(/\r$/, "") !== "---") return { missing: "open" };
   const close = lines.findIndex((l, i) => i > 0 && l.trim() === "---");
-  if (close < 0) return [`${file}: frontmatter 終了 marker (---) がありません`];
+  if (close < 0) return { missing: "close" };
+  return { yaml: lines.slice(1, close).join("\n") };
+}
 
-  const loaded = safeLoad(lines.slice(1, close).join("\n"));
+export function checkSkill(file: string): string[] {
+  const split = splitFrontmatter(readFileSync(file, "utf8"));
+  if ("missing" in split) {
+    return split.missing === "open"
+      ? [`${file}: 1 行目に frontmatter 開始 marker (---) がありません`]
+      : [`${file}: frontmatter 終了 marker (---) がありません`];
+  }
+
+  const loaded = safeLoad(split.yaml);
   if ("error" in loaded) return [`${file}: frontmatter を YAML として読めません (${loaded.error})`];
   const meta = loaded.value;
   if (meta === null || typeof meta !== "object" || Array.isArray(meta)) return [`${file}: frontmatter は YAML map である必要があります`];

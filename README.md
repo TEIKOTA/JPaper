@@ -149,7 +149,7 @@ jpaper の repo のディレクトリで Claude Code（`claude`）か Codex（`c
 
 和訳の依頼では、セットアップが済んでいなければ先にセットアップしてから訳す。論文は arXiv ID のほか、URL・タイトル・手元のファイル（PDF も可）でも指定できる。provider を言わなければ、Claude Code では `claude`、Codex では `codex` を使う。訳し終えると、和訳 PDF と対訳 PDF のパスを伝える。
 
-LaTeX（MacTeX）のように管理者のパスワードが要るものは、AI は入れずに、実行するコマンドを示す。この skill（[`.claude/skills/jpaper/SKILL.md`](./.claude/skills/jpaper/SKILL.md)）は、`/jpaper`・`$jpaper` で呼んだときだけ動く。
+LaTeX（MacTeX）のように管理者のパスワードが要るものは、AI は入れずに、別のターミナルで実行するコマンドを示す。この skill（[`.claude/skills/jpaper/SKILL.md`](./.claude/skills/jpaper/SKILL.md)）は、`/jpaper`・`$jpaper` で呼んだときだけ動く。
 
 ### LLM プロバイダ
 

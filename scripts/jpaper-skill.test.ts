@@ -3,12 +3,14 @@ import { existsSync, readFileSync, realpathSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { parse } from "yaml";
-import { checkSkill } from "./check-skill-frontmatter.js";
+import { BOOL_FLAGS, VALUE_FLAGS } from "../src/cli.js";
+import { checkSkill, splitFrontmatter } from "./check-skill-frontmatter.js";
 
 const ROOT = path.join(import.meta.dirname, "..");
 const SKILL = path.join(ROOT, ".claude", "skills", "jpaper", "SKILL.md");
 const text = readFileSync(SKILL, "utf8");
-const frontmatter = parse(text.split("---\n")[1]!) as Record<string, unknown>;
+const split = splitFrontmatter(text);
+const frontmatter = parse("yaml" in split ? split.yaml : "") as Record<string, unknown>;
 
 describe("/jpaper skill（issue #424）", () => {
   it("frontmatter の検査を通る", () => {
@@ -30,10 +32,12 @@ describe("/jpaper skill（issue #424）", () => {
   it("実行するファイルと、使うオプションが CLI にある", () => {
     expect(text).toContain("node bin/jpaper.mjs <入力> --provider <provider>");
     expect(existsSync(path.join(ROOT, "bin", "jpaper.mjs"))).toBe(true);
-    const cli = readFileSync(path.join(ROOT, "src", "cli.ts"), "utf8");
-    const options = new Set([...text.matchAll(/`(--[a-z-]+)/g)].map((m) => m[1]!));
+    const known = new Set([...VALUE_FLAGS, ...BOOL_FLAGS, "--help"]);
+    const translate = text.slice(text.indexOf("## 3. 和訳する"));
+    expect(translate).not.toBe(text);
+    const options = new Set([...translate.matchAll(/`(--[a-z][a-z-]*)/g)].map((m) => m[1]!));
     expect(options.size).toBeGreaterThan(0);
-    for (const o of options) expect(cli, o).toContain(o);
+    for (const o of options) expect(known.has(o), o).toBe(true);
   });
 
   it("README の「Coding AI から使う」が両方の呼び方と skill を示す", () => {
