@@ -1,5 +1,6 @@
 // 設計メモ §3・契約付録 §3/§5/§8。source-first 取り込みの配線。
-import { readFileSync, statSync, rmSync, mkdirSync } from "node:fs";
+import { redactTree, type Redactor } from "./redact.js";
+import { copyFileSync, readdirSync, readFileSync, statSync, rmSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import type { JpaperInput } from "../types/contract.js";
@@ -20,6 +21,8 @@ export interface Ingested {
   mainDir: string;
   // 解決できなかった \input / \include の件数。0 でなければ本文の一部が欠けている。
   unresolvedInputs: number;
+  // *** に置き換えた数（伏せ字）。
+  redacted: number;
 }
 
 export interface IngestDeps {
@@ -28,6 +31,8 @@ export interface IngestDeps {
   limits?: IngestLimits;
   // PDF 入力を起こした main.tex のディレクトリ（extractPdf の出力）。契約付録 §8（PDF 入力）
   pdfDir?: string;
+  // 伏せ字。展開したソースのテキストのファイルを、本文を作る前に書き換える。契約付録 §8（伏せ字）
+  redact?: Redactor;
 }
 
 const PATH_STRIP =
@@ -124,13 +129,53 @@ async function materialize(
   return { sourceDir: extractInto(bytes, workDir, limits) };
 }
 
+// src の木を dest へ複写する（dest を作り直す）。シンボリックリンクはたどらず、dest を含む run のディレクトリは飛ばす。
+// 件数・合計の大きさが上限を超えたら入力エラー。
+function copyTreeInto(src: string, dest: string, limits: IngestLimits): string {
+  const skip = path.resolve(path.dirname(dest));
+  rmSync(dest, { recursive: true, force: true });
+  mkdirSync(dest, { recursive: true });
+  let entries = 0;
+  let bytes = 0;
+  const walk = (from: string, to: string): void => {
+    for (const e of readdirSync(from, { withFileTypes: true })) {
+      const abs = path.join(from, e.name);
+      if (path.resolve(abs) === skip || path.resolve(abs).startsWith(`${skip}${path.sep}`)) continue;
+      if (++entries > limits.maxEntries) {
+        throw new JpaperError(2, "too-large", "伏せ字のために複写する入力のファイルが多すぎます（論文のファイルだけを 1 つのディレクトリに置いてください）");
+      }
+      const out = path.join(to, e.name);
+      if (e.isDirectory()) {
+        mkdirSync(out);
+        walk(abs, out);
+      } else if (e.isFile()) {
+        bytes += statSync(abs).size;
+        if (bytes > limits.maxTotalBytes) {
+          throw new JpaperError(2, "too-large", "伏せ字のために複写する入力が大きすぎます（論文のファイルだけを 1 つのディレクトリに置いてください）");
+        }
+        copyFileSync(abs, out);
+      }
+    }
+  };
+  walk(src, dest);
+  return dest;
+}
+
 export async function ingest(
   input: JpaperInput,
   workDir: string,
   deps: IngestDeps = {},
 ): Promise<Ingested> {
   const limits = deps.limits ?? DEFAULT_LIMITS;
-  const { sourceDir, mainRel, limited } = await materialize(input, workDir, deps);
+  const materialized = await materialize(input, workDir, deps);
+  const { mainRel, limited } = materialized;
+  let { sourceDir } = materialized;
+  let redacted = 0;
+  if (deps.redact !== undefined) {
+    // 利用者のディレクトリ（素の .tex・ディレクトリの入力）は書き換えず、作業領域へ複写してから置き換える。契約付録 §8（伏せ字）
+    if (sourceDir !== workDir && sourceDir !== deps.pdfDir) sourceDir = copyTreeInto(sourceDir, workDir, limits);
+    redacted = redactTree(sourceDir, deps.redact);
+  }
   const main = mainRel ?? detectMainTex(sourceDir, limits.maxEntries);
   const expand: ExpandBudget = { maxBytes: limits.maxLatexBytes };
   const expanded = expandInputs(sourceDir, main, expand);
@@ -153,5 +198,6 @@ export async function ingest(
     sourceDir,
     mainDir,
     unresolvedInputs: expand.unresolved ?? 0,
+    redacted,
   };
 }

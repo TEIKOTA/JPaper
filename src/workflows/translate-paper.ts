@@ -1,4 +1,6 @@
 // 契約付録 §7.5・§8。core API（取り込み→用語バリア→並列翻訳→訳注→出力→RunSummary）。
+import { makeRedactor, parseRedactTerms } from "../ingest/redact.js";
+import { loadCacheKey } from "../durable/cache-key.js";
 import {
   closeSync,
   existsSync,
@@ -156,6 +158,8 @@ export interface TranslateOptions {
   pages?: string;
   // PDF 入力で LARGE_PDF_PAGES を超えるページを読むことに同意済みか。
   allowLargePdf?: boolean;
+  // 伏せ字にする語（CLI は --redact-file から読む）。取り込みの段で *** に置き換え、どの LLM 呼び出しにも渡さない。契約付録 §8（伏せ字）
+  redact?: readonly string[];
 }
 
 // subprocess プロバイダは無制限並列に耐えないため翻訳の同時実行数を制限する。
@@ -985,6 +989,10 @@ function entryError(input: JpaperInput, opts: TranslateOptions): string | undefi
   if (opts.allowLargePdf !== undefined && typeof opts.allowLargePdf !== "boolean") {
     return `allowLargePdf が不正です: ${outwardMessage(String(opts.allowLargePdf))}`;
   }
+  // 語そのものは誤りの文に載せない。
+  if (opts.redact !== undefined && (!Array.isArray(opts.redact) || opts.redact.some((t) => typeof t !== "string"))) {
+    return "redact は文字列の配列で指定してください";
+  }
   const r = opts.openrouter;
   if (r !== undefined) {
     if (typeof r.model !== "string" || r.model.trim() === "") {
@@ -1149,6 +1157,16 @@ export async function translatePaper(
     }
     let pdf: PdfExtracted | undefined;
     const signature = inputSignature(input);
+    // 伏せ字の語の一覧の鍵付きの値を、取り込みの無効化キーに入れる（語そのものは入れない）。契約付録 §8（伏せ字）
+    const redactor =
+      opts.redact === undefined ? undefined : makeRedactor(parseRedactTerms(opts.redact.join("\n")), deps.cacheKey ?? loadCacheKey());
+    if (redactor !== undefined && input.kind === "path") {
+      redactor.pattern.lastIndex = 0;
+      if (redactor.pattern.test(path.basename(input.path))) {
+        notify("入力のファイル名に伏せ字の語が含まれます。論文 ID と出力先の名前には残ります");
+      }
+      redactor.pattern.lastIndex = 0;
+    }
     if (isPdf) {
       const canSee = deps.client === undefined ? IMAGE_PROVIDERS.includes(opts.provider) : deps.images === true;
       if (!canSee) {
@@ -1164,6 +1182,7 @@ export async function translatePaper(
           outDir: path.join(runDir, "pdf-source"),
           signature,
           concurrency: opts.concurrency ?? defaultConcurrencyFor(opts.provider),
+          ...(redactor === undefined ? {} : { redact: redactor }),
           tools: deps.pdfTools,
           cacheKey: deps.cacheKey,
           signal,
@@ -1184,8 +1203,17 @@ export async function translatePaper(
           limits: deps.limits ?? deps.ingest?.limits,
           arxiv: { ...deps.ingest?.arxiv, signal },
           ...(pdf === undefined ? {} : { pdfDir: pdf.dir }),
+          ...(redactor === undefined ? {} : { redact: redactor }),
         }),
-      { invalidation: pdf === undefined ? signature : hashContext(signature, pdfMain), key: deps.cacheKey },
+      {
+        invalidation:
+          redactor === undefined
+            ? pdf === undefined
+              ? signature
+              : hashContext(signature, pdfMain)
+            : hashContext(signature, pdfMain, "redact", redactor.fingerprint),
+        key: deps.cacheKey,
+      },
     );
 
     // プリアンブルは翻訳対象ではなく verbatim に持ち越されるため、節ループの品質ゲートでは
@@ -1598,6 +1626,10 @@ export async function translatePaper(
       llmCalls: llmCalls(),
       title: titleStatus,
       pdf: pdf === undefined ? null : { pages: pdf.pages.length, fallbackPages: pdf.fallbackPages, figures: pdf.figures },
+      redaction:
+        redactor === undefined
+          ? null
+          : { terms: redactor.terms.length, replaced: ingested.redacted + (pdf?.redacted ?? 0) },
       exitCode,
     });
     if (exitCode === 0) return { status: "ok", exitCode, pdfPath, summary };

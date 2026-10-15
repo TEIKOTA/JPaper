@@ -6,7 +6,9 @@ import type { LlmClient } from "../../types/contract.js";
 import { JpaperError } from "../../types/errors.js";
 import { checkpoint, hashContext } from "../../durable/checkpoint.js";
 import type { LatexRunner } from "../../tools/build-gate.js";
-import { popplerTools, type PdfTools } from "./poppler.js";
+import { popplerTools, type Box, type PdfTools } from "./poppler.js";
+import { redactText, type Redactor } from "../redact.js";
+import { pageWords, redactionBoxes } from "./redact-pdf.js";
 import { hasTextLayer, normalizePageText, parsePageRange, stripRepeatedLines } from "./text-layer.js";
 import { readPage } from "./page-reader.js";
 import { assembleMainTex, placeFigures, type AssembledPage } from "./assemble.js";
@@ -55,6 +57,8 @@ export interface PdfExtractDeps {
   signal?: AbortSignal;
   notify?: (message: string) => void;
   onPage?: (page: number, status: PdfPageCache["status"], done: number, total: number) => void;
+  // 伏せ字。テキスト層を書き換え、ページ画像のその位置を白で塗る。契約付録 §8（伏せ字）
+  redact?: Redactor;
 }
 
 export interface PdfExtracted {
@@ -63,6 +67,8 @@ export interface PdfExtracted {
   fallbackPages: number[];
   // 切り出して貼った図の数。
   figures: number;
+  // テキスト層で *** に置き換えた数（伏せ字）。
+  redacted: number;
   stepIds: string[];
 }
 
@@ -120,7 +126,20 @@ export async function extractPdf(pdf: string, opts: PdfReadOptions, deps: PdfExt
     );
   }
   const raw: string[] = [];
-  for (const p of pages) raw.push(normalizePageText(await tools.pageText(pdf, p, deps.signal)));
+  let redacted = 0;
+  // 伏せ字: テキスト層の語を *** に置き換え、ページ画像で白く塗る位置（pt）を語の矩形から求める。契約付録 §8（伏せ字）
+  const masks = new Map<number, Box[]>();
+  for (const p of pages) {
+    let text = normalizePageText(await tools.pageText(pdf, p, deps.signal));
+    if (deps.redact !== undefined) {
+      const r = redactText(text, deps.redact);
+      text = r.text;
+      redacted += r.replaced;
+      const boxes = redactionBoxes(pageWords(await tools.pageLayout(pdf, p, deps.signal)), deps.redact);
+      if (boxes.length > 0) masks.set(p, boxes);
+    }
+    raw.push(text);
+  }
   // 繰り返す行を落として本文が残らないページは、落とす前のテキスト層を使う。
   const texts = stripRepeatedLines(raw).map((t, i) => (hasTextLayer(t) ? t : raw[i]!));
   const noText = pages.filter((_, i) => !hasTextLayer(raw[i]!));
@@ -149,7 +168,7 @@ export async function extractPdf(pdf: string, opts: PdfReadOptions, deps: PdfExt
         pdfStepId(page),
         PdfPageCache,
         async () => {
-          const png = await tools.renderPage(pdf, page, path.join(workDir, `read-${String(page)}`), deps.signal);
+          const png = await tools.renderPage(pdf, page, path.join(workDir, `read-${String(page)}`), deps.signal, masks.get(page));
           return readPage(page, readFileSync(png), text, {
             client: deps.client,
             runner: deps.runner,
@@ -158,7 +177,10 @@ export async function extractPdf(pdf: string, opts: PdfReadOptions, deps: PdfExt
           });
         },
         {
-          invalidation: hashContext(PDF_READER_VERSION, deps.signature, String(page), text),
+          invalidation:
+            deps.redact === undefined
+              ? hashContext(PDF_READER_VERSION, deps.signature, String(page), text)
+              : hashContext(PDF_READER_VERSION, deps.signature, String(page), text, "redact", deps.redact.fingerprint),
           cacheable: (x) => x.status === "ok",
           key: deps.cacheKey,
         },
@@ -211,7 +233,7 @@ export async function extractPdf(pdf: string, opts: PdfReadOptions, deps: PdfExt
         const key = figureKey(region.label);
         if (key === undefined) continue;
         const rel = `figures/p-${String(page).padStart(4, "0")}-${String(k + 1)}`;
-        await tools.renderRegion(pdf, page, region, path.join(deps.outDir, rel), deps.signal);
+        await tools.renderRegion(pdf, page, region, path.join(deps.outDir, rel), deps.signal, masks.get(page));
         figures.push({ key, file: `${rel}.png` });
       }
     } catch (e) {
@@ -234,7 +256,7 @@ export async function extractPdf(pdf: string, opts: PdfReadOptions, deps: PdfExt
     let image: string | undefined;
     if (r.status === "fallback") {
       const rel = `pages/p-${String(page).padStart(4, "0")}`;
-      await tools.renderPage(pdf, page, path.join(deps.outDir, rel), deps.signal);
+      await tools.renderPage(pdf, page, path.join(deps.outDir, rel), deps.signal, masks.get(page));
       image = `${rel}.png`;
     }
     assembled.push({
@@ -248,5 +270,5 @@ export async function extractPdf(pdf: string, opts: PdfReadOptions, deps: PdfExt
   }
   writeFileSync(path.join(deps.outDir, "main.tex"), assembleMainTex(assembled));
   rmSync(workDir, { recursive: true, force: true });
-  return { dir: deps.outDir, pages, fallbackPages, figures: figureCount, stepIds: pages.map(pdfStepId) };
+  return { dir: deps.outDir, pages, fallbackPages, figures: figureCount, redacted, stepIds: pages.map(pdfStepId) };
 }

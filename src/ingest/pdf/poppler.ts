@@ -1,6 +1,7 @@
 // 契約付録 §8（PDF 入力）。poppler の CLI（pdfinfo・pdftotext・pdftocairo）の呼び出し。
 import { execFile } from "node:child_process";
-import { closeSync, openSync, readSync } from "node:fs";
+import { closeSync, openSync, readFileSync, readSync, rmSync, writeFileSync } from "node:fs";
+import { encodePng, paintWhite, parsePpm } from "./raster.js";
 import { JpaperError } from "../../types/errors.js";
 import { canceledError } from "../../runtime/cancellation.js";
 
@@ -13,18 +14,72 @@ const MAX_BUFFER = 64 * 1024 * 1024;
 export interface PdfTools {
   pageCount(pdf: string, signal?: AbortSignal): Promise<number>;
   pageText(pdf: string, page: number, signal?: AbortSignal): Promise<string>;
-  // outPrefix に .png を付けたファイルへ書く。
-  renderPage(pdf: string, page: number, outPrefix: string, signal?: AbortSignal): Promise<string>;
+  // outPrefix に .png を付けたファイルへ書く。mask（pt）は白で塗る（伏せ字）。
+  renderPage(pdf: string, page: number, outPrefix: string, signal?: AbortSignal, mask?: readonly Box[]): Promise<string>;
   // pdftotext -bbox-layout の出力（1 ページ分）。
   pageLayout(pdf: string, page: number, signal?: AbortSignal): Promise<string>;
   // ページの一部（pt 単位）を FIGURE_DPI で描く。outPrefix に .png を付けたファイルへ書く。
   renderRegion(
     pdf: string,
     page: number,
-    box: { x0: number; y0: number; x1: number; y1: number },
+    box: Box,
     outPrefix: string,
     signal?: AbortSignal,
+    mask?: readonly Box[],
   ): Promise<string>;
+}
+
+export interface Box {
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+}
+
+// pdftoppm で PPM に描き、mask（ページの pt。crop は描く範囲の pt）を白で塗って PNG に書く。契約付録 §8（伏せ字）
+async function renderMasked(
+  pdf: string,
+  page: number,
+  dpi: number,
+  outPrefix: string,
+  mask: readonly Box[],
+  crop: Box | undefined,
+  signal?: AbortSignal,
+): Promise<string> {
+  const s = dpi / 72;
+  const px = (v: number): number => Math.max(0, Math.round(v * s));
+  await run(
+    "pdftoppm",
+    [
+      "-r",
+      String(dpi),
+      "-f",
+      String(page),
+      "-l",
+      String(page),
+      "-singlefile",
+      ...(crop === undefined
+        ? []
+        : ["-x", String(px(crop.x0)), "-y", String(px(crop.y0)), "-W", String(px(crop.x1 - crop.x0)), "-H", String(px(crop.y1 - crop.y0))]),
+      pdf,
+      outPrefix,
+    ],
+    signal,
+  );
+  const ppm = `${outPrefix}.ppm`;
+  try {
+    const raster = parsePpm(readFileSync(ppm));
+    const ox = crop === undefined ? 0 : px(crop.x0);
+    const oy = crop === undefined ? 0 : px(crop.y0);
+    paintWhite(
+      raster,
+      mask.map((b) => ({ x0: b.x0 * s - ox, y0: b.y0 * s - oy, x1: b.x1 * s - ox, y1: b.y1 * s - oy })),
+    );
+    writeFileSync(`${outPrefix}.png`, encodePng(raster));
+  } finally {
+    rmSync(ppm, { force: true });
+  }
+  return `${outPrefix}.png`;
 }
 
 // 先頭 5 バイトが %PDF- か。
@@ -71,7 +126,8 @@ export const popplerTools: PdfTools = {
   pageText(pdf, page, signal) {
     return run("pdftotext", ["-f", String(page), "-l", String(page), "-enc", "UTF-8", pdf, "-"], signal);
   },
-  async renderPage(pdf, page, outPrefix, signal) {
+  async renderPage(pdf, page, outPrefix, signal, mask) {
+    if (mask !== undefined && mask.length > 0) return renderMasked(pdf, page, RENDER_DPI, outPrefix, mask, undefined, signal);
     await run(
       "pdftocairo",
       ["-png", "-singlefile", "-r", String(RENDER_DPI), "-f", String(page), "-l", String(page), pdf, outPrefix],
@@ -82,7 +138,8 @@ export const popplerTools: PdfTools = {
   pageLayout(pdf, page, signal) {
     return run("pdftotext", ["-bbox-layout", "-f", String(page), "-l", String(page), "-enc", "UTF-8", pdf, "-"], signal);
   },
-  async renderRegion(pdf, page, box, outPrefix, signal) {
+  async renderRegion(pdf, page, box, outPrefix, signal, mask) {
+    if (mask !== undefined && mask.length > 0) return renderMasked(pdf, page, FIGURE_DPI, outPrefix, mask, box, signal);
     const s = FIGURE_DPI / 72;
     const px = (v: number): string => String(Math.max(0, Math.round(v * s)));
     await run(

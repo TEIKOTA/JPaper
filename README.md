@@ -73,6 +73,8 @@ jpaper paper.pdf --provider claude [--pages 1-72] [--yes]
 
 PDF は、ページごとに画像とテキスト層を LLM に渡して LaTeX に起こしてから訳す。テキスト層と照らして語の欠けがあれば読み直させ、それでも駄目なページは原本の画像を貼って未訳にする（`RunSummary.pdf.fallbackPages`）。読むページが 100 を超えると、端末では読み取りの目安を出して確認し、端末でなければ `--yes` か `--pages` が要る。テキスト層の無いスキャンした PDF は扱わない（[契約付録 §8「PDF 入力」](./docs/design/contract-appendix.md)）。
 
+LLM に渡したくない語（自分の名前など）は、1 行 1 語のファイルに書いて `--redact-file names.txt` で渡す。語は取り込みの段で `***` に置き換わり、翻訳・評価・用語集作り・用語の Web 検索のどの LLM 呼び出しにも渡らず、和訳 PDF・対訳 PDF・用語集にも残らない。PDF の入力では、ページ画像のその語の位置を白く塗ってから渡す。図の中の画像の文字のように、テキスト層に無い文字は消せない（[伏せ字 ADR](./docs/adr/20261015-redact-terms-at-ingest-never-send-to-llm.md)）。
+
 和訳 PDF（例 `article/2507.17845-ja/2507.17845_pathorob-ja.pdf`）と対訳 PDF（例 `article/2507.17845-ja/2507.17845_pathorob-bilingual.pdf`）のパスを標準出力に出し、`RunSummary` を JSON で出す。
 
 claude・codex では、翻訳の前に用語集の訳を CLI の Web 検索で既存の日本語の用例と照らし、出典の取れた表記に差し替える。用例を確かめられない語は「未確認」の訳注になる。`--no-verify-terms` で止められる（[用語の検証 ADR](./docs/adr/20261013-verify-unconfirmed-terms-with-cli-web-search.md)）。オプションの一覧は `jpaper --help` で表示できる。オプションの正本は [契約付録 §5](./docs/design/contract-appendix.md)。

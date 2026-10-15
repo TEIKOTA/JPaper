@@ -8,6 +8,8 @@ import { forTerminal } from "./runtime/untrusted.js";
 import { createInterface } from "node:readline";
 import { estimatePdfRead, LARGE_PDF_PAGES, pdfPagesToRead } from "./ingest/pdf/index.js";
 import { isPdfFile } from "./ingest/pdf/poppler.js";
+import { parseRedactTerms } from "./ingest/redact.js";
+import { readFileSync } from "node:fs";
 import { IMAGE_PROVIDERS } from "./providers/index.js";
 import {
   DEFAULT_OLLAMA,
@@ -31,7 +33,7 @@ export interface CliDeps {
   pdfPages?: (pdf: string, spec: string | undefined) => Promise<number>;
 }
 
-const VALUE_FLAGS = ["--provider", "--out", "--model", "--context-window", "--effort", "--concurrency", "--pages"];
+const VALUE_FLAGS = ["--provider", "--out", "--model", "--context-window", "--effort", "--concurrency", "--pages", "--redact-file"];
 const BOOL_FLAGS = ["--think", "--no-think", "--no-bilingual", "--no-verify-terms", "--yes"];
 const HELP_FLAGS = ["--help", "-h"];
 const HELP_HINT = "使い方は jpaper --help で表示できます\n";
@@ -60,6 +62,8 @@ export const USAGE = `使い方: jpaper <input> --provider {ollama|claude|codex|
   --no-verify-terms     用語の訳を Web 検索で確かめない（確かめるのは claude・codex だけ）
   --pages RANGE         PDF の読むページ（例 1-72・3,5-9。PDF の何枚目かで数える）
   --yes                 PDF の読むページが ${String(LARGE_PDF_PAGES)} を超えても確認せずに進む
+  --redact-file PATH    伏せ字にする語のファイル（1 行 1 語。空行と # で始まる行は読まない）。
+                        語は *** に置き換えてからどの LLM にも渡し、PDF のページ画像では白く塗る
   -h, --help            この使い方を表示する
 
 作業ディレクトリの .env を読む。実行の要約（JSON）と、和訳 PDF・対訳 PDF のパスを標準出力に出す。
@@ -294,6 +298,19 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number
     const concurrency = concurrencyArg === undefined ? undefined : parseConcurrency(concurrencyArg);
     const input = detectInput(inputStr);
     const pagesArg = flags.get("--pages");
+    const redactArg = flags.get("--redact-file");
+    // 語は引数で受けず、ファイルから読む（シェルの履歴・プロセス一覧に残さない）。契約付録 §8（伏せ字）
+    let redact: string[] | undefined;
+    if (redactArg !== undefined) {
+      let text: string;
+      try {
+        text = readFileSync(redactArg, "utf8");
+      } catch {
+        throw new JpaperError(2, "input", "--redact-file のファイルを読めません");
+      }
+      redact = parseRedactTerms(text);
+      if (redact.length === 0) throw new JpaperError(2, "input", "--redact-file に語がありません");
+    }
     let allowLargePdf = flags.has("--yes");
     // 端末なら、LLM を呼ぶ前に 100 ページ超を確かめる。端末でなければ translatePaper が --yes を求めて止める。契約付録 §8（PDF 入力）
     const confirm = deps.confirm ?? (process.stdin.isTTY && process.stderr.isTTY ? askYesNo : undefined);
@@ -325,6 +342,7 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number
         ...modelCfg,
         ...(concurrency === undefined ? {} : { concurrency }),
         ...(pagesArg === undefined ? {} : { pages: pagesArg }),
+        ...(redact === undefined ? {} : { redact }),
         ...(allowLargePdf ? { allowLargePdf: true } : {}),
         ...(flags.has("--no-bilingual") ? { bilingual: false } : {}),
         ...(flags.has("--no-verify-terms") ? { verifyTerms: false } : {}),
