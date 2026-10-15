@@ -1,3 +1,5 @@
+<p align="center"><img src="docs/images/logo/logo.svg" alt="JPaper" width="480"></p>
+
 # JPaper
 
 > English summary: JPaper translates academic papers into Japanese. It takes the LaTeX source of a paper (an arXiv ID, a .tex file, a zip or tar.gz archive, or a directory) and produces a typeset Japanese PDF and a landscape side-by-side PDF (original on the left, Japanese on the right), along with a per-paper glossary. Translation and quality review are done by an LLM (Claude Code CLI, Codex CLI, Ollama or OpenRouter), while the control flow, retry limits and formal checks are plain TypeScript. Japanese is the only target language, and the rest of this README and the documentation are written in Japanese. Requirements: Node.js 22.5+, pnpm 10+, LaTeX (LuaLaTeX and latexmk) and one of the LLM providers above. Licensed under the MIT License.
