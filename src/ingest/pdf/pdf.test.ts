@@ -298,9 +298,8 @@ describe("PDF 抽出の段", () => {
     expect((err as JpaperError).code).toBe(3);
   });
 
-  it("キャプションの上を切り出して図の目印を置き換え、数が合わなければ警告する", async () => {
-    const bbox = (blocks: string): string =>
-      `<doc><page width="504" height="720"><flow>${blocks}</flow></page></doc>`;
+  describe("図", () => {
+    const bbox = (blocks: string): string => `<doc><page width="504" height="720"><flow>${blocks}</flow></page></doc>`;
     const blk = (x0: number, y0: number, x1: number, y1: number, text: string): string =>
       `<block xMin="${String(x0)}" yMin="${String(y0)}" xMax="${String(x1)}" yMax="${String(y1)}"><line xMin="${String(x0)}" yMin="${String(y0)}" xMax="${String(x1)}" yMax="${String(y1)}">${text
         .split(" ")
@@ -312,21 +311,41 @@ describe("PDF 抽出の段", () => {
       bbox(body),
       bbox(body + blk(150, 400, 350, 410, "Figure 3.1. Another.")),
     ];
-    const mark = "\\fbox{Figure omitted (see page N of the original PDF)}";
-    const client = new FakeLlmClient((req) => {
+    const mark = "\\par\\noindent\\fbox{Figure omitted (see page N of the original PDF)}";
+    // 1・2 ページ目に目印とキャプションを置く（3 ページ目は目印なし）。
+    const reader = (req: LlmRequest): string => {
       const text = echoReader(req);
-      return /Page 1 /.test(text) || /Page 2 /.test(text) ? `${mark}\n\n${text}` : text;
+      const n = /Page (\d) /.exec(text)![1]!;
+      return n === "3" ? text : `${text}\n\n${mark}\n\nFigure ${n}.1. Caption.`;
+    };
+
+    it("番号の合う図を貼り、貼れない目印は警告して残す", async () => {
+      const notes: string[] = [];
+      const deps = {
+        ...extractDeps(new FakeLlmClient(reader), fakeTools([1, 2, 3].map(PAGE_TEXT), layouts)),
+        notify: (m: string) => notes.push(m),
+      };
+      const r = await extractPdf("x.pdf", {}, deps);
+      expect(r.figures).toBe(1);
+      const main = readFileSync(path.join(r.dir, "main.tex"), "utf8");
+      expect(main).toContain("{figures/p-0001-1.png}");
+      expect(existsSync(path.join(r.dir, "figures", "p-0001-1.png"))).toBe(true);
+      // 2 ページ目は目印があるのに図が無い。3 ページ目の図は目印が無いので貼らない。
+      expect(main.match(/Figure omitted/g)).toHaveLength(1);
+      expect(main).not.toContain("p-0003-1.png");
+      expect(notes.filter((n) => n.includes("図の目印")).map((n) => n.slice(0, 12))).toEqual(["PDF の 2 ページ目"]);
     });
-    const notes: string[] = [];
-    const deps = { ...extractDeps(client, fakeTools([1, 2, 3].map(PAGE_TEXT), layouts)), notify: (m: string) => notes.push(m) };
-    const r = await extractPdf("x.pdf", {}, deps);
-    expect(r.figures).toBe(1);
-    const main = readFileSync(path.join(r.dir, "main.tex"), "utf8");
-    expect(main).toContain("{figures/p-0001-1.png}");
-    expect(existsSync(path.join(r.dir, "figures", "p-0001-1.png"))).toBe(true);
-    // 2 ページ目は目印があるのに図が無く、3 ページ目は図があるのに目印が無い。
-    expect(main.match(/Figure omitted/g)).toHaveLength(1);
-    expect(notes.filter((n) => n.includes("図の目印")).map((n) => n.slice(0, 12))).toEqual(["PDF の 2 ページ目", "PDF の 3 ページ目"]);
+
+    it("図を描けなければ目印のまま警告し、run は続ける", async () => {
+      const notes: string[] = [];
+      const tools = fakeTools([1, 2, 3].map(PAGE_TEXT), layouts);
+      tools.renderRegion = () => Promise.reject(new Error("pdftocairo failed"));
+      const deps = { ...extractDeps(new FakeLlmClient(reader), tools), notify: (m: string) => notes.push(m) };
+      const r = await extractPdf("x.pdf", {}, deps);
+      expect(r.figures).toBe(0);
+      expect(readFileSync(path.join(r.dir, "main.tex"), "utf8").match(/Figure omitted/g)).toHaveLength(2);
+      expect(notes.some((n) => n.includes("1 ページ目") && n.includes("描けない"))).toBe(true);
+    });
   });
 
   it("画像に落ちたページがちょうど半数なら進む", async () => {

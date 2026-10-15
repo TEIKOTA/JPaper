@@ -1,6 +1,7 @@
 // 契約付録 §8（PDF 入力）・PDF 入力 ADR(20261015) 決定 3・7。ページごとの LaTeX を 1 本の main.tex にする。
 import { OMITTED_MARK } from "./word-check.js";
 import { PAGE_PREAMBLE, splitContinues } from "./page-reader.js";
+import { figureKey } from "./figures.js";
 
 export interface AssembledPage {
   page: number;
@@ -11,25 +12,35 @@ export interface AssembledPage {
   continues: boolean;
   // fallback のページ画像（main.tex からの相対パス）。
   image?: string;
-  // ページの図（上から順。main.tex からの相対パス）。図の目印を前から順に置き換える。
-  figures?: readonly string[];
 }
 
-// LLM が図の代わりに置く目印。契約付録 §8（PDF 入力）
-export const FIGURE_PLACEHOLDER = /\\fbox\{Figure omitted[^{}]*\}/g;
+// LLM が図の代わりに置く目印。契約付録 §8（PDF 入力・図）
+export const FIGURE_PLACEHOLDER = /(\\noindent\s*)?\\fbox\{Figure omitted[^{}]*\}/g;
+// 目印の後ろでキャプションの番号を探す範囲（文字数）。
+const CAPTION_LOOKAHEAD = 400;
 
-// 図の目印を前から順に切り出した図へ置き換える。置き換えた数を返す。
-export function placeFigures(tex: string, figures: readonly string[]): { tex: string; placed: number; marks: number } {
-  let k = 0;
+// 目印ごとに、後ろ（次の目印まで）に最初に現れる図の番号と同じ番号の図を貼る。番号が無い・合う図が無い目印はそのまま残す。
+export function placeFigures(
+  tex: string,
+  figures: readonly { key: string; file: string }[],
+): { tex: string; placed: number; marks: number } {
+  const used = new Set<string>();
+  let placed = 0;
   let marks = 0;
-  const out = tex.replace(FIGURE_PLACEHOLDER, (m) => {
+  const out = tex.replace(FIGURE_PLACEHOLDER, (m: string, noindent: string | undefined, offset: number) => {
     marks++;
-    const f = figures[k];
-    if (f === undefined) return m;
-    k++;
-    return `\\begin{center}\\includegraphics[width=\\linewidth,height=0.45\\textheight,keepaspectratio]{${f}}\\end{center}`;
+    const rest = tex.slice(offset + m.length, offset + m.length + CAPTION_LOOKAHEAD);
+    const next = rest.search(/\\fbox\{Figure omitted/);
+    const key = figureKey(next < 0 ? rest : rest.slice(0, next));
+    const f = figures.find((x) => x.key === key && !used.has(x.file));
+    if (key === undefined || f === undefined) return m;
+    used.add(f.file);
+    placed++;
+    const graphic = `\\includegraphics[width=\\linewidth,height=0.45\\textheight,keepaspectratio]{${f.file}}`;
+    // 段落の頭（\noindent の直後）の目印だけを center で包む。
+    return noindent === undefined ? graphic : `\\begin{center}${graphic}\\end{center}`;
   });
-  return { tex: out, placed: k, marks };
+  return { tex: out, placed, marks };
 }
 
 // 文末として扱う終わり方（閉じ括弧・引用符が後ろに付いてよい）。
@@ -99,7 +110,7 @@ export function assembleMainTex(pages: readonly AssembledPage[]): string {
   for (const p0 of pages) {
     const split = splitContinues(p0.tex);
     const p = { ...p0, continues: p0.continues || split.continues };
-    let tex = p.status === "ok" ? placeFigures(dropOmitted(split.tex), p.figures ?? []).tex : fallbackTex(p);
+    let tex = p.status === "ok" ? dropOmitted(split.tex) : fallbackTex(p);
     if (p.status === "ok") {
       // 最初に現れた \title・\author を前文へ移し、\title の位置に \maketitle を置く。
       for (const name of ["title", "author"] as const) {

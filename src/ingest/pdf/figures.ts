@@ -42,6 +42,10 @@ const COLUMN_RATIO = 0.55;
 const CAPTION = /^(?:Figure|Fig\.)\s+[A-Z]?\d+(?:\.\d+)*(?:[.:](?=\s|$)|\s+\|)/;
 const TABLE_CAPTION = /^Table\s+[A-Z]?\d+(?:\.\d+)*(?:[.:](?=\s|$)|\s+\|)/;
 
+// 図の番号（"Figure 1.1." → "1.1"）。文字列の中で最初に現れるもの。
+const FIGURE_NUMBER = /\b(?:Figure|Fig\.)\s*~?([A-Z]?\d+(?:\.\d+)*)/i;
+export const figureKey = (text: string): string | undefined => FIGURE_NUMBER.exec(text)?.[1]?.toUpperCase();
+
 const attr = (tag: string, name: string): number => Number(new RegExp(`${name}="([-0-9.]+)"`).exec(tag)?.[1] ?? NaN);
 const boxOf = (tag: string): Box => ({ x0: attr(tag, "xMin"), y0: attr(tag, "yMin"), x1: attr(tag, "xMax"), y1: attr(tag, "yMax") });
 
@@ -116,7 +120,14 @@ export function figureRegions(layout: PageLayout, docBox?: { x0: number; x1: num
     if (bottom - top < MIN_FIGURE_HEIGHT) continue;
     // 読む順: 全幅の図と左の段の図は上から、右の段の図はその後。
     const order = narrow && range.x0 >= mid ? layout.height + bottom : bottom;
-    out.push({ x0: range.x0 - GAP, y0: top, x1: range.x1 + GAP, y1: bottom, label: head2(c), order });
+    out.push({
+      x0: Math.max(0, range.x0 - GAP),
+      y0: top,
+      x1: Math.min(layout.width, range.x1 + GAP),
+      y1: bottom,
+      label: head2(c),
+      order,
+    });
   }
   return out.sort((a, b) => a.order - b.order).map(({ order: _order, ...r }) => r);
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { documentTextBox, figureRegions, parseBboxLayout, textBox, type PageLayout, type TextBlock } from "./figures.js";
+import { documentTextBox, figureKey, figureRegions, parseBboxLayout, textBox, type PageLayout, type TextBlock } from "./figures.js";
 import { placeFigures } from "./assemble.js";
 
 // 504×720pt の書籍のページ（GSM 252 の実測の座標に合わせる）。本文の幅は 72.7〜431.3pt。
@@ -111,11 +111,36 @@ describe("bbox の読み取り", () => {
 });
 
 describe("図の目印を置き換える", () => {
-  it("前から順に置き換え、図が足りなければ残りは目印のまま", () => {
-    const tex = "\\par\\noindent\\fbox{Figure omitted (see page 3 of the original PDF)}\nCap 1.\n\\fbox{Figure omitted (see page 3 of the original PDF)}\nCap 2.";
-    const r = placeFigures(tex, ["figures/p-0003-1.png"]);
+  const mark = "\\par\\noindent\\fbox{Figure omitted (see page 3 of the original PDF)}";
+  const fig = (key: string): { key: string; file: string } => ({ key, file: `figures/${key}.png` });
+
+  it("目印の後ろのキャプションの番号と同じ番号の図を貼り、段落の頭なら center で包む", () => {
+    const tex = `${mark}\n\n\\textbf{Figure 2.1.} One.\n\n${mark}\n\n\\textbf{Figure 2.2.} Two.`;
+    const r = placeFigures(tex, [fig("2.2"), fig("2.1")]);
+    expect(r).toMatchObject({ placed: 2, marks: 2 });
+    expect(r.tex.indexOf("{figures/2.1.png}")).toBeLessThan(r.tex.indexOf("{figures/2.2.png}"));
+    expect(r.tex).toContain("\\begin{center}\\includegraphics");
+  });
+
+  it("前の図が切り出せなくても、後ろの図を前の目印に貼らない", () => {
+    const tex = `${mark}\n\nFigure 2.1. One.\n\n${mark}\n\nFigure 2.2. Two.`;
+    const r = placeFigures(tex, [fig("2.2")]);
     expect(r).toMatchObject({ placed: 1, marks: 2 });
-    expect(r.tex).toContain("{figures/p-0003-1.png}");
-    expect(r.tex.match(/Figure omitted/g)).toHaveLength(1);
+    expect(r.tex.indexOf("Figure omitted")).toBeLessThan(r.tex.indexOf("Figure 2.1."));
+    expect(r.tex.indexOf("{figures/2.2.png}")).toBeGreaterThan(r.tex.indexOf("Figure 2.1."));
+  });
+
+  it("番号の無い目印は残し、段落の頭でない目印は center で包まない", () => {
+    expect(placeFigures(`${mark}\n\nA caption without a number.`, [fig("1")]).placed).toBe(0);
+    const r = placeFigures("\\fbox{Figure omitted (see page 3 of the original PDF)} & Fig. 1: a", [fig("1")]);
+    expect(r.placed).toBe(1);
+    expect(r.tex).not.toContain("center");
+  });
+
+  it("キャプションの番号を読む", () => {
+    expect(figureKey("Figure 1.1.")).toBe("1.1");
+    expect(figureKey("\\textbf{Fig.~3} x")).toBe("3");
+    expect(figureKey("FIGURE s2:")).toBe("S2");
+    expect(figureKey("Table 1.")).toBeUndefined();
   });
 });
