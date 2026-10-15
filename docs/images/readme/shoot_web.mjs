@@ -31,25 +31,36 @@ const chrome = spawn(
 );
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-let targets = [];
-for (let i = 0; i < 50 && !targets.some((t) => t.type === "page"); i++) {
-  try {
-    targets = await (await fetch(`http://127.0.0.1:${PORT}/json/list`)).json();
-  } catch {
-    await sleep(200);
-  }
-}
-const ws = new WebSocket(targets.find((t) => t.type === "page").webSocketDebuggerUrl);
-await new Promise((r) => ws.addEventListener("open", r, { once: true }));
-let seq = 0;
+let ws;
 const pending = new Map();
-ws.addEventListener("message", (e) => {
-  const m = JSON.parse(e.data);
-  if (m.id !== undefined && pending.has(m.id)) {
-    pending.get(m.id)(m);
-    pending.delete(m.id);
-  }
-});
+const connect = async () => {
+  const failed = new Promise((_, reject) => chrome.once("error", reject));
+  const ready = (async () => {
+    let targets = [];
+    for (let i = 0; i < 50 && !targets.some((t) => t.type === "page"); i++) {
+      await sleep(200);
+      try {
+        targets = await (await fetch(`http://127.0.0.1:${PORT}/json/list`)).json();
+      } catch {}
+    }
+    const page = targets.find((t) => t.type === "page");
+    if (page === undefined) throw new Error("Chrome のページに接続できない");
+    ws = new WebSocket(page.webSocketDebuggerUrl);
+    await new Promise((resolve, reject) => {
+      ws.addEventListener("open", resolve, { once: true });
+      ws.addEventListener("error", () => reject(new Error("DevTools に接続できない")), { once: true });
+    });
+    ws.addEventListener("message", (e) => {
+      const m = JSON.parse(e.data);
+      if (m.id !== undefined && pending.has(m.id)) {
+        pending.get(m.id)(m);
+        pending.delete(m.id);
+      }
+    });
+  })();
+  await Promise.race([ready, failed]);
+};
+let seq = 0;
 const send = (method, params = {}) =>
   new Promise((resolve, reject) => {
     const id = ++seq;
@@ -79,9 +90,10 @@ const text = (selector, pattern) =>
   `[...document.querySelectorAll(${JSON.stringify(selector)})].some((e) => ${pattern}.test(e.textContent ?? ""))`;
 
 try {
+  await connect();
   await send("Page.enable");
   await send("Emulation.setDeviceMetricsOverride", { width: WIDTH, height: HEIGHT, deviceScaleFactor: 1, mobile: false });
-  await open(`#/search?q=${encodeURIComponent(QUERY)}`, text("main", "/arXiv/"));
+  await open(`#/search?q=${encodeURIComponent(QUERY)}`, text("main", "/件中/"));
   await shot("web-search.png");
   await open(`#/translate?id=${PAPER}`, `!!document.querySelector('main form')`);
   await shot("web-translate.png");
@@ -90,7 +102,7 @@ try {
   await open(`#/papers/${PAPER}/terms/${encodeURIComponent(TERM)}`, `!!document.querySelector('#new-ja')`);
   await shot("web-term.png");
 } finally {
-  ws.close();
+  ws?.close();
   chrome.kill();
   await sleep(300);
   rmSync(profile, { recursive: true, force: true });

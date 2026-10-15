@@ -7,7 +7,9 @@ const readme = readFileSync(`${ROOT}README.md`, "utf8");
 
 describe("README（issue #418）", () => {
   it("参照する手元の画像がすべてある", () => {
-    const images = [...readme.matchAll(/!\[[^\]]*\]\(\.\/([^)]+)\)|src="([^"]+)"/g)].map((m) => m[1] ?? m[2]);
+    const images = [...readme.matchAll(/!\[[^\]]*\]\(([^)\s]+)[^)]*\)|<img[^>]*\ssrc="([^"]+)"/g)]
+      .map((m) => (m[1] ?? m[2]).replace(/[#?].*$/, "").replace(/^\.\//, ""))
+      .filter((p) => !/^[a-z]+:/i.test(p));
     expect(images.length).toBeGreaterThan(0);
     for (const p of images) expect(existsSync(`${ROOT}${p}`), p).toBe(true);
   });

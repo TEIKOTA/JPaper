@@ -68,7 +68,7 @@ OpenRouter の API キーなどは、`.env.example` を `.env` に写して書�
 
 ## 使い方
 
-ふだんは Web アプリから使う。同じ翻訳は CLI からも実行できる（下の「CLI」）。
+手軽なのは Web アプリ。同じ翻訳は CLI からも実行できる（下の「CLI」）。
 
 ### Web アプリ
 
@@ -78,7 +78,7 @@ jpaper web
 
 ブラウザで `http://127.0.0.1:5173` を開く。止めるときは Ctrl+C。`jpaper` を `pnpm link --global` で入れていなければ、repo の直下で `pnpm dev:web` を実行しても同じ。
 
-Web アプリの依存が無いときや、`git pull` で依存が変わったときは、先に jpaper の repo で `pnpm install` を実行してから立ち上げる。`.env` は jpaper の repo のものを読む。ポートは `JPAPER_WEB_PORT`（画面。既定 5173）と `JPAPER_WEB_API_PORT`（API。既定 5174）で変えられる。`127.0.0.1` だけで待ち受け、認証は持たない。仕様の正本は [契約付録 §9](./docs/design/contract-appendix.md)。
+`jpaper web` は、Web アプリの依存が無いときや、`git pull` で依存が変わったときに、先に jpaper の repo で `pnpm install` を実行してから立ち上げる（`pnpm dev:web` で立ち上げるときは、自分で `pnpm install` を実行しておく）。`.env` は jpaper の repo のものを読む。ポートは `JPAPER_WEB_PORT`（画面。既定 5173）と `JPAPER_WEB_API_PORT`（API。既定 5174）で変えられる。`127.0.0.1` だけで待ち受け、認証は持たない。仕様の正本は [契約付録 §9](./docs/design/contract-appendix.md)。
 
 #### 1. 論文を探す
 
@@ -88,7 +88,7 @@ Web アプリの依存が無いときや、`git pull` で依存が変わった�
 
 #### 2. 翻訳する
 
-「翻訳」で arXiv ID（探す画面から送ったものは入力済み）か PDF を選び、provider・model・effort を毎回指定して「翻訳を始める」を押す。ジョブはキューに入り、段階・節 n/m・費用・経過時間・ログの末尾を見ながら、待機中・実行中のジョブを取り消せる。翻訳は CLI を子プロセスで動かすので、訳し終えた論文はそのまま論文の一覧と用語集の編集の対象になる。
+「翻訳」で arXiv ID（探す画面から送ったものは入力済み）か PDF を選び、provider・model・effort を指定して（初期値は「設定」で決められる）「翻訳を始める」を押す。ジョブはキューに入り、段階・節 n/m・費用・経過時間・ログの末尾を見ながら、待機中・実行中のジョブを取り消せる。翻訳は CLI を子プロセスで動かすので、訳し終えた論文はそのまま論文の一覧と用語集の編集の対象になる。
 
 ![翻訳画面。arXiv ID と PDF の切り替え、provider・model・effort、翻訳を始めるボタン](./docs/images/readme/web-translate.png)
 
@@ -109,7 +109,7 @@ Web アプリの依存が無いときや、`git pull` で依存が変わった�
 
 「設定」で、翻訳のフォームの初期値と、同時に走らせる本数（既定は 1 本ずつ、4 本まで）を決める。設定は `~/.jpaper/web-settings.json`（`JPAPER_HOME`）に保存する。初期値を指定しなければ、claude は最新の Sonnet、GPT は最新の Sol を effort medium で使う。
 
-#### データの場所と注意
+#### データの場所と注意点
 
 - 論文と全体の用語 DB の場所は CLI と同じ既定（実行した場所の `article/` と `~/.jpaper/glossary.db`）で、`JPAPER_ARTICLE_DIR`・`JPAPER_GLOSSARY_DB` で変えられる。ただし、翻訳が使う全体の用語 DB は CLI と同じ `JPAPER_HOME/glossary.db` で、`JPAPER_GLOSSARY_DB` は翻訳には効かない。
 - ジョブは API のメモリにだけ持つので、API を止めると実行中の翻訳も止まる。同じ ID で始め直せば checkpoint から再開する。
