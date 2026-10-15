@@ -23,6 +23,9 @@ import {
   conditionalLinesNest,
   isConditionalLine,
   conditionalNamesDeclared,
+  separateAcronyms,
+  usesAcronymPackage,
+  acronymKeysOf,
 } from "./bilingual-latex.js";
 import { findUnsafeTexCommands } from "./tex-safety.js";
 import { fastestMs } from "../testing/timing.js";
@@ -878,5 +881,48 @@ describe("段落の境目の条件分岐（issue #378）", () => {
     expect(renderPairs(pairs, { left: "", right: "" }, iopart).blocks).toEqual(
       pairs.map((p) => `${p.left}\n\\switchcolumn\n${p.right}\n\\switchcolumn*`),
     );
+  });
+});
+
+describe("略語（acronym パッケージ）を左右の段で分ける（issue #381）", () => {
+  const keys = (...texs: string[]) => acronymKeysOf(texs);
+
+  it("右の段の本文で定義する略語のキーだけに接頭辞を付け、定義で略称を省いていれば元のキーを略称として書く", () => {
+    const k = keys("\\acro{MF}[MF]{有糸分裂像}\\acro{FM}{基盤モデル}\\acrodef{OOD}[OOD]{ドメイン外}\\acro{ViT}[ViT]{x}");
+    expect(separateAcronyms("\\ac{MF} と \\acp{FM}、\\Acf*{OOD}、\\acused{ViT}、\\ac[2]{MF}、\\Acfip{FM}、\\ac{PRE}", k)).toBe(
+      "\\ac{jpRMF} と \\acp{jpRFM}、\\Acf*{jpROOD}、\\acused{jpRViT}、\\ac[2]{jpRMF}、\\Acfip{jpRFM}、\\ac{PRE}",
+    );
+    // キーを取らない命令・似た名前の命令は変えない。
+    expect(separateAcronyms("\\acresetall \\acute{e} \\acroextra{MF} \\acc{MF}", k)).toBe("\\acresetall \\acute{e} \\acroextra{MF} \\acc{MF}");
+  });
+
+  it("定義の直後に正式名のままの複数形を足す（\\acro には \\acroplural、\\acrodef には \\acrodefplural。作者が複数形を定めたキーは除く）", () => {
+    const tex = "\\acro{MF}[MF]{有糸分裂像}\n\\acro{WSI}{全スライド画像}\n\\acrodef{BD}[BD]{本文}\n\\acro{ROI}[RoI]{関心領域}\\acroplural{ROI}{関心領域群}";
+    expect(separateAcronyms(tex, keys(tex))).toBe(
+      "\\acro{jpRMF}[MF]{有糸分裂像}\\acroplural{jpRMF}[MFs]{有糸分裂像}\n" +
+        "\\acro{jpRWSI}[WSI]{全スライド画像}\\acroplural{jpRWSI}[WSIs]{全スライド画像}\n" +
+        "\\acrodef{jpRBD}[BD]{本文}\\acrodefplural{jpRBD}[BDs]{本文}\n" +
+        "\\acro{jpRROI}[RoI]{関心領域}\\acroplural{jpRROI}{関心領域群}",
+    );
+    // 正式名の中の波括弧・\\& と脚注もそのまま複数形に写す。
+    const he = "\\acro{HE}[H\\&E]{ヘマトキシリン\\&エオジン\\footnote{訳注: {x}}}";
+    expect(separateAcronyms(he, keys(he))).toBe(
+      "\\acro{jpRHE}[H\\&E]{ヘマトキシリン\\&エオジン\\footnote{訳注: {x}}}\\acroplural{jpRHE}[H\\&Es]{ヘマトキシリン\\&エオジン\\footnote{訳注: {x}}}",
+    );
+  });
+
+  it("acronym パッケージを読む文書だけ（コメントは見ない）、右の段の略語を分ける（左の段はそのまま）", () => {
+    expect(usesAcronymPackage("\\usepackage[nolist]{acronym}")).toBe(true);
+    expect(usesAcronymPackage("\\usepackage{amsmath,acronym}")).toBe(true);
+    expect(usesAcronymPackage("\\usepackage{acro}")).toBe(false);
+    expect(usesAcronymPackage("%\\usepackage{acronym}\n\\usepackage{acro}")).toBe(false);
+    const pairs = [
+      { segmentId: "s", left: "a \\ac{MF}", right: "甲 \\ac{MF}" },
+      { segmentId: "s", left: "\\begin{acronym}\\acro{MF}[MF]{mitotic}\\end{acronym}", right: "\\begin{acronym}\\acro{MF}[MF]{有糸}\\end{acronym}" },
+    ];
+    const on = renderPairs(pairs, { left: "\\usepackage{acronym}", right: "\\usepackage{acronym}" }).blocks.join("\n");
+    expect(on).toContain("a \\ac{MF}\n\\switchcolumn\n甲 \\ac{jpRMF}");
+    const off = renderPairs(pairs, { left: "", right: "" }).blocks.join("\n");
+    expect(off).toContain("甲 \\ac{MF}");
   });
 });

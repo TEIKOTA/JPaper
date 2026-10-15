@@ -309,3 +309,59 @@ describe.skipIf(!hasTex)("段落の境目の条件分岐を pdflatex と paracol
     });
   });
 });
+
+// 略語（acronym パッケージ。issue #381）: 右の段の略語を分けた対訳を pdflatex で 3 回組み（略称を省いた \acroplural は 3 回目で定まる）、左右の半分のテキストを比べる。
+const hasAcronym = hasTex && spawnSync("kpsewhich", ["acronym.sty"], { encoding: "utf8" }).stdout.trim() !== "";
+
+function runThrice(dir: string, name: string, tex: string): { ok: boolean; log: string } {
+  writeFileSync(path.join(dir, `${name}.tex`), tex);
+  let ok = true;
+  for (let i = 0; i < 3; i++) {
+    const r = spawnSync("pdflatex", ["-interaction=nonstopmode", "-halt-on-error", "-no-shell-escape", `${name}.tex`], { cwd: dir, timeout: 60_000 });
+    ok &&= r.status === 0;
+  }
+  return { ok, log: readFileSync(path.join(dir, `${name}.log`), "utf8") };
+}
+
+const half = (dir: string, name: string, side: "left" | "right"): string =>
+  spawnSync("pdftotext", ["-x", side === "left" ? "0" : "306", "-y", "0", "-W", "306", "-H", "792", "-raw", `${name}.pdf`, "-"], {
+    cwd: dir,
+    encoding: "utf8",
+  }).stdout.replace(/\s+/g, " ");
+
+describe.skipIf(!hasAcronym)("略語を左右の段で分けて pdflatex で組む（issue #381）", () => {
+  it("左の段は原文の定義、右の段は和訳の定義で展開され、前文・本文の \\acrodef と複数形も組める", () => {
+    const dir = process.env.JP_ACRO_DIR ?? mkdtempSync(path.join(tmpdir(), "jpaper-acro-"));
+    try {
+      const preamble = "\\usepackage[nolist]{acronym}\n\\acrodef{PRE}[PRE]{preamble long}";
+      const pairs = [
+        { segmentId: "s", left: "Left: \\ac{MF}, \\acp{FM}, \\ac[2]{ROI}, \\acp{ROI}, \\ac{PRE}, \\ac{BD}.", right: "Right: \\ac{MF}, \\acp{FM}, \\ac[2]{ROI}, \\acp{ROI}, \\ac{PRE}, \\ac{BD}." },
+        { segmentId: "s", left: "\\acrodef{BD}[BD]{body def}", right: "\\acrodef{BD}[BD]{karada}" },
+        {
+          segmentId: "s",
+          left: "\\begin{acronym}\n\\acro{MF}[MF]{mitotic figure}\n\\acro{FM}{foundation model}\n\\acro{ROI}[RoI]{region of interest}\n\\acroplural{ROI}{regions of interest}\n\\end{acronym}",
+          right: "\\begin{acronym}\n\\acro{MF}[MF]{yushi}\n\\acro{FM}{kiban}\n\\acro{ROI}[RoI]{kanshin}\n\\acroplural{ROI}{kanshin gun}\n\\end{acronym}",
+        },
+      ];
+      const body = renderPairs(pairs, { left: preamble, right: preamble }, IOPART).blocks.join("\n\n");
+      const tex = ["\\documentclass{article}", "\\usepackage[letterpaper]{geometry}", "\\usepackage{paracol}", preamble, "\\begin{document}", "\\begin{paracol}{2}", body, "\\end{paracol}", "\\end{document}", ""].join("\n");
+      const r = runThrice(dir, "acro", tex);
+      expect(r.ok, r.log.slice(-2000)).toBe(true);
+      expect(r.log).not.toMatch(/Undefined control sequence|Acronym .* is not defined/);
+      const left = half(dir, "acro", "left");
+      const right = half(dir, "acro", "right");
+      expect(left).toContain("mitotic figure (MF)");
+      expect(left).toContain("foundation models (FMs)");
+      expect(left).toContain("region of interest (RoI)");
+      expect(left).toContain("body def (BD)");
+      expect(left).not.toMatch(/yushi|kiban|kanshin|karada/);
+      expect(right).toContain("yushi (MF)");
+      expect(right).toContain("kiban (FMs)");
+      expect(right).toContain("kanshin (RoI)");
+      expect(right).toContain("karada (BD)");
+      expect(right).not.toMatch(/mitotic|foundation|region of|body def/);
+    } finally {
+      if (process.env.JP_ACRO_DIR === undefined) rmSync(dir, { recursive: true, force: true });
+    }
+  }, 120_000);
+});
