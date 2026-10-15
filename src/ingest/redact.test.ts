@@ -1,3 +1,4 @@
+import { createHmac } from "node:crypto";
 import { afterEach, describe, expect, it } from "vitest";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import os from "node:os";
@@ -47,10 +48,18 @@ describe("置き換え", () => {
     expect(makeRedactor(["Taro Yamada", "山田太郎", "Yamada"], KEY)!.fingerprint).toBe(r.fingerprint);
     expect(makeRedactor(["Yamada", "Taro Yamada", "山田太郎"], Buffer.alloc(32, 8))!.fingerprint).not.toBe(r.fingerprint);
     expect(makeRedactor([], KEY)).toBeUndefined();
+    // 当て方の版も入る（版を上げると古い checkpoint を使わない）。
+    expect(r.fingerprint).not.toBe(createHmac("sha256", KEY).update("jpaper-redact\0").update("Taro Yamada\0Yamada\0山田太郎\0").digest("hex").slice(0, 16));
   });
 
   it("LaTeX のコマンド名の中の一致を数える（\\\\ の改行の後の語は数えない）", () => {
     expect(controlWordHits("\\Yamada{x} \\textbf{Yamada} a\\\\Yamada", r)).toBe(1);
+  });
+
+  it("語の中の - は無くても当てる（行末の分綴で落ちた形）。語の端の - は落とさない", () => {
+    const h = makeRedactor(["Jean-Pierre", "-ab-"], KEY)!;
+    expect(redactText("Jean-Pierre JeanPierre Jean Pierre", h)).toEqual({ text: "*** *** Jean Pierre", replaced: 2 });
+    expect(redactText("-ab- ab -ab", h).text).toBe("*** ab -ab");
   });
 
   it("LaTeX の空白（~・\\ ・\\,）とコメントでの継ぎにも当てる", () => {

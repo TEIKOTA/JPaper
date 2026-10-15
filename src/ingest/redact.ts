@@ -8,6 +8,8 @@ export const REDACTED = "***";
 // 語の最小の長さ（文字数）。
 export const MIN_TERM_CHARS = 2;
 export const MAX_TERMS = 1000;
+// 当て方を変えたら上げる（checkpoint の無効化キーに入り、古い当て方で作った取り込み・読み取りを使い回さない）。
+export const REDACT_RULES_VERSION = "2";
 // 書き換えないファイルの先頭の印（PDF・PNG・JPEG・GIF。バイト数が変わると壊れる）。
 const BINARY_MAGIC = [Buffer.from("%PDF-"), Buffer.from([0x89, 0x50, 0x4e, 0x47]), Buffer.from([0xff, 0xd8, 0xff]), Buffer.from("GIF8")];
 const MAX_TERM_CHARS = 200;
@@ -66,9 +68,11 @@ export function parseRedactTerms(text: string): string[] {
 export function makeRedactor(terms: readonly string[], key: Buffer): Redactor | undefined {
   if (terms.length === 0) return undefined;
   // 長い語から当てる（"Taro Yamada" を "Yamada" より先に）。語の中の空白は改行を含む空白の並びに当てる。
+  // 語の中の - は無くても当てる（行末で分綴すると PDF のテキスト層では - が落ちる）。契約付録 §8（伏せ字）
   const sorted = [...terms].sort((a, b) => b.length - a.length || (a < b ? -1 : 1));
-  const pattern = new RegExp(sorted.map((t) => t.split(/\s+/).map(escape).join(GAP)).join("|"), "g");
-  const h = createHmac("sha256", key).update("jpaper-redact\0");
+  const word = (w: string): string => w.split(/(?<=.)-(?=.)/).map(escape).join("-?");
+  const pattern = new RegExp(sorted.map((t) => t.split(/\s+/).map(word).join(GAP)).join("|"), "g");
+  const h = createHmac("sha256", key).update("jpaper-redact\0").update(REDACT_RULES_VERSION).update("\0");
   for (const t of sorted) h.update(t).update("\0");
   return { terms: sorted, fingerprint: h.digest("hex").slice(0, 16), pattern };
 }
