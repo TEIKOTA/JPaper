@@ -41,3 +41,12 @@ describe("makeLlmClient", () => {
     expect(args).toContain('model_reasoning_effort="low"');
   });
 });
+
+describe("画像の入力（契約付録 §8 PDF 入力）", () => {
+  it.each(["ollama", "openrouter"] as const)("%s に画像を渡すと、送らずに provider エラー", async (p) => {
+    const c = makeLlmClient(p);
+    await expect(
+      c.complete({ system: "s", user: "u", images: [{ mediaType: "image/png", data: Buffer.from("x") }] }),
+    ).rejects.toMatchObject({ code: 2, kind: "provider" });
+  });
+});

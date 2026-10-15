@@ -268,6 +268,16 @@ export const RunSummary = z.object({
     .default(null),
   // 論文タイトルの翻訳結果。null は翻訳まで到達しなかった run。契約付録 §8
   title: z.enum(["translated", "failed", "absent"]).nullable().default(null),
+  // PDF 入力の読み取り結果。null は PDF 以外の入力と、読み取りが終わらずに失敗した run。契約付録 §8（PDF 入力）
+  pdf: z
+    .object({
+      // 読んだページの数（--pages で絞った後）。
+      pages: z.number().int().nonnegative(),
+      // 原本のページ画像を貼って未訳にしたページ（PDF の何枚目か）。
+      fallbackPages: z.array(z.number().int().positive()),
+    })
+    .nullable()
+    .default(null),
   exitCode: z.number().int(),
 });
 export type RunSummary = z.infer<typeof RunSummary>;
@@ -309,8 +319,8 @@ export type Result = z.infer<typeof Result>;
 // ── §8 LlmClient 境界 ──
 // meta は呼び出し文脈（誰が・どの段・何回目か）。トレース（LlmCallEvent）へ写すためだけに使い、変換結果には影響しない。
 export interface LlmCallMeta {
-  role: "translator" | "evaluator" | "glossary-builder" | "term-verifier";
-  phase?: "translate" | "evaluate" | "glossary" | "verify";
+  role: "translator" | "evaluator" | "glossary-builder" | "term-verifier" | "pdf-reader";
+  phase?: "translate" | "evaluate" | "glossary" | "verify" | "read";
   segmentId?: string;
   pass?: number; // 節ループの再訳回数（0=初回）
 }
@@ -326,6 +336,12 @@ export interface LlmRequest {
   signal?: AbortSignal;
   // この呼び出しだけ CLI の Web 検索を許す（claude・codex）。他のプロバイダは使わない。契約付録 §4
   webSearch?: boolean;
+  // 一緒に渡す画像（claude・codex だけ）。契約付録 §8（PDF 入力）
+  images?: readonly LlmImage[];
+}
+export interface LlmImage {
+  mediaType: "image/png";
+  data: Buffer;
 }
 export interface LlmClient {
   complete(req: LlmRequest): Promise<string>;

@@ -1,7 +1,10 @@
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { describe, it, expect } from "vitest";
 import { runCli, formatProgress, USAGE, wantsHelp } from "./cli.js";
 import type { Result } from "./types/contract.js";
+import type { TranslateOptions } from "./workflows/translate-paper.js";
 
 const okResult: Result = {
   status: "ok",
@@ -20,6 +23,7 @@ const okResult: Result = {
     llmCalls: 0,
     sharedDefaults: [],
     title: null,
+    pdf: null,
     exitCode: 0,
   },
 };
@@ -624,5 +628,96 @@ describe("実行中の進捗（#246）", () => {
       },
     });
     expect(code).toBe(0);
+  });
+});
+
+describe("PDF 入力の --pages・--yes と確認（契約付録 §8 PDF 入力）", () => {
+  const pdf = (() => {
+    const p = path.join(mkdtempSync(path.join(os.tmpdir(), "jpaper-cli-pdf-")), "book.pdf");
+    writeFileSync(p, "%PDF-1.4\n");
+    return p;
+  })();
+  const capture = () => {
+    const seen: TranslateOptions[] = [];
+    const translate = async (_i: unknown, o: TranslateOptions): Promise<Result> => {
+      seen.push(o);
+      return okResult;
+    };
+    return { seen, translate: translate as never };
+  };
+
+  it("--pages と --yes を translatePaper に渡し、確認しない", async () => {
+    const { seen, translate } = capture();
+    let asked = false;
+    const code = await runCli(["node", "jpaper", pdf, "--provider", "claude", "--pages", "1-72", "--yes"], {
+      translate,
+      stdout: () => {},
+      stderr: () => {},
+      confirm: async () => ((asked = true), true),
+      pdfPages: async () => 412,
+    });
+    expect(code).toBe(0);
+    expect(asked).toBe(false);
+    expect(seen[0]).toMatchObject({ pages: "1-72", allowLargePdf: true });
+  });
+
+  it("100 ページを超えると目安を出して確認し、断れば翻訳しない（exit 2）", async () => {
+    const { seen, translate } = capture();
+    let question = "";
+    const code = await runCli(["node", "jpaper", pdf, "--provider", "claude"], {
+      translate,
+      stdout: () => {},
+      stderr: () => {},
+      confirm: async (q) => ((question = q), false),
+      pdfPages: async () => 412,
+    });
+    expect(code).toBe(2);
+    expect(seen).toHaveLength(0);
+    expect(question).toContain("412 ページ");
+    expect(question).toContain("--pages");
+  });
+
+  it("確認で続けると allowLargePdf を付けて翻訳する。100 ページ以下なら聞かない", async () => {
+    const yes = capture();
+    await runCli(["node", "jpaper", pdf, "--provider", "claude"], {
+      translate: yes.translate,
+      stdout: () => {},
+      stderr: () => {},
+      confirm: async () => true,
+      pdfPages: async () => 101,
+    });
+    expect(yes.seen[0]?.allowLargePdf).toBe(true);
+
+    const small = capture();
+    let asked = false;
+    await runCli(["node", "jpaper", pdf, "--provider", "claude"], {
+      translate: small.translate,
+      stdout: () => {},
+      stderr: () => {},
+      confirm: async () => ((asked = true), true),
+      pdfPages: async () => 100,
+    });
+    expect(asked).toBe(false);
+    expect(small.seen[0]?.allowLargePdf).toBeUndefined();
+  });
+
+  it("画像を渡せないプロバイダでは確認を出さない（translatePaper の入口で止まる）", async () => {
+    const { translate } = capture();
+    let asked = false;
+    await runCli(["node", "jpaper", pdf, "--provider", "ollama"], {
+      translate,
+      stdout: () => {},
+      stderr: () => {},
+      confirm: async () => ((asked = true), true),
+      pdfPages: async () => 412,
+    });
+    expect(asked).toBe(false);
+  });
+
+  it("読み取りの進捗を 1 行で出す", () => {
+    expect(formatProgress({ phase: "read", segmentId: "p3", done: 3, total: 72, passed: true })).toBe("[読み取り 3/72] p3 ok");
+    expect(formatProgress({ phase: "read", segmentId: "p4", done: 4, total: 72, passed: false })).toBe(
+      "[読み取り 4/72] p4 原本の画像を貼る",
+    );
   });
 });

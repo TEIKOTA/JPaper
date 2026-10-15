@@ -56,7 +56,9 @@ import {
   type OllamaConfig,
   type OpenRouterConfig,
 } from "../config.js";
-import { makeLlmClient } from "../providers/index.js";
+import { IMAGE_PROVIDERS, makeLlmClient } from "../providers/index.js";
+import { extractPdf, type PdfExtracted } from "../ingest/pdf/index.js";
+import { isPdfFile, type PdfTools } from "../ingest/pdf/poppler.js";
 import { z } from "zod";
 import { paperExcerpt } from "../terminology/paper-excerpt.js";
 import { applyVerification, carriedUnverified, isTargetCheck, verifyTargets } from "../terminology/verify.js";
@@ -121,6 +123,7 @@ import {
   type PaperTitle,
 } from "../tools/paper-title.js";
 import {
+  defaultRunner,
   runBuildGate,
   unsafeSupportFiles,
   type LatexRunner,
@@ -149,6 +152,10 @@ export interface TranslateOptions {
   bilingual?: boolean;
   // 用語集の訳を Web 検索の用例で確かめるか（claude・codex だけ）。既定 true。契約付録 §4
   verifyTerms?: boolean;
+  // PDF 入力で読むページ（"1-72" など。PDF の何枚目か）。契約付録 §8（PDF 入力）
+  pages?: string;
+  // PDF 入力で LARGE_PDF_PAGES を超えるページを読むことに同意済みか。
+  allowLargePdf?: boolean;
 }
 
 // subprocess プロバイダは無制限並列に耐えないため翻訳の同時実行数を制限する。
@@ -209,10 +216,14 @@ export interface TranslateDeps {
   writeBackGlossary?: boolean;
   // 注入した client が LlmRequest.webSearch を扱えるか。既定 false（内部で作る claude・codex の client は扱える）。契約付録 §4
   webSearch?: boolean;
+  // 注入した client が LlmRequest.images を扱えるか。既定 false。契約付録 §8（PDF 入力）
+  images?: boolean;
+  // PDF の読み取りに使う poppler の呼び出し（テスト用）。
+  pdfTools?: PdfTools;
 }
 
 export interface RunProgress {
-  phase: "ingest" | "context" | "translate" | "typeset";
+  phase: "read" | "ingest" | "context" | "translate" | "typeset";
   segmentId?: string;
   done: number;
   total: number;
@@ -968,6 +979,12 @@ function entryError(input: JpaperInput, opts: TranslateOptions): string | undefi
   if (opts.verifyTerms !== undefined && typeof opts.verifyTerms !== "boolean") {
     return `verifyTerms が不正です: ${outwardMessage(String(opts.verifyTerms))}`;
   }
+  if (opts.pages !== undefined && typeof opts.pages !== "string") {
+    return `pages が不正です: ${outwardMessage(String(opts.pages))}`;
+  }
+  if (opts.allowLargePdf !== undefined && typeof opts.allowLargePdf !== "boolean") {
+    return `allowLargePdf が不正です: ${outwardMessage(String(opts.allowLargePdf))}`;
+  }
   const r = opts.openrouter;
   if (r !== undefined) {
     if (typeof r.model !== "string" || r.model.trim() === "") {
@@ -1125,6 +1142,38 @@ export async function translatePaper(
       db = new GlossaryDb(loc);
     }
 
+    // PDF は先にページを読んで main.tex を起こす。LLM を呼ぶ前に、画像を渡せないプロバイダを落とす。契約付録 §8（PDF 入力）
+    const isPdf = input.kind === "path" && isPdfFile(input.path);
+    if (!isPdf && opts.pages !== undefined) {
+      throw new JpaperError(2, "input", "--pages は PDF の入力のときだけ指定できます");
+    }
+    let pdf: PdfExtracted | undefined;
+    const signature = inputSignature(input);
+    if (isPdf) {
+      const canSee = deps.client === undefined ? IMAGE_PROVIDERS.includes(opts.provider) : deps.images === true;
+      if (!canSee) {
+        throw new JpaperError(2, "input", "PDF の読み取りは --provider claude|codex のときだけ使えます");
+      }
+      pdf = await extractPdf(
+        input.path,
+        { pages: opts.pages, allowLarge: opts.allowLargePdf },
+        {
+          client,
+          runner: deps.latexRunner ?? defaultRunner,
+          runDir,
+          outDir: path.join(runDir, "pdf-source"),
+          signature,
+          concurrency: opts.concurrency ?? defaultConcurrencyFor(opts.provider),
+          tools: deps.pdfTools,
+          cacheKey: deps.cacheKey,
+          signal,
+          notify,
+          onPage: (page, status, done, total) =>
+            progress({ phase: "read", segmentId: `p${String(page)}`, done, total, passed: status === "ok" }),
+        },
+      );
+    }
+    const pdfMain = pdf === undefined ? "" : readFileSync(path.join(pdf.dir, "main.tex"), "utf8");
     const ingested = await checkpoint(
       runDir,
       "ingest",
@@ -1134,8 +1183,9 @@ export async function translatePaper(
           ...deps.ingest,
           limits: deps.limits ?? deps.ingest?.limits,
           arxiv: { ...deps.ingest?.arxiv, signal },
+          ...(pdf === undefined ? {} : { pdfDir: pdf.dir }),
         }),
-      { invalidation: inputSignature(input), key: deps.cacheKey },
+      { invalidation: pdf === undefined ? signature : hashContext(signature, pdfMain), key: deps.cacheKey },
     );
 
     // プリアンブルは翻訳対象ではなく verbatim に持ち越されるため、節ループの品質ゲートでは
@@ -1509,7 +1559,15 @@ export async function translatePaper(
       // 残ると、前の論文の訳文がそのまま出力先に居座る）。
       pruneSteps(
         runDir,
-        new Set(["ingest", "glossary", VERIFY_STEP, VERIFY_RESULT_STEP, TITLE_SEGMENT_ID, ...segments.map((s) => s.id)]),
+        new Set([
+          "ingest",
+          "glossary",
+          VERIFY_STEP,
+          VERIFY_RESULT_STEP,
+          TITLE_SEGMENT_ID,
+          ...segments.map((s) => s.id),
+          ...(pdf?.stepIds ?? []),
+        ]),
       );
       promoteContext(outDir, ingested.paperId, sourceDigestOf(ingested.cleanLatex), ctx.pending);
     }
@@ -1539,6 +1597,7 @@ export async function translatePaper(
       sharedDefaults,
       llmCalls: llmCalls(),
       title: titleStatus,
+      pdf: pdf === undefined ? null : { pages: pdf.pages.length, fallbackPages: pdf.fallbackPages },
       exitCode,
     });
     if (exitCode === 0) return { status: "ok", exitCode, pdfPath, summary };

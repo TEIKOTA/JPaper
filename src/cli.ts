@@ -5,6 +5,10 @@ import { translatePaper, type RunProgress } from "./workflows/translate-paper.js
 import { Provider, type Result } from "./types/contract.js";
 import { JpaperError } from "./types/errors.js";
 import { forTerminal } from "./runtime/untrusted.js";
+import { createInterface } from "node:readline";
+import { estimatePdfRead, LARGE_PDF_PAGES, pdfPagesToRead } from "./ingest/pdf/index.js";
+import { isPdfFile } from "./ingest/pdf/poppler.js";
+import { IMAGE_PROVIDERS } from "./providers/index.js";
 import {
   DEFAULT_OLLAMA,
   DEFAULT_OPENROUTER,
@@ -21,20 +25,25 @@ export interface CliDeps {
   translate?: typeof translatePaper;
   stdout?: (s: string) => void;
   stderr?: (s: string) => void;
+  // 100 ページを超える PDF を読むかを利用者に聞く。undefined なら端末のときだけ聞く。契約付録 §8（PDF 入力）
+  confirm?: (question: string) => Promise<boolean>;
+  // PDF の読むページ数（テスト用）。
+  pdfPages?: (pdf: string, spec: string | undefined) => Promise<number>;
 }
 
-const VALUE_FLAGS = ["--provider", "--out", "--model", "--context-window", "--effort", "--concurrency"];
-const BOOL_FLAGS = ["--think", "--no-think", "--no-bilingual", "--no-verify-terms"];
+const VALUE_FLAGS = ["--provider", "--out", "--model", "--context-window", "--effort", "--concurrency", "--pages"];
+const BOOL_FLAGS = ["--think", "--no-think", "--no-bilingual", "--no-verify-terms", "--yes"];
 const HELP_FLAGS = ["--help", "-h"];
 const HELP_HINT = "使い方は jpaper --help で表示できます\n";
 
 // 契約付録 §5
 export const USAGE = `使い方: jpaper <input> --provider {ollama|claude|codex|openrouter} [オプション]
 
-論文の LaTeX ソースを和訳し、和訳 PDF と対訳 PDF を作る。
+論文の LaTeX ソース（または PDF）を和訳し、和訳 PDF と対訳 PDF を作る。
 
 <input>
-  arXiv ID（例 2606.22649）、.tex・.tex.gz・zip・tar.gz などのファイル、またはディレクトリ
+  arXiv ID（例 2606.22649）、.tex・.tex.gz・zip・tar.gz などのファイル、ディレクトリ、
+  またはテキスト層のある PDF（claude・codex だけ。ページ画像を LLM に読ませて LaTeX に起こす）
 
 必須:
   --provider NAME       使う LLM（ollama・claude・codex・openrouter）
@@ -49,6 +58,8 @@ export const USAGE = `使い方: jpaper <input> --provider {ollama|claude|codex|
   --concurrency N       同時に走らせる LLM 呼び出しの数（1〜${String(MAX_CONCURRENCY)}。既定は ollama が ${String(defaultConcurrencyFor("ollama"))}、ほかは ${String(defaultConcurrencyFor("claude"))}）
   --no-bilingual        対訳 PDF を作らない
   --no-verify-terms     用語の訳を Web 検索で確かめない（確かめるのは claude・codex だけ）
+  --pages RANGE         PDF の読むページ（例 1-72・3,5-9。PDF の何枚目かで数える）
+  --yes                 PDF の読むページが ${String(LARGE_PDF_PAGES)} を超えても確認せずに進む
   -h, --help            この使い方を表示する
 
 作業ディレクトリの .env を読む。実行の要約（JSON）と、和訳 PDF・対訳 PDF のパスを標準出力に出す。
@@ -174,6 +185,7 @@ export function modelConfigFrom(
 }
 
 const PHASE_LABEL: Record<RunProgress["phase"], string> = {
+  read: "読み取り",
   ingest: "取り込み",
   context: "文脈",
   translate: "翻訳",
@@ -183,6 +195,9 @@ const PHASE_LABEL: Record<RunProgress["phase"], string> = {
 // 契約付録 §5
 export function formatProgress(e: RunProgress): string | undefined {
   const label = PHASE_LABEL[e.phase];
+  if (e.phase === "read") {
+    return `[${label} ${String(e.done)}/${String(e.total)}] ${e.segmentId ?? ""} ${e.passed === false ? "原本の画像を貼る" : "ok"}`;
+  }
   if (e.phase !== "translate") {
     return e.done < e.total ? undefined : `[${label}] 完了`;
   }
@@ -195,6 +210,26 @@ export function formatProgress(e: RunProgress): string | undefined {
   if (e.passed !== false) return `${head} ok${rev}`;
   const kinds = e.failedKinds ?? [];
   return `${head} 失敗 ${kinds.length > 0 ? kinds.join(", ") : "品質"}${rev}`;
+}
+
+async function defaultPdfPages(pdf: string, spec: string | undefined): Promise<number> {
+  return (await pdfPagesToRead(pdf, spec)).pages.length;
+}
+
+function askYesNo(question: string): Promise<boolean> {
+  const rl = createInterface({ input: process.stdin, output: process.stderr });
+  return new Promise((resolve) => {
+    let answered = false;
+    // Ctrl+C・Ctrl+D で閉じたら中止として扱う。
+    rl.on("close", () => {
+      if (!answered) resolve(false);
+    });
+    rl.question(question, (answer) => {
+      answered = true;
+      rl.close();
+      resolve(/^y(es)?$/i.test(answer.trim()));
+    });
+  });
 }
 
 export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number> {
@@ -256,14 +291,41 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number
       flags.get("--effort"),
     );
     const concurrencyArg = flags.get("--concurrency");
+    const concurrency = concurrencyArg === undefined ? undefined : parseConcurrency(concurrencyArg);
     const input = detectInput(inputStr);
+    const pagesArg = flags.get("--pages");
+    let allowLargePdf = flags.has("--yes");
+    // 端末なら、LLM を呼ぶ前に 100 ページ超を確かめる。端末でなければ translatePaper が --yes を求めて止める。契約付録 §8（PDF 入力）
+    const confirm = deps.confirm ?? (process.stdin.isTTY && process.stderr.isTTY ? askYesNo : undefined);
+    if (
+      !allowLargePdf &&
+      confirm !== undefined &&
+      IMAGE_PROVIDERS.includes(provider) &&
+      input.kind === "path" &&
+      isPdfFile(input.path)
+    ) {
+      const n = await (deps.pdfPages ?? defaultPdfPages)(input.path, pagesArg);
+      if (n > LARGE_PDF_PAGES) {
+        const est = estimatePdfRead(n, concurrency ?? defaultConcurrencyFor(provider));
+        const question =
+          `この PDF は ${String(n)} ページ読みます（読み取りの目安: 約 $${String(est.usd)}・約 ${String(est.minutes)} 分。翻訳はこれとは別にかかります）。\n` +
+          "範囲を絞るには --pages 1-72 のように指定します。続けますか？ [y/N] ";
+        if (!(await confirm(question))) {
+          stderr("中止しました\n");
+          return 2;
+        }
+        allowLargePdf = true;
+      }
+    }
     const result: Result = await translate(
       input,
       {
         provider,
         outDir: outArg,
         ...modelCfg,
-        ...(concurrencyArg === undefined ? {} : { concurrency: parseConcurrency(concurrencyArg) }),
+        ...(concurrency === undefined ? {} : { concurrency }),
+        ...(pagesArg === undefined ? {} : { pages: pagesArg }),
+        ...(allowLargePdf ? { allowLargePdf: true } : {}),
         ...(flags.has("--no-bilingual") ? { bilingual: false } : {}),
         ...(flags.has("--no-verify-terms") ? { verifyTerms: false } : {}),
       },

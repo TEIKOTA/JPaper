@@ -171,6 +171,19 @@ describe("\\providecommand 置換", () => {
   });
 });
 
+describe("列の切り替え", () => {
+  it("右の列が [ で始まると \\switchcolumn の引数に読まれないよう \\relax を挟む（契約付録 §8 PDF 入力）", () => {
+    const pair = (right: string) =>
+      renderPairs([{ segmentId: "s", left: "As shown in [BCN18], x.", right }], { left: "", right: "" }).blocks[0];
+    expect(pair("[BCN18] で示されているように、x。")).toBe(
+      "As shown in [BCN18], x.\n\\switchcolumn\n\\relax\n[BCN18] で示されているように、x。\n\\switchcolumn*",
+    );
+    expect(pair("x は [BCN18] で示された。")).toBe(
+      "As shown in [BCN18], x.\n\\switchcolumn\nx は [BCN18] で示された。\n\\switchcolumn*",
+    );
+  });
+});
+
 describe("タイトル", () => {
   it("前文の最後の \\title の中身を波括弧の対応で取り出す", () => {
     expect(titleOf("\\title{}\n\\title[short]{A {B} \\{C}\n\\author{x}")).toBe("A {B} \\{C");

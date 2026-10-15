@@ -26,10 +26,12 @@ export interface IngestDeps {
   arxiv?: ArxivDeps;
   // 取り込みのサイズ・件数上限。既定は DEFAULT_LIMITS。
   limits?: IngestLimits;
+  // PDF 入力を起こした main.tex のディレクトリ（extractPdf の出力）。契約付録 §8（PDF 入力）
+  pdfDir?: string;
 }
 
 const PATH_STRIP =
-  /\.(?:tar\.gz|tex\.gz|tgz|tar|zip|gz|tex)$/i;
+  /\.(?:tar\.gz|tex\.gz|tgz|tar|zip|gz|tex|pdf)$/i;
 
 const DIGEST_SUFFIX = /-[0-9a-f]{8}$/;
 
@@ -102,6 +104,12 @@ async function materialize(
     } catch (e) {
       if (e instanceof JpaperError) throw e;
       throw new JpaperError(2, "input", `入力パスを読めません: ${input.path}`);
+    }
+    if (bytes.subarray(0, 5).toString("latin1") === "%PDF-") {
+      if (deps.pdfDir === undefined) {
+        throw new JpaperError(2, "input", `PDF は先に読み取りの段を通す必要があります: ${input.path}`);
+      }
+      return { sourceDir: deps.pdfDir, mainRel: "main.tex", limited: true };
     }
     if (!isArchive(bytes)) {
       if (!/\.tex$/i.test(input.path)) {

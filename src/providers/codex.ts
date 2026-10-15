@@ -1,17 +1,17 @@
 // 契約付録 §5・§8。codex プロバイダ（純変換器化した公式 CLI subprocess）。
 import { spawn } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { CodexConfig } from "../config.js";
-import type { LlmClient, LlmCallEvent, TraceSink } from "../types/contract.js";
+import type { LlmClient, LlmCallEvent, LlmImage, TraceSink } from "../types/contract.js";
 import { JpaperError } from "../types/errors.js";
 import { canceledError } from "../runtime/cancellation.js";
 import { MAX_RESPONSE_CHARS } from "../runtime/llm-client.js";
 
 export interface CodexDeps {
   // args は `-C <dir> -o <file> -` を除いた codex の引数。戻り値は最終メッセージ。
-  run?: (args: string[], prompt: string, signal?: AbortSignal) => Promise<string>;
+  run?: (args: string[], prompt: string, signal?: AbortSignal, images?: readonly LlmImage[]) => Promise<string>;
   trace?: TraceSink;
   now?: () => number;
 }
@@ -75,13 +75,24 @@ export function codexEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
 const STDERR_TAIL = 8_000;
 
 // 一時ディレクトリで起動し、最終メッセージを -o のファイルから読む。
-async function defaultRun(args: string[], prompt: string, signal?: AbortSignal): Promise<string> {
+async function defaultRun(
+  args: string[],
+  prompt: string,
+  signal?: AbortSignal,
+  images: readonly LlmImage[] = [],
+): Promise<string> {
   if (signal?.aborted === true) throw canceledError("codex 起動前");
   const dir = mkdtempSync(path.join(os.tmpdir(), "jpaper-codex-"));
   const last = path.join(dir, "last-message.txt");
   try {
+    // 画像は一時ディレクトリに書いて --image で渡す。契約付録 §8（PDF 入力）
+    const imageArgs = images.map((im, i) => {
+      const file = path.join(dir, `image-${String(i)}.png`);
+      writeFileSync(file, im.data);
+      return `--image=${file}`;
+    });
     await new Promise<void>((resolve, reject) => {
-      const child = spawn("codex", [...args, "-C", dir, "-o", last, "-"], {
+      const child = spawn("codex", [...args, ...imageArgs, "-C", dir, "-o", last, "-"], {
         cwd: dir,
         env: codexEnv(process.env),
         stdio: ["pipe", "ignore", "pipe"],
@@ -132,7 +143,7 @@ export function makeCodexClient(cfg: CodexConfig = {}, deps: CodexDeps = {}): Ll
       const started = now();
       let result: string;
       try {
-        result = await run(codexArgs(cfg, req.webSearch === true), promptFor(req.system, req.user), req.signal);
+        result = await run(codexArgs(cfg, req.webSearch === true), promptFor(req.system, req.user), req.signal, req.images);
       } catch (e) {
         if (e instanceof JpaperError && e.kind === "canceled") throw e;
         if ((e as { code?: unknown }).code === "ENOENT") {
