@@ -12,6 +12,7 @@ import {
   sanitizeMath,
   fuseCaptionParagraphs,
   releaseLuatexjaNames,
+  releaseCounterAnchorNames,
   separateCjkAfterControlWords,
   classPackages,
 } from "./assemble-latex.js";
@@ -259,6 +260,34 @@ describe("releaseLuatexjaNames", () => {
     expect(releaseLuatexjaNames("\\newcommand{\\mc}[1]{\\mathcal{#1}}")).toBe("\\DeclareRobustCommand{\\mc}[1]{\\mathcal{#1}}");
     expect(releaseLuatexjaNames("\\newcommand*\\gt{x}")).toBe("\\DeclareRobustCommand*\\gt{x}");
     expect(releaseLuatexjaNames("\\newcommand{\\mcal}{x}\\newcommand\\gtr{y}")).toBe("\\newcommand{\\mcal}{x}\\newcommand\\gtr{y}");
+  });
+});
+
+describe("releaseCounterAnchorNames", () => {
+  it("\\theH<カウンタ名> の \\newcommand だけを \\providecommand に替える", () => {
+    expect(releaseCounterAnchorNames("\\newcommand{\\theHalgorithm}{\\arabic{algorithm}}")).toBe(
+      "\\providecommand{\\theHalgorithm}{\\arabic{algorithm}}",
+    );
+    expect(releaseCounterAnchorNames("\\newcommand*\\theHfigure{x}")).toBe("\\providecommand*\\theHfigure{x}");
+    expect(releaseCounterAnchorNames("\\newcommand { \\theHtable }{x}")).toBe("\\providecommand{ \\theHtable }{x}");
+    const others = "\\newcommand{\\theH}{x}\\newcommand{\\theorem}{y}\\newcommand\\theHx@y{z}\\renewcommand{\\theHalgorithm}{w}";
+    expect(releaseCounterAnchorNames(others)).toBe(others);
+  });
+
+  it("原プリアンブルでも共通テンプレでも main.tex に \\newcommand{\\theH…} を残さない", () => {
+    const clean = [
+      "\\documentclass{article}",
+      "\\usepackage{algorithm}",
+      "\\newcommand{\\theHalgorithm}{\\arabic{algorithm}}",
+      "\\begin{document}",
+      "x",
+      "\\end{document}",
+    ].join("\n");
+    for (const mode of ["original", "template"] as const) {
+      const { mainTex } = assembleWithMap({ cleanLatex: clean, segments: [{ id: "s", tex: "x" } as never], mode });
+      expect(mainTex).toContain("\\providecommand{\\theHalgorithm}{\\arabic{algorithm}}");
+      expect(mainTex).not.toContain("\\newcommand{\\theHalgorithm}");
+    }
   });
 });
 

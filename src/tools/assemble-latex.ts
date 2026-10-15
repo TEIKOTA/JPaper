@@ -85,6 +85,14 @@ export function releaseLuatexjaNames(tex: string): string {
   );
 }
 
+// 論文の \newcommand{\theH<カウンタ名>} を、カーネルが定義済みでも通る \providecommand に替える。⚠ landmines.md
+export function releaseCounterAnchorNames(tex: string): string {
+  return tex.replace(
+    /\\newcommand(\*?)\s*(\{\s*\\theH[A-Za-z]+\s*\}|\\theH[A-Za-z]+(?![A-Za-z@]))/g,
+    "\\providecommand$1$2",
+  );
+}
+
 // \caption の引数の中の空行を、行数を変えずに段落区切りでなくする。⚠ landmines.md
 export function fuseCaptionParagraphs(tex: string): string {
   let out = "";
@@ -291,7 +299,7 @@ export function assembleWithMap(input: {
     if (i < parts.length - 1) out += "\n\n";
   });
   out += `\n${END_DOC}\n`;
-  return { mainTex: releaseLuatexjaNames(out), layout, sourceMap };
+  return { mainTex: releaseCounterAnchorNames(releaseLuatexjaNames(out)), layout, sourceMap };
 }
 
 export function segmentAtLine(sourceMap: SourceSpan[], line: number): string | undefined {

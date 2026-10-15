@@ -207,6 +207,12 @@
 - **なぜ意図的か**: luatexja はこの 2 つを和文書体の切り替えとして定義済みなので、論文が同じ名前を `\newcommand` すると `Command \mc already defined` で組版が落ちる（実測: 2011.03395 seg-0059 の `\newcommand{\mc}[1]{\mathcal{#1}}`）。`\DeclareRobustCommand` は定義済みでも上書きでき、論文の意味が勝つ。
 - **正本ポインタ**: 契約付録 §7、issue #320。回帰テストは `src/tools/assemble-latex.test.ts`。
 
+## `src/tools/assemble-latex.ts` — 論文の `\newcommand{\theH…}` を `\providecommand` に替える
+
+- **おかしく見える点**: 原文の `\newcommand` を、名前が `\theH` で始まるときだけ `\providecommand` に書き換え、論文の定義を捨ててカーネルの定義を残している。
+- **なぜ意図的か**: 今の LaTeX カーネル（TeX Live 2025、形式版 2025-11-01）は `\@definecounter` でカウンタを作るたびに `\theH<名前>` を定義するので、古い hyperref 向けの回避策 `\newcommand{\theHalgorithm}{\arabic{algorithm}}` が `Command \theHalgorithm already defined` で組版を落とす（実測: 1406.2661。hyperref を読まない最小の文書でも同じ）。共通テンプレートも原前文を引き継ぐので同じ行で落ちる。`\theH…` は hyperref のアンカー名にだけ使われ、カーネルの定義も番号を出すだけなので、論文の定義を捨てても PDF の見た目は変わらない。`\DeclareRobustCommand` にすると `\xdef` の中で展開されず、アンカー名が壊れる。
+- **正本ポインタ**: issue #425。回帰テストは `src/tools/assemble-latex.test.ts`・`src/tools/bilingual-latex.test.ts`。
+
 ## `src/tools/build-gate.ts` — サブディレクトリの支援ファイルを `srcpkg/` と main からの相対位置の両方に置く
 
 - **おかしく見える点**: 同梱の `.cls` / `.sty` などは `srcpkg/` へ基底名で置くのに、サブディレクトリにあるものだけ組版ディレクトリの同じ相対位置にも複製している。
