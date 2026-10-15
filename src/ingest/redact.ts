@@ -9,7 +9,7 @@ export const REDACTED = "***";
 export const MIN_TERM_CHARS = 2;
 export const MAX_TERMS = 1000;
 // 当て方を変えたら上げる（checkpoint の無効化キーに入り、古い当て方で作った取り込み・読み取りを使い回さない）。
-export const REDACT_RULES_VERSION = "2";
+export const REDACT_RULES_VERSION = "3";
 // 書き換えないファイルの先頭の印（PDF・PNG・JPEG・GIF。バイト数が変わると壊れる）。
 const BINARY_MAGIC = [Buffer.from("%PDF-"), Buffer.from([0x89, 0x50, 0x4e, 0x47]), Buffer.from([0xff, 0xd8, 0xff]), Buffer.from("GIF8")];
 const MAX_TERM_CHARS = 200;
@@ -72,8 +72,8 @@ export function makeRedactor(terms: readonly string[], key: Buffer): Redactor | 
   if (terms.length === 0) return undefined;
   // 長い語から当てる（"Taro Yamada" を "Yamada" より先に）。語の中の空白は改行を含む空白の並びに当てる。
   // 語の中の - は無くても当てる（行末で分綴すると PDF のテキスト層では - が落ちる）。契約付録 §8（伏せ字）
-  // 長さは語の中の - を除いて数える（- を省いて当たる長さ）。
-  const len = (t: string): number => t.replace(/(?<=.)-(?=.)/g, "").length;
+  // 長さは語の中の - を除き、空白の並びを 1 つと数える（当たりうる最短の長さ）。
+  const len = (t: string): number => t.replace(/(?<=.)-(?=.)/g, "").replace(/\s+/g, " ").length;
   const sorted = [...terms].sort((a, b) => len(b) - len(a) || b.length - a.length || (a < b ? -1 : 1));
   const word = (w: string): string => w.split(/(?<=.)-(?=.)/).map(escape).join("-?");
   const pattern = new RegExp(sorted.map((t) => t.split(/\s+/).map(word).join(GAP)).join("|"), "g");

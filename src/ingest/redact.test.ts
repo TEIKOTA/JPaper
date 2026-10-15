@@ -62,8 +62,9 @@ describe("置き換え", () => {
     expect(redactText("-ab- ab -ab", h).text).toBe("*** ab -ab");
   });
 
-  it("長い語から当てるときの長さは、語の中の - を除いて数える", () => {
+  it("長い語から当てるときの長さは、語の中の - を除き、空白の並びを 1 つと数える", () => {
     expect(redactText("KLabs", makeRedactor(["K-Lab", "KLabs"], KEY)!).text).toBe("***");
+    expect(redactText("ab cd", makeRedactor(["ab     c", "ab cd"], KEY)!).text).toBe("***");
   });
 
   it("- と空白を除いて 2 文字に満たない語は受けない", () => {
