@@ -2,6 +2,7 @@
 
 # Status
 - accepted
+- 部分 supersede（2026-10-15）: public の repo では「branch protection を見送る」を [`20261015-require-ci-checks-on-public-repo.md`](./20261015-require-ci-checks-on-public-repo.md) で置換（再検討条件の「repo を public にする」が成立）。
 - 部分 supersede（2026-09-01）: 強制手段のうち「pr-checks / self-test CI」の条項は [`20260901-disable-github-actions-by-default.md`](./20260901-disable-github-actions-by-default.md) により置換（CI は既定オフとなり、強制手段は lefthook・`scripts/check-pr.sh`・`tests/run-tests.sh`・AGENTS.md の規約）。branch protection を見送る判断・再検討条件の条項は存続。
 
 # Situation
