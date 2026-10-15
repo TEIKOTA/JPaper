@@ -819,6 +819,10 @@ describe("段落の境目の条件分岐（issue #378）", () => {
     expect(isConditionalLine("\\ifdraft\\relax")).toBe(false);
     expect(isConditionalLine("\\ifdraft{")).toBe(false);
     expect(isConditionalLine("\\ifnum\\x>0 Positive")).toBe(false);
+    expect(isConditionalLine("\\ifnum\\x>0 \\relax")).toBe(false);
+    expect(isConditionalLine("\\ifx\\a\\b \\foo")).toBe(false);
+    expect(isConditionalLine("\\ifnum\\value{page}>1 \\newpage")).toBe(false);
+    expect(isConditionalLine("\\ifnum \\x>0")).toBe(false);
     expect(isConditionalLine("\\ifx\\a\\b{")).toBe(false);
     expect(isConditionalLine("\\ifx\\a\\b\\begin{x}")).toBe(false);
     expect(isConditionalLine("\\iff")).toBe(false);

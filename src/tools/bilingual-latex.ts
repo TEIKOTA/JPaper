@@ -382,7 +382,7 @@ export function isConditionalLine(bare: string): boolean {
     OPERAND_CONDITIONALS.has(m[1]!) &&
     n.env === 0 &&
     n.brace === 0 &&
-    !/\s[A-Za-z]/.test(rest) &&
+    !/\s\S/.test(rest) &&
     conditionalTokens(rest).length === 0
   );
 }

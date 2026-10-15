@@ -132,6 +132,12 @@ const CASES: Case[] = [
     expected: { false: after, true: ["DraftL:0", "DraftR:1", ...after] },
   },
   {
+    name: "比較の対象の後に空白と命令が続く \\ifnum の行（3 回目のレビューの blocking）",
+    pairs: mirror(["\\ifnum\\x>0 \\mk{Shared}\n\\mk{PosL}", "\\fi", "\\mk{AfterL}"]),
+    split: false,
+    expected: { false: after, true: ["Shared:0", "PosL:0", "Shared:1", "PosR:1", ...after] },
+  },
+  {
     name: "左右で条件分岐の行が違う段落",
     pairs: [
       { left: "\\ifdraft\n\\mk{DraftL}", right: "\\ifdraft \\mk{DraftR}" },
