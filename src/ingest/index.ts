@@ -1,6 +1,6 @@
 // 設計メモ §3・契約付録 §3/§5/§8。source-first 取り込みの配線。
-import { redactTree, type Redactor } from "./redact.js";
-import { copyFileSync, readdirSync, readFileSync, statSync, rmSync, mkdirSync } from "node:fs";
+import { controlWordHits, redactText, redactTree, type Redactor } from "./redact.js";
+import { copyFileSync, readdirSync, readFileSync, realpathSync, statSync, rmSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import type { JpaperInput } from "../types/contract.js";
@@ -129,10 +129,18 @@ async function materialize(
   return { sourceDir: extractInto(bytes, workDir, limits) };
 }
 
-// src の木を dest へ複写する（dest を作り直す）。シンボリックリンクはたどらず、dest を含む run のディレクトリは飛ばす。
-// 件数・合計の大きさが上限を超えたら入力エラー。
+// src の木を dest へ複写する（dest を作り直す）。. で始まる名前・node_modules・dest を含む run のディレクトリは飛ばし、
+// シンボリックリンクは src の内側を指すものだけ実体を複写する。件数・合計の大きさが上限を超えたら入力エラー。
 function copyTreeInto(src: string, dest: string, limits: IngestLimits): string {
   const skip = path.resolve(path.dirname(dest));
+  const root = realpathSync(src);
+  const inside = (p: string, dir: string): boolean => p === dir || p.startsWith(`${dir}${path.sep}`);
+  if (inside(root, skip) || inside(path.resolve(src), skip)) {
+    throw new JpaperError(2, "input", "入力が出力先の作業領域の中にあります。別の場所に置いてから訳してください");
+  }
+  // 出力先（run のディレクトリの親）も、入力がその中に無ければ飛ばす。
+  const outDir = path.dirname(skip);
+  const skipOut = inside(path.resolve(src), outDir) ? undefined : outDir;
   rmSync(dest, { recursive: true, force: true });
   mkdirSync(dest, { recursive: true });
   let entries = 0;
@@ -140,15 +148,31 @@ function copyTreeInto(src: string, dest: string, limits: IngestLimits): string {
   const walk = (from: string, to: string): void => {
     for (const e of readdirSync(from, { withFileTypes: true })) {
       const abs = path.join(from, e.name);
-      if (path.resolve(abs) === skip || path.resolve(abs).startsWith(`${skip}${path.sep}`)) continue;
+      const resolved = path.resolve(abs);
+      if (e.name.startsWith(".") || e.name === "node_modules" || inside(resolved, skip)) continue;
+      if (skipOut !== undefined && inside(resolved, skipOut)) continue;
+      let isDir = e.isDirectory();
+      let isFile = e.isFile();
+      if (e.isSymbolicLink()) {
+        let real: string;
+        try {
+          real = realpathSync(abs);
+        } catch {
+          continue;
+        }
+        if (!inside(real, root) || inside(real, skip)) continue;
+        const st = statSync(real);
+        isDir = st.isDirectory();
+        isFile = st.isFile();
+      }
       if (++entries > limits.maxEntries) {
         throw new JpaperError(2, "too-large", "伏せ字のために複写する入力のファイルが多すぎます（論文のファイルだけを 1 つのディレクトリに置いてください）");
       }
       const out = path.join(to, e.name);
-      if (e.isDirectory()) {
+      if (isDir) {
         mkdirSync(out);
         walk(abs, out);
-      } else if (e.isFile()) {
+      } else if (isFile) {
         bytes += statSync(abs).size;
         if (bytes > limits.maxTotalBytes) {
           throw new JpaperError(2, "too-large", "伏せ字のために複写する入力が大きすぎます（論文のファイルだけを 1 つのディレクトリに置いてください）");
@@ -188,7 +212,16 @@ export async function ingest(
       `取り込んだ本文が上限 ${limits.maxLatexBytes} バイトを超えています`,
     );
   }
-  const cleanLatex = dropDisabledBlocks(expanded);
+  let cleanLatex = dropDisabledBlocks(expanded);
+  if (deps.redact !== undefined) {
+    // コメントでの継ぎ・\iffalse を落とした後に組み上がった語も置き換える。契約付録 §8（伏せ字）
+    if (controlWordHits(cleanLatex, deps.redact) > 0) {
+      throw new JpaperError(2, "input", "--redact-file の語が LaTeX のコマンド名の中にあります。置き換えると組版が壊れるため止めました");
+    }
+    const again = redactText(cleanLatex, deps.redact);
+    cleanLatex = again.text;
+    redacted += again.replaced;
+  }
   const mainDir = path.join(sourceDir, path.dirname(main));
   const figures = collectFigures(cleanLatex, mainDir, sourceDir, limits.maxFigureRefs);
   return {

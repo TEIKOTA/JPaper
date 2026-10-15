@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import os from "node:os";
 import path from "node:path";
 import { controlWordHits, makeRedactor, parseRedactTerms, redactText, redactTree } from "./redact.js";
+import { ingest } from "./index.js";
 import { JpaperError } from "../types/errors.js";
 
 const KEY = Buffer.alloc(32, 7);
@@ -48,23 +49,53 @@ describe("置き換え", () => {
     expect(makeRedactor([], KEY)).toBeUndefined();
   });
 
-  it("LaTeX のコマンド名の中の一致を数える", () => {
-    expect(controlWordHits("\\Yamada{x} \\textbf{Yamada}", r)).toBe(1);
+  it("LaTeX のコマンド名の中の一致を数える（\\\\ の改行の後の語は数えない）", () => {
+    expect(controlWordHits("\\Yamada{x} \\textbf{Yamada} a\\\\Yamada", r)).toBe(1);
+  });
+
+  it("LaTeX の空白（~・\\ ・\\,）とコメントでの継ぎにも当てる", () => {
+    expect(redactText("Taro~Yamada, Taro\\ Yamada, Taro\\,Yamada, Taro%c\nYamada", r).text).toBe("***, ***, ***, ***");
+  });
+
+  it("ファイル名に語があれば入力エラーで、誤りの文に語を載せない", () => {
+    const d = mkdtempSync(path.join(os.tmpdir(), "jpaper-redact-name-"));
+    dirs.push(d);
+    writeFileSync(path.join(d, "Yamada.bib"), "x");
+    expect(() => redactTree(d, r)).toThrow(/名前を変えて/);
   });
 });
 
 describe("取り込んだソースの書き換え", () => {
-  it("テキストのファイルだけを書き換え、latin1 のファイルはバイトを壊さない", () => {
+  it("拡張子によらずテキストのファイルを書き換え、NUL を含むファイルは触らず、latin1 のファイルはバイトを壊さない", () => {
     const d = mkdtempSync(path.join(os.tmpdir(), "jpaper-redact-tree-"));
     dirs.push(d);
     mkdirSync(path.join(d, "sec"));
     writeFileSync(path.join(d, "main.tex"), "Yamada wrote this.");
     writeFileSync(path.join(d, "sec", "refs.bib"), Buffer.from("@misc{a, author={M\xfcller and Yamada}}", "latin1"));
-    writeFileSync(path.join(d, "fig.png"), "Yamada");
+    writeFileSync(path.join(d, "fig.png"), Buffer.from("\x89PNG\x00Yamada", "latin1"));
+    writeFileSync(path.join(d, "plot.tikz"), "node {Yamada};");
     const r = makeRedactor(["Yamada"], KEY)!;
-    expect(redactTree(d, r)).toBe(2);
+    expect(redactTree(d, r)).toBe(3);
+    expect(readFileSync(path.join(d, "plot.tikz"), "utf8")).toBe("node {***};");
     expect(readFileSync(path.join(d, "main.tex"), "utf8")).toBe("*** wrote this.");
     expect(readFileSync(path.join(d, "sec", "refs.bib")).equals(Buffer.from("@misc{a, author={M\xfcller and ***}}", "latin1"))).toBe(true);
-    expect(readFileSync(path.join(d, "fig.png"), "utf8")).toBe("Yamada");
+    expect(readFileSync(path.join(d, "fig.png")).toString("latin1")).toBe("\x89PNG\x00Yamada");
+  });
+});
+
+describe("取り込みの最後の置き換え", () => {
+  it("\\iffalse のブロックを落としてつながった語も、本文から消す", async () => {
+    const d = mkdtempSync(path.join(os.tmpdir(), "jpaper-redact-ingest-"));
+    dirs.push(d);
+    const src = path.join(d, "src");
+    mkdirSync(src);
+    writeFileSync(
+      path.join(src, "paper.tex"),
+      "\\documentclass{article}\\begin{document}\nby Hanako\n\\iffalse\ndraft\n\\fi\nYamada.\n\\end{document}\n",
+    );
+    const r = makeRedactor(["Hanako Yamada"], KEY)!;
+    const out = await ingest({ kind: "path", path: path.join(src, "paper.tex") }, path.join(d, "run", "source"), { redact: r });
+    expect(out.cleanLatex).not.toContain("Yamada");
+    expect(out.redacted).toBe(1);
   });
 });

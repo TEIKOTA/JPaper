@@ -136,12 +136,23 @@ export async function extractPdf(pdf: string, opts: PdfReadOptions, deps: PdfExt
       text = r.text;
       redacted += r.replaced;
       const boxes = redactionBoxes(pageWords(await tools.pageLayout(pdf, p, deps.signal)), deps.redact);
+      // テキスト層で当たったのに画像の位置が分からなければ、画像に語が残るので止める。
+      if (r.replaced > 0 && boxes.length === 0) {
+        throw new JpaperError(
+          2,
+          "input",
+          `PDF の ${String(p)} ページ目で、伏せ字の語がテキスト層にあるのにページ上の位置が分かりません（画像を白く塗れないため止めました）`,
+        );
+      }
       if (boxes.length > 0) masks.set(p, boxes);
     }
     raw.push(text);
   }
   // 繰り返す行を落として本文が残らないページは、落とす前のテキスト層を使う。
-  const texts = stripRepeatedLines(raw).map((t, i) => (hasTextLayer(t) ? t : raw[i]!));
+  // 行を落としてつながった語も置き換える（伏せ字）。
+  const texts = stripRepeatedLines(raw)
+    .map((t, i) => (hasTextLayer(t) ? t : raw[i]!))
+    .map((t) => (deps.redact === undefined ? t : redactText(t, deps.redact).text));
   const noText = pages.filter((_, i) => !hasTextLayer(raw[i]!));
   if (noText.length * 2 >= pages.length) {
     throw new JpaperError(

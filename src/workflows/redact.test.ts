@@ -142,6 +142,60 @@ describe("伏せ字（契約付録 §8）: LaTeX 入力", () => {
   });
 });
 
+describe("伏せ字（契約付録 §8）: LaTeX の書き方の違いと、拡張子の無いファイル", () => {
+  it("~・\\ ・コメントでの継ぎ・.tikz・拡張子の無い \\input の語も、どの LLM 呼び出しにも渡らない", async () => {
+    const dir = tmp();
+    writeFileSync(path.join(dir, "fig.tikz"), "\\node {Hanako Yamada};");
+    writeFileSync(path.join(dir, "body"), "Taro~Yamada wrote this alpha body text.");
+    const tex = path.join(dir, "paper.tex");
+    writeFileSync(
+      tex,
+      TEX.replace(
+        "\\section{Introduction}",
+        "\\section{Introduction}\nThanks to Hanako%\nYamada and Hanako\\ Yamada.\n\\input{fig.tikz}\n\\input{body}\n",
+      ),
+    );
+    const c = client();
+    const r = await run(tex, { redact: [NAME, "Taro Yamada", "Yamada"] }, { client: c });
+    expect(r.exitCode).toBe(0);
+    expectNoTerm(c, r.summary.outDir, r.summary);
+    expect(readFileSync(path.join(dir, "body"), "utf8")).toContain("Taro~Yamada");
+  });
+
+  it("入力の名前に語があれば、LLM を呼ぶ前に exit 2", async () => {
+    const dir = tmp();
+    const tex = path.join(dir, "Yamada-thesis.tex");
+    writeFileSync(tex, TEX);
+    const c = client();
+    const r = await run(tex, { redact: TERMS }, { client: c });
+    expect(r.exitCode).toBe(2);
+    expect(r.error?.message).not.toContain("Yamada");
+    expect(c.calls).toHaveLength(0);
+  });
+
+  it("\\\\ の改行の直後の語はコマンド名ではない", async () => {
+    const dir = tmp();
+    const tex = path.join(dir, "paper.tex");
+    writeFileSync(tex, TEX.replace(`\\author{${NAME}}`, "\\author{Taro\\\\Yamada}"));
+    const c = client();
+    const r = await run(tex, { redact: TERMS }, { client: c });
+    expect(r.exitCode).toBe(0);
+    expectNoTerm(c, r.summary.outDir, r.summary);
+  });
+
+  it("API の語は 1 語ずつ検査し、空の配列・改行を含む語は exit 2", async () => {
+    const dir = tmp();
+    const tex = path.join(dir, "paper.tex");
+    writeFileSync(tex, TEX);
+    for (const bad of [[], ["Taro\nYamada"], ["  "]]) {
+      const c = client();
+      const r = await run(tex, { redact: bad }, { client: c });
+      expect(r.exitCode, JSON.stringify(bad)).toBe(2);
+      expect(c.calls).toHaveLength(0);
+    }
+  });
+});
+
 describe("伏せ字（契約付録 §8）: PDF 入力", () => {
   const PAGES = [
     `Introduction to alpha methods by ${NAME}. We study alpha estimators in the plain setting`,
@@ -185,5 +239,25 @@ describe("伏せ字（契約付録 §8）: PDF 入力", () => {
       [72 + 6 * 40 - 1, 72 + 6 * 40 + 36],
     ]);
     expect(masks.find((x) => x.page === 2)!.mask).toBeUndefined();
+  });
+
+  it("PDF の入力の名前に語があっても、LLM を呼ぶ前に exit 2", async () => {
+    const pdf = path.join(tmp(), "Yamada.pdf");
+    writeFileSync(pdf, "%PDF-1.4\n% fake\n");
+    const c = client();
+    const r = await run(pdf, { redact: TERMS, bilingual: false }, { client: c, pdfTools: tools });
+    expect(r.error?.message).toContain("名前");
+    expect(r.exitCode).toBe(2);
+    expect(c.calls).toHaveLength(0);
+  });
+
+  it("テキスト層で当たったのにページ上の位置が分からなければ、LLM を呼ぶ前に exit 2", async () => {
+    const pdf = path.join(tmp(), "book.pdf");
+    writeFileSync(pdf, "%PDF-1.4\n% fake\n");
+    const c = client();
+    const r = await run(pdf, { redact: TERMS, bilingual: false }, { client: c, pdfTools: { ...tools, pageLayout: () => Promise.resolve("") } });
+    expect(r.exitCode).toBe(2);
+    expect(r.error?.message).toContain("1 ページ目");
+    expect(c.calls).toHaveLength(0);
   });
 });

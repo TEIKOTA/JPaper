@@ -9,8 +9,8 @@ export const REDACTED = "***";
 export const MIN_TERM_CHARS = 2;
 export const MAX_TERMS = 1000;
 const MAX_TERM_CHARS = 200;
-// 書き換える取り込みのファイル（テキスト）。
-const TEXT_EXT = /\.(?:tex|bib|bbl|sty|cls|bst|cfg|def|clo|txt|ltx|dtx|ins)$/i;
+// 語の中の空白に当てる並び: 空白・改行、LaTeX の空白（~・\ ・\,・\;・\:・\!）、行末のコメントでの継ぎ。
+const GAP = String.raw`(?:\s|~|\\[ ,;:!]|%[^\n]*\n)+`;
 
 export interface Redactor {
   terms: readonly string[];
@@ -27,6 +27,20 @@ export interface RedactCount {
 const escape = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 // 伏せ字のファイル（1 行 1 語。空行と # で始まる行は読まない）を読む。誤りの文には語を載せない（行番号だけ）。
+// API から渡された語の配列を、1 語ずつ検査する（捨てずに誤りにする）。誤りの文には何語目かだけを載せる。
+export function checkRedactTerms(terms: readonly unknown[]): string[] {
+  if (terms.length === 0) throw new JpaperError(2, "input", "redact に語がありません");
+  if (terms.length > MAX_TERMS) throw new JpaperError(2, "input", `redact の語は ${String(MAX_TERMS)} 個までです`);
+  return terms.map((t, i) => {
+    const s = typeof t === "string" ? t.trim() : "";
+    const chars = [...s].length;
+    if (chars < MIN_TERM_CHARS || chars > MAX_TERM_CHARS || /[\x00-\x1f\x7f]/.test(s)) {
+      throw new JpaperError(2, "input", `redact の ${String(i + 1)} 語目は ${String(MIN_TERM_CHARS)}〜${String(MAX_TERM_CHARS)} 文字の、改行を含まない文字列にしてください`);
+    }
+    return s;
+  });
+}
+
 export function parseRedactTerms(text: string): string[] {
   const terms = new Set<string>();
   for (const [i, raw] of text.split(/\r?\n/).entries()) {
@@ -50,7 +64,7 @@ export function makeRedactor(terms: readonly string[], key: Buffer): Redactor | 
   if (terms.length === 0) return undefined;
   // 長い語から当てる（"Taro Yamada" を "Yamada" より先に）。語の中の空白は改行を含む空白の並びに当てる。
   const sorted = [...terms].sort((a, b) => b.length - a.length || (a < b ? -1 : 1));
-  const pattern = new RegExp(sorted.map((t) => t.split(/\s+/).map(escape).join("\\s+")).join("|"), "g");
+  const pattern = new RegExp(sorted.map((t) => t.split(/\s+/).map(escape).join(GAP)).join("|"), "g");
   const h = createHmac("sha256", key).update("jpaper-redact\0");
   for (const t of sorted) h.update(t).update("\0");
   return { terms: sorted, fingerprint: h.digest("hex").slice(0, 16), pattern };
@@ -66,25 +80,39 @@ export function redactText(text: string, r: Redactor): { text: string; replaced:
 }
 
 // LaTeX の制御綴り（\Yamada など）の中の一致。置き換えると組版が壊れるので、見つけたら止める。
+// 直前の \ が偶数個（\\ の改行の後に語）なら制御綴りではない。
 export function controlWordHits(tex: string, r: Redactor): number {
   let hits = 0;
-  for (const m of tex.matchAll(/\\[A-Za-z@]+/g)) {
+  for (const m of tex.matchAll(/(\\+)([A-Za-z@]+)/g)) {
+    if (m[1]!.length % 2 === 0) continue;
     r.pattern.lastIndex = 0;
-    if (r.pattern.test(m[0].slice(1))) hits++;
+    if (r.pattern.test(m[2]!)) hits++;
   }
   r.pattern.lastIndex = 0;
   return hits;
 }
 
-// 取り込んだソースのテキストのファイルをすべて書き換える。制御綴りに当たる語があれば入力エラー。
+export function matches(text: string, r: Redactor): boolean {
+  r.pattern.lastIndex = 0;
+  const hit = r.pattern.test(text);
+  r.pattern.lastIndex = 0;
+  return hit;
+}
+
+// 取り込んだソースのテキストのファイル（NUL を含まないもの。拡張子によらない）をすべて書き換える。
+// 制御綴り・ファイル名に当たる語があれば入力エラー（置き換えると参照や組版が壊れる）。誤りの文に語は載せない。
 export function redactTree(dir: string, r: Redactor): number {
   let replaced = 0;
   const walk = (d: string): void => {
     for (const e of readdirSync(d, { withFileTypes: true })) {
       const abs = path.join(d, e.name);
+      if (matches(e.name, r)) {
+        throw new JpaperError(2, "input", "--redact-file の語を名前に含むファイル・ディレクトリがあります。名前を変えてから訳してください");
+      }
       if (e.isDirectory()) walk(abs);
-      else if (e.isFile() && TEXT_EXT.test(e.name) && statSync(abs).size > 0) {
+      else if (e.isFile() && statSync(abs).size > 0) {
         const buf = readFileSync(abs);
+        if (buf.includes(0)) continue;
         // UTF-8 として往復できないファイル（latin1 の .bib など）は 1 バイト 1 文字で扱う。
         const utf8 = buf.toString("utf8");
         const encoding: BufferEncoding = Buffer.from(utf8, "utf8").equals(buf) ? "utf8" : "latin1";
@@ -93,7 +121,7 @@ export function redactTree(dir: string, r: Redactor): number {
           throw new JpaperError(
             2,
             "input",
-            `--redact-file の語が LaTeX のコマンド名の中にあります（${path.relative(dir, abs)}）。置き換えると組版が壊れるため止めました`,
+            `--redact-file の語が LaTeX のコマンド名の中にあります（${redactText(path.relative(dir, abs), r).text}）。置き換えると組版が壊れるため止めました`,
           );
         }
         const out = redactText(text, r);

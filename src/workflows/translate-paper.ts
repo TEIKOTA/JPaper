@@ -1,5 +1,5 @@
 // 契約付録 §7.5・§8。core API（取り込み→用語バリア→並列翻訳→訳注→出力→RunSummary）。
-import { makeRedactor, parseRedactTerms } from "../ingest/redact.js";
+import { checkRedactTerms, makeRedactor, matches, type Redactor } from "../ingest/redact.js";
 import { loadCacheKey } from "../durable/cache-key.js";
 import {
   closeSync,
@@ -300,6 +300,7 @@ async function loadOrBuildContext(
   writeBack = true,
   verify = false,
   localInput = false,
+  redact?: Redactor,
 ): Promise<PaperContext> {
   const built = await checkpoint(
     runDir,
@@ -330,7 +331,11 @@ async function loadOrBuildContext(
       `出力先には同じ名前（${paperId}）で内容の違う論文があるので既存の glossary.md / brief.md / style.md は使いません`,
     );
   }
-  const adopt = (file: string): boolean => !foreign && existsSync(file);
+  // 伏せ字の run は、本文のダイジェストが一致する出力先の md だけを、語を含まないときに採用する。契約付録 §8（伏せ字）
+  const adopt = (file: string): boolean =>
+    !foreign &&
+    existsSync(file) &&
+    (redact === undefined || (stamp?.sourceDigest === digest && !matches(readFileSync(file, "utf8"), redact)));
 
   const pending: PaperContext["pending"] = {};
   let resolved: ResolvedRow[] = built.resolved;
@@ -532,6 +537,11 @@ function digestTree(h: Hash, dir: string, rel: string, budget: { bytes: number; 
 // 代表させていた頃は、同一パス・同一サイズ・秒単位で同じ mtime（tar/cp -p が復元する形）の
 // 別論文が同じ入力とみなされ、論文 B を投げた利用者に論文 A の訳文が exit 0 で返った
 // （LLM 呼び出し 0 回）。署名の破綻ではなく、署名対象が内容を代表していない設計の穴。
+// 論文 ID の元になる名前（arXiv ID かパス）。
+function ingestPaperIdSource(input: JpaperInput): string {
+  return input.kind === "arxiv" ? input.id : input.path.replace(/[/\\]+$/, "");
+}
+
 export function inputSignature(input: JpaperInput): string {
   if (input.kind === "arxiv") return hashContext("arxiv", input.id);
   const abs = path.resolve(input.path);
@@ -1159,13 +1169,10 @@ export async function translatePaper(
     const signature = inputSignature(input);
     // 伏せ字の語の一覧の鍵付きの値を、取り込みの無効化キーに入れる（語そのものは入れない）。契約付録 §8（伏せ字）
     const redactor =
-      opts.redact === undefined ? undefined : makeRedactor(parseRedactTerms(opts.redact.join("\n")), deps.cacheKey ?? loadCacheKey());
-    if (redactor !== undefined && input.kind === "path") {
-      redactor.pattern.lastIndex = 0;
-      if (redactor.pattern.test(path.basename(input.path))) {
-        notify("入力のファイル名に伏せ字の語が含まれます。論文 ID と出力先の名前には残ります");
-      }
-      redactor.pattern.lastIndex = 0;
+      opts.redact === undefined ? undefined : makeRedactor(checkRedactTerms(opts.redact), deps.cacheKey ?? loadCacheKey());
+    // 論文 ID（入力の名前から作る）は用語集作り・用語の検証のプロンプトと全体の用語 DB に載るので、語を含む名前は止める。
+    if (redactor !== undefined && matches(path.basename(ingestPaperIdSource(input)), redactor)) {
+      throw new JpaperError(2, "input", "入力のファイル名・ディレクトリ名に伏せ字の語が含まれます。名前を変えてから訳してください");
     }
     if (isPdf) {
       const canSee = deps.client === undefined ? IMAGE_PROVIDERS.includes(opts.provider) : deps.images === true;
@@ -1284,6 +1291,7 @@ export async function translatePaper(
         (opts.provider === "claude" || opts.provider === "codex") &&
         (deps.client === undefined || deps.webSearch === true),
       input.kind !== "arxiv",
+      redactor,
     );
     const firstOcc = segmentFirstOccurrence(segments, ctx.resolved);
 
