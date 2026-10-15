@@ -47,16 +47,17 @@ export function validTerm(term: string): boolean {
   return n >= MIN_CHARS && n <= MAX_CHARS && core >= MIN_CHARS && !/[\x00-\x1f\x7f]/.test(term) && !term.startsWith("#");
 }
 
-// 空白の入り方だけ違う形を語に足せるか。既にある語と同じ形は足しても当たらない（文字の間の見えない制御文字・語の並び順）。
+// 空白の入り方だけ違う形を語に足せるか。有効な語と（空白の並びを 1 つにして）同じ形は足しても当たらない（文字の間の見えない制御文字など）。
+// 外した語と同じ形は、足せばその語を有効に戻す。
 export function variantAction(text: string, terms: readonly RedactTerm[]): "add" | "same" | "invalid" {
-  if (terms.some((t) => t.term === text)) return "same";
+  if (terms.some((t) => t.on && t.term.replace(/\s+/g, " ") === text)) return "same";
   return validTerm(text) ? "add" : "invalid";
 }
 
-// 空白・- を除いて SHORT_VARIANT 文字以下で、空白をまたぐ形（"a new" の中の "a n" など）。語の境目をまたいだ偶然の並びのことが多い。
+// 空白・- を除いて SHORT_VARIANT 文字以下で、空白をまたぐ英数字の形（"a new" の中の "a n" など）。語の境目をまたいだ偶然の並びのことが多い。
 const SHORT_VARIANT = 3;
 export function crossesWords(text: string): boolean {
-  return /\s/.test(text) && [...text.replace(/[-\s]/g, "")].length <= SHORT_VARIANT;
+  return /^[A-Za-z0-9\s-]+$/.test(text) && /\s/.test(text) && [...text.replace(/[-\s]/g, "")].length <= SHORT_VARIANT;
 }
 
 // pages の中で今のページの次（dir=1）・前（dir=-1）のページ。端では反対の端へ回る。
@@ -311,10 +312,24 @@ export function RedactPanel(props: {
                       {v.pages.length > 5 ? " ほか" : ""}）
                     </span>
                     <span className="redact-term-nav">
-                      <button type="button" className="text-button" onClick={() => jump(v.pages, -1)}>
+                      <button
+                        type="button"
+                        className="text-button"
+                        onClick={() => {
+                          setWhite(false);
+                          jump(v.pages, -1);
+                        }}
+                      >
                         前
                       </button>
-                      <button type="button" className="text-button" onClick={() => jump(v.pages, 1)}>
+                      <button
+                        type="button"
+                        className="text-button"
+                        onClick={() => {
+                          setWhite(false);
+                          jump(v.pages, 1);
+                        }}
+                      >
                         次
                       </button>
                       {action === "add" && (

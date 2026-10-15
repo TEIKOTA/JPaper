@@ -102,10 +102,14 @@ describe("伏せ字の範囲選択（画面）", () => {
     expect(variantAction("HanakoYamada", terms)).toBe("add");
     expect(variantAction("Hanako Yamada", terms)).toBe("same");
     expect(variantAction("x".repeat(201), terms)).toBe("invalid");
+    // 空白が並ぶ語とも同じ形とみなす。外した語と同じ形は、足せば有効に戻るので足せる。
+    expect(variantAction("Hanako Yamada", [{ term: "Hanako  Yamada", on: true }])).toBe("same");
+    expect(variantAction("HanakoYamada", [...terms, { term: "HanakoYamada", on: false }])).toBe("add");
     expect(crossesWords("a n")).toBe(true);
     expect(crossesWords("t he")).toBe(true);
     expect(crossesWords("HanakoYamada")).toBe(false);
     expect(crossesWords("Hanako Yamada")).toBe(false);
+    expect(crossesWords("山 田")).toBe(false);
   });
 
   it("前・次のページは端で反対の端へ回る", () => {
