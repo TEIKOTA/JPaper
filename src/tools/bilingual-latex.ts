@@ -333,7 +333,8 @@ export function renderPairs(
     if (left.trim() === "" && right.trim() === "") return;
     const l = replaceFrontmatter(left, "left");
     const r = muteBibliography(dropLabels(provideCommands(replaceFrontmatter(right, "right"))));
-    blocks.push(`${l}\n\\switchcolumn\n${r}\n\\switchcolumn*`);
+    // ⚠ landmines.md
+    blocks.push(`${l}\n\\switchcolumn\n${/^\s*\[/.test(r) ? "\\relax\n" : ""}${r}\n\\switchcolumn*`);
   };
   let seenLeft = preambles.left;
   let seenRight = preambles.right;
