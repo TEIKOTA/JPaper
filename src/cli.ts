@@ -257,7 +257,7 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number
 
   if (args[0] === "web") {
     if (args.length > 1) {
-      stderr(`エラー: jpaper web は引数を取りません: ${args.slice(1).join(" ")}\n${HELP_HINT}`);
+      stderr(`エラー: jpaper web は引数を取りません: ${args.slice(1).join(" ")}（ディレクトリ web を訳すなら ./web と書いてください）\n${HELP_HINT}`);
       return 2;
     }
     return runWeb({ stderr, ...deps.web });
@@ -392,8 +392,14 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number
 }
 
 // jpaper コマンドの入口（bin/jpaper.mjs と直接実行）。.env はここだけで読む（runCli・ライブラリ経路では読まない）。契約付録 §5・§8
+// 作業ディレクトリの .env を読むか（-h・--help と jpaper web では読まない。Web アプリは repo の .env を読む）。契約付録 §5
+export function readsDotEnv(argv: string[]): boolean {
+  const args = argv.slice(2);
+  return !wantsHelp(args) && args[0] !== "web";
+}
+
 export async function main(argv: string[]): Promise<never> {
-  if (!wantsHelp(argv.slice(2))) {
+  if (readsDotEnv(argv)) {
     const env = loadDotEnv();
     if (env.error !== undefined) {
       process.stderr.write(`エラー: .env を読めません: ${env.error}\n`);
