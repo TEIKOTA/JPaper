@@ -1,7 +1,7 @@
 // 契約付録 §9（Web アプリ）。翻訳ジョブのキュー。CLI を子プロセスで起動し、stderr の進捗行と
 // LLM トレースから状態を作る。ジョブはサーバのメモリだけに持つ。
 import { spawn } from "node:child_process";
-import { readFileSync, statSync } from "node:fs";
+import { copyFileSync, mkdirSync, readFileSync, statSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { derivePaperId } from "../../../src/ingest/index.js";
@@ -33,7 +33,11 @@ export type JobRunner = (spec: ProcessSpec, onLine: (stream: "stdout" | "stderr"
 
 export interface JobView {
   id: string;
-  arxivId: string;
+  // 一覧に出す入力の名前（arXiv ID か、アップロードした PDF の元のファイル名）。
+  label: string;
+  arxivId?: string;
+  // アップロードした PDF の入力。pages は --pages に渡す範囲。
+  pdf?: { name: string; pages?: string };
   paperId: string;
   title?: string;
   options: TranslateOptions;
@@ -51,6 +55,7 @@ export interface JobView {
 
 interface Job extends Omit<JobView, "log" | "costUsd"> {
   outDir: string;
+  upload?: PdfUpload;
   log: string[];
   cancelRequested: boolean;
   proc?: RunningProcess;
@@ -210,11 +215,22 @@ export interface JobQueueDeps {
   now?: () => number;
 }
 
-export interface EnqueueRequest {
-  arxivId: string;
-  options: TranslateOptions;
-  title?: string;
+export interface PdfUpload {
+  id: string;
+  // 作業フォルダに置いた PDF（<id>.pdf）。
+  file: string;
+  name: string;
+  pages?: string;
+  // 100 ページ超を読むことに同意した（--yes）。
+  yes?: boolean;
 }
+
+// 出力先にコピーした入力の PDF の場所（出力先からの相対）。契約付録 §9
+export const SOURCE_DIR = "source";
+
+export type EnqueueRequest =
+  | { arxivId: string; options: TranslateOptions; title?: string }
+  | { pdf: PdfUpload; options: TranslateOptions };
 
 export class JobQueue {
   private readonly jobs: Job[] = [];
@@ -229,17 +245,26 @@ export class JobQueue {
   }
 
   enqueue(req: EnqueueRequest): JobView {
-    const paperId = derivePaperId({ kind: "arxiv", id: req.arxivId });
+    const pdf = "pdf" in req ? req.pdf : undefined;
+    const paperId =
+      pdf === undefined
+        ? derivePaperId({ kind: "arxiv", id: (req as { arxivId: string }).arxivId })
+        : derivePaperId({ kind: "path", path: `${pdf.id}.pdf` });
+    const label = pdf === undefined ? (req as { arxivId: string }).arxivId : pdf.name;
     const active = this.jobs.find((j) => j.paperId === paperId && (j.state === "queued" || j.state === "running"));
     if (active !== undefined) {
-      throw new JpaperError(2, "conflict", `${req.arxivId} は既に${active.state === "running" ? "実行中" : "待機中"}です`);
+      throw new JpaperError(2, "conflict", `${active.label} は既に${active.state === "running" ? "実行中" : "待機中"}です`);
     }
     this.seq += 1;
+    const title = "title" in req ? req.title : undefined;
     const job: Job = {
       id: `job-${String(this.seq)}`,
-      arxivId: req.arxivId,
+      label,
+      ...(pdf === undefined
+        ? { arxivId: label }
+        : { upload: pdf, pdf: { name: pdf.name, ...(pdf.pages === undefined ? {} : { pages: pdf.pages }) } }),
       paperId,
-      ...(req.title === undefined ? {} : { title: req.title }),
+      ...(title === undefined ? {} : { title }),
       options: req.options,
       outDir: path.join(this.deps.articleDir, `${paperId}-ja`),
       state: "queued",
@@ -324,7 +349,26 @@ export class JobQueue {
     job.phase = "ingest";
     job.startedAt = this.now();
     job.knownRunIds = traceRunIds(job.outDir);
-    const args = cliArgs(job.arxivId, job.options, job.outDir);
+    let input = job.arxivId ?? "";
+    if (job.upload !== undefined) {
+      // 入力の PDF を出力先にコピーし、翻訳の記録と一緒に残す。契約付録 §9
+      try {
+        const dir = path.join(job.outDir, SOURCE_DIR);
+        mkdirSync(dir, { recursive: true });
+        input = path.join(dir, `${job.upload.id}.pdf`);
+        copyFileSync(job.upload.file, input);
+      } catch (e) {
+        job.error = `入力の PDF を出力先にコピーできませんでした: ${e instanceof Error ? e.message : String(e)}`;
+        this.finish(job, { code: null, signal: null });
+        return;
+      }
+    }
+    const args = cliArgs(
+      input,
+      job.options,
+      job.outDir,
+      job.upload === undefined ? {} : { ...(job.upload.pages === undefined ? {} : { pages: job.upload.pages }), yes: job.upload.yes === true },
+    );
     const cmd = (this.deps.command ?? ((a) => cliCommand(this.deps.repoRoot, a)))(args);
     const env = { ...(this.deps.env ?? process.env) };
     try {
@@ -408,7 +452,9 @@ export class JobQueue {
   private view(job: Job): JobView {
     return {
       id: job.id,
-      arxivId: job.arxivId,
+      label: job.label,
+      ...(job.arxivId === undefined ? {} : { arxivId: job.arxivId }),
+      ...(job.pdf === undefined ? {} : { pdf: job.pdf }),
       paperId: job.paperId,
       ...(job.title === undefined ? {} : { title: job.title }),
       options: job.options,

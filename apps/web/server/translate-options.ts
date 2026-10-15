@@ -72,14 +72,22 @@ export function parseArxivId(value: unknown): string {
   return input.id;
 }
 
-export function cliArgs(arxivId: string, opts: TranslateOptions, outDir: string): string[] {
+// input は arXiv ID か PDF の絶対パス。pages・yes は PDF 入力のとき（§8「PDF 入力」の --pages・--yes）。
+export function cliArgs(
+  input: string,
+  opts: TranslateOptions,
+  outDir: string,
+  pdf: { pages?: string; yes?: boolean } = {},
+): string[] {
   return [
-    arxivId,
+    input,
     "--provider",
     opts.provider,
     ...(opts.model === undefined ? [] : ["--model", opts.model]),
     ...(opts.effort === undefined ? [] : ["--effort", opts.effort]),
     ...(opts.verifyTerms === false ? ["--no-verify-terms"] : []),
+    ...(pdf.pages === undefined ? [] : ["--pages", pdf.pages]),
+    ...(pdf.yes === true ? ["--yes"] : []),
     "--out",
     outDir,
   ];

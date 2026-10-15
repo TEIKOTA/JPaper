@@ -605,6 +605,99 @@ input {
   color: var(--sub);
   margin: 20px 0 0;
 }
+.source-switch {
+  display: inline-flex;
+  border: 1px solid var(--line-strong);
+  border-radius: 2px;
+  margin-bottom: 24px;
+}
+.source-option {
+  position: relative;
+  padding: 6px 20px;
+  font-size: 14px;
+  cursor: pointer;
+  color: var(--sub);
+}
+.source-option + .source-option {
+  border-left: 1px solid var(--line-strong);
+}
+.source-option.is-on {
+  background: var(--accent);
+  color: #fff;
+}
+.source-option input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+.source-option:focus-within {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.file-input {
+  display: block;
+  font-size: 15px;
+  height: 50px;
+  padding: 12px 0;
+}
+.file-status {
+  display: block;
+  font-size: 14px;
+  color: var(--sub);
+  min-height: 1.8em;
+}
+
+/* 確認ダイアログ */
+.dialog {
+  border: 1px solid var(--line-strong);
+  border-radius: 2px;
+  padding: 32px 40px;
+  width: min(560px, calc(100vw - 32px));
+  color: var(--text);
+}
+.dialog::backdrop {
+  background: rgba(0, 0, 0, 0.32);
+}
+.dialog-title {
+  font-size: 22px;
+  font-weight: 400;
+  color: var(--ink);
+  margin: 0 0 20px;
+}
+.dialog-facts {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 24px;
+  margin: 0 0 8px;
+}
+.dialog-facts dt {
+  color: var(--sub);
+}
+.dialog-facts dd {
+  margin: 0;
+  color: var(--ink);
+}
+.dialog-note {
+  font-size: 14px;
+  color: var(--sub);
+  margin: 0 0 24px;
+}
+.dialog-error {
+  display: block;
+  font-size: 14px;
+  margin-top: 6px;
+}
+.dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 16px;
+}
+@media (max-width: 720px) {
+  .dialog {
+    padding: 24px 16px;
+  }
+}
+
 .settings-form .form-note {
   margin: 20px 0 28px;
 }
