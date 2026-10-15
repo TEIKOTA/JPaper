@@ -29,7 +29,8 @@ export function App() {
   // ファイルをどこに落としても、ブラウザがそのファイルを開いて画面を離れないようにする（受け付けるのは翻訳の画面だけ）。契約付録 §9
   useEffect(() => {
     const block = (e: DragEvent): void => {
-      if (e.dataTransfer?.types.includes("Files") === true) e.preventDefault();
+      const onFileInput = e.target instanceof HTMLInputElement && e.target.type === "file";
+      if (e.dataTransfer?.types.includes("Files") === true && !onFileInput) e.preventDefault();
     };
     window.addEventListener("dragover", block);
     window.addEventListener("drop", block);

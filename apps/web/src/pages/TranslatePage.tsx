@@ -101,6 +101,7 @@ function TranslateForm(props: {
     setUploading(false);
     setRedact([]);
     if (file === undefined) return;
+    setError(undefined);
     if (file.size > MAX_UPLOAD_BYTES) {
       setError(`PDF が上限 ${String(MAX_UPLOAD_BYTES / 1024 / 1024)}MiB を超えています`);
       return;
@@ -123,41 +124,56 @@ function TranslateForm(props: {
   const chooseRef = useRef(choosePdf);
   chooseRef.current = choosePdf;
 
+  // 確認のダイアログ・送信の間は、落としたファイルを受け付けない。
+  const blockedRef = useRef(false);
+  blockedRef.current = large !== undefined || busy;
+
   // 画面のどこに落とした PDF も受け付ける。契約付録 §9
   useEffect(() => {
-    let depth = 0;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     const hasFiles = (e: DragEvent): boolean => e.dataTransfer?.types.includes("Files") === true;
-    const enter = (e: DragEvent): void => {
-      if (!hasFiles(e)) return;
-      depth++;
-      setDragging(true);
+    const hide = (): void => {
+      clearTimeout(timer);
+      setDragging(false);
     };
-    const leave = (e: DragEvent): void => {
-      if (!hasFiles(e)) return;
-      depth = Math.max(0, depth - 1);
-      if (depth === 0) setDragging(false);
+    // dragover が途切れたら（窓の外へ出た・取り消した）案内を消す。
+    const over = (e: DragEvent): void => {
+      if (!hasFiles(e) || blockedRef.current || isFileInput(e.target)) return hide();
+      setDragging(true);
+      clearTimeout(timer);
+      timer = setTimeout(hide, DRAG_IDLE_MS);
     };
     const drop = (e: DragEvent): void => {
       if (!hasFiles(e)) return;
+      hide();
+      const action = dropAction({ blocked: blockedRef.current, onFileInput: isFileInput(e.target), files: [...(e.dataTransfer?.files ?? [])] });
+      if (action === "native") return;
       e.preventDefault();
-      depth = 0;
-      setDragging(false);
-      const picked = droppedPdf([...(e.dataTransfer?.files ?? [])]);
+      if (action === "ignore") return;
+      if ("error" in action) {
+        setError(action.error);
+        return;
+      }
+      termsSeq.current++;
       setSource("pdf");
       setTermsFile({ loading: false });
       setFileKey((k) => k + 1);
-      if ("error" in picked) {
-        chooseRef.current(undefined);
-        setError(picked.error);
-      } else chooseRef.current(picked.file);
+      chooseRef.current(action.file);
     };
-    window.addEventListener("dragenter", enter);
+    // 窓の外へ出たら（relatedTarget が無い dragleave）すぐ消す。
+    const leave = (e: DragEvent): void => {
+      if (e.relatedTarget === null) hide();
+    };
+    window.addEventListener("dragover", over);
     window.addEventListener("dragleave", leave);
     window.addEventListener("drop", drop);
+    window.addEventListener("dragend", hide);
     return () => {
-      window.removeEventListener("dragenter", enter);
+      hide();
+      window.removeEventListener("dragover", over);
       window.removeEventListener("dragleave", leave);
       window.removeEventListener("drop", drop);
+      window.removeEventListener("dragend", hide);
     };
   }, []);
 
@@ -235,6 +251,7 @@ function TranslateForm(props: {
               <input type="radio" name="source" value={value} checked={source === value} onChange={() => {
                   setSource(value);
                   setError(undefined);
+                  termsSeq.current++;
                   setRedact([]);
                   setTermsFile({ loading: false });
                 }}
@@ -290,7 +307,7 @@ function TranslateForm(props: {
               <span className="file-status">
                 {termsFile.loading ? "読んでいます…" : redact.length > 0 ? `${String(redact.length)} 語を伏せ字にします` : ""}
               </span>
-              {termsFile.error !== undefined && <span className="error">{termsFile.error}（ファイルを選び直すか外すまで、翻訳を始められません）</span>}
+              {termsFile.error !== undefined && <span className="error" role="alert">{termsFile.error}（ファイルを選び直すか外すまで、翻訳を始められません）</span>}
             </label>
           </>
         ) : (
@@ -378,7 +395,11 @@ function TranslateForm(props: {
           <button className="primary" type="submit" disabled={busy || provider === "" || !ready}>
             {busy ? "加えています…" : source === "pdf" && redactOn.length > 0 ? "この内容で翻訳を始める" : "翻訳を始める"}
           </button>
-          {error !== undefined && <span className="error">{error}</span>}
+          {error !== undefined && (
+            <span className="error" role="alert">
+              {error}
+            </span>
+          )}
           {started !== undefined && <span>{started}</span>}
         </div>
         <p className="form-note">
@@ -408,6 +429,23 @@ function TranslateForm(props: {
       )}
     </>
   );
+}
+
+// ドラッグの dragover がこの時間（ms）途切れたら、案内を消す。
+const DRAG_IDLE_MS = 1000;
+
+const isFileInput = (t: EventTarget | null): boolean => t instanceof HTMLInputElement && t.type === "file";
+
+// 落としたファイルの扱い。ファイルの選択欄の上はブラウザの標準（欄が受け取る）、確認のダイアログ・送信の間は受け付けない、
+// PDF でなければ誤り（今の PDF と伏せ字の選択はそのまま）。契約付録 §9
+export function dropAction<F extends { name: string; type: string }>(d: {
+  blocked: boolean;
+  onFileInput: boolean;
+  files: readonly F[];
+}): "native" | "ignore" | { file: F } | { error: string } {
+  if (d.blocked) return "ignore";
+  if (d.onFileInput) return "native";
+  return droppedPdf(d.files);
 }
 
 // 落としたファイルから PDF を 1 つ選ぶ。PDF でない・2 つ以上なら誤り。
