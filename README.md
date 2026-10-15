@@ -68,6 +68,54 @@ OpenRouter の API キーなどは、`.env.example` を `.env` に写して書�
 
 ## 使い方
 
+手軽なのは Web アプリ。同じ翻訳は CLI からも実行できる（下の「CLI」）。
+
+### Web アプリ
+
+```sh
+jpaper web
+```
+
+ブラウザで `http://127.0.0.1:5173` を開く。止めるときは Ctrl+C。`jpaper` を `pnpm link --global` で入れていなければ、repo の直下で `pnpm dev:web` を実行しても同じ。
+
+`jpaper web` は、Web アプリの依存が無いときや、`git pull` で依存が変わったときに、先に jpaper の repo で `pnpm install` を実行してから立ち上げる（`pnpm dev:web` で立ち上げるときは、自分で `pnpm install` を実行しておく）。`.env` は jpaper の repo のものを読む。ポートは `JPAPER_WEB_PORT`（画面。既定 5173）と `JPAPER_WEB_API_PORT`（API。既定 5174）で変えられる。`127.0.0.1` だけで待ち受け、認証は持たない。仕様の正本は [契約付録 §9](./docs/design/contract-appendix.md)。
+
+#### 1. 論文を探す
+
+「探す」の検索欄に語を入れると手元の論文を絞り込み、「arXiv も検索」で arXiv の論文も探す。未訳の論文は「翻訳する」から翻訳の画面へ送れる（翻訳の画面に arXiv ID を直接入れてもよい）。
+
+![探す画面。検索欄と、手元の論文・arXiv の検索結果](./docs/images/readme/web-search.png)
+
+#### 2. 翻訳する
+
+「翻訳」で arXiv ID（探す画面から送ったものは入力済み）か PDF を選び、provider・model・effort を指定して（初期値は「設定」で決められる）「翻訳を始める」を押す。ジョブはキューに入り、段階・節 n/m・費用・経過時間・ログの末尾を見ながら、待機中・実行中のジョブを取り消せる。翻訳は CLI を子プロセスで動かすので、訳し終えた論文はそのまま論文の一覧と用語集の編集の対象になる。
+
+![翻訳画面。arXiv ID と PDF の切り替え、provider・model・effort、翻訳を始めるボタン](./docs/images/readme/web-translate.png)
+
+- PDF（100MiB まで）を送って訳せるのは claude・GPT だけ。送った PDF は `~/.jpaper/web-uploads/` と論文の出力先の `source/` に残る。読むページが 100 を超えるときは、始める前にページ数と読み取りの目安を出して確かめ、範囲を絞れる。
+- PDF を送ると、ページの画像の上で語をドラッグして選び、文書全体の同じ語をまとめて伏せ字にしてから訳せる（白く塗る位置を確かめられる）。arXiv の論文には伏せ字の語のファイルを付けられる。
+
+#### 3. 用語集を直す
+
+「論文」で訳した論文を開くと、論文の用語集（原語・訳語・表記・出現数）が並ぶ。全体の用語 DB は「全体の用語 DB」で見られる。
+
+![論文の画面。用語集の原語・訳語・表記・出現数・全体 DB の登録状態](./docs/images/readme/web-paper.png)
+
+用語の行を開いて新しい訳語を入れると、訳文での出現箇所を原文の対応箇所と合わせて確かめてから置換し、和訳 PDF と対訳 PDF を組み直す。置換にも組み直しにも LLM は使わず、直前の 1 回は元に戻せる。
+
+![用語の画面。現在の訳語、新しい訳語の入力欄、出現箇所](./docs/images/readme/web-term.png)
+
+#### 4. 設定
+
+「設定」で、翻訳のフォームの初期値と、同時に走らせる本数（既定は 1 本ずつ、4 本まで）を決める。設定は `~/.jpaper/web-settings.json`（`JPAPER_HOME`）に保存する。初期値を指定しなければ、claude は最新の Sonnet、GPT は最新の Sol を effort medium で使う。
+
+#### データの場所と注意点
+
+- 論文と全体の用語 DB の場所は CLI と同じ既定（実行した場所の `article/` と `~/.jpaper/glossary.db`）で、`JPAPER_ARTICLE_DIR`・`JPAPER_GLOSSARY_DB` で変えられる。ただし、翻訳が使う全体の用語 DB は CLI と同じ `JPAPER_HOME/glossary.db` で、`JPAPER_GLOSSARY_DB` は翻訳には効かない。
+- ジョブは API のメモリにだけ持つので、API を止めると実行中の翻訳も止まる。同じ ID で始め直せば checkpoint から再開する。
+
+### CLI
+
 ```sh
 jpaper <arXiv ID|ファイル|ディレクトリ> --provider {ollama|claude|codex|openrouter} [--out DIR] [--no-bilingual] [--no-verify-terms]
 jpaper paper.pdf --provider claude [--pages 1-72] [--yes]
@@ -84,24 +132,6 @@ claude・codex では、翻訳の前に用語集の訳を CLI の Web 検索で�
 ### LLM プロバイダ
 
 LLM プロバイダは `LlmClient` の境界で差し替えられる。ローカルの Ollama、公式 CLI を子プロセスで動かすクラウド（`claude -p` / `codex exec`）、OpenRouter（OpenAI 互換 API）の 4 つの実装があり、`--provider {ollama|claude|codex|openrouter}` は**必須（既定なし）**。claude と codex では `--model` / `--effort` を CLI に渡し、指定しなければ最新の中位モデル（claude は Sonnet、codex は Sol）と effort medium を使う。LLM クライアントは薄い自作のランタイムの中に閉じ込める（[プロバイダ ADR](./docs/adr/20260709-llm-provider-abstraction-local-ollama-and-cloud-cli.md)）。
-
-### Web アプリ（検索・翻訳・用語集）
-
-```sh
-jpaper web
-```
-
-（`jpaper` を `pnpm link --global` で入れていなければ、repo の直下で `pnpm dev:web` でも同じ。）Web アプリの依存が無い・`git pull` で変わったときは、先に jpaper の repo で `pnpm install` を実行してから立ち上げる。`.env` は jpaper の repo のものを読む。止めるときは Ctrl+C。ポートは `JPAPER_WEB_PORT`（画面。既定 5173）・`JPAPER_WEB_API_PORT`（API。既定 5174）で変えられる。
-
-ブラウザで `http://127.0.0.1:5173` を開くと、`article/` の論文と用語集、全体の用語 DB を見られる。用語の行から訳語を直すと、訳文での出現箇所を原文の対応箇所と合わせて確かめてから置換し、和訳 PDF と対訳 PDF を組み直す。置換にも組み直しにも LLM は使わず、直前の 1 回は元に戻せる。データの場所は CLI と同じ既定（実行した場所の `article/` と `~/.jpaper/glossary.db`）で、`JPAPER_ARTICLE_DIR`・`JPAPER_GLOSSARY_DB` で変えられる。`127.0.0.1` だけで待ち受け、認証は持たない。仕様の正本は [契約付録 §9](./docs/design/contract-appendix.md)。
-
-画面は次の 3 つ。
-
-- 探す: 手元の論文と arXiv の論文を 1 つの検索欄で探す。未訳の論文は「翻訳する」から翻訳の画面へ送れる（arXiv ID を直接入れてもよい）。
-- 翻訳: provider・model・effort を毎回指定して、ジョブをキューに加える。段階・節 n/m・費用・経過時間・ログの末尾を見ながら、待機中・実行中のジョブを取り消せる。翻訳は CLI を子プロセスで動かすので、訳し終えた論文はそのまま一覧と用語集の編集の対象になる。arXiv ID の代わりに PDF（100MiB まで）を送って訳すこともでき（claude・GPT だけ）、送った PDF は `~/.jpaper/web-uploads/` と論文の出力先の `source/` に残る。読むページが 100 を超えるときは、始める前にページ数と読み取りの目安を出して確かめ、範囲を絞れる。PDF を送ると、ページの画像の上で語をドラッグして選び、文書全体の同じ語をまとめて伏せ字にしてから訳せる（白く塗る位置を確かめられる）。arXiv の論文には伏せ字の語のファイルを付けられる。
-- 設定: フォームの初期値と、同時に走らせる本数（既定は 1 本ずつ、4 本まで）を決め、`~/.jpaper/web-settings.json`（`JPAPER_HOME`）に保存する。初期値を指定しなければ、claude は最新の Sonnet、GPT は最新の Sol を effort medium で使う。
-
-ジョブは API のメモリにだけ持つので、API を止めると実行中の翻訳も止まる（同じ ID で始め直せば checkpoint から再開する）。翻訳が使う全体の用語 DB は CLI と同じ `JPAPER_HOME/glossary.db` で、`JPAPER_GLOSSARY_DB` は翻訳には効かない。
 
 ## コマンド
 
