@@ -359,51 +359,7 @@ git -C "$nb_repo" branch -D feat/55-existing-path >/dev/null 2>&1 || true
 rm -f "$nb_backlog_log"
 rm -rf "$nb_repo" "$nb_remote" "$nb_upstream" "$nb_home"
 
-# ---- skill frontmatter -------------------------------------------------
-
-skill_root="$(mktemp -d)"
-mkdir -p "$skill_root/valid" "$skill_root/malformed" "$skill_root/missing-description" \
-  "$skill_root/missing-name" "$skill_root/missing-trigger" "$skill_root/unterminated" \
-  "$skill_root/too-long"
-printf '%s\n' '---' 'name: valid' \
-  'description: Use when a valid fixture is needed for testing.' '---' \
-  '# Valid' > "$skill_root/valid/SKILL.md"
-printf '%s\n' '---' 'name: malformed' 'description: [broken' '---' \
-  '# Malformed' > "$skill_root/malformed/SKILL.md"
-printf '%s\n' '---' 'name: missing-description' '---' \
-  '# Missing description' > "$skill_root/missing-description/SKILL.md"
-printf '%s\n' '---' \
-  'description: Use when a fixture without a name is needed.' '---' \
-  '# Missing name' > "$skill_root/missing-name/SKILL.md"
-printf '%s\n' '---' 'name: missing-trigger' \
-  'description: Valid YAML without an invocation condition.' '---' \
-  '# Missing trigger' > "$skill_root/missing-trigger/SKILL.md"
-printf '%s\n' '---' 'name: unterminated' \
-  'description: Use when testing an unterminated frontmatter block.' \
-  '# Unterminated' > "$skill_root/unterminated/SKILL.md"
-ruby -e 'puts "---", "name: too-long", "description: Use when #{"x" * 1020}", "---", "# Too long"' \
-  > "$skill_root/too-long/SKILL.md"
-
-expect 0 "skill frontmatter: 正常な YAML と必須キーを受理" \
-  ruby "$ROOT/scripts/check-skill-frontmatter.rb" "$skill_root/valid"
-expect 1 "skill frontmatter: 壊れた YAML を拒否" \
-  ruby "$ROOT/scripts/check-skill-frontmatter.rb" "$skill_root/malformed"
-expect 1 "skill frontmatter: 必須 description の欠落を拒否" \
-  ruby "$ROOT/scripts/check-skill-frontmatter.rb" "$skill_root/missing-description"
-expect 1 "skill frontmatter: 必須 name の欠落を拒否" \
-  ruby "$ROOT/scripts/check-skill-frontmatter.rb" "$skill_root/missing-name"
-expect 1 "skill frontmatter: 起動条件のない description を拒否" \
-  ruby "$ROOT/scripts/check-skill-frontmatter.rb" "$skill_root/missing-trigger"
-expect 1 "skill frontmatter: 終端 marker のない YAML を拒否" \
-  ruby "$ROOT/scripts/check-skill-frontmatter.rb" "$skill_root/unterminated"
-expect 1 "skill frontmatter: 1024 文字超の description を拒否" \
-  ruby "$ROOT/scripts/check-skill-frontmatter.rb" "$skill_root/too-long"
-expect 0 "skill frontmatter: repository の全 skill が正常" \
-  ruby "$ROOT/scripts/check-skill-frontmatter.rb" "$ROOT/.claude/skills"
-expect 0 "fix-issue: description 全文と issue 引数メタデータを保持" \
-  ruby -ryaml -e 'text = File.read(ARGV.fetch(0)); yaml = text.split(/^---\s*$/, 3).fetch(1); meta = YAML.safe_load(yaml); ok = meta["description"].include?("#12") && meta["arguments"] == ["issue"] && meta["argument-hint"] == "[issue-number]"; exit(ok ? 0 : 1)' \
-  "$ROOT/.claude/skills/fix-issue/SKILL.md"
-rm -rf "$skill_root"
+# skill frontmatter の検査は scripts/check-skill-frontmatter.test.ts（vitest）が持つ（issue #416）。
 
 # ---- AGENTS.md / CLAUDE.md sibling links ------------------------------
 

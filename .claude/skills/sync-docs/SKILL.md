@@ -12,7 +12,7 @@ description: Use when periodically reviewing the repository to detect drift betw
 1. **ADR 索引**: `docs/adr/README.md` の索引 vs `rg --files docs/adr` の実ファイル一覧。各 ADR の `Status` セクションと索引の Status 列の一致。
 2. **AGENTS.md**: 「リポジトリ構成」に記載のディレクトリ・「コマンド」に記載のスクリプトが実在するか。実ツリー側に未記載の主要ディレクトリが増えていないか。root とネストを問わず、各 `AGENTS.md` の sibling に `CLAUDE.md -> AGENTS.md` symlink があるかを `scripts/check-agent-instruction-links.sh` で検査する。
 3. **README.md**: 参照しているファイル・スクリプト・手順が実在・実行可能か。
-4. **skills**: `.claude/skills/*/SKILL.md` が参照するパス・スクリプトが実在するか。`scripts/check-skill-frontmatter.rb` で全 skill の YAML、必須キー、起動条件、Agent Skills 共通上限を検査する。Claude Code 専用 field は共通必須条件にしない。
+4. **skills**: `.claude/skills/*/SKILL.md` が参照するパス・スクリプトが実在するか。`pnpm exec tsx scripts/check-skill-frontmatter.ts` で全 skill の YAML、必須キー、起動条件、Agent Skills 共通上限を検査する。Claude Code 専用 field は共通必須条件にしない。
 5. **正本整合**: 許可 type 一覧の正本は `scripts/check-commit-msg.sh`。ラベル定義の正本は `.github/labels.yml`。ADR 運用ルールの正本は `docs/adr/README.md`。他の文書がこれらを重複列挙してズレていないか。
 6. **宣言なき複製**: skill / 文書が正本（scripts・docs）の本文を宣言なく複製していないか。複製を残す箇所には転記契約（どの正本と同時更新するか）が明記され、正本と同期しているか。ポインタで足りる複製は解消候補として報告する。
 7. **AGENTS.md 行数予算**: `wc -l AGENTS.md` が予算（目安 200 行）内か。超過・接近時は各行に「この行を消したら防いでいた失敗が再発するか」を問い、否の行を削除・降ろし候補（ネスト AGENTS.md / skill / scripts）として報告する。予算は機械削除の根拠ではなく、報告と提案に留める（採用背景は [`docs/adr/20260901-adopt-session-audit-guards-v2.md`](../../../docs/adr/20260901-adopt-session-audit-guards-v2.md)）。

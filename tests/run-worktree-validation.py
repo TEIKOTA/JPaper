@@ -38,7 +38,7 @@ commands = [
     ("green-nested", ["python3", "tests/worktree-lifecycle.py", "--case", "nested"], 0),
     ("bash-selftest", ["bash", "tests/run-tests.sh"], 0),
     ("system-bash-selftest", ["/bin/bash", "tests/run-tests.sh"], 0),
-    ("frontmatter", ["ruby", "scripts/check-skill-frontmatter.rb"], 0),
+    ("frontmatter", ["pnpm", "exec", "tsx", "scripts/check-skill-frontmatter.ts"], 0),
     ("instruction-links", ["bash", "scripts/check-agent-instruction-links.sh"], 0),
     ("diff-check", ["git", "diff", "--check"], 0),
 ]
