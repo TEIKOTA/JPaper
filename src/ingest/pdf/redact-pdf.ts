@@ -65,30 +65,40 @@ export function joinWords(words: readonly Word[]): { joined: string; starts: num
   return { joined, starts, ends };
 }
 
-// 当たったそれぞれの場所の印（空白を除いた前後 CONTEXT 文字と当たった文字列）。テキスト層とページ上の位置で、当たった場所が同じかを比べる。
-export const CONTEXT = 16;
+// 語の文字の間に入りうる空白・書字方向の制御文字・- （テキスト層と語の矩形で入り方が違いうるもの）。
+const LOOSE_GAP = "[\\s\\u200e\\u200f\\u202a-\\u202e\\u2066-\\u2069-]*";
+const looseCache = new WeakMap<Redactor, RegExp>();
 
-export function matchPlaces(s: string, r: Redactor): string[] {
-  const strip = (t: string): string => t.replace(/\s+/g, "");
-  return [...s.matchAll(r.pattern)].map((m) => {
-    const a = m.index;
-    const b = a + m[0].length;
-    const before = strip(s.slice(Math.max(0, a - CONTEXT * 4), a)).slice(-CONTEXT);
-    const after = strip(s.slice(b, b + CONTEXT * 4)).slice(0, CONTEXT);
-    return `${before}\0${strip(m[0])}\0${after}`;
-  });
+// 語の文字の間に空白などが入っても当てる正規表現（長い語から）。
+function loosePattern(r: Redactor): RegExp {
+  let p = looseCache.get(r);
+  if (p === undefined) {
+    const chars = (t: string): string[] => [...t.replace(/[\s-]/g, "")];
+    const terms = [...r.terms].sort((a, b) => chars(b).length - chars(a).length);
+    p = new RegExp(terms.map((t) => chars(t).map((c) => c.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join(LOOSE_GAP)).join("|"), "gu");
+    looseCache.set(r, p);
+  }
+  return p;
 }
 
-// 2 つの場所の印の並びが、順序によらず同じか。
-export function samePlaces(a: readonly string[], b: readonly string[]): boolean {
-  if (a.length !== b.length) return false;
-  const x = [...a].sort();
-  const y = [...b].sort();
-  return x.every((v, i) => v === y[i]);
+const squeeze = (t: string): string => t.replace(/[\s\u200e\u200f\u202a-\u202e\u2066-\u2069-]/g, "");
+
+// 緩い当たりを文書の順に並べ、それぞれ当たった文字列（空白などを除く）と、伏せ字の当たり（同じ範囲）かどうかの印にする。
+function matchSequence(s: string, r: Redactor): string[] {
+  const strict = new Set([...s.matchAll(r.pattern)].map((m) => `${String(m.index)}:${String(m.index + m[0].length)}`));
+  return [...s.matchAll(loosePattern(r))].map((m) => `${strict.has(`${String(m.index)}:${String(m.index + m[0].length)}`) ? "+" : "-"}${squeeze(m[0])}`);
 }
 
-// 語をテキスト層と同じようにつないだ文字列で当て、当たった範囲に重なる語の矩形（少し広げる）・当たった数・当たった場所の印を返す。
-export function redactionBoxes(words: readonly Word[], r: Redactor, pad = 1): { boxes: Box[]; hits: number; places: string[] } {
+// テキスト層とつないだ語の文字列で、伏せ字の当たりが食い違っていないか（どちらかに語が残らないか）。
+// 空白などの入り方だけが違う同じ語（緩い当たり）を文書の順に並べ、どれが伏せ字の当たりかまで両方で同じなら食い違いなし。
+export function sameMatches(text: string, joined: string, r: Redactor): boolean {
+  const a = matchSequence(text, r);
+  const b = matchSequence(joined, r);
+  return a.length === b.length && a.every((v, k) => v === b[k]);
+}
+
+// 語をテキスト層と同じようにつないだ文字列で当て、当たった範囲に重なる語の矩形（少し広げる）・当たった数・つないだ文字列を返す。
+export function redactionBoxes(words: readonly Word[], r: Redactor, pad = 1): { boxes: Box[]; hits: number; joined: string } {
   const { joined, starts, ends } = joinWords(words);
   const boxes: Box[] = [];
   let hits = 0;
@@ -101,5 +111,5 @@ export function redactionBoxes(words: readonly Word[], r: Redactor, pad = 1): { 
       if (starts[i]! < b && ends[i]! > a) boxes.push({ x0: w.x0 - pad, y0: w.y0 - pad, x1: w.x1 + pad, y1: w.y1 + pad });
     }
   }
-  return { boxes, hits, places: matchPlaces(joined, r) };
+  return { boxes, hits, joined };
 }

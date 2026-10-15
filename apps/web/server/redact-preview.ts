@@ -3,7 +3,7 @@
 import { execFile } from "node:child_process";
 import { JpaperError } from "../../../src/types/errors.js";
 import { makeRedactor, type Redactor } from "../../../src/ingest/redact.js";
-import { matchPlaces, pageWords, redactionBoxes, samePlaces } from "../../../src/ingest/pdf/redact-pdf.js";
+import { pageWords, redactionBoxes, sameMatches } from "../../../src/ingest/pdf/redact-pdf.js";
 import { normalizePageText } from "../../../src/ingest/pdf/text-layer.js";
 import type { Box } from "../../../src/ingest/pdf/poppler.js";
 
@@ -141,9 +141,9 @@ export class UploadWords {
         }
       }
       // CLI（契約付録 §8 伏せ字）と同じ比べ方。
-      const { hits, places } = redactionBoxes(words, all);
+      const { hits, joined } = redactionBoxes(words, all);
       totalHits += hits;
-      if (!samePlaces(matchPlaces(text, all), places)) mismatchPages.push(p);
+      if (!sameMatches(text, joined, all)) mismatchPages.push(p);
     }
     return { terms: each.map(({ term, count, pages }) => ({ term, count, pages })), totalHits, mismatchPages };
   }

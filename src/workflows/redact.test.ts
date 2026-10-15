@@ -267,7 +267,7 @@ describe("伏せ字（契約付録 §8）: PDF 入力", () => {
     const c = client();
     const r = await run(pdf, { redact: [NAME], bilingual: false }, { client: c, pdfTools: swapped });
     expect(r.exitCode).toBe(2);
-    expect(r.error?.message).toContain("合わない");
+    expect(r.error?.message).toContain("食い違う");
     expect(c.calls).toHaveLength(0);
   });
 
@@ -278,7 +278,7 @@ describe("伏せ字（契約付録 §8）: PDF 入力", () => {
     const c = client();
     const r = await run(pdf, { redact: [NAME], bilingual: false }, { client: c, pdfTools: glued });
     expect(r.exitCode).toBe(2);
-    expect(r.error?.message).toContain("合わない");
+    expect(r.error?.message).toContain("食い違う");
     expect(c.calls).toHaveLength(0);
   });
 

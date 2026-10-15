@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { joinWords, matchPlaces, pageWords, redactionBoxes, samePlaces } from "./redact-pdf.js";
+import { joinWords, pageWords, redactionBoxes, sameMatches } from "./redact-pdf.js";
 import { makeRedactor } from "../redact.js";
 
 describe("PDF の語の位置", () => {
@@ -19,7 +19,7 @@ describe("PDF の語の位置", () => {
   });
 
   it("当たらなければ空", () => {
-    expect(redactionBoxes(pageWords(xml), makeRedactor(["Suzuki"], Buffer.alloc(32, 1))!)).toMatchObject({ boxes: [], hits: 0, places: [] });
+    expect(redactionBoxes(pageWords(xml), makeRedactor(["Suzuki"], Buffer.alloc(32, 1))!)).toMatchObject({ boxes: [], hits: 0 });
   });
 });
 
@@ -82,16 +82,17 @@ describe("テキスト層と同じつなぎ方", () => {
     expect(boxes.map((b) => b.x0)).toEqual([312, 72]);
   });
 
-  it("当たりの数が同じでも、場所が違えば同じとみなさない（テキスト層だけ・画像だけの当たりが打ち消し合う形）", () => {
-    const r = makeRedactor(["Yamada"], Buffer.alloc(32, 1))!;
-    // テキスト層は 1 つ目の場所、ページ上の位置は 2 つ目の場所でだけ当たる。
-    const text = "by Yamada here. and Yama da there.";
-    const boxes = "by Yama da here. and Yamada there.";
-    expect(matchPlaces(text, r)).toHaveLength(1);
-    expect(matchPlaces(boxes, r)).toHaveLength(1);
-    expect(samePlaces(matchPlaces(text, r), matchPlaces(boxes, r))).toBe(false);
-    // 空白の入り方だけが違う同じ場所は、同じとみなす。
-    expect(samePlaces(matchPlaces("a Yamada1, b", r), matchPlaces("a Yamada 1 , b", r))).toBe(true);
+  it("当たりの数が同じでも、空白の入り方だけが違って当たらない語がどちらかにあれば、食い違いとみなす", () => {
+    const r = makeRedactor(["Hanako Yamada"], Buffer.alloc(32, 1))!;
+    // テキスト層は 2 つ目、つないだ語は 1 つ目の場所でだけ当たる（同じ定型文に挟まれていても見分ける）。
+    const line = (name: string): string => `Thanks to the reviewers and to ${name} for the comments on this draft.`;
+    const text = `${line("HanakoYamada")}\n${line("Hanako Yamada")}`;
+    const joined = `${line("Hanako Yamada")} ${line("HanakoYamada")}`;
+    expect(sameMatches(text, joined, r)).toBe(false);
+    // テキスト層とつないだ語で、空白・改行・書字方向の制御文字の入り方だけが違う同じ当たりは、食い違いとみなさない。
+    expect(sameMatches("a Hanako\nYamada1, b \u202bx\u202c", "a Hanako Yamada 1 , b x", r)).toBe(true);
+    // 語の中で空白が入り、当たらずに残る語（Yama da）があれば食い違い。
+    expect(sameMatches("a Hanako Yamada b", "a Hanako Yama da b", r)).toBe(false);
   });
 
   it("語の文字はテキスト層と同じにする（&apos; などの実体参照を戻し、制御文字を落とす）", () => {
