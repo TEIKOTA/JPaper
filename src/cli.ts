@@ -1,7 +1,7 @@
 // 契約付録 §5・§6・§8。jpaper CLI（core API translatePaper の薄い皮）。
 import { detectInput } from "./ingest/detect-input.js";
 import { describeDotEnv, loadDotEnv } from "./env-file.js";
-import { translatePaper, type RunProgress } from "./workflows/translate-paper.js";
+import { SHARED_DEFAULT_NOTICE, translatePaper, type RunProgress } from "./workflows/translate-paper.js";
 import { Provider, type Result } from "./types/contract.js";
 import { JpaperError } from "./types/errors.js";
 import { forTerminal } from "./runtime/untrusted.js";
@@ -362,7 +362,10 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number
         ...(flags.has("--no-verify-terms") ? { verifyTerms: false } : {}),
       },
       {
-        onError: (m) => stderr(`エラー: ${m}\n`),
+        // 契約付録 §8（CLI は単一ユーザ既定の通知を出さない）。
+        onError: (m) => {
+          if (!m.startsWith(SHARED_DEFAULT_NOTICE)) stderr(`エラー: ${m}\n`);
+        },
         onProgress: (e) => {
           const line = formatProgress(e);
           if (line !== undefined) stderr(`${line}\n`);

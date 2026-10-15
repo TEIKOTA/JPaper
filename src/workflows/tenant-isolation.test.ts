@@ -266,7 +266,8 @@ describe("単一ユーザ既定の可視化", () => {
     // ほうがプロセスの生死を左右した（506KiB の .tar.gz が 508MiB に展開されて成功）。
     expect(r.summary.sharedDefaults).toContain("limits");
     expect(r.summary.sharedDefaults).toContain("work");
-    expect(warns.some((w) => w.includes("単一ユーザ既定"))).toBe(true);
+    const { SHARED_DEFAULT_NOTICE } = await import("./translate-paper.js");
+    expect(warns.some((w) => w.startsWith(`${SHARED_DEFAULT_NOTICE}: `))).toBe(true);
     // 既定の出力先は cwd 配下の article/<paperId>-ja＝作業用 tmp ではない、が「分離できていない」証拠。
     expect(existsSync(path.join(articleDir, `${r.summary.paperId}-ja`))).toBe(true);
     expect(existsSync(path.join(process.cwd(), `${r.summary.paperId}-ja`))).toBe(false);

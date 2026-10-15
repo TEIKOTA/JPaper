@@ -573,6 +573,7 @@ function countByTrigger(notes: TranslatorNote[]): Record<string, number> {
 // 単一ユーザ既定にフォールバックした資源を数える。マルチテナントで気づかず共有したまま
 // 本番に出るのを防ぐため、observable にして警告も出す（契約付録 §8）。
 type SharedDefault = "db" | "cacheKey" | "outDir" | "limits" | "work";
+export const SHARED_DEFAULT_NOTICE = "単一ユーザ既定を使用";
 function sharedDefaultsOf(opts: TranslateOptions, deps: TranslateDeps): SharedDefault[] {
   const shared: SharedDefault[] = [];
   if (deps.db === undefined && (deps.dbPath === undefined || deps.dbPath.trim() === "")) {
@@ -1086,7 +1087,7 @@ export async function translatePaper(
     // ここはまだ notify を組み立てる前。通知の失敗で run を落とさない。
     try {
       deps.onError?.(
-        `単一ユーザ既定を使用: ${sharedDefaults.join(", ")}（マルチテナントでは dbPath / cacheKey / outDir / limits / work を明示的に渡すこと）`,
+        `${SHARED_DEFAULT_NOTICE}: ${sharedDefaults.join(", ")}（マルチテナントでは dbPath / cacheKey / outDir / limits / work を明示的に渡すこと）`,
       );
     } catch {
       // 通知の失敗は run を壊さない。
