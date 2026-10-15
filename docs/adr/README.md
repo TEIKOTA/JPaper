@@ -102,3 +102,4 @@
 | 2026-10-13 | [取り込み（ingest）は worker 化せず、有界時間で終わることを契約として守る](./20261013-keep-ingest-synchronous-with-bounded-time.md) | accepted |
 | 2026-10-13 | [承認済みの訳が無い用語は、翻訳の前に CLI 自身の Web 検索で用例を確かめる](./20261013-verify-unconfirmed-terms-with-cli-web-search.md) | accepted |
 | 2026-10-14 | [public にした JPaper では GitHub Actions を有効にする](./20261014-enable-github-actions-on-public-repo.md) | accepted |
+| 2026-10-15 | [PDF 入力は、本文の語句をテキスト層から取り、数式と構造だけを LLM にページ画像から起こさせる](./20261015-pdf-input-text-layer-as-source-llm-rebuilds-math.md) | accepted |

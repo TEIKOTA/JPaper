@@ -33,6 +33,8 @@
 
 ## 4. PDF-only から取れる 4 層（実測）と抽出ツールの役割分担
 
+> **2026-10-15 追記**: PDF-only の経路は [PDF 入力 ADR](../adr/20261015-pdf-input-text-layer-as-source-llm-rebuilds-math.md) で決着した（本文の語句は `pdftotext` のテキスト層、数式・見出し・表は LLM がページ画像とテキスト層から起こす。Nougat・pdfplumber・PyMuPDF は使わない。図はキャプションの上の空白を `pdftotext -bbox-layout` の位置で切り出す）。本節の Nougat を前提にした記述は、計画フェーズの分析として残す。
+
 | 層 | 手段（この環境で可） | 取れるもの | 信頼度 |
 |---|---|---|---|
 | ページ画像 | Read 目視 / `pdftocairo` | 本文・図・数式・レイアウトを人間同様に判読 | 高（要書き起こし） |
@@ -53,6 +55,8 @@ PDF-only の論文で、対象ごとに最もよい手段（役割分担）は�
 | 図 | pdfimages / render→crop | §6 |
 
 ## 5. 数式の入手経路
+
+> **2026-10-15 追記**: PDF-only の経路は [PDF 入力 ADR](../adr/20261015-pdf-input-text-layer-as-source-llm-rebuilds-math.md) で決着した（本文の語句は `pdftotext` のテキスト層、数式・見出し・表は LLM がページ画像とテキスト層から起こす。Nougat・pdfplumber・PyMuPDF は使わない。図はキャプションの上の空白を `pdftotext -bbox-layout` の位置で切り出す）。本節の Nougat を前提にした記述は、計画フェーズの分析として残す。
 
 | 状況 | 数式の入手 |
 |---|---|
@@ -86,6 +90,8 @@ PDF-only の論文で、対象ごとに最もよい手段（役割分担）は�
 - 必要な追加の依存（未導入）: `nougat-ocr`, `pymupdf`, `pdfplumber`（PoC の前に導入するかを判断する）。
 
 ## 9. JPaper への落とし込み（スタック）
+
+> **2026-10-15 追記**: PDF-only の経路は [PDF 入力 ADR](../adr/20261015-pdf-input-text-layer-as-source-llm-rebuilds-math.md) で決着した（本文の語句は `pdftotext` のテキスト層、数式・見出し・表は LLM がページ画像とテキスト層から起こす。Nougat・pdfplumber・PyMuPDF は使わない。図はキャプションの上の空白を `pdftotext -bbox-layout` の位置で切り出す）。本節の Nougat を前提にした記述は、計画フェーズの分析として残す。
 
 - JPaper は TS。PDF の処理は、TS のワークフローが poppler / nougat / python のヘルパを外部ツールとして呼び出す形にする（PDF の処理を外部に任せる方針と合う）。
 - スクリプトの構成のイメージ:
@@ -130,6 +136,8 @@ async function checkpoint<T>(runDir, stepId, schema, fn: () => Promise<T>): Prom
 - 場所とスタックは「JPaper(TS) で新しく組む」。用語 DB は `node:sqlite`。ただし SQLite のファイルと CLI の設計にして `資料/` からも呼び出せるよう共有し、既存の翻訳作業からもすぐ使える形にする。`資料/` は参照・検証用に置いておく（追跡対象外）。基盤 ADR（JPaper/TS）の前提と一致する。
 
 ### 明示的に保留（未成熟な段階で固定しない、という決定）
+
+> **2026-10-15 追記**: PDF-only の経路は [PDF 入力 ADR](../adr/20261015-pdf-input-text-layer-as-source-llm-rebuilds-math.md) で決着した（本文の語句は `pdftotext` のテキスト層、数式・見出し・表は LLM がページ画像とテキスト層から起こす。Nougat・pdfplumber・PyMuPDF は使わない。図はキャプションの上の空白を `pdftotext -bbox-layout` の位置で切り出す）。本節の Nougat を前提にした記述は、計画フェーズの分析として残す。
 
 以下は PDF-only の抽出の PoC の論点。source-first で多くの論文が解決するので後回しにする投資で、しかも**一度実際に走らせないと妥当に決められない**。PoC に着手したときに、PoC の中で決める。
 
