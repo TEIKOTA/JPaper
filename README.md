@@ -49,7 +49,7 @@ agent-native の考え方と Flue の設計に沿って、次のように分け�
 - poppler（`pdfinfo`・`pdftotext`・`pdftocairo`。`brew install poppler`）: PDF を入力にするときだけ
 - `gh`（GitHub CLI）: issue / PR の確認と初期設定
 - Python 3（`python3`）: hook の設定と一部の self-test
-- Ruby（`ruby`）: skill の frontmatter の検査
+- Ruby（`ruby`）: 一部の self-test
 - lefthook（commit-msg / pre-push のローカル hook）
 
 ```sh

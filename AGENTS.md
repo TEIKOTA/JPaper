@@ -102,7 +102,7 @@
 - `scripts/setup-github-repo.sh [--prune] [--dry-run] [--enable-actions]` — ラベル同期・squash merge / commit title 固定・private repo での Actions 無効化（repo 作成直後に `--prune` 付きで 1 回。定義外ラベルの削除は `--prune` 時のみ）
 - `scripts/check-pr.sh [<PR番号>]` — PR タイトル・body・issue 連結のローカル検査（PR 作成・編集後に実行する）
 - `scripts/check-pr.sh --backlog` — 自分の open PR を作成日順・base・draft 状態で一覧する（棚卸しは上限超過時も止めない）
-- `scripts/check-skill-frontmatter.rb [<skills-dir>]` — 全 `SKILL.md` の frontmatter を Agent Skills 共通契約と repo の起動条件規約で検査する
+- `pnpm exec tsx scripts/check-skill-frontmatter.ts [<skills-dir>]` — 全 `SKILL.md` の frontmatter を Agent Skills 共通契約と repo の起動条件規約で検査する
 - `scripts/check-agent-instruction-links.sh [<root>]` — root / ネストの `AGENTS.md` に対応する sibling `CLAUDE.md` symlink を検査する
 - `scripts/wait-for-marker.sh --log <log> --marker <ERE> [--timeout <sec>]` — detached ジョブの完了 marker を待つ正本 waiter（待機ループを script 内に閉じる）
 - `sync-docs` skill — 文書と実ツリーのドリフトを定期的に検査する
