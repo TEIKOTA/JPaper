@@ -47,6 +47,9 @@ describe("skill の frontmatter 検査（issue #416）", () => {
     ["not-a-map", ["---", "- a", "---"], "YAML map"],
     ["alias", ["---", "name: &n alias", "description: *n", "---"], "alias"],
     ["dated", ["---", "name: dated", "description: Use when x.", "since: 2026-10-15", "---"], "日付"],
+    ["set", ["---", "name: set", "description: Use when x.", "tags: !!set { a, b }", "---"], "tag:yaml.org,2002:set"],
+    ["binary", ["---", "name: binary", "description: Use when x.", "data: !!binary aGVsbG8=", "---"], "バイナリ"],
+    ["dup-key", ["---", "name: other", "description: Use when x.", "name: dup-key", "---"], "unique"],
   ])("%s を拒否する", (name, lines, message) => {
     const f = skill(name, [...lines, "# body"]);
     const errors = checkSkill(f);
@@ -57,6 +60,12 @@ describe("skill の frontmatter 検査（issue #416）", () => {
   it("description の長さは文字数で数える（1024 文字ちょうどは受理）", () => {
     const f = skill("multibyte", ["---", "name: multibyte", `description: "Use when ${"あ".repeat(1024 - 9)}"`, "---"]);
     expect(checkSkill(f)).toEqual([]);
+  });
+
+  it("ディレクトリでない・隠しディレクトリの SKILL.md は対象にしない", () => {
+    const f = skill(".hidden", ["---", "name: x", "---"]);
+    expect(run(path.dirname(path.dirname(f))).code).toBe(1);
+    expect(run(path.join(REPO_SKILLS, "fix-issue", "SKILL.md"))).toMatchObject({ code: 1 });
   });
 
   it("SKILL.md が無ければ exit 1", () => {

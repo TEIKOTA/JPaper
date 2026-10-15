@@ -1,7 +1,7 @@
 #!/usr/bin/env tsx
 // SKILL.md の frontmatter を Agent Skills 共通契約（name・description）と repo の起動条件規約で検査する（issue #416）。
 // 使い方: pnpm exec tsx scripts/check-skill-frontmatter.ts [<skills-dir>]
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { isAlias, isCollection, isScalar, parseDocument, visit } from "yaml";
@@ -16,8 +16,9 @@ export const USAGE = "Usage: scripts/check-skill-frontmatter.ts [<skills-dir>]\n
 export function skillFiles(root: string): string[] {
   const single = path.join(root, "SKILL.md");
   if (existsSync(single) && statSync(single).isFile()) return [single];
-  if (!existsSync(root)) return [];
+  if (!existsSync(root) || !statSync(root).isDirectory()) return [];
   return readdirSync(root)
+    .filter((d) => !d.startsWith("."))
     .sort()
     .map((d) => path.join(root, d, "SKILL.md"))
     .filter((p) => existsSync(p) && statSync(p).isFile());
@@ -25,7 +26,6 @@ export function skillFiles(root: string): string[] {
 
 const chars = (s: string): number => [...s].length;
 
-// YAML の基本型（文字列・数・真偽値・null・配列・map）だけを許す。日付・集合・バイナリ・alias は拒否する。
 function safeLoad(text: string): { value: unknown } | { error: string } {
   const doc = parseDocument(text, { schema: "yaml-1.1" });
   if (doc.errors.length > 0) return { error: doc.errors[0]!.message.split("\n")[0]!.trim() };
@@ -100,7 +100,7 @@ export function main(argv: string[], io: Io, defaultRoot: string): number {
   return 0;
 }
 
-if (process.argv[1] !== undefined && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (process.argv[1] !== undefined && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url))) {
   const defaultRoot = fileURLToPath(new URL("../.claude/skills", import.meta.url));
   process.exitCode = main(process.argv.slice(2), { stdout: (s) => process.stdout.write(s), stderr: (s) => process.stderr.write(s) }, defaultRoot);
 }

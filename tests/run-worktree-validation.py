@@ -17,7 +17,7 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 EVIDENCE = ROOT / "docs/process/worktree-lifecycle-evidence"
 run_id = sys.argv[1]
-for name in ("bash", "git", "python3", "ruby", "lsof"):
+for name in ("bash", "git", "python3", "ruby", "lsof", "pnpm"):
     if not shutil.which(name):
         raise SystemExit("required resource unavailable: " + name)
 if not EVIDENCE.is_dir():
