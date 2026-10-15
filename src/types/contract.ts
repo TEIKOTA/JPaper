@@ -280,6 +280,14 @@ export const RunSummary = z.object({
     })
     .nullable()
     .default(null),
+  // 伏せ字（--redact-file）。語の数と置き換えた数だけ。null は指定の無い run。契約付録 §8（伏せ字）
+  redaction: z
+    .object({
+      terms: z.number().int().nonnegative(),
+      replaced: z.number().int().nonnegative(),
+    })
+    .nullable()
+    .default(null),
   exitCode: z.number().int(),
 });
 export type RunSummary = z.infer<typeof RunSummary>;

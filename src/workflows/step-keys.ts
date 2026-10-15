@@ -25,6 +25,8 @@ export const IngestCache = z.object({
   mainDir: z.string(), // 旧キャッシュは mainDir 欠落で無効化され再取り込みされる（入れ子 main の図配置に必須）
   // 旧キャッシュには無いので既定 0（未解決件数を知らない＝警告を出さない側へ倒す）。
   unresolvedInputs: z.number().int().default(0),
+  // 取り込みで *** に置き換えた数（伏せ字）。旧キャッシュは 0。
+  redacted: z.number().int().nonnegative().default(0),
 });
 export type IngestCache = z.infer<typeof IngestCache>;
 

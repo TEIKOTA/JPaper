@@ -1,4 +1,6 @@
 // 契約付録 §7.5・§8。core API（取り込み→用語バリア→並列翻訳→訳注→出力→RunSummary）。
+import { checkRedactTerms, makeRedactor, matches, type Redactor } from "../ingest/redact.js";
+import { loadCacheKey } from "../durable/cache-key.js";
 import {
   closeSync,
   existsSync,
@@ -156,6 +158,8 @@ export interface TranslateOptions {
   pages?: string;
   // PDF 入力で LARGE_PDF_PAGES を超えるページを読むことに同意済みか。
   allowLargePdf?: boolean;
+  // 伏せ字にする語（CLI は --redact-file から読む）。取り込みの段で *** に置き換え、どの LLM 呼び出しにも渡さない。契約付録 §8（伏せ字）
+  redact?: readonly string[];
 }
 
 // subprocess プロバイダは無制限並列に耐えないため翻訳の同時実行数を制限する。
@@ -296,6 +300,7 @@ async function loadOrBuildContext(
   writeBack = true,
   verify = false,
   localInput = false,
+  redact?: Redactor,
 ): Promise<PaperContext> {
   const built = await checkpoint(
     runDir,
@@ -326,7 +331,16 @@ async function loadOrBuildContext(
       `出力先には同じ名前（${paperId}）で内容の違う論文があるので既存の glossary.md / brief.md / style.md は使いません`,
     );
   }
-  const adopt = (file: string): boolean => !foreign && existsSync(file);
+  // 伏せ字の run は、本文のダイジェストが一致する出力先の md だけを、語を含まないときに採用する。契約付録 §8（伏せ字）
+  const adopt = (file: string): boolean =>
+    !foreign &&
+    existsSync(file) &&
+    (redact === undefined || adoptRedacted(file));
+  const adoptRedacted = (file: string): boolean => {
+    const ok = stamp?.sourceDigest === digest && !matches(readFileSync(file, "utf8"), redact!);
+    if (!ok) warn?.(`伏せ字の run なので、本文が同じと確かめられないか語を含む ${path.basename(file)} は使いません`);
+    return ok;
+  };
 
   const pending: PaperContext["pending"] = {};
   let resolved: ResolvedRow[] = built.resolved;
@@ -528,6 +542,11 @@ function digestTree(h: Hash, dir: string, rel: string, budget: { bytes: number; 
 // 代表させていた頃は、同一パス・同一サイズ・秒単位で同じ mtime（tar/cp -p が復元する形）の
 // 別論文が同じ入力とみなされ、論文 B を投げた利用者に論文 A の訳文が exit 0 で返った
 // （LLM 呼び出し 0 回）。署名の破綻ではなく、署名対象が内容を代表していない設計の穴。
+// 論文 ID の元になる名前（arXiv ID かパス）。
+function ingestPaperIdSource(input: JpaperInput): string {
+  return input.kind === "arxiv" ? input.id : input.path.replace(/[/\\]+$/, "");
+}
+
 export function inputSignature(input: JpaperInput): string {
   if (input.kind === "arxiv") return hashContext("arxiv", input.id);
   const abs = path.resolve(input.path);
@@ -985,6 +1004,10 @@ function entryError(input: JpaperInput, opts: TranslateOptions): string | undefi
   if (opts.allowLargePdf !== undefined && typeof opts.allowLargePdf !== "boolean") {
     return `allowLargePdf が不正です: ${outwardMessage(String(opts.allowLargePdf))}`;
   }
+  // 語そのものは誤りの文に載せない。
+  if (opts.redact !== undefined && (!Array.isArray(opts.redact) || opts.redact.some((t) => typeof t !== "string"))) {
+    return "redact は文字列の配列で指定してください";
+  }
   const r = opts.openrouter;
   if (r !== undefined) {
     if (typeof r.model !== "string" || r.model.trim() === "") {
@@ -1037,7 +1060,16 @@ export async function translatePaper(
   let outDir: string;
   let runDir: string;
   let sharedDefaults: SharedDefault[];
+  let redactor: Redactor | undefined;
   try {
+    // 伏せ字の語の一覧の鍵付きの値を、取り込みの無効化キーに入れる（語そのものは入れない）。
+    // 論文 ID（入力の名前から作る）は用語集作り・用語の検証のプロンプト・全体の用語 DB・実行の要約に載るので、
+    // 語を含む名前は論文 ID を作る前に止める。契約付録 §8（伏せ字）
+    redactor =
+      opts.redact === undefined ? undefined : makeRedactor(checkRedactTerms(opts.redact), deps.cacheKey ?? loadCacheKey());
+    if (redactor !== undefined && matches(path.basename(ingestPaperIdSource(input)), redactor)) {
+      throw new JpaperError(2, "input", "入力のファイル名・ディレクトリ名に伏せ字の語が含まれます。名前を変えてから訳してください");
+    }
     paperId = derivePaperId(input);
     outDir = paperOutDir(paperId, opts.outDir);
     runDir = path.join(outDir, ".run");
@@ -1164,6 +1196,7 @@ export async function translatePaper(
           outDir: path.join(runDir, "pdf-source"),
           signature,
           concurrency: opts.concurrency ?? defaultConcurrencyFor(opts.provider),
+          ...(redactor === undefined ? {} : { redact: redactor }),
           tools: deps.pdfTools,
           cacheKey: deps.cacheKey,
           signal,
@@ -1184,8 +1217,17 @@ export async function translatePaper(
           limits: deps.limits ?? deps.ingest?.limits,
           arxiv: { ...deps.ingest?.arxiv, signal },
           ...(pdf === undefined ? {} : { pdfDir: pdf.dir }),
+          ...(redactor === undefined ? {} : { redact: redactor }),
         }),
-      { invalidation: pdf === undefined ? signature : hashContext(signature, pdfMain), key: deps.cacheKey },
+      {
+        invalidation:
+          redactor === undefined
+            ? pdf === undefined
+              ? signature
+              : hashContext(signature, pdfMain)
+            : hashContext(signature, pdfMain, "redact", redactor.fingerprint),
+        key: deps.cacheKey,
+      },
     );
 
     // プリアンブルは翻訳対象ではなく verbatim に持ち越されるため、節ループの品質ゲートでは
@@ -1256,6 +1298,7 @@ export async function translatePaper(
         (opts.provider === "claude" || opts.provider === "codex") &&
         (deps.client === undefined || deps.webSearch === true),
       input.kind !== "arxiv",
+      redactor,
     );
     const firstOcc = segmentFirstOccurrence(segments, ctx.resolved);
 
@@ -1598,6 +1641,10 @@ export async function translatePaper(
       llmCalls: llmCalls(),
       title: titleStatus,
       pdf: pdf === undefined ? null : { pages: pdf.pages.length, fallbackPages: pdf.fallbackPages, figures: pdf.figures },
+      redaction:
+        redactor === undefined
+          ? null
+          : { terms: redactor.terms.length, replaced: ingested.redacted + (pdf?.redacted ?? 0) },
       exitCode,
     });
     if (exitCode === 0) return { status: "ok", exitCode, pdfPath, summary };

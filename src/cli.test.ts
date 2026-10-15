@@ -24,6 +24,7 @@ const okResult: Result = {
     sharedDefaults: [],
     title: null,
     pdf: null,
+    redaction: null,
     exitCode: 0,
   },
 };
@@ -719,5 +720,43 @@ describe("PDF 入力の --pages・--yes と確認（契約付録 §8 PDF 入力�
     expect(formatProgress({ phase: "read", segmentId: "p4", done: 4, total: 72, passed: false })).toBe(
       "[読み取り 4/72] p4 原本の画像を貼る",
     );
+  });
+});
+
+describe("--redact-file（契約付録 §8 伏せ字）", () => {
+  const file = (text: string): string => {
+    const p = path.join(mkdtempSync(path.join(os.tmpdir(), "jpaper-cli-redact-")), "names.txt");
+    writeFileSync(p, text);
+    return p;
+  };
+
+  it("ファイルの語を translate に渡す（語は引数に出ない）", async () => {
+    let got: TranslateOptions | undefined;
+    const code = await runCli(["node", "jpaper", "1706.03762", "--provider", "claude", "--redact-file", file("# me\nTaro Yamada\n")], {
+      stdout: () => {},
+      stderr: () => {},
+      translate: async (_i, o) => {
+        got = o;
+        return okResult;
+      },
+    });
+    expect(code).toBe(0);
+    expect(got?.redact).toEqual(["Taro Yamada"]);
+  });
+
+  it("読めない・語の無いファイルは translate を呼ばずに exit 2", async () => {
+    for (const p of ["/nonexistent/names.txt", file("# only a comment\n\n")]) {
+      let called = false;
+      const code = await runCli(["node", "jpaper", "1706.03762", "--provider", "claude", "--redact-file", p], {
+        stdout: () => {},
+        stderr: () => {},
+        translate: async () => {
+          called = true;
+          return okResult;
+        },
+      });
+      expect(code, p).toBe(2);
+      expect(called).toBe(false);
+    }
   });
 });
