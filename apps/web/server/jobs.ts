@@ -344,6 +344,7 @@ export class JobQueue {
       if (job.state === "queued") {
         job.state = "canceled";
         job.finishedAt = this.now();
+        job.redact = undefined;
       } else if (job.state === "running") {
         job.cancelRequested = true;
         job.proc?.kill();

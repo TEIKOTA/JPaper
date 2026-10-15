@@ -33,7 +33,7 @@ const escape = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 export function checkRedactTerms(terms: readonly unknown[]): string[] {
   if (terms.length === 0) throw new JpaperError(2, "input", "redact に語がありません");
   if (terms.length > MAX_TERMS) throw new JpaperError(2, "input", `redact の語は ${String(MAX_TERMS)} 個までです`);
-  return terms.map((t, i) => {
+  const checked = terms.map((t, i) => {
     const s = typeof t === "string" ? t.trim() : "";
     const chars = [...s].length;
     if (chars < MIN_TERM_CHARS || chars > MAX_TERM_CHARS || /[\x00-\x1f\x7f]/.test(s)) {
@@ -41,6 +41,7 @@ export function checkRedactTerms(terms: readonly unknown[]): string[] {
     }
     return s;
   });
+  return [...new Set(checked)];
 }
 
 export function parseRedactTerms(text: string): string[] {

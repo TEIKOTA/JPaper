@@ -31,7 +31,7 @@ const pageXml = (text: string): string =>
     .map((w, i) => `<word xMin="${String(72 + i * 40)}" yMin="100" xMax="${String(107 + i * 40)}" yMax="110">${w}</word>`)
     .join("")}</line></block></flow></page>`;
 
-function setup() {
+function setup(plain: readonly string[] = TEXTS) {
   const root = tmp();
   const articleDir = path.join(root, "article");
   const settingsPath = path.join(root, "home", "web-settings.json");
@@ -50,10 +50,13 @@ function setup() {
   };
   const jobs = new JobQueue({ articleDir, repoRoot: root, redactDir, concurrency: () => readSettings(settingsPath).concurrency, runner });
   const layoutCalls: [number, number][] = [];
-  const words = new UploadWords((_pdf, first, last) => {
-    layoutCalls.push([first, last]);
-    return Promise.resolve(`<doc>${TEXTS.slice(first - 1, last).map(pageXml).join("")}</doc>`);
-  });
+  const words = new UploadWords(
+    (_pdf, first, last) => {
+      layoutCalls.push([first, last]);
+      return Promise.resolve(`<doc>${TEXTS.slice(first - 1, last).map(pageXml).join("")}</doc>`);
+    },
+    (_pdf, first, last) => Promise.resolve(plain.slice(first - 1, last).map((t) => `${t}\n\f`).join("")),
+  );
   const renders: number[] = [];
   const app = createApp(
     { articleDir, dbPath: path.join(root, "glossary.db"), settingsPath, repoRoot: root },
@@ -111,10 +114,28 @@ describe("伏せ字の範囲選択の API（契約付録 §9）", () => {
       { term: "Hanako Yamada", count: 2, pages: [1, 3] },
       { term: "Yamada", count: 3, pages: [1, 3] },
     ]);
+    // まとめて当てると "Hanako Yamada" が 2、残りの "Yamada" が 1。
+    expect(body).toMatchObject({ totalHits: 3, mismatchPages: [] });
     // 3 ページ目は "Hanako Yamada" と最後の "Yamada"（長い語から当てる）。
     expect(body.boxes.map((b: { x0: number }) => b.x0)).toEqual([72 + 2 * 40 - 1, 72 + 3 * 40 - 1, 72 + 6 * 40 - 1]);
     expect((await t.post(`/api/uploads/${id}/matches`, { terms: ["Y"] })).status).toBe(400);
     expect((await t.post(`/api/uploads/${id}/matches`, { terms: [] })).body).toMatchObject({ terms: [] });
+  });
+
+  it("テキスト層とページ上の位置で当たりの数が違うページを返す（CLI はそこで止まる）", async () => {
+    const t = setup(["Work by HanakoYamada on alpha", TEXTS[1]!, TEXTS[2]!]);
+    const id = await t.upload();
+    const r = await t.post(`/api/uploads/${id}/matches`, { terms: ["Hanako Yamada"] });
+    expect(r.body).toMatchObject({ totalHits: 2, mismatchPages: [1] });
+  });
+
+  it("同じまとまりを同時に求めても、語は 1 回だけ読む。同じ語を 2 回送っても 1 語として数える", async () => {
+    const t = setup();
+    const id = await t.upload();
+    await Promise.all([t.req(`/api/uploads/${id}/pages/1/words`), t.req(`/api/uploads/${id}/pages/2/words`)]);
+    expect(t.layoutCalls).toEqual([[1, 3]]);
+    const r = await t.post(`/api/uploads/${id}/matches`, { terms: ["Yamada", " Yamada "] });
+    expect((r.body as Record<string, any>).terms).toHaveLength(1);
   });
 
   it("ページ画像を描いて置き、2 回目は描き直さない", async () => {

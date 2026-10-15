@@ -228,7 +228,8 @@ export interface WordBox {
 export interface PageWords {
   width: number;
   height: number;
-  words: (WordBox & { text: string })[];
+  // eol: 行の最後の語。
+  words: (WordBox & { text: string; eol?: boolean })[];
 }
 
 export interface TermMatch {
@@ -240,6 +241,10 @@ export interface TermMatch {
 export interface Matches {
   total: number;
   terms: TermMatch[];
+  // すべての語をまとめて当てたときの、白く塗る位置の数。
+  totalHits: number;
+  // テキスト層とページ上の位置で当たった数が違うページ（このままでは翻訳を始められない）。
+  mismatchPages: number[];
   page?: number;
   boxes?: WordBox[];
 }

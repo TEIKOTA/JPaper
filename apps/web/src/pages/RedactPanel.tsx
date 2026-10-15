@@ -13,11 +13,27 @@ const MIN_CHARS = 2;
 const MAX_CHARS = 200;
 const DEBOUNCE_MS = 250;
 
-// 選んだ語をつないだ文字列から、前後の句読点・括弧を落とす。
-export function termFromWords(words: readonly { text: string }[]): string {
+// この幅（pt）未満の隙間で縦に重なる隣の語は空白なしで、行末が - の語は - を落として次の語へ空白なしでつなぐ。
+// ⚠ CLI の src/ingest/pdf/redact-pdf.ts の JOIN_GAP・spaceBetween・hyphenated と同じ規則（RedactPanel.test.ts で突き合わせる）。
+export const JOIN_GAP = 0.25;
+
+export function spaceBetween(a: WordBox, b: WordBox): boolean {
+  return !(b.x0 - a.x1 < JOIN_GAP && b.x0 >= a.x0 && b.y1 > a.y0 && b.y0 < a.y1);
+}
+
+export function hyphenated(w: { text: string; eol?: boolean }): boolean {
+  return w.eol === true && w.text.endsWith("-");
+}
+
+// 選んだ語をテキスト層と同じようにつないだ文字列から、前後の句読点・括弧を落とす。
+export function termFromWords(words: readonly (WordBox & { text: string; eol?: boolean })[]): string {
   return words
-    .map((w) => w.text)
-    .join(" ")
+    .map((w, i) => {
+      const prev = words[i - 1];
+      const sep = prev !== undefined && !hyphenated(prev) && spaceBetween(prev, w) ? " " : "";
+      return sep + (hyphenated(w) && i < words.length - 1 ? w.text.slice(0, -1) : w.text);
+    })
+    .join("")
     .replace(/^[\s,.;:!?()[\]{}"'“”‘’]+|[\s,.;:!?()[\]{}"'“”‘’]+$/g, "");
 }
 
@@ -33,8 +49,14 @@ export function wordsInRect<T extends WordBox>(words: readonly T[], r: WordBox):
     .sort((a, b) => (Math.abs(a.y0 - b.y0) > 2 ? a.y0 - b.y0 : a.x0 - b.x0));
 }
 
-export function RedactPanel(props: { upload: Upload; terms: RedactTerm[]; onChange: (terms: RedactTerm[]) => void }) {
-  const { upload, terms, onChange } = props;
+export function RedactPanel(props: {
+  upload: Upload;
+  terms: RedactTerm[];
+  onChange: (terms: RedactTerm[]) => void;
+  // 語の当たりを数え終え、テキスト層と合わないページが無いか（false の間は翻訳を始めない）。
+  onReady: (ready: boolean) => void;
+}) {
+  const { upload, terms, onChange, onReady } = props;
   const [page, setPage] = useState(1);
   const [words, setWords] = useState<PageWords>();
   const [matches, setMatches] = useState<Matches>();
@@ -56,6 +78,10 @@ export function RedactPanel(props: { upload: Upload; terms: RedactTerm[]; onChan
     return () => ac.abort();
   }, [upload.id, page]);
 
+  const mismatch = matches?.mismatchPages ?? [];
+  const ready = !counting && matches !== undefined && mismatch.length === 0;
+  useEffect(() => onReady(ready), [ready]);
+
   useEffect(() => {
     const ac = new AbortController();
     setCounting(true);
@@ -67,6 +93,7 @@ export function RedactPanel(props: { upload: Upload; terms: RedactTerm[]; onChan
         },
         (e: unknown) => {
           if (ac.signal.aborted) return;
+          setMatches(undefined);
           setCounting(false);
           setError(errorText(e));
         },
@@ -108,7 +135,7 @@ export function RedactPanel(props: { upload: Upload; terms: RedactTerm[]; onChan
   };
   const picked = rect === undefined || words === undefined ? [] : wordsInRect(words.words, rect);
   const countOf = (term: string) => matches?.terms.find((m) => m.term === term);
-  const totalHits = enabled.reduce((n, t) => n + (countOf(t)?.count ?? 0), 0);
+  const totalHits = matches?.totalHits ?? 0;
 
   const jump = (term: string, dir: 1 | -1): void => {
     const pages = countOf(term)?.pages ?? [];
@@ -155,6 +182,8 @@ export function RedactPanel(props: { upload: Upload; terms: RedactTerm[]; onChan
                 if (rect !== undefined && picked.length > 0) add(termFromWords(picked));
                 setDrag(undefined);
               }}
+              onPointerCancel={() => setDrag(undefined)}
+              onLostPointerCapture={() => setDrag(undefined)}
             >
               {(matches?.page === page ? (matches.boxes ?? []) : []).map((b, i) => (
                 <rect
@@ -244,6 +273,12 @@ export function RedactPanel(props: { upload: Upload; terms: RedactTerm[]; onChan
             足す
           </button>
         </div>
+        {!counting && mismatch.length > 0 && (
+          <p className="error redact-mismatch">
+            {mismatch.slice(0, 10).join("・")}
+            {mismatch.length > 10 ? " ほか" : ""} ページで、文字と画像の当たりの数が合いません。語をページの文字どおりに直すか外すまで、翻訳を始められません。
+          </p>
+        )}
         {error !== undefined && <p className="error">{error}</p>}
         <p className="form-note">
           一覧の語は、文書全体の同じ文字列もすべて *** に置き換えてから LLM に渡し、ページの画像では白く塗ります。赤枠が塗られる位置です。図の中の画像の文字は消せません。

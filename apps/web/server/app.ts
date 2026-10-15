@@ -1,6 +1,7 @@
 // 契約付録 §9（Web アプリ）。core を直接呼ぶ API と、翻訳ジョブ（CLI の子プロセス）・arXiv 検索の API。
 // 127.0.0.1 だけで待ち受け、認証は持たない。
-import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+import { randomBytes } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync } from "node:fs";
 import { UploadWords } from "./redact-preview.js";
 import { checkRedactTerms } from "../../../src/ingest/redact.js";
 import { popplerTools } from "../../../src/ingest/pdf/poppler.js";
@@ -324,7 +325,8 @@ export function createApp(config: WebConfig, services: Services = createServices
       const png = path.join(dir, `p-${String(page)}.png`);
       if (!existsSync(png)) {
         mkdirSync(dir, { recursive: true });
-        await renderPage(file, page, path.join(dir, `p-${String(page)}`));
+        const tmp = await renderPage(file, page, path.join(dir, `.p-${String(page)}-${randomBytes(6).toString("hex")}`));
+        renameSync(tmp, png);
       }
       return c.body(readFileSync(png), 200, { "content-type": "image/png", "cache-control": "private, max-age=3600" });
     } catch (e) {
@@ -354,7 +356,7 @@ export function createApp(config: WebConfig, services: Services = createServices
       const page = body.page === undefined ? undefined : pageNumber(String(body.page), total);
       return c.json({
         total,
-        terms: await words.matches(id, file, total, terms),
+        ...(await words.matches(id, file, total, terms)),
         ...(page === undefined ? {} : { page, boxes: await words.boxes(id, file, total, page, terms) }),
       });
     } catch (e) {
