@@ -285,3 +285,10 @@
 - **おかしく見える点**: 右の列の文が `[` で始まるときだけ、`\switchcolumn` の直後に何もしない `\relax` を挟んでいる。
 - **なぜ意図的か**: paracol の `\switchcolumn` は直後の `[…]` を省略可能な引数（列の番号）として読む。右の列の段落が `[BCN18] で示されているように…` のように角括弧で始まると、`[BCN18]` を番号と読んで `Missing number, treated as zero` の致命エラーで落ちる（実測: PDF 入力の `oss.pdf` 1〜3 ページ。PDF から起こした LaTeX は引用が `\cite` ではなく文字どおりの `[BCN18]` になる）。左の列は前のブロックとの間に空行（`\par`）が入るので先読みに当たらない。常に挟むと既存の出力がすべて変わるので、`[` で始まるときだけにしている。
 - **正本ポインタ**: [対訳 PDF ADR](../adr/20261006-bilingual-side-by-side-pdf.md)・契約付録 §8（PDF 入力）。
+
+## `src/ingest/pdf/index.ts` — `runLimited` が失敗後も全 worker の決着を待つ
+
+- **おかしく見える点**: 1 ページの読み取りが例外で落ちても、すぐには投げず、走っている他のページの読み取りが終わるのを待ってから最初の例外を投げる。
+- **なぜ意図的か**: すぐ投げると `translatePaper` が返って run lock を解放した後も、残りの worker がページの checkpoint（`.run/steps/pdf-pNNNN`）を書き続ける。`translate-paper.ts` の `mapLimit` と同じ理由（亡霊の書き込み）。
+- **正本ポインタ**: 契約付録 §8（PDF 入力）・`src/workflows/translate-paper.ts` の `mapLimit`。
+

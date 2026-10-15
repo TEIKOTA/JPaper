@@ -8,7 +8,7 @@
 
 ## 何をするか
 
-- **入力**: 学術論文の LaTeX ソース（arXiv、zip・tar.gz）を最優先で扱う。ソースが無く PDF しか無い論文・書籍（テキスト層のあるもの）は、本文の語句をテキスト層から取り、数式と構造を LLM にページ画像から起こさせて訳す方針で、実装はこれから（[PDF 入力 ADR](./docs/adr/20261015-pdf-input-text-layer-as-source-llm-rebuilds-math.md)、#385）。
+- **入力**: 学術論文の LaTeX ソース（arXiv、zip・tar.gz）を最優先で扱う。ソースが無く PDF しか無い論文・書籍（テキスト層のあるもの）は、本文の語句をテキスト層から取り、数式と構造を LLM にページ画像から起こさせて訳す（claude・codex だけ。[PDF 入力 ADR](./docs/adr/20261015-pdf-input-text-layer-as-source-llm-rebuilds-math.md)）。見た目は原本を再現しない。図はまだ切り出さず、「原本の何ページ目を参照」の目印を置く。
 - **出力**: 日本語 PDF（LuaLaTeX で組版）と、横長（A4 縦 2 枚分）で左に原文、右に和訳を並べた対訳 PDF。
   - ファイル名は `<ID>_<短い英語名>-ja.pdf`・`<ID>_<短い英語名>-bilingual.pdf` で、出力先の直下に置く（例 `2507.17845_pathorob-ja.pdf`）。短い英語名はタイトルを訳すときに LLM が決め、決まらなければ `2507.17845-ja.pdf` になる（[成果物 PDF の名前 ADR](./docs/adr/20261007-name-deliverable-pdfs-by-id-and-slug.md)）。
   - 対訳 PDF は `--no-bilingual` を付けると作らない。対訳の組版だけが失敗しても run は成功し、`RunSummary.bilingual` とエラー出力に理由が出る（[対訳 PDF ADR](./docs/adr/20261006-bilingual-side-by-side-pdf.md)）。
@@ -44,6 +44,7 @@ agent-native の考え方と Flue の設計に沿って、次のように分け�
 
 - Node.js（22.5 以上）と pnpm（10 以上。`brew install pnpm` か `corepack enable`）: 本体の実行とテスト
 - LaTeX（`latexmk`・LuaLaTeX）: 組版
+- poppler（`pdfinfo`・`pdftotext`・`pdftocairo`。`brew install poppler`）: PDF を入力にするときだけ
 - `gh`（GitHub CLI）: issue / PR の確認と初期設定
 - Python 3（`python3`）: hook の設定と一部の self-test
 - Ruby（`ruby`）: skill の frontmatter の検査
@@ -67,7 +68,10 @@ OpenRouter の API キーなどは、`.env.example` を `.env` に写して書�
 
 ```sh
 jpaper <arXiv ID|ファイル|ディレクトリ> --provider {ollama|claude|codex|openrouter} [--out DIR] [--no-bilingual] [--no-verify-terms]
+jpaper paper.pdf --provider claude [--pages 1-72] [--yes]
 ```
+
+PDF は、ページごとに画像とテキスト層を LLM に渡して LaTeX に起こしてから訳す。テキスト層と照らして語の欠けがあれば読み直させ、それでも駄目なページは原本の画像を貼って未訳にする（`RunSummary.pdf.fallbackPages`）。読むページが 100 を超えると、端末では読み取りの目安を出して確認し、端末でなければ `--yes` か `--pages` が要る。テキスト層の無いスキャンした PDF は扱わない（[契約付録 §8「PDF 入力」](./docs/design/contract-appendix.md)）。
 
 和訳 PDF（例 `article/2507.17845-ja/2507.17845_pathorob-ja.pdf`）と対訳 PDF（例 `article/2507.17845-ja/2507.17845_pathorob-bilingual.pdf`）のパスを標準出力に出し、`RunSummary` を JSON で出す。
 

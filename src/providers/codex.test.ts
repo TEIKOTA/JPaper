@@ -170,6 +170,21 @@ describe("makeCodexClient（既定の run: PATH 上の codex を起動）", () =
     expect(String((e as Error).message)).toContain("最終メッセージを書き出しませんでした");
   });
 
+  it("画像は一時ディレクトリに書いて --image で渡す（契約付録 §8 PDF 入力）", async () => {
+    useFakeCodex(
+      "image",
+      `${WRITE_LAST}\ncat >/dev/null\nimg=""; for a in "$@"; do case "$a" in --image=*) img="\${a#--image=}";; esac; done\nprintf 'image=%s' "$(cat "$img")" > "$out"`,
+    );
+    const before = leftovers();
+    const out = await makeCodexClient().complete({
+      system: "S",
+      user: "U",
+      images: [{ mediaType: "image/png", data: Buffer.from("PNGDATA") }],
+    });
+    expect(out).toBe("image=PNGDATA");
+    expect(leftovers()).toEqual(before);
+  });
+
   it("stderr が多くても成功した呼び出しは落とさない", async () => {
     useFakeCodex("noisy", `${WRITE_LAST}\ncat >/dev/null\nhead -c 3000000 /dev/zero | tr '\\0' 'e' >&2\nprintf '訳文' > "$out"`);
     expect(await makeCodexClient().complete({ system: "S", user: "U" })).toBe("訳文");

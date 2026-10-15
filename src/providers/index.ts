@@ -1,5 +1,6 @@
 // 契約付録 §5。プロバイダ選択。
 import type { LlmClient, Provider, TraceSink } from "../types/contract.js";
+import { JpaperError } from "../types/errors.js";
 import {
   DEFAULT_OLLAMA,
   DEFAULT_OPENROUTER,
@@ -25,6 +26,20 @@ export interface MakeLlmClientOptions {
   trace?: TraceSink; // LLM トレース ADR。選択したプロバイダの deps に注入する。
 }
 
+// 画像を渡せるプロバイダ。契約付録 §8（PDF 入力）
+export const IMAGE_PROVIDERS: readonly Provider[] = ["claude", "codex"];
+
+function rejectImages(provider: Provider, client: LlmClient): LlmClient {
+  return {
+    complete(req) {
+      if ((req.images?.length ?? 0) > 0) {
+        return Promise.reject(new JpaperError(2, "provider", `${provider} には画像を渡せません`));
+      }
+      return client.complete(req);
+    },
+  };
+}
+
 export function makeLlmClient(
   provider: Provider,
   opts: MakeLlmClientOptions = {},
@@ -32,13 +47,13 @@ export function makeLlmClient(
   // 同時実行ゲートはここでは掛けない。注入クライアント（web のテナント別資格情報など）にも
   // 効かせる必要があるため、run 層（translatePaper）で一律に掛ける。
   if (provider === "ollama") {
-    return makeOllamaClient(opts.ollama ?? DEFAULT_OLLAMA, { trace: opts.trace, ...opts.ollamaDeps });
+    return rejectImages(provider, makeOllamaClient(opts.ollama ?? DEFAULT_OLLAMA, { trace: opts.trace, ...opts.ollamaDeps }));
   }
   if (provider === "openrouter") {
-    return makeOpenRouterClient(opts.openrouter ?? DEFAULT_OPENROUTER, {
-      trace: opts.trace,
-      ...opts.openrouterDeps,
-    });
+    return rejectImages(
+      provider,
+      makeOpenRouterClient(opts.openrouter ?? DEFAULT_OPENROUTER, { trace: opts.trace, ...opts.openrouterDeps }),
+    );
   }
   if (provider === "codex") {
     return makeCodexClient(opts.codex ?? {}, { trace: opts.trace, ...opts.codexDeps });

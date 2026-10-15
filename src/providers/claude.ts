@@ -2,7 +2,7 @@
 import { spawn } from "node:child_process";
 import os from "node:os";
 import type { ClaudeConfig } from "../config.js";
-import type { LlmClient, LlmCallEvent, LlmCallMeta, TraceSink } from "../types/contract.js";
+import type { LlmClient, LlmCallEvent, LlmCallMeta, LlmImage, TraceSink } from "../types/contract.js";
 import { JpaperError } from "../types/errors.js";
 import { canceledError } from "../runtime/cancellation.js";
 import { MAX_RESPONSE_CHARS } from "../runtime/llm-client.js";
@@ -114,6 +114,33 @@ async function defaultRun(args: string[], input: string, signal?: AbortSignal): 
   });
 }
 
+// 画像と本文を 1 つの user メッセージにした stream-json の入力（1 行）。
+export function streamJsonInput(user: string, images: readonly LlmImage[]): string {
+  const content = [
+    ...images.map((im) => ({
+      type: "image",
+      source: { type: "base64", media_type: im.mediaType, data: im.data.toString("base64") },
+    })),
+    { type: "text", text: user },
+  ];
+  return `${JSON.stringify({ type: "user", message: { role: "user", content } })}\n`;
+}
+
+// stream-json の出力のうち、最後の type="result" の行（--output-format json の応答と同じ形）。
+export function resultLine(stdout: string): string {
+  const lines = stdout.split("\n");
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i]!.trim();
+    if (!line.startsWith("{")) continue;
+    try {
+      if ((JSON.parse(line) as { type?: unknown }).type === "result") return line;
+    } catch {
+      // 壊れた行は飛ばす。
+    }
+  }
+  return "";
+}
+
 export function makeClaudeClient(cfg: ClaudeConfig = {}, deps: ClaudeDeps = {}): LlmClient {
   const run = deps.run ?? defaultRun;
   const now = deps.now ?? Date.now;
@@ -121,12 +148,15 @@ export function makeClaudeClient(cfg: ClaudeConfig = {}, deps: ClaudeDeps = {}):
     async complete(req) {
       let stdout: string;
       const started = now();
+      const images = req.images ?? [];
       try {
         stdout = await run(
           [
             "-p",
-            "--output-format",
-            "json",
+            // 画像は stream-json の入力でしか渡せず、その出力も stream-json に限られる。契約付録 §8（PDF 入力）
+            ...(images.length === 0
+              ? ["--output-format", "json"]
+              : ["--input-format", "stream-json", "--output-format", "stream-json", "--verbose"]),
             "--append-system-prompt",
             req.system,
             // ⚠ landmines.md
@@ -141,9 +171,10 @@ export function makeClaudeClient(cfg: ClaudeConfig = {}, deps: ClaudeDeps = {}):
             ...(cfg.model === undefined ? [] : ["--model", cfg.model]),
             ...(cfg.effort === undefined ? [] : ["--effort", cfg.effort]),
           ],
-          req.user,
+          images.length === 0 ? req.user : streamJsonInput(req.user, images),
           req.signal,
         );
+        if (images.length > 0) stdout = resultLine(stdout);
       } catch (e) {
         if (e instanceof JpaperError && e.kind === "canceled") throw e;
         if ((e as { code?: unknown }).code === "ENOENT") {

@@ -1,0 +1,105 @@
+// 契約付録 §8（PDF 入力）・PDF 入力 ADR(20261015) 決定 3・7。ページごとの LaTeX を 1 本の main.tex にする。
+import { OMITTED_MARK } from "./word-check.js";
+import { PAGE_PREAMBLE, splitContinues } from "./page-reader.js";
+
+export interface AssembledPage {
+  page: number;
+  // テキスト層（繰り返す行を落とした後）。つなぐかの判断に使う。
+  text: string;
+  status: "ok" | "fallback";
+  tex: string;
+  continues: boolean;
+  // fallback のページ画像（main.tex からの相対パス）。
+  image?: string;
+}
+
+// 文末として扱う終わり方（閉じ括弧・引用符が後ろに付いてよい）。
+const TERMINAL = /[.?!:;]["'”’)\]]*$/;
+
+function lastLine(text: string): string {
+  const lines = text.split("\n").filter((l) => l.trim() !== "");
+  return lines[lines.length - 1]?.trim() ?? "";
+}
+
+function firstLine(text: string): string {
+  return text.split("\n").find((l) => l.trim() !== "")?.trim() ?? "";
+}
+
+// 前のページの末尾と次のページの先頭を、段落を切らずにつなぐか。
+export function shouldJoin(prevText: string, nextText: string, marked: boolean): boolean {
+  const ended = TERMINAL.test(lastLine(prevText));
+  const head = firstLine(nextText);
+  const lower = /^[a-z]/.test(head);
+  const upper = /^[A-Z0-9\\]/.test(head);
+  return marked ? !(ended && upper) : !ended && lower;
+}
+
+// \name{...}（入れ子の波括弧を含む）の区間。見つからなければ undefined。
+function commandSpan(tex: string, name: string): [number, number] | undefined {
+  const re = new RegExp(`\\\\${name}\\s*\\{`);
+  const m = re.exec(tex);
+  if (m === null) return undefined;
+  let depth = 0;
+  for (let i = m.index + m[0].length - 1; i < tex.length; i++) {
+    const c = tex[i];
+    if (c === "\\") {
+      i++;
+      continue;
+    }
+    if (c === "{") depth++;
+    else if (c === "}" && --depth === 0) return [m.index, i + 1];
+  }
+  return undefined;
+}
+
+function dropOmitted(tex: string): string {
+  return tex
+    .split("\n")
+    .filter((l) => !l.trimStart().startsWith(OMITTED_MARK))
+    .join("\n")
+    .trim();
+}
+
+function fallbackTex(p: AssembledPage): string {
+  return [
+    "\\begin{center}",
+    `\\includegraphics[width=\\linewidth,height=0.85\\textheight,keepaspectratio]{${p.image ?? ""}}`,
+    "\\end{center}",
+  ].join("\n");
+}
+
+const BIB_END = /\\end\{thebibliography\}\s*$/;
+const BIB_BEGIN = /^\s*\\begin\{thebibliography\}\{[^}]*\}/;
+
+export function assembleMainTex(pages: readonly AssembledPage[]): string {
+  const front: string[] = [];
+  let body = "";
+  let prev: AssembledPage | undefined;
+  for (const p0 of pages) {
+    const split = splitContinues(p0.tex);
+    const p = { ...p0, continues: p0.continues || split.continues };
+    let tex = p.status === "ok" ? dropOmitted(split.tex) : fallbackTex(p);
+    if (p.status === "ok") {
+      // 最初に現れた \title・\author を前文へ移し、\title の位置に \maketitle を置く。
+      for (const name of ["title", "author"] as const) {
+        if (front.some((f) => f.startsWith(`\\${name}`))) continue;
+        const span = commandSpan(tex, name);
+        if (span === undefined) continue;
+        front.push(tex.slice(span[0], span[1]));
+        tex = `${tex.slice(0, span[0])}${name === "title" ? "\\maketitle" : ""}${tex.slice(span[1])}`.trim();
+      }
+    }
+    const adjacent = prev !== undefined && prev.page + 1 === p.page && prev.status === "ok" && p.status === "ok";
+    if (adjacent && BIB_END.test(body) && BIB_BEGIN.test(tex)) {
+      body = body.replace(BIB_END, "").trimEnd();
+      tex = tex.replace(BIB_BEGIN, "").trimStart();
+      body += `\n${tex}`;
+    } else if (adjacent && shouldJoin(prev!.text, p.text, p.continues)) {
+      body = `${body.trimEnd()}\n${tex.trimStart()}`;
+    } else {
+      body += `${body === "" ? "" : "\n\n"}${tex}`;
+    }
+    prev = p;
+  }
+  return `${PAGE_PREAMBLE}${front.map((f) => `${f}\n`).join("")}\\begin{document}\n${body}\n\\end{document}\n`;
+}

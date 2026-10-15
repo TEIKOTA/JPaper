@@ -289,6 +289,22 @@ describe("makeClaudeClient（既定の run: PATH 上の claude を起動）", ()
     expect(await c.complete({ system: "SYS", user: "USR" })).toBe(`cwd=${tmp} safe=yes`);
   });
 
+  it("画像は stream-json の入力で渡し、出力の result 行を読む（契約付録 §8 PDF 入力）", async () => {
+    useFakeClaude(
+      "image",
+      `in=$(cat)\nfmt=""; prev=""; for a in "$@"; do [ "$prev" = "--input-format" ] && fmt="$a"; prev="$a"; done\n` +
+        `case "$in" in *'"type":"image"'*UE5HREFUQQ==*) img=yes;; *) img=no;; esac\n` +
+        `printf '{"type":"system"}\\n{"type":"result","result":"fmt=%s img=%s","total_cost_usd":0.03}\\n' "$fmt" "$img"`,
+    );
+    const c = makeClaudeClient();
+    const out = await c.complete({
+      system: "SYS",
+      user: "USR",
+      images: [{ mediaType: "image/png", data: Buffer.from("PNGDATA") }],
+    });
+    expect(out).toBe("fmt=stream-json img=yes");
+  });
+
   it("stdin を読まずに終了しても親プロセスを落とさず provider 失敗にする", async () => {
     useFakeClaude("early-exit", "exit 3");
     const c = makeClaudeClient();

@@ -273,7 +273,7 @@ export const BUILD_TIMEOUT_MS = 300_000;
 
 // latexmk は子（lualatex）を起こす。detached でプロセスグループを作り、超過時はグループごと止める。
 // execFileSync の timeout は直接の子にしか届かず、孫が孤児として生き残るため。
-const defaultRunner: LatexRunner = (buildDir, signal) =>
+export const defaultRunner: LatexRunner = (buildDir, signal) =>
   new Promise<RunResult>((resolve) => {
     const child = spawn(
       "latexmk",
