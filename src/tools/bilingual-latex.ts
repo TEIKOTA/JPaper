@@ -190,6 +190,55 @@ export function muteBibliography(tex: string): string {
   return tex.replace(/\\bibliography(?:style)?\{[^{}]*\}/g, (m) => `\\jpNoAux{${m}}`);
 }
 
+// 右の段の略語（acronym パッケージ）のキーに付ける接頭辞。契約付録 §8（対訳 PDF）
+export const ACRONYM_PREFIX = "jpR";
+// acronym パッケージで略語のキーを取る命令。
+const ACRONYM_KEY_COMMANDS =
+  "ac|acs|acl|acf|acp|acsp|aclp|acfp|acfi|acsu|aclu|iac|Iac|Ac|Acs|Acl|Acf|Acp|Acsp|Aclp|Acfp|acused|acro|acrodef|acroplural|acrodefplural|acroindefinite|acrodefindefinite";
+const ACRONYM_KEY = new RegExp(`\\\\(${ACRONYM_KEY_COMMANDS})(\\*?)(\\s*)\\{([^{}]*)\\}`, "g");
+
+export function usesAcronymPackage(preamble: string): boolean {
+  return /\\usepackage\s*(?:\[[^\]]*\])?\s*\{[^}]*\bacronym\b[^}]*\}/.test(preamble);
+}
+
+// ⚠ landmines.md
+export function separateAcronyms(tex: string): string {
+  return japanesePlurals(prefixAcronymKeys(tex));
+}
+
+// 和訳の略語の定義の直後に、正式名の複数形を正式名のまま（s を付けない）と定める。後に書いた \acroplural が優先する。
+function japanesePlurals(tex: string): string {
+  const def = new RegExp(`\\\\(?:acro|acrodef)\\{(${ACRONYM_PREFIX}[^{}]*)\\}\\s*\\[([^\\]]*)\\]\\s*\\{`, "g");
+  let out = "";
+  let from = 0;
+  for (const m of tex.matchAll(def)) {
+    if (m.index < from) continue;
+    let depth = 1;
+    let i = m.index + m[0].length;
+    for (; i < tex.length && depth > 0; i++) {
+      if (tex[i] === "\\") i++;
+      else if (tex[i] === "{") depth++;
+      else if (tex[i] === "}") depth--;
+    }
+    if (depth !== 0) continue;
+    const long = tex.slice(m.index + m[0].length, i - 1);
+    out += `${tex.slice(from, i)}\\acroplural{${m[1]!}}[${m[2]!}s]{${long}}`;
+    from = i;
+  }
+  return out + tex.slice(from);
+}
+
+function prefixAcronymKeys(tex: string): string {
+  return tex.replace(ACRONYM_KEY, (_m, cmd: string, star: string, sp: string, key: string, offset: number, all: string) => {
+    const head = `\\${cmd}${star}${sp}{${ACRONYM_PREFIX}${key}}`;
+    // 定義で略称（[…]）を省くとキーが略称になるので、元のキーを略称として書く。
+    if (!/^(?:acro|acrodef|acroplural|acrodefplural)$/.test(cmd)) return head;
+    const rest = all.slice(offset + _m.length);
+    if (/^\s*\[/.test(rest)) return head;
+    return `${head}[${key}${cmd.includes("plural") ? "s" : ""}]`;
+  });
+}
+
 const FRONTMATTER_LABELS = { left: "{Abstract}{Keywords}", right: "{概要}{キーワード}" } as const;
 
 // ⚠ landmines.md
@@ -515,10 +564,12 @@ export function renderPairs(
   profile: FrontMatterProfile = DEFAULT_PROFILE,
 ): { blocks: string[]; titled: boolean } {
   const entries: (string | { left: string; right: string })[] = [];
+  const acronyms = usesAcronymPackage(preambles.right);
   const push = (left: string, right: string): void => {
     if (left.trim() === "" && right.trim() === "") return;
     const l = replaceFrontmatter(left, "left");
-    const r = muteBibliography(dropLabels(provideCommands(replaceFrontmatter(right, "right"))));
+    const r0 = muteBibliography(dropLabels(provideCommands(replaceFrontmatter(right, "right"))));
+    const r = acronyms ? separateAcronyms(r0) : r0;
     entries.push({ left: l, right: r });
   };
   let seenLeft = preambles.left;

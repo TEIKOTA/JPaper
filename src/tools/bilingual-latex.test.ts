@@ -23,6 +23,8 @@ import {
   conditionalLinesNest,
   isConditionalLine,
   conditionalNamesDeclared,
+  separateAcronyms,
+  usesAcronymPackage,
 } from "./bilingual-latex.js";
 import { findUnsafeTexCommands } from "./tex-safety.js";
 import { fastestMs } from "../testing/timing.js";
@@ -878,5 +880,33 @@ describe("段落の境目の条件分岐（issue #378）", () => {
     expect(renderPairs(pairs, { left: "", right: "" }, iopart).blocks).toEqual(
       pairs.map((p) => `${p.left}\n\\switchcolumn\n${p.right}\n\\switchcolumn*`),
     );
+  });
+});
+
+describe("略語（acronym パッケージ）を左右の段で分ける（issue #381）", () => {
+  it("右の段の略語のキーに接頭辞を付け、定義で略称を省いていれば元のキーを略称として書く", () => {
+    expect(separateAcronyms("\\ac{MF} と \\acp{FM}、\\Acf*{OOD}、\\acused{ViT}")).toBe(
+      "\\ac{jpRMF} と \\acp{jpRFM}、\\Acf*{jpROOD}、\\acused{jpRViT}",
+    );
+    expect(separateAcronyms("\\acro{MF}[MF]{有糸分裂像}\n\\acro{WSI}{全スライド画像}\n\\acroplural{X}{y}")).toBe(
+      "\\acro{jpRMF}[MF]{有糸分裂像}\\acroplural{jpRMF}[MFs]{有糸分裂像}\n\\acro{jpRWSI}[WSI]{全スライド画像}\\acroplural{jpRWSI}[WSIs]{全スライド画像}\n\\acroplural{jpRX}[Xs]{y}",
+    );
+    // 正式名の中の波括弧・\\& と脚注もそのまま複数形に写す。
+    expect(separateAcronyms("\\acro{HE}[H\\&E]{ヘマトキシリン\\&エオジン\\footnote{訳注: {x}}}")).toBe(
+      "\\acro{jpRHE}[H\\&E]{ヘマトキシリン\\&エオジン\\footnote{訳注: {x}}}\\acroplural{jpRHE}[H\\&Es]{ヘマトキシリン\\&エオジン\\footnote{訳注: {x}}}",
+    );
+    // キーを取らない命令・似た名前の命令は変えない。
+    expect(separateAcronyms("\\acresetall \\acute{e} \\acroextra{x} \\acc{y}")).toBe("\\acresetall \\acute{e} \\acroextra{x} \\acc{y}");
+  });
+
+  it("acronym パッケージを読む文書だけ、右の段の略語を分ける（左の段はそのまま）", () => {
+    expect(usesAcronymPackage("\\usepackage[nolist]{acronym}")).toBe(true);
+    expect(usesAcronymPackage("\\usepackage{amsmath,acronym}")).toBe(true);
+    expect(usesAcronymPackage("\\usepackage{acro}")).toBe(false);
+    const pairs = [{ segmentId: "s", left: "a \\ac{MF}", right: "甲 \\ac{MF}" }];
+    const on = renderPairs(pairs, { left: "\\usepackage{acronym}", right: "\\usepackage{acronym}" }).blocks.join("\n");
+    expect(on).toContain("a \\ac{MF}\n\\switchcolumn\n甲 \\ac{jpRMF}");
+    const off = renderPairs(pairs, { left: "", right: "" }).blocks.join("\n");
+    expect(off).toContain("甲 \\ac{MF}");
   });
 });
