@@ -46,7 +46,9 @@ describe("/jpaper skill（issue #424）", () => {
     expect(failure).toContain("推測で起票しない");
     expect(failure).toContain("了承を得たときだけ、`gh issue create --repo TEIKOTA/JPaper");
     expect(failure).toContain("gh issue list --repo TEIKOTA/JPaper --state all");
-    expect(failure).toContain("伏せ字にした語");
+    expect(failure).toContain("gh pr list --repo TEIKOTA/JPaper --state all");
+    expect(failure).toContain("失敗したときに消えるので残らない");
+    expect(failure).toContain("`bilingual`");
     expect(existsSync(path.join(ROOT, ".github", "ISSUE_TEMPLATE", "bug-report.md"))).toBe(true);
   });
 
