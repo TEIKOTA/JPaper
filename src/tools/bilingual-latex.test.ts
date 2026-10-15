@@ -19,6 +19,9 @@ import {
   splitAtConditionals,
   pairAcrossConditionals,
   conditionalsBalanced,
+  conditionalsSplittable,
+  conditionalLinesNest,
+  isConditionalLine,
 } from "./bilingual-latex.js";
 import { findUnsafeTexCommands } from "./tex-safety.js";
 import { fastestMs } from "../testing/timing.js";
@@ -736,7 +739,7 @@ describe("段落の境目の条件分岐（issue #378）", () => {
   it("波括弧・環境の中の条件分岐の行（マクロ定義など）と \\iff の行では割らない", () => {
     const def = "\\fi\n\\newcommand{\\foo}{%\n\\ifdraft\nx\n\\else\ny\n\\fi\n}";
     expect(splitAtConditionals(def).conds).toEqual(["\\fi"]);
-    const env = "\\fi\n\\begin{verbatim}\n\\fi\n\\end{verbatim}";
+    const env = "\\fi\n\\begin{tabular}{l}\n\\ifx\\a\\b\nx\n\\fi\n\\end{tabular}";
     expect(splitAtConditionals(env).conds).toEqual(["\\fi"]);
     expect(splitAtConditionals("\\fi\n$a\n\\iff\nb$").conds).toEqual(["\\fi"]);
     expect(splitAtConditionals("\\fi\n\\[\na\n\\iff\\quad\nb\n\\]")).toEqual({
@@ -777,5 +780,74 @@ describe("段落の境目の条件分岐（issue #378）", () => {
   it("左右で条件分岐の行の並びが違えば、従来どおり段落ごと左右に置く", () => {
     expect(pairAcrossConditionals("\\fi\nA", "和")).toBe("\\fi\nA\n\\switchcolumn\n和\n\\switchcolumn*");
     expect(pairAcrossConditionals("A", "和")).toBe("A\n\\switchcolumn\n和\n\\switchcolumn*");
+  });
+
+  it("条件分岐の釣り合いを strict で確かめるときは、{ が続く \\if… も開きとして数える", () => {
+    expect(conditionalsBalanced("\\ifdraft{\\bf N}\n\\fi")).toBe(false);
+    expect(conditionalsBalanced("\\ifdraft{\\bf N}\n\\fi", true)).toBe(true);
+    expect(conditionalsBalanced("\\ifbool{x}{a}{b}", true)).toBe(false);
+  });
+
+  it("{ が続く \\if… で開いて \\fi だけの行で閉じる段落は割らず、従来どおり段落ごと左右に置く（2 回目のレビュー）", () => {
+    const l = "A\n\\ifdraft{\\bf N}\n\\fi";
+    const r = "甲\n\\ifdraft{\\bf 注}\n\\fi";
+    expect(splitAtConditionals(l)).toEqual({ runs: [l], conds: [] });
+    expect(pairAcrossConditionals(l, r)).toBe(`${l}\n\\switchcolumn\n${r}\n\\switchcolumn*`);
+  });
+
+  it("割った後の部分で条件分岐が閉じない段落は割らない（\\fi が本文と同じ行・\\unless\\if…・\\ifbool{…}）", () => {
+    expect(splitAtConditionals("\\else\nFinalL\\fi").conds).toEqual([]);
+    expect(splitAtConditionals("\\unless\\ifdraft\nA").conds).toEqual([]);
+    expect(splitAtConditionals("\\ifbool{x}{a}{b}\n\\fi").conds).toEqual([]);
+    expect(splitAtConditionals("\\fi\n\\begin{verbatim}\n\\fi\n\\end{verbatim}").conds).toEqual([]);
+  });
+
+  it("1 行で閉じた \\ifx … \\else … \\fi の行と \\ifbool{…} の行は、条件分岐の行として割らない", () => {
+    expect(splitAtConditionals("\\ifx\\a\\b X\\else Y\\fi\n\\fi")).toEqual({
+      runs: ["\\ifx\\a\\b X\\else Y\\fi", ""],
+      conds: ["\\fi"],
+    });
+    expect(isConditionalLine("\\ifx\\a\\b X\\else Y\\fi")).toBe(false);
+    expect(isConditionalLine("\\ifbool{x}{a}{b}")).toBe(false);
+  });
+
+  it("\\if… の行の後ろに書けるのは、比較を取る条件分岐の、波括弧の釣り合った比較の対象だけ", () => {
+    expect(isConditionalLine("\\ifdraft")).toBe(true);
+    expect(isConditionalLine("\\if@twocolumn")).toBe(true);
+    expect(isConditionalLine("\\ifnum\\value{page}>1")).toBe(true);
+    expect(isConditionalLine("\\ifdim\\linewidth>3in")).toBe(true);
+    expect(isConditionalLine("\\ifdraft\\relax")).toBe(false);
+    expect(isConditionalLine("\\ifdraft{")).toBe(false);
+    expect(isConditionalLine("\\ifnum\\x>0 Positive")).toBe(false);
+    expect(isConditionalLine("\\ifx\\a\\b{")).toBe(false);
+    expect(isConditionalLine("\\ifx\\a\\b\\begin{x}")).toBe(false);
+    expect(isConditionalLine("\\iff")).toBe(false);
+  });
+
+  it("割った条件分岐の行の並びは、\\else が 1 つの条件分岐に 1 回、\\or が \\ifcase の中だけのときに入れ子として閉じる", () => {
+    expect(conditionalLinesNest(["\\ifdraft", "\\else", "\\fi"])).toBe(true);
+    expect(conditionalLinesNest(["\\ifcase\\x", "\\or", "\\else", "\\fi"])).toBe(true);
+    expect(conditionalLinesNest(["\\ifdraft", "\\else", "\\else", "\\fi"])).toBe(false);
+    expect(conditionalLinesNest(["\\ifdraft", "\\or", "\\fi"])).toBe(false);
+    expect(conditionalLinesNest(["\\ifcase\\x", "\\else", "\\or", "\\fi"])).toBe(false);
+    expect(conditionalLinesNest(["\\fi"])).toBe(false);
+    expect(conditionalLinesNest(["\\else"])).toBe(false);
+    expect(conditionalLinesNest(["\\ifdraft"])).toBe(false);
+  });
+
+  it("文書のどこかに割れない段落があるか、割った行の並びが閉じなければ、文書のどの段落も割らない", () => {
+    const open = { left: "\\ifdraft\nA", right: "\\ifdraft\n甲" };
+    const close = { left: "\\fi", right: "\\fi" };
+    const plain = { left: "B", right: "乙" };
+    expect(conditionalsSplittable([open, plain, close])).toBe(true);
+    expect(conditionalsSplittable([open, plain])).toBe(false);
+    expect(conditionalsSplittable([open, { left: "\\else\nF\\fi", right: "\\else\n丙\\fi" }])).toBe(false);
+    expect(conditionalsSplittable([{ left: "X\n\\ifdraft{N}\n\\fi", right: "X\n\\ifdraft{N}\n\\fi" }, open, close])).toBe(false);
+    expect(conditionalsSplittable([{ left: "\\ifdraft\nA", right: "\\ifdraft 甲" }, close])).toBe(false);
+    const pairs = [open, { left: "\\else\nF\\fi", right: "\\else\n丙\\fi" }, plain].map((p) => ({ segmentId: "s", ...p }));
+    const iopart = detectProfile("\\documentclass{iopart}\n\\begin{document}\n\\end{document}");
+    expect(renderPairs(pairs, { left: "", right: "" }, iopart).blocks).toEqual(
+      pairs.map((p) => `${p.left}\n\\switchcolumn\n${p.right}\n\\switchcolumn*`),
+    );
   });
 });

@@ -327,32 +327,72 @@ function pairBlock(left: string, right: string): string {
   return `${left}\n\\switchcolumn\n${/^\s*\[/.test(right) ? "\\relax\n" : ""}${right}\n\\switchcolumn*`;
 }
 
-// コメントを除くと \if…（\iff を除く。続く \fi / \else / \or を含まない）/ \else / \or / \fi だけの行。
-const CONDITIONAL_LINE =
-  /^\\(?:if(?!f(?![A-Za-z@]))[A-Za-z@]*(?![A-Za-z@{])(?!.*\\(?:fi|else|or)(?![A-Za-z@])).*|else|or|fi)$/;
+// 後ろに比較の対象を続けて書く TeX の条件分岐。
+const OPERAND_CONDITIONALS = new Set([
+  "if", "ifcat", "ifnum", "ifdim", "ifodd", "ifx", "ifcase", "ifdefined", "ifcsname", "iffontchar",
+  "ifvoid", "ifhbox", "ifvbox", "ifeof", "ifincsname", "ifabsnum", "ifabsdim", "ifpdfabsnum",
+  "ifpdfabsdim", "ifpdfprimitive", "ifprimitive",
+]);
 
-// コメントを除いて、\if…（\iff・\newif の直後・{ が続くものを除く）と \fi が釣り合い、
-// \else / \or が開いた条件分岐の中にだけあるか。
-export function conditionalsBalanced(tex: string): boolean {
-  let depth = 0;
+// コメントを除いた \if…（\iff と \newif の直後を除く。brace は直後に { が続くか）/ \else / \or / \fi の並び。
+function conditionalTokens(tex: string): { name: string; brace: boolean }[] {
+  const out: { name: string; brace: boolean }[] = [];
   let prev = "";
   for (const m of stripComments(tex).matchAll(/\\([A-Za-z@]+|[^A-Za-z@])/g)) {
     const name = m[1]!;
-    const next = m.input[m.index + m[0].length];
-    if (/^if(?!f$)/.test(name) && prev !== "newif" && next !== "{") depth++;
-    else if (name === "fi") {
+    if ((/^if(?!f$)/.test(name) && prev !== "newif") || name === "else" || name === "or" || name === "fi") {
+      out.push({ name, brace: m.input[m.index + m[0].length] === "{" });
+    }
+    prev = name;
+  }
+  return out;
+}
+
+// \if… と \fi が釣り合い、\else / \or が開いた条件分岐の中にだけあるか。strict でなければ { が続く \if…
+// （etoolbox の \ifbool{…} など）を数えない。
+export function conditionalsBalanced(tex: string, strict = false): boolean {
+  let depth = 0;
+  for (const t of conditionalTokens(tex)) {
+    if (t.name === "fi") {
       if (depth === 0) return false;
       depth--;
-    } else if ((name === "else" || name === "or") && depth === 0) return false;
-    prev = name;
+    } else if (t.name === "else" || t.name === "or") {
+      if (depth === 0) return false;
+    } else if (strict || !t.brace) depth++;
   }
   return depth === 0;
 }
 
-// 条件分岐が釣り合っていない段落だけを条件分岐の行で割る。段落の中で開いて段落の中で閉じる
-// 環境・波括弧の内側の行では割らない。runs は conds より 1 つ多い。⚠ landmines.md
+// { が続く \if… を数えても数えなくても条件分岐が釣り合う。
+function conditionalsClosed(tex: string): boolean {
+  return conditionalsBalanced(tex) && conditionalsBalanced(tex, true);
+}
+
+// コメントを除いて \else / \or / \fi だけの行か、\if…（\iff を除く）だけの行。\if… の後ろには、
+// OPERAND_CONDITIONALS の比較の対象（波括弧と環境が釣り合い、空白の後に英字が来ず、条件分岐を含まない）
+// だけを許す。
+export function isConditionalLine(bare: string): boolean {
+  if (/^\\(?:else|or|fi)$/.test(bare)) return true;
+  const m = /^\\(if[A-Za-z@]*)(.*)$/.exec(bare);
+  if (m === null || m[1] === "iff") return false;
+  const rest = m[2]!;
+  if (rest === "") return true;
+  const n = nestingOf(rest);
+  return (
+    OPERAND_CONDITIONALS.has(m[1]!) &&
+    n.env === 0 &&
+    n.brace === 0 &&
+    !/\s[A-Za-z]/.test(rest) &&
+    conditionalTokens(rest).length === 0
+  );
+}
+
+// 条件分岐が段落の中で閉じない段落だけを条件分岐の行で割る。段落の中で開いて段落の中で閉じる
+// 環境・波括弧の内側の行では割らない。割った後のどれかの部分で条件分岐が閉じなければ割らない。
+// runs は conds より 1 つ多い。⚠ landmines.md
 export function splitAtConditionals(tex: string): { runs: string[]; conds: string[] } {
-  if (conditionalsBalanced(tex)) return { runs: [tex.trim()], conds: [] };
+  const whole = { runs: [tex.trim()], conds: [] };
+  if (conditionalsClosed(tex)) return whole;
   const lines = tex.split("\n");
   // 各行の前で、段落の中で開いて閉じていない環境・波括弧の数（最後の要素は段落の末尾）。
   const env: number[] = [0];
@@ -374,7 +414,7 @@ export function splitAtConditionals(tex: string): { runs: string[]; conds: strin
   let buf: string[] = [];
   lines.forEach((line, i) => {
     const bare = stripComments(line).trim();
-    if (env[i] === envMin[i] && brace[i] === braceMin[i] && CONDITIONAL_LINE.test(bare)) {
+    if (env[i] === envMin[i] && brace[i] === braceMin[i] && isConditionalLine(bare)) {
       runs.push(buf.join("\n").trim());
       conds.push(bare);
       buf = [];
@@ -383,19 +423,62 @@ export function splitAtConditionals(tex: string): { runs: string[]; conds: strin
     }
   });
   runs.push(buf.join("\n").trim());
-  return { runs, conds };
+  return runs.every(conditionalsClosed) ? { runs, conds } : whole;
 }
 
-// 左右で条件分岐の行の並びが同じなら、条件分岐の行を段の切り替えの外に 1 回だけ置く。⚠ landmines.md
-export function pairAcrossConditionals(left: string, right: string): string {
+type ConditionalPlan = "closed" | { left: { runs: string[]; conds: string[] }; right: { runs: string[]; conds: string[] } };
+
+// closed は左右とも条件分岐が段落の中で閉じる。割れるのは左右が同じ条件分岐の行で割れるときだけで、
+// それ以外は undefined。
+function planConditionals(left: string, right: string): ConditionalPlan | undefined {
+  if (conditionalsClosed(left) && conditionalsClosed(right)) return "closed";
   const l = splitAtConditionals(left);
   const r = splitAtConditionals(right);
-  if (l.conds.length === 0 || l.conds.join("\n") !== r.conds.join("\n")) return pairBlock(left, right);
+  if (l.conds.length === 0 || l.conds.join("\n") !== r.conds.join("\n")) return undefined;
+  return { left: l, right: r };
+}
+
+// 条件分岐の行の並びが入れ子として閉じるか（\else は 1 つの条件分岐に 1 回、\or は \ifcase の中だけ）。
+export function conditionalLinesNest(conds: readonly string[]): boolean {
+  const open: { ifcase: boolean; sawElse: boolean }[] = [];
+  for (const c of conds) {
+    const top = open[open.length - 1];
+    if (c === "\\fi") {
+      if (top === undefined) return false;
+      open.pop();
+    } else if (c === "\\else") {
+      if (top === undefined || top.sawElse) return false;
+      top.sawElse = true;
+    } else if (c === "\\or") {
+      if (top === undefined || !top.ifcase || top.sawElse) return false;
+    } else {
+      open.push({ ifcase: /^\\ifcase(?![A-Za-z@])/.test(c), sawElse: false });
+    }
+  }
+  return open.length === 0;
+}
+
+// 文書のすべての段落の対が、条件分岐が段落の中で閉じるか左右が同じ条件分岐の行で割れ、割った条件分岐の行を
+// 文書の順に並べると入れ子として閉じるか。⚠ landmines.md
+export function conditionalsSplittable(pairs: readonly { left: string; right: string }[]): boolean {
+  const conds: string[] = [];
+  for (const p of pairs) {
+    const plan = planConditionals(p.left, p.right);
+    if (plan === undefined) return false;
+    if (plan !== "closed") conds.push(...plan.left.conds);
+  }
+  return conditionalLinesNest(conds);
+}
+
+// 左右が同じ条件分岐の行で割れれば、条件分岐の行を段の切り替えの外に 1 回だけ置く。⚠ landmines.md
+export function pairAcrossConditionals(left: string, right: string): string {
+  const plan = planConditionals(left, right);
+  if (plan === undefined || plan === "closed") return pairBlock(left, right);
   const out: string[] = [];
-  l.runs.forEach((run, i) => {
-    const other = r.runs[i]!;
+  plan.left.runs.forEach((run, i) => {
+    const other = plan.right.runs[i]!;
     if (run !== "" || other !== "") out.push(pairBlock(run, other));
-    if (i < l.conds.length) out.push(l.conds[i]!);
+    if (i < plan.left.conds.length) out.push(plan.left.conds[i]!);
   });
   return out.join("\n");
 }
@@ -406,12 +489,12 @@ export function renderPairs(
   preambles: { left: string; right: string },
   profile: FrontMatterProfile = DEFAULT_PROFILE,
 ): { blocks: string[]; titled: boolean } {
-  const blocks: string[] = [];
+  const entries: (string | { left: string; right: string })[] = [];
   const push = (left: string, right: string): void => {
     if (left.trim() === "" && right.trim() === "") return;
     const l = replaceFrontmatter(left, "left");
     const r = muteBibliography(dropLabels(provideCommands(replaceFrontmatter(right, "right"))));
-    blocks.push(pairAcrossConditionals(l, r));
+    entries.push({ left: l, right: r });
   };
   let seenLeft = preambles.left;
   let seenRight = preambles.right;
@@ -438,7 +521,7 @@ export function renderPairs(
       continue;
     }
     push(leftBefore.trimEnd(), rightBefore.trimEnd());
-    blocks.push(
+    entries.push(
       titleBlock(
         titleOf(`${seenLeft}\n${leftBefore}`, profile.titleCommands) ?? "",
         titleOf(`${seenRight}\n${rightBefore}`, profile.titleCommands) ?? "",
@@ -447,7 +530,14 @@ export function renderPairs(
     titled = true;
     push(p.left.slice(l.end), r === undefined ? "" : p.right.slice(r.end));
   }
-  return { blocks, titled };
+  const paired = entries.filter((e) => typeof e !== "string");
+  const split = conditionalsSplittable(paired);
+  return {
+    blocks: entries.map((e) =>
+      typeof e === "string" ? e : split ? pairAcrossConditionals(e.left, e.right) : pairBlock(e.left, e.right),
+    ),
+    titled,
+  };
 }
 
 export function paracolBody(blocks: string[]): string {
