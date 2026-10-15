@@ -242,6 +242,26 @@ describe("伏せ字（契約付録 §8）: PDF 入力", () => {
     expect(masks.find((x) => x.page === 2)!.mask).toBeUndefined();
   });
 
+  it("空白の入り方だけ違って当たらなかった所は止めずに、数とページだけを警告する（語は載せない）", async () => {
+    const pdf = path.join(tmp(), "book.pdf");
+    writeFileSync(pdf, "%PDF-1.4\n% fake\n");
+    const page2 = `${PAGES[1]!} Thanks HanakoYamada.`;
+    const glued = {
+      ...tools,
+      pageText: (_p: string, page: number) => Promise.resolve(page === 1 ? PAGES[0]! : page2),
+      pageLayout: (_p: string, page: number) =>
+        Promise.resolve(`<doc><page width="504" height="720"><flow><block><line>${words(page === 1 ? PAGES[0]! : page2)}</line></block></flow></page></doc>`),
+    };
+    const messages: string[] = [];
+    const c = client();
+    const r = await run(pdf, { redact: [NAME], bilingual: false }, { client: c, pdfTools: glued, onError: (m) => messages.push(m) });
+    expect(r.exitCode).toBe(0);
+    const warning = messages.find((m) => m.includes("空白・改行の入り方だけが違う所"));
+    expect(warning).toContain("1 か所");
+    expect(warning).toContain("p.2");
+    expect(messages.join("\n")).not.toMatch(/Hanako|Yamada/);
+  });
+
   it("PDF の入力の名前に語があっても、LLM を呼ぶ前に exit 2", async () => {
     const pdf = path.join(tmp(), "Yamada.pdf");
     writeFileSync(pdf, "%PDF-1.4\n% fake\n");

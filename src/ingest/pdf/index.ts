@@ -8,7 +8,7 @@ import { checkpoint, hashContext } from "../../durable/checkpoint.js";
 import type { LatexRunner } from "../../tools/build-gate.js";
 import { popplerTools, type Box, type PdfTools } from "./poppler.js";
 import { redactText, type Redactor } from "../redact.js";
-import { pageWords, redactionBoxes, sameMatches } from "./redact-pdf.js";
+import { pageWords, redactionBoxes, sameMatches, unmatchedVariants } from "./redact-pdf.js";
 import { hasTextLayer, normalizePageText, parsePageRange, stripRepeatedLines } from "./text-layer.js";
 import { readPage } from "./page-reader.js";
 import { assembleMainTex, placeFigures, type AssembledPage } from "./assemble.js";
@@ -129,6 +129,9 @@ export async function extractPdf(pdf: string, opts: PdfReadOptions, deps: PdfExt
   let redacted = 0;
   // 伏せ字: テキスト層の語を *** に置き換え、ページ画像で白く塗る位置（pt）を語の矩形から求める。契約付録 §8（伏せ字）
   const masks = new Map<number, Box[]>();
+  // 空白の入り方だけ違って伏せ字に当たらなかった所のページと数（警告には語を載せない）。
+  const unmatched: number[] = [];
+  let unmatchedCount = 0;
   for (const p of pages) {
     let text = normalizePageText(await tools.pageText(pdf, p, deps.signal));
     if (deps.redact !== undefined) {
@@ -146,8 +149,18 @@ export async function extractPdf(pdf: string, opts: PdfReadOptions, deps: PdfExt
         );
       }
       if (boxes.length > 0) masks.set(p, boxes);
+      const variants = unmatchedVariants(original, deps.redact).length;
+      if (variants > 0) {
+        unmatched.push(p);
+        unmatchedCount += variants;
+      }
     }
     raw.push(text);
+  }
+  if (unmatched.length > 0) {
+    deps.notify?.(
+      `伏せ字の語と空白・改行の入り方だけが違う所が ${String(unmatchedCount)} か所あり、伏せ字にしていません（${unmatched.slice(0, 10).map((p) => `p.${String(p)}`).join(", ")}${unmatched.length > 10 ? " ほか" : ""}）。伏せるなら、その書き方も語に足してください`,
+    );
   }
   // 繰り返す行を落として本文が残らないページは、落とす前のテキスト層を使う。
   // 行を落としてつながった語も置き換える（伏せ字）。

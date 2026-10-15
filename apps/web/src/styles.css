@@ -998,3 +998,16 @@ input {
   text-align: center;
   background: #fff;
 }
+
+/* 空白の入り方だけ違って伏せ字に当たらなかった形。契約付録 §9 */
+.redact-variants {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.redact-variants-title {
+  margin: 0 0 4px;
+  color: var(--error);
+  font-size: 14px;
+}

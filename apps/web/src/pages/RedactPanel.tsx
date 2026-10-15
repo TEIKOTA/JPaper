@@ -12,6 +12,8 @@ export interface RedactTerm {
 const MIN_CHARS = 2;
 const MAX_CHARS = 200;
 const DEBOUNCE_MS = 250;
+// 空白の入り方だけ違う形を並べる数。
+const MAX_VARIANTS = 20;
 
 // この幅（pt）未満の隙間で縦に重なる隣の語は空白なしで、行末（段の最後の行を除く。eol）が - の語は次の語へ空白なしでつなぐ。
 // ⚠ CLI の src/ingest/pdf/redact-pdf.ts の JOIN_GAP・spaceBetween・hyphenated と同じ規則（RedactPanel.test.ts で突き合わせる）。
@@ -276,6 +278,33 @@ export function RedactPanel(props: {
             足す
           </button>
         </div>
+        {!counting && (matches?.unmatched.length ?? 0) > 0 && (
+          <div className="redact-variants">
+            <p className="redact-variants-title">空白の入り方だけ違って当たらなかった所（伏せ字になりません）</p>
+            <ul className="redact-terms">
+              {matches!.unmatched.slice(0, MAX_VARIANTS).map((v) => (
+                <li key={v.text} className="redact-term">
+                  <span className="redact-term-text">{v.text}</span>
+                  <span className="redact-term-count">
+                    {v.count} か所（{v.pages.slice(0, 5).map((p) => `p.${String(p)}`).join(", ")}
+                    {v.pages.length > 5 ? " ほか" : ""}）
+                  </span>
+                  <span className="redact-term-nav">
+                    <button type="button" className="text-button" onClick={() => setPage(v.pages[0]!)}>
+                      見る
+                    </button>
+                    <button type="button" className="text-button" onClick={() => add(v.text)}>
+                      語に足す
+                    </button>
+                  </span>
+                </li>
+              ))}
+            </ul>
+            {matches!.unmatched.length > MAX_VARIANTS && (
+              <p className="form-note">ほか {matches!.unmatched.length - MAX_VARIANTS} 通りの書き方があります。</p>
+            )}
+          </div>
+        )}
         {!counting && mismatch.length > 0 && (
           <p className="error redact-mismatch">
             {mismatch.slice(0, 10).join("・")}
