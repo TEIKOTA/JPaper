@@ -1,6 +1,10 @@
 // 契約付録 §9（Web アプリ）。core を直接呼ぶ API と、翻訳ジョブ（CLI の子プロセス）・arXiv 検索の API。
 // 127.0.0.1 だけで待ち受け、認証は持たない。
-import { readFileSync, rmSync } from "node:fs";
+import { randomBytes } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync } from "node:fs";
+import { UploadWords } from "./redact-preview.js";
+import { checkRedactTerms } from "../../../src/ingest/redact.js";
+import { popplerTools } from "../../../src/ingest/pdf/poppler.js";
 import path from "node:path";
 import { Hono, type Context } from "hono";
 import { z } from "zod";
@@ -77,6 +81,10 @@ export interface Services {
   arxiv: ArxivClient;
   // PDF の全ページ数と、範囲を当てた後に読むページ（テスト用に差し替える）。
   pdfPages?: (file: string, spec: string | undefined) => Promise<{ total: number; pages: number[] }>;
+  // アップロードした PDF の語の位置（伏せ字の範囲選択）。
+  words?: UploadWords;
+  // ページ画像を描く（テスト用に差し替える）。
+  renderPage?: (file: string, page: number, outPrefix: string) => Promise<string>;
 }
 
 export function createServices(config: WebConfig, env: NodeJS.ProcessEnv = process.env): Services {
@@ -85,6 +93,7 @@ export function createServices(config: WebConfig, env: NodeJS.ProcessEnv = proce
     jobs: new JobQueue({
       articleDir: config.articleDir,
       repoRoot: config.repoRoot,
+      redactDir: path.join(uploadDirOf(config), ".redact"),
       concurrency: () => readSettings(config.settingsPath).concurrency,
       env: { ...env, ...(home === undefined || home === "" ? {} : { JPAPER_HOME: path.resolve(home) }) },
     }),
@@ -98,6 +107,18 @@ export function createApp(config: WebConfig, services: Services = createServices
   const { jobs, arxiv } = services;
   const pdfPages = services.pdfPages ?? ((file: string, spec: string | undefined) => pdfPagesToRead(file, spec));
   const uploadDir = uploadDirOf(config);
+  const words = services.words ?? new UploadWords();
+  const renderPage = services.renderPage ?? ((file: string, page: number, prefix: string) => popplerTools.renderPage(file, page, prefix));
+  const totalOf = async (file: string): Promise<number> => (await pdfPages(file, undefined)).total;
+  const pageNumber = (value: string, total: number): number => {
+    const n = Number(value);
+    if (!/^\d+$/.test(value) || n < 1 || n > total) throw new JpaperError(2, "input", "ページの番号が不正です");
+    return n;
+  };
+  const termsOf = (value: unknown): string[] => {
+    if (!Array.isArray(value)) throw new JpaperError(2, "input", "terms は文字列の配列で指定してください");
+    return value.length === 0 ? [] : checkRedactTerms(value);
+  };
   const app = new Hono();
 
   // Host が 127.0.0.1・localhost 以外、Origin が画面・API のポート以外の要求は 403。
@@ -295,6 +316,54 @@ export function createApp(config: WebConfig, services: Services = createServices
 
   app.get("/api/jobs", (c) => c.json({ jobs: jobs.list() }));
 
+  // アップロードした PDF のページ画像（作業フォルダに描いて置く）。契約付録 §9（伏せ字の範囲選択）
+  app.get("/api/uploads/:id/pages/:page/image", async (c) => {
+    try {
+      const { id, file } = uploadFile(uploadDir, c.req.param("id"));
+      const page = pageNumber(c.req.param("page"), await totalOf(file));
+      const dir = path.join(uploadDir, `${id}.pages`);
+      const png = path.join(dir, `p-${String(page)}.png`);
+      if (!existsSync(png)) {
+        mkdirSync(dir, { recursive: true });
+        const tmp = await renderPage(file, page, path.join(dir, `.p-${String(page)}-${randomBytes(6).toString("hex")}`));
+        renameSync(tmp, png);
+      }
+      return c.body(readFileSync(png), 200, { "content-type": "image/png", "cache-control": "private, max-age=3600" });
+    } catch (e) {
+      return errorResponse(c, e);
+    }
+  });
+
+  // ページの寸法（pt）と語の矩形。
+  app.get("/api/uploads/:id/pages/:page/words", async (c) => {
+    try {
+      const { id, file } = uploadFile(uploadDir, c.req.param("id"));
+      const total = await totalOf(file);
+      return c.json(await words.page(id, file, pageNumber(c.req.param("page"), total), total));
+    } catch (e) {
+      return errorResponse(c, e);
+    }
+  });
+
+  // 語ごとの当たりの数と当たったページ。page を付ければ、そのページで白く塗る矩形も返す。
+  app.post("/api/uploads/:id/matches", async (c) => {
+    try {
+      const { id, file } = uploadFile(uploadDir, c.req.param("id"));
+      const body = (await c.req.json().catch(() => undefined)) as Record<string, unknown> | undefined;
+      if (typeof body !== "object" || body === null) throw new JpaperError(2, "input", "JSON で送ってください");
+      const terms = termsOf(body.terms);
+      const total = await totalOf(file);
+      const page = body.page === undefined ? undefined : pageNumber(String(body.page), total);
+      return c.json({
+        total,
+        ...(await words.matches(id, file, total, terms)),
+        ...(page === undefined ? {} : { page, boxes: await words.boxes(id, file, total, page, terms) }),
+      });
+    } catch (e) {
+      return errorResponse(c, e);
+    }
+  });
+
   // PDF を受け取り、内容のハッシュの名前で作業フォルダに置く。契約付録 §9（PDF のアップロード）
   app.post("/api/uploads", async (c) => {
     try {
@@ -320,6 +389,8 @@ export function createApp(config: WebConfig, services: Services = createServices
       const body = (await c.req.json().catch(() => undefined)) as Record<string, unknown> | undefined;
       if (typeof body !== "object" || body === null) throw new JpaperError(2, "input", "JSON で送ってください");
       const options = parseTranslateOptions(body);
+      // 伏せ字の語（arXiv・PDF のどちらのジョブにも付けられる）。契約付録 §9（伏せ字の範囲選択）
+      const redact = body.redact === undefined ? undefined : termsOf(body.redact);
       const verify = readSettings(config.settingsPath).verifyTerms;
       const jobOptions = { ...options, ...(verify ? {} : { verifyTerms: false as const }) };
       let job;
@@ -355,6 +426,7 @@ export function createApp(config: WebConfig, services: Services = createServices
             ...(selected.pages.length > LARGE_PDF_PAGES ? { yes: true } : {}),
           },
           options: jobOptions,
+          ...(redact === undefined || redact.length === 0 ? {} : { redact }),
         });
       } else {
         const arxivId = parseArxivId(body.arxivId);
@@ -362,7 +434,12 @@ export function createApp(config: WebConfig, services: Services = createServices
           typeof body.title === "string"
             ? body.title.replace(/[\x00-\x1f\x7f]/g, " ").trim().slice(0, TITLE_MAX) || undefined
             : undefined;
-        job = jobs.enqueue({ arxivId, options: jobOptions, ...(title === undefined ? {} : { title }) });
+        job = jobs.enqueue({
+          arxivId,
+          options: jobOptions,
+          ...(title === undefined ? {} : { title }),
+          ...(redact === undefined || redact.length === 0 ? {} : { redact }),
+        });
       }
       try {
         const raw = readSettingsObject(config.settingsPath);

@@ -77,7 +77,7 @@ export function cliArgs(
   input: string,
   opts: TranslateOptions,
   outDir: string,
-  pdf: { pages?: string; yes?: boolean } = {},
+  pdf: { pages?: string; yes?: boolean; redactFile?: string } = {},
 ): string[] {
   return [
     input,
@@ -88,6 +88,7 @@ export function cliArgs(
     ...(opts.verifyTerms === false ? ["--no-verify-terms"] : []),
     ...(pdf.pages === undefined ? [] : ["--pages", pdf.pages]),
     ...(pdf.yes === true ? ["--yes"] : []),
+    ...(pdf.redactFile === undefined ? [] : ["--redact-file", pdf.redactFile]),
     "--out",
     outDir,
   ];

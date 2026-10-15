@@ -33,14 +33,15 @@ const escape = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 export function checkRedactTerms(terms: readonly unknown[]): string[] {
   if (terms.length === 0) throw new JpaperError(2, "input", "redact に語がありません");
   if (terms.length > MAX_TERMS) throw new JpaperError(2, "input", `redact の語は ${String(MAX_TERMS)} 個までです`);
-  return terms.map((t, i) => {
+  const checked = terms.map((t, i) => {
     const s = typeof t === "string" ? t.trim() : "";
     const chars = [...s].length;
-    if (chars < MIN_TERM_CHARS || chars > MAX_TERM_CHARS || /[\x00-\x1f\x7f]/.test(s)) {
-      throw new JpaperError(2, "input", `redact の ${String(i + 1)} 語目は ${String(MIN_TERM_CHARS)}〜${String(MAX_TERM_CHARS)} 文字の、改行を含まない文字列にしてください`);
+    if (chars < MIN_TERM_CHARS || chars > MAX_TERM_CHARS || /[\x00-\x1f\x7f]/.test(s) || s.startsWith("#")) {
+      throw new JpaperError(2, "input", `redact の ${String(i + 1)} 語目は ${String(MIN_TERM_CHARS)}〜${String(MAX_TERM_CHARS)} 文字の、改行を含まず # で始まらない文字列にしてください`);
     }
     return s;
   });
+  return [...new Set(checked)];
 }
 
 export function parseRedactTerms(text: string): string[] {

@@ -136,12 +136,12 @@ export async function extractPdf(pdf: string, opts: PdfReadOptions, deps: PdfExt
       text = r.text;
       redacted += r.replaced;
       const { boxes, hits } = redactionBoxes(pageWords(await tools.pageLayout(pdf, p, deps.signal)), deps.redact);
-      // テキスト層で当たった数だけ画像の位置が分からなければ、画像に語が残るので止める。
-      if (hits < r.replaced) {
+      // テキスト層と画像で当たった数が違えば、どちらかに語が残るので止める（画像だけで当たれば文字が、文字だけで当たれば画像が残る）。
+      if (hits !== r.replaced) {
         throw new JpaperError(
           2,
           "input",
-          `PDF の ${String(p)} ページ目で、伏せ字の語がテキスト層にあるのにページ上の位置が分かりません（画像を白く塗れないため止めました）`,
+          `PDF の ${String(p)} ページ目で、伏せ字の語の当たりがテキスト層（${String(r.replaced)} か所）とページ上の位置（${String(hits)} か所）で合わないため止めました（語の書き方を、ページの文字どおりにしてください）`,
         );
       }
       if (boxes.length > 0) masks.set(p, boxes);

@@ -14,6 +14,7 @@ import {
 import { errorText, useLoad, usePoll } from "../load.js";
 import { href } from "../router.js";
 import { Status } from "./Status.js";
+import { RedactPanel, validTerm, type RedactTerm } from "./RedactPanel.js";
 
 const POLL_MS = 2000;
 
@@ -68,6 +69,14 @@ function TranslateForm(props: {
   // 最後に選んだファイルの送信の番号。古い送信の応答は捨てる。
   const uploadSeq = useRef(0);
   const [pages, setPages] = useState("");
+  // 伏せ字の語（PDF は画面で選ぶ、arXiv はファイルから読む）。契約付録 §9
+  const [redact, setRedact] = useState<RedactTerm[]>([]);
+  // arXiv の伏せ字のファイル: 読んでいる途中か、形の誤り。どちらの間も翻訳を始めない（語を付けずに始めない）。
+  const [termsFile, setTermsFile] = useState<{ loading: boolean; error?: string }>({ loading: false });
+  // PDF の伏せ字: 当たりを数え終え、テキスト層と合わないページが無いか。
+  const [redactReady, setRedactReady] = useState(true);
+  // 最後に選んだ語のファイルの番号。古い読み込みの結果は捨てる。
+  const termsSeq = useRef(0);
   const [large, setLarge] = useState<LargePdf>();
   const [provider, setProvider] = useState(settings.provider ?? "");
   const [model, setModel] = useState(defaultsFor(settings.provider ?? "").model ?? "");
@@ -78,14 +87,16 @@ function TranslateForm(props: {
   const history = settings.history;
   const acceptsEffort = providers.find((p) => p.name === provider)?.effort === true;
   const title = props.title !== undefined && arxivId.trim() === props.id ? props.title : undefined;
-  const ready = source === "arxiv" ? arxivId.trim() !== "" : upload !== undefined && !uploading;
+  const ready = formReady({ source, arxivId, termsFile, uploaded: upload !== undefined && !uploading, redact, redactReady });
 
   useEffect(() => setError(undefined), [source, arxivId, pages, provider, model, effort]);
 
+  const redactOn = redact.filter((t) => t.on).map((t) => t.term);
   const options = {
     provider,
     ...(model.trim() === "" ? {} : { model: model.trim() }),
     ...(acceptsEffort && effort.trim() !== "" ? { effort: effort.trim() } : {}),
+    ...(redactOn.length === 0 ? {} : { redact: redactOn }),
   };
 
   const start = (body: StartJob) => {
@@ -99,6 +110,8 @@ function TranslateForm(props: {
         setArxivId("");
         setUpload(undefined);
         setPages("");
+        setRedact([]);
+        setTermsFile({ loading: false });
         setFileKey((k) => k + 1);
         if (props.id !== undefined) window.history.replaceState(null, "", href.translate());
         props.onStarted();
@@ -144,7 +157,12 @@ function TranslateForm(props: {
             ] as const
           ).map(([value, label]) => (
             <label key={value} className={`source-option${source === value ? " is-on" : ""}`}>
-              <input type="radio" name="source" value={value} checked={source === value} onChange={() => setSource(value)} />
+              <input type="radio" name="source" value={value} checked={source === value} onChange={() => {
+                  setSource(value);
+                  setRedact([]);
+                  setTermsFile({ loading: false });
+                }}
+              />
               {label}
             </label>
           ))}
@@ -161,6 +179,43 @@ function TranslateForm(props: {
               />
             </label>
             {title !== undefined && <p className="form-title">{title}</p>}
+            <label className="field">
+              <span className="field-label">伏せ字の語のファイル（任意。1 行 1 語）</span>
+              <input
+                key={fileKey}
+                className="file-input"
+                type="file"
+                accept=".txt,text/plain"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  const seq = ++termsSeq.current;
+                  setRedact([]);
+                  if (file === undefined) {
+                    setTermsFile({ loading: false });
+                    return;
+                  }
+                  setTermsFile({ loading: true });
+                  file.text().then(
+                    (text) => {
+                      if (seq !== termsSeq.current) return;
+                      const terms = parseTermLines(text);
+                      if (terms === undefined) setTermsFile({ loading: false, error: "伏せ字の語は 1 行 1 語、2〜200 文字で 1 語以上にしてください" });
+                      else {
+                        setTermsFile({ loading: false });
+                        setRedact(terms.map((term) => ({ term, on: true })));
+                      }
+                    },
+                    () => {
+                      if (seq === termsSeq.current) setTermsFile({ loading: false, error: "伏せ字の語のファイルを読めません" });
+                    },
+                  );
+                }}
+              />
+              <span className="file-status">
+                {termsFile.loading ? "読んでいます…" : redact.length > 0 ? `${String(redact.length)} 語を伏せ字にします` : ""}
+              </span>
+              {termsFile.error !== undefined && <span className="error">{termsFile.error}（ファイルを選び直すか外すまで、翻訳を始められません）</span>}
+            </label>
           </>
         ) : (
           <div className="form-row">
@@ -176,6 +231,7 @@ function TranslateForm(props: {
                   const seq = ++uploadSeq.current;
                   setUpload(undefined);
                   setUploading(false);
+                  setRedact([]);
                   if (file === undefined) return;
                   if (file.size > MAX_UPLOAD_BYTES) {
                     setError(`PDF が上限 ${String(MAX_UPLOAD_BYTES / 1024 / 1024)}MiB を超えています`);
@@ -212,6 +268,7 @@ function TranslateForm(props: {
             </label>
           </div>
         )}
+        {source === "pdf" && upload !== undefined && <RedactPanel upload={upload} terms={redact} onChange={setRedact} onReady={setRedactReady} />}
         <div className="form-row">
           <label className="field">
             <span className="field-label">provider</span>
@@ -268,7 +325,7 @@ function TranslateForm(props: {
         </div>
         <div className="form-actions">
           <button className="primary" type="submit" disabled={busy || provider === "" || !ready}>
-            {busy ? "加えています…" : "翻訳を始める"}
+            {busy ? "加えています…" : source === "pdf" && redactOn.length > 0 ? "この内容で翻訳を始める" : "翻訳を始める"}
           </button>
           {error !== undefined && <span className="error">{error}</span>}
           {started !== undefined && <span>{started}</span>}
@@ -298,6 +355,25 @@ function TranslateForm(props: {
       )}
     </>
   );
+}
+
+// 翻訳を始められるか。伏せ字の語が読めていない・テキスト層と合わない間は始めない（語を付けずに始めない）。契約付録 §9
+export function formReady(f: {
+  source: Source;
+  arxivId: string;
+  termsFile: { loading: boolean; error?: string };
+  uploaded: boolean;
+  redact: readonly RedactTerm[];
+  redactReady: boolean;
+}): boolean {
+  if (f.source === "arxiv") return f.arxivId.trim() !== "" && !f.termsFile.loading && f.termsFile.error === undefined;
+  return f.uploaded && (f.redact.every((t) => !t.on) || f.redactReady);
+}
+
+// 伏せ字の語のファイル（CLI の --redact-file と同じ形: 1 行 1 語、空行と # の行は読まない）。形が違う・語が無ければ undefined。
+export function parseTermLines(text: string): string[] | undefined {
+  const terms = [...new Set(text.split(/\r?\n/).map((l) => l.trim()).filter((l) => l !== "" && !l.startsWith("#")))];
+  return terms.length > 0 && terms.every(validTerm) ? terms : undefined;
 }
 
 // 範囲の指定（"1-72,80"）が選ぶページ数。形が違えば undefined。数えるのは目安の表示のためだけ（検査は API）。

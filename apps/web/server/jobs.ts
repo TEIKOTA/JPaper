@@ -1,7 +1,8 @@
 // 契約付録 §9（Web アプリ）。翻訳ジョブのキュー。CLI を子プロセスで起動し、stderr の進捗行と
 // LLM トレースから状態を作る。ジョブはサーバのメモリだけに持つ。
 import { spawn } from "node:child_process";
-import { copyFileSync, mkdirSync, readFileSync, statSync } from "node:fs";
+import { randomBytes } from "node:crypto";
+import { copyFileSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { derivePaperId } from "../../../src/ingest/index.js";
@@ -38,6 +39,8 @@ export interface JobView {
   arxivId?: string;
   // アップロードした PDF の入力。pages は --pages に渡す範囲。
   pdf?: { name: string; pages?: string };
+  // 伏せ字の語の数（語そのものは返さない）。
+  redactTerms?: number;
   paperId: string;
   title?: string;
   options: TranslateOptions;
@@ -56,6 +59,9 @@ export interface JobView {
 interface Job extends Omit<JobView, "log" | "costUsd"> {
   outDir: string;
   upload?: PdfUpload;
+  // 伏せ字の語（メモリだけに持つ）と、CLI に渡す間だけ置くファイル。
+  redact?: readonly string[];
+  redactFile?: string;
   log: string[];
   cancelRequested: boolean;
   proc?: RunningProcess;
@@ -208,6 +214,8 @@ export const spawnRunner: JobRunner = (spec, onLine) => {
 export interface JobQueueDeps {
   articleDir: string;
   repoRoot: string;
+  // 伏せ字の語のファイルを、CLI が走る間だけ置くフォルダ。
+  redactDir?: string;
   concurrency: () => number;
   runner?: JobRunner;
   command?: (args: string[]) => { command: string; args: string[] };
@@ -228,9 +236,10 @@ export interface PdfUpload {
 // 出力先にコピーした入力の PDF の場所（出力先からの相対）。契約付録 §9
 export const SOURCE_DIR = "source";
 
-export type EnqueueRequest =
+export type EnqueueRequest = (
   | { arxivId: string; options: TranslateOptions; title?: string }
-  | { pdf: PdfUpload; options: TranslateOptions };
+  | { pdf: PdfUpload; options: TranslateOptions }
+) & { redact?: readonly string[] };
 
 export class JobQueue {
   private readonly jobs: Job[] = [];
@@ -242,6 +251,12 @@ export class JobQueue {
   constructor(private readonly deps: JobQueueDeps) {
     this.runner = deps.runner ?? spawnRunner;
     this.now = deps.now ?? Date.now;
+    // 前のプロセスが残した伏せ字の語のファイルを消す（ジョブはメモリにしか無いので、残っているものは使われない）。
+    rmSync(this.redactDir(), { recursive: true, force: true });
+  }
+
+  private redactDir(): string {
+    return this.deps.redactDir ?? path.join(this.deps.articleDir, ".jpaper-redact");
   }
 
   enqueue(req: EnqueueRequest): JobView {
@@ -265,6 +280,7 @@ export class JobQueue {
         : { upload: pdf, pdf: { name: pdf.name, ...(pdf.pages === undefined ? {} : { pages: pdf.pages }) } }),
       paperId,
       ...(title === undefined ? {} : { title }),
+      ...(req.redact === undefined || req.redact.length === 0 ? {} : { redact: req.redact, redactTerms: req.redact.length }),
       options: req.options,
       outDir: path.join(this.deps.articleDir, `${paperId}-ja`),
       state: "queued",
@@ -299,6 +315,7 @@ export class JobQueue {
     if (job.state === "queued") {
       job.state = "canceled";
       job.finishedAt = this.now();
+      job.redact = undefined;
       this.trim();
     } else if (job.state === "running") {
       job.cancelRequested = true;
@@ -327,9 +344,11 @@ export class JobQueue {
       if (job.state === "queued") {
         job.state = "canceled";
         job.finishedAt = this.now();
+        job.redact = undefined;
       } else if (job.state === "running") {
         job.cancelRequested = true;
         job.proc?.kill();
+        if (job.redactFile !== undefined) rmSync(job.redactFile, { force: true });
       }
     }
   }
@@ -350,7 +369,23 @@ export class JobQueue {
     job.startedAt = this.now();
     job.knownRunIds = traceRunIds(job.outDir);
     let input = job.arxivId ?? "";
-    if (job.upload !== undefined) {
+    if (job.redact !== undefined) {
+      // 語は CLI の引数に載せず、本人だけが読めるファイルで渡し、終わったら消す。契約付録 §9（伏せ字）
+      try {
+        const dir = this.redactDir();
+        mkdirSync(dir, { recursive: true, mode: 0o700 });
+        job.redactFile = path.join(dir, `${job.id}-${randomBytes(8).toString("hex")}.txt`);
+        writeFileSync(job.redactFile, `${job.redact.join("\n")}\n`, { mode: 0o600, flag: "wx" });
+      } catch (e) {
+        job.error = `伏せ字の語を CLI に渡せませんでした: ${e instanceof Error ? e.message : String(e)}`;
+        this.finish(job, { code: null, signal: null });
+        return;
+      }
+    }
+    if (job.upload !== undefined && job.redact !== undefined) {
+      // 伏せ字の run は、語を含む元の PDF を出力先にコピーしない（作業フォルダの PDF をそのまま読む）。
+      input = job.upload.file;
+    } else if (job.upload !== undefined) {
       // 入力の PDF を出力先にコピーし、翻訳の記録と一緒に残す。契約付録 §9
       try {
         const dir = path.join(job.outDir, SOURCE_DIR);
@@ -367,7 +402,12 @@ export class JobQueue {
       input,
       job.options,
       job.outDir,
-      job.upload === undefined ? {} : { ...(job.upload.pages === undefined ? {} : { pages: job.upload.pages }), yes: job.upload.yes === true },
+      {
+        ...(job.upload === undefined
+          ? {}
+          : { ...(job.upload.pages === undefined ? {} : { pages: job.upload.pages }), yes: job.upload.yes === true }),
+        ...(job.redactFile === undefined ? {} : { redactFile: job.redactFile }),
+      },
     );
     const cmd = (this.deps.command ?? ((a) => cliCommand(this.deps.repoRoot, a)))(args);
     const env = { ...(this.deps.env ?? process.env) };
@@ -410,6 +450,11 @@ export class JobQueue {
 
   private finish(job: Job, exit: ProcessExit): void {
     if (job.state !== "running") return;
+    if (job.redactFile !== undefined) {
+      rmSync(job.redactFile, { force: true });
+      job.redactFile = undefined;
+    }
+    job.redact = undefined;
     job.finishedAt = this.now();
     job.exitCode = exit.code;
     job.finalCost = this.cost(job);
@@ -455,6 +500,7 @@ export class JobQueue {
       label: job.label,
       ...(job.arxivId === undefined ? {} : { arxivId: job.arxivId }),
       ...(job.pdf === undefined ? {} : { pdf: job.pdf }),
+      ...(job.redactTerms === undefined ? {} : { redactTerms: job.redactTerms }),
       paperId: job.paperId,
       ...(job.title === undefined ? {} : { title: job.title }),
       options: job.options,

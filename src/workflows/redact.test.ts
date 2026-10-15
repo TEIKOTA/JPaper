@@ -252,6 +252,17 @@ describe("伏せ字（契約付録 §8）: PDF 入力", () => {
     expect(c.calls).toHaveLength(0);
   });
 
+  it("画像の上でだけ当たり、テキスト層では当たらなければ（文字が残る）、LLM を呼ぶ前に exit 2", async () => {
+    const pdf = path.join(tmp(), "book.pdf");
+    writeFileSync(pdf, "%PDF-1.4\n% fake\n");
+    const glued = { ...tools, pageText: (_p: string, page: number) => Promise.resolve(page === 1 ? PAGES[0]!.replace(NAME, "HanakoYamada") : PAGES[1]!) };
+    const c = client();
+    const r = await run(pdf, { redact: [NAME], bilingual: false }, { client: c, pdfTools: glued });
+    expect(r.exitCode).toBe(2);
+    expect(r.error?.message).toContain("合わない");
+    expect(c.calls).toHaveLength(0);
+  });
+
   it("テキスト層で当たった数より位置の分かる数が少なければ、LLM を呼ぶ前に exit 2", async () => {
     const pdf = path.join(tmp(), "book.pdf");
     writeFileSync(pdf, "%PDF-1.4\n% fake\n");
