@@ -362,7 +362,7 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number
         ...(flags.has("--no-verify-terms") ? { verifyTerms: false } : {}),
       },
       {
-        // 契約付録 §5（CLI は単一ユーザ既定の通知を出さない）。
+        // 契約付録 §8（CLI は単一ユーザ既定の通知を出さない）。
         onError: (m) => {
           if (!m.startsWith(SHARED_DEFAULT_NOTICE)) stderr(`エラー: ${m}\n`);
         },
