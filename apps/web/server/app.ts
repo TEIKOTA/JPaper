@@ -24,7 +24,7 @@ import {
   pdfPath,
   type PdfKind,
 } from "./catalog.js";
-import { DEFAULT_API_PORT, DEFAULT_WEB_PORT, localOrigins, type WebConfig } from "./config.js";
+import { DEFAULT_API_PORT, DEFAULT_WEB_PORT, localOrigins, uploadDirOf, type WebConfig } from "./config.js";
 import { ArxivClient, ArxivError, ArxivQueryError } from "./arxiv.js";
 import { JobQueue } from "./jobs.js";
 import {
@@ -38,7 +38,17 @@ import {
   settingsFrom,
   writeSettings,
 } from "./settings.js";
-import { parseArxivId, parseTranslateOptions, providerInfo } from "./translate-options.js";
+import { optionalText, parseArxivId, parseTranslateOptions, providerInfo } from "./translate-options.js";
+import { displayName, MAX_UPLOAD_BYTES, readCappedBody, saveUpload, uploadFile } from "./uploads.js";
+import {
+  ESTIMATED_SECONDS_PER_PAGE,
+  ESTIMATED_USD_PER_PAGE,
+  estimatePdfRead,
+  LARGE_PDF_PAGES,
+  pdfPagesToRead,
+} from "../../../src/ingest/pdf/index.js";
+import { IMAGE_PROVIDERS } from "../../../src/providers/index.js";
+import { defaultConcurrencyFor } from "../../../src/config.js";
 
 const LOCAL_HOSTS = new Set(["127.0.0.1", "localhost", "[::1]"]);
 
@@ -65,6 +75,8 @@ function errorResponse(c: Context, e: unknown): Response {
 export interface Services {
   jobs: JobQueue;
   arxiv: ArxivClient;
+  // PDF の全ページ数と、範囲を当てた後に読むページ（テスト用に差し替える）。
+  pdfPages?: (file: string, spec: string | undefined) => Promise<{ total: number; pages: number[] }>;
 }
 
 export function createServices(config: WebConfig, env: NodeJS.ProcessEnv = process.env): Services {
@@ -84,6 +96,8 @@ const TITLE_MAX = 500;
 
 export function createApp(config: WebConfig, services: Services = createServices(config)): Hono {
   const { jobs, arxiv } = services;
+  const pdfPages = services.pdfPages ?? ((file: string, spec: string | undefined) => pdfPagesToRead(file, spec));
+  const uploadDir = uploadDirOf(config);
   const app = new Hono();
 
   // Host が 127.0.0.1・localhost 以外、Origin が画面・API のポート以外の要求は 403。
@@ -96,8 +110,11 @@ export function createApp(config: WebConfig, services: Services = createServices
     if (origin !== undefined && !origins.has(origin)) {
       return c.json({ error: "許可されていないオリジンです" }, 403);
     }
-    if (c.req.method === "POST" && !/^application\/json(\s*;|$)/i.test(c.req.header("content-type") ?? "")) {
-      return c.json({ error: "content-type: application/json で送ってください" }, 415);
+    // PDF のアップロードだけは application/pdf（これも単純リクエストにならない）。
+    const type = c.req.path === "/api/uploads" ? "application/pdf" : "application/json";
+    const sent = (c.req.header("content-type") ?? "").split(";")[0]!.trim().toLowerCase();
+    if (c.req.method === "POST" && sent !== type) {
+      return c.json({ error: `content-type: ${type} で送ってください` }, 415);
     }
     await next();
   });
@@ -278,22 +295,68 @@ export function createApp(config: WebConfig, services: Services = createServices
 
   app.get("/api/jobs", (c) => c.json({ jobs: jobs.list() }));
 
+  // PDF を受け取り、内容のハッシュの名前で作業フォルダに置く。契約付録 §9（PDF のアップロード）
+  app.post("/api/uploads", async (c) => {
+    try {
+      const body = await readCappedBody(c.req.raw, config.maxUploadBytes ?? MAX_UPLOAD_BYTES);
+      const { id, file } = saveUpload(uploadDir, body);
+      const { total } = await pdfPages(file, undefined);
+      const name = displayName(c.req.header("x-jpaper-filename")) ?? `${id}.pdf`;
+      return c.json({ upload: { id, name, pages: total, bytes: body.length } }, 201);
+    } catch (e) {
+      return errorResponse(c, e);
+    }
+  });
+
   app.post("/api/jobs", async (c) => {
     try {
       const body = (await c.req.json().catch(() => undefined)) as Record<string, unknown> | undefined;
       if (typeof body !== "object" || body === null) throw new JpaperError(2, "input", "JSON で送ってください");
-      const arxivId = parseArxivId(body.arxivId);
       const options = parseTranslateOptions(body);
-      const title =
-        typeof body.title === "string"
-          ? body.title.replace(/[\x00-\x1f\x7f]/g, " ").trim().slice(0, TITLE_MAX) || undefined
-          : undefined;
       const verify = readSettings(config.settingsPath).verifyTerms;
-      const job = jobs.enqueue({
-        arxivId,
-        options: { ...options, ...(verify ? {} : { verifyTerms: false as const }) },
-        ...(title === undefined ? {} : { title }),
-      });
+      const jobOptions = { ...options, ...(verify ? {} : { verifyTerms: false as const }) };
+      let job;
+      if (body.upload !== undefined) {
+        // PDF 入力: 画像を渡せる provider だけ。100 ページ超は同意（confirmLarge）が要る。契約付録 §8・§9
+        const { id, file } = uploadFile(uploadDir, body.upload);
+        if (!IMAGE_PROVIDERS.includes(options.provider)) {
+          throw new JpaperError(2, "input", `PDF の入力は ${IMAGE_PROVIDERS.join("・")} だけで読めます`);
+        }
+        const pages = optionalText(body.pages, "ページの範囲");
+        const selected = await pdfPages(file, pages);
+        if (selected.pages.length > LARGE_PDF_PAGES && body.confirmLarge !== true) {
+          const concurrency = defaultConcurrencyFor(options.provider);
+          return c.json(
+            {
+              error: `この PDF は ${String(selected.pages.length)} ページ読みます。確かめてから始めてください`,
+              kind: "confirm-large",
+              total: selected.total,
+              pages: selected.pages.length,
+              estimate: estimatePdfRead(selected.pages.length, concurrency),
+              perPage: { usd: ESTIMATED_USD_PER_PAGE, seconds: ESTIMATED_SECONDS_PER_PAGE, concurrency },
+            },
+            409,
+          );
+        }
+        const name = typeof body.name === "string" ? (displayName(encodeURIComponent(body.name)) ?? `${id}.pdf`) : `${id}.pdf`;
+        job = jobs.enqueue({
+          pdf: {
+            id,
+            file,
+            name,
+            ...(pages === undefined ? {} : { pages }),
+            ...(selected.pages.length > LARGE_PDF_PAGES ? { yes: true } : {}),
+          },
+          options: jobOptions,
+        });
+      } else {
+        const arxivId = parseArxivId(body.arxivId);
+        const title =
+          typeof body.title === "string"
+            ? body.title.replace(/[\x00-\x1f\x7f]/g, " ").trim().slice(0, TITLE_MAX) || undefined
+            : undefined;
+        job = jobs.enqueue({ arxivId, options: jobOptions, ...(title === undefined ? {} : { title }) });
+      }
       try {
         const raw = readSettingsObject(config.settingsPath);
         if (raw === undefined) throw new Error("設定ファイル（web-settings.json）を読めません");

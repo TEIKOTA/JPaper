@@ -26,6 +26,16 @@ export interface WebConfig {
   settingsPath: string;
   // 翻訳ジョブの CLI を起動する repo のルート。
   repoRoot: string;
+  // アップロードした PDF を置くフォルダ。既定は設定ファイルと同じフォルダの web-uploads/。
+  uploadDir?: string;
+  // アップロードの上限（バイト。テスト用。既定は MAX_UPLOAD_BYTES）。
+  maxUploadBytes?: number;
+}
+
+export const UPLOAD_DIR = "web-uploads";
+
+export function uploadDirOf(config: WebConfig): string {
+  return config.uploadDir ?? path.join(path.dirname(config.settingsPath), UPLOAD_DIR);
 }
 
 // 画面（Vite）と API のポートについて、127.0.0.1・localhost の Origin を並べる。

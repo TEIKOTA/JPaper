@@ -145,7 +145,9 @@ export interface TranslateOptions {
 
 export interface Job {
   id: string;
-  arxivId: string;
+  label: string;
+  arxivId?: string;
+  pdf?: { name: string; pages?: string };
   paperId: string;
   title?: string;
   options: TranslateOptions;
@@ -177,6 +179,7 @@ export class ApiError extends Error {
   constructor(
     message: string,
     readonly status: number,
+    readonly body: Record<string, unknown> = {},
   ) {
     super(message);
   }
@@ -185,9 +188,33 @@ export class ApiError extends Error {
 async function call<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, init);
   const body = (await res.json().catch(() => ({}))) as { error?: string };
-  if (!res.ok) throw new ApiError(body.error ?? `エラーが発生しました（${String(res.status)}）`, res.status);
+  if (!res.ok) throw new ApiError(body.error ?? `エラーが発生しました（${String(res.status)}）`, res.status, body);
   return body as T;
 }
+
+export interface Upload {
+  id: string;
+  name: string;
+  pages: number;
+  bytes: number;
+}
+
+// 100 ページ超の PDF で、同意（confirmLarge）なしにジョブを始めようとしたときの 409 の中身。
+export interface LargePdf {
+  kind: "confirm-large";
+  total: number;
+  pages: number;
+  estimate: { usd: number; minutes: number };
+  perPage: { usd: number; seconds: number; concurrency: number };
+}
+
+export function largePdfOf(e: unknown): LargePdf | undefined {
+  return e instanceof ApiError && e.status === 409 && e.body.kind === "confirm-large" ? (e.body as unknown as LargePdf) : undefined;
+}
+
+export type StartJob =
+  | ({ arxivId: string; title?: string } & TranslateOptions)
+  | ({ upload: string; name: string; pages?: string; confirmLarge?: boolean } & TranslateOptions);
 
 const post = (body: unknown): RequestInit => ({
   method: "POST",
@@ -214,7 +241,13 @@ export const api = {
   arxiv: (q: string, signal?: AbortSignal) =>
     call<{ total?: number; entries: ArxivEntry[] }>(`/api/arxiv?q=${encodeURIComponent(q)}`, { signal }),
   jobs: () => call<{ jobs: Job[] }>("/api/jobs").then((r) => r.jobs),
-  startJob: (body: { arxivId: string; title?: string } & TranslateOptions) => call<{ job: Job }>("/api/jobs", post(body)),
+  startJob: (body: StartJob) => call<{ job: Job }>("/api/jobs", post(body)),
+  uploadPdf: (file: File) =>
+    call<{ upload: Upload }>("/api/uploads", {
+      method: "POST",
+      headers: { "content-type": "application/pdf", "x-jpaper-filename": encodeURIComponent(file.name) },
+      body: file,
+    }).then((r) => r.upload),
   cancelJob: (id: string) => call<{ job: Job }>(`/api/jobs/${encodeURIComponent(id)}/cancel`, post({})),
 };
 
