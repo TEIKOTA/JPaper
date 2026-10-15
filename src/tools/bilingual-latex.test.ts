@@ -656,6 +656,11 @@ describe("段落の境目の条件分岐（issue #378）", () => {
     expect(body.match(/^\\fi$/gm)).toHaveLength(1);
   });
 
+  it("条件分岐の行で割った後の右の列が [ で始まっても、\\switchcolumn の後に \\relax を挟む", () => {
+    const out = pairAcrossConditionals("A\n\\fi\n[BCN18] x", "甲\n\\fi\n[BCN18] 乙");
+    expect(out).toBe("A\n\\switchcolumn\n甲\n\\switchcolumn*\n\\fi\n[BCN18] x\n\\switchcolumn\n\\relax\n[BCN18] 乙\n\\switchcolumn*");
+  });
+
   it("1 つの段落の中で閉じた条件分岐は割らず、従来どおり段落ごと左右に置く", () => {
     const l = "\\ifdraft\nA\n\\else\nB\n\\fi\nC";
     const r = "\\ifdraft\n甲\n\\else\n乙\n\\fi\n丙";
