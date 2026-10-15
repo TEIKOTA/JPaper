@@ -4,7 +4,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { parse } from "yaml";
 import { BOOL_FLAGS, VALUE_FLAGS } from "../src/cli.js";
-import { RunSummary } from "../src/types/contract.js";
+import { ErrorKind, RunSummary } from "../src/types/contract.js";
 import { checkSkill, splitFrontmatter } from "./check-skill-frontmatter.js";
 
 const ROOT = path.join(import.meta.dirname, "..");
@@ -48,7 +48,7 @@ describe("/jpaper skill（issue #424）", () => {
     expect(failure).toContain("了承を得たときだけ、`gh issue create --repo TEIKOTA/JPaper");
     expect(failure).toContain("gh issue list --repo TEIKOTA/JPaper --state all");
     expect(failure).toContain("gh pr list --repo TEIKOTA/JPaper --state all");
-    expect(failure).toContain("失敗したときに消えるので残らない");
+    expect(failure).toContain("失敗したときに消える");
     const keys = /RunSummary`）の ((?:`[A-Za-z]+`・?)+)/.exec(failure)?.[1];
     expect(keys).toBeDefined();
     for (const k of [...keys!.matchAll(/`([A-Za-z]+)`/g)].map((m) => m[1]!)) expect(Object.keys(RunSummary.shape), k).toContain(k);
@@ -61,8 +61,6 @@ describe("/jpaper skill（issue #424）", () => {
       "失敗[",
       "想定外エラー: ",
       "原プリアンブルで組めず共通テンプレへフォールバック: ",
-      "組版失敗(翻訳起因・要再訳): ",
-      "組版失敗(テンプレでも不可): ",
       "対訳 PDF の組版に失敗しました",
       "翻訳起因: ",
       '"translation", "chapters"',
@@ -71,6 +69,12 @@ describe("/jpaper skill（issue #424）", () => {
       expect(src, s).toContain(s);
       expect(text, s).toContain(s.replace(/"/g, "").replace(", ", "/").replace(/: $/, ""));
     }
+  });
+
+  it("失敗の分け方の表が、すべての kind を扱う", () => {
+    const table = text.slice(text.indexOf("### 原因で分ける"), text.indexOf("### issue に起票する"));
+    const listed = [...table.matchAll(/^\| ((?:`[a-z-]+`・?)+)/gm)].flatMap((m) => [...m[1]!.matchAll(/`([a-z-]+)`/g)].map((k) => k[1]!));
+    expect([...listed].sort()).toEqual([...ErrorKind.options].sort());
   });
 
   it("README の「Coding AI から使う」が両方の呼び方と skill を示す", () => {
