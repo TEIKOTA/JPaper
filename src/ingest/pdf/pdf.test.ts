@@ -166,9 +166,17 @@ describe("ページをつなぐ", () => {
   it("ページをまたぐ enumerate を 1 つにする（番号が 1 に戻らない）", () => {
     const tex = assembleMainTex([
       page({ page: 1, text: "(1) a", tex: "\\begin{enumerate}\n\\item a\n\\end{enumerate}" }),
-      page({ page: 2, text: "(2) b", tex: "\\begin{enumerate}\n\\item b\n\\end{enumerate}" }),
+      page({ page: 2, text: "(2) b", tex: "\\begin{enumerate}\n\\item b\n\\end{enumerate}", continues: true }),
     ]);
     expect(tex.match(/\\begin\{enumerate\}/g)).toHaveLength(1);
+  });
+
+  it("続きでないページの enumerate は別のリストのまま", () => {
+    const tex = assembleMainTex([
+      page({ page: 1, text: "(1) a.", tex: "\\begin{enumerate}\n\\item a.\n\\end{enumerate}" }),
+      page({ page: 2, text: "(1) b.", tex: "\\begin{enumerate}\n\\item b.\n\\end{enumerate}" }),
+    ]);
+    expect(tex.match(/\\begin\{enumerate\}/g)).toHaveLength(2);
   });
 
   it("ページをまたぐ参考文献の一覧を 1 つにする", () => {

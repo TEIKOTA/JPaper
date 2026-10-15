@@ -92,12 +92,18 @@ export function assembleMainTex(pages: readonly AssembledPage[]): string {
       }
     }
     const adjacent = prev !== undefined && prev.page + 1 === p.page && prev.status === "ok" && p.status === "ok";
-    const env = adjacent ? LIST_ENVS.find((e) => envEnd(e).test(body) && envBegin(e).test(tex)) : undefined;
+    // 参考文献の一覧は常に、ほかのリストは続きのページのときだけ 1 つにする。
+    const join = adjacent && shouldJoin(prev!.text, p.text, p.continues);
+    const env = adjacent
+      ? LIST_ENVS.find(
+          (e) => (e === "thebibliography" || join || p.continues) && envEnd(e).test(body) && envBegin(e).test(tex),
+        )
+      : undefined;
     if (env !== undefined) {
       body = body.replace(envEnd(env), "").trimEnd();
       tex = tex.replace(envBegin(env), "").trimStart();
       body += `\n${tex}`;
-    } else if (adjacent && shouldJoin(prev!.text, p.text, p.continues)) {
+    } else if (join) {
       // 行末で分綴した語がページをまたぐなら、ハイフンを除いてつなぐ。
       const end = body.trimEnd();
       const head = tex.trimStart();
