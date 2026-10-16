@@ -22,6 +22,8 @@ export interface PaperSummary {
   titleEn?: string;
   termCount: number;
   pdf: Record<PdfKind, boolean>;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export type DbStatus = "confirmed" | "confirmed-other" | "none";
@@ -97,12 +99,38 @@ export function pdfPath(outDir: string, kind: PdfKind): string | undefined {
   return existsSync(legacy) ? legacy : undefined;
 }
 
+const UPDATED_FILES = ["glossary.md", "brief.md", "style.md", "notes.json"];
+
+function mtimeOf(file: string): number | undefined {
+  try {
+    return statSync(file).mtimeMs;
+  } catch {
+    return undefined;
+  }
+}
+
+// 契約付録 §9「論文の一覧」。作成日は論文フォルダの作成日時、更新日は成果物の最も新しい更新日時。
+export function paperDates(outDir: string): { createdAt: string; updatedAt: string } {
+  const files = [...UPDATED_FILES, ...listDeliverables(outDir, "ja"), ...listDeliverables(outDir, "bilingual")];
+  const mtimes = files.map((f) => mtimeOf(path.join(outDir, f))).filter((t): t is number => t !== undefined);
+  let birth = 0;
+  try {
+    birth = statSync(outDir).birthtimeMs;
+  } catch {
+    // 作成日時が読めなければ更新日時で代える。
+  }
+  const created = birth > 0 ? birth : Math.min(...mtimes, mtimeOf(outDir) ?? Date.now());
+  const updated = Math.max(created, ...mtimes);
+  return { createdAt: new Date(created).toISOString(), updatedAt: new Date(updated).toISOString() };
+}
+
 export function listPapers(articleDir: string, key?: Buffer): PaperSummary[] {
   return [...paperDirs(articleDir)].map(([id, dir]) => ({
     id,
     ...paperTitles(dir, key),
     termCount: readRows(dir).length,
     pdf: { ja: pdfPath(dir, "ja") !== undefined, bilingual: pdfPath(dir, "bilingual") !== undefined },
+    ...paperDates(dir),
   }));
 }
 

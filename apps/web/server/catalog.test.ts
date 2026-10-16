@@ -6,7 +6,7 @@ import { writeStep } from "../../../src/durable/checkpoint.js";
 import { GlossaryDb } from "../../../src/terminology/db.js";
 import { renderGlossaryMd, type ResolvedRow } from "../../../src/terminology/glossary-io.js";
 import { TITLE_SEGMENT_ID } from "../../../src/tools/paper-title.js";
-import { globalTerms } from "./catalog.js";
+import { globalTerms, listPapers } from "./catalog.js";
 
 vi.mock("node:fs", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs")>();
@@ -96,5 +96,25 @@ describe("用語集の一覧（契約付録 §9）", () => {
     } finally {
       db.close();
     }
+  });
+});
+
+describe("論文の一覧の作成日と更新日（契約付録 §9）", () => {
+  it("更新日は glossary.md などと成果物 PDF の最も新しい更新日時、作成日より古ければ作成日", () => {
+    const { articleDir, paperDirs } = setup();
+    const [first, second] = paperDirs as [string, string];
+    const created = fs.statSync(first).birthtimeMs;
+    const later = new Date(Math.max(created, Date.now()) + 60_000);
+    const pdf = path.join(first, "2601.00001_a-study-ja.pdf");
+    fs.writeFileSync(pdf, "%PDF");
+    fs.utimesSync(pdf, later, later);
+    const old = new Date(0);
+    fs.utimesSync(path.join(second, "glossary.md"), old, old);
+    const papers = listPapers(articleDir, KEY);
+    const p1 = papers.find((p) => p.id === "2601.00001")!;
+    const p2 = papers.find((p) => p.id === "2601.00002")!;
+    expect(p1.updatedAt).toBe(later.toISOString());
+    expect(Date.parse(p2.updatedAt)).toBeGreaterThan(0);
+    expect(p2.updatedAt).toBe(p2.createdAt);
   });
 });

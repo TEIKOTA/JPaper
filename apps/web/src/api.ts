@@ -8,6 +8,8 @@ export interface PaperSummary {
   titleEn?: string;
   termCount: number;
   pdf: Record<PdfKind, boolean>;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export type DbStatus = "confirmed" | "confirmed-other" | "none";
