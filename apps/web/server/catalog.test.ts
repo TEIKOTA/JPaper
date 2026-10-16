@@ -104,7 +104,8 @@ describe("論文の一覧の作成日と更新日（契約付録 §9）", () => 
     const { articleDir, paperDirs } = setup();
     const [first, second] = paperDirs as [string, string];
     const created = fs.statSync(first).birthtimeMs;
-    const later = new Date(Math.max(created, Date.now()) + 60_000);
+    // ⚠ landmines.md
+    const later = new Date(Math.ceil((Math.max(created, Date.now()) + 60_000) / 1000) * 1000);
     const pdf = path.join(first, "2601.00001_a-study-ja.pdf");
     fs.writeFileSync(pdf, "%PDF");
     fs.utimesSync(pdf, later, later);
