@@ -85,6 +85,12 @@ describe("/jpaper skill（issue #424）", () => {
     expect(section).toContain("`/jpaper セットアップして`");
     expect(section).toContain("`$jpaper セットアップして`");
     expect(section).toContain("./.claude/skills/jpaper/SKILL.md");
-    expect(readme).toContain("(#coding-ai-から使う)");
+    const heading = /^### (Coding AI から使う.*)$/m.exec(readme)?.[1];
+    expect(heading).toBeDefined();
+    const slug = heading!
+      .toLowerCase()
+      .replace(/[^\p{L}\p{N}\s-]/gu, "")
+      .replace(/\s/g, "-");
+    expect(readme).toContain(`](#${slug})`);
   });
 });

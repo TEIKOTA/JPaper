@@ -42,7 +42,7 @@ agent-native の考え方と Flue の設計に沿って、次のように分け�
 
 ## セットアップ
 
-Claude Code か Codex を使っているなら、セットアップも下の「[Coding AI から使う](#coding-ai-から使う)」で任せられる。
+Claude Code か Codex を使っているなら、セットアップも下の「[Coding AI から使う](#coding-ai-から使うpc初心者おすすめ)」で任せられる。
 
 ### 使うのに要るもの
 
@@ -77,7 +77,7 @@ OpenRouter の API キーなどは、`.env.example` を `.env` に写して書�
 
 ## 使い方
 
-手軽なのは Coding AI。当リポジトリで起動して、セットアップや翻訳の旨を伝えるだけでよい。同じ翻訳は　Webアプリ や　CLI からも実行できる（下の「Webアプリ」「CLI」）。
+手軽なのは Coding AI。当リポジトリで起動して、セットアップや翻訳の旨を伝えるだけでよい。同じ翻訳は Webアプリ や CLI からも実行できる（下の「Webアプリ」「CLI」）。
 
 ### Coding AI から使う(PC初心者おすすめ)
 
