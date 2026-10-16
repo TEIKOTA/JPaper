@@ -111,7 +111,7 @@ const post = (body: unknown): RequestInit => ({
 });
 
 describe("用語集 Web API（契約付録 §9）", () => {
-  it("論文の一覧: 日本語タイトル・原題・ID・用語数・PDF の有無", async () => {
+  it("論文の一覧: 日本語タイトル・原題・ID・用語数・PDF の有無・作成日と更新日", async () => {
     const { json } = await setup();
     const { status, body } = await json("/api/papers");
     expect(status).toBe(200);
@@ -122,6 +122,8 @@ describe("用語集 Web API（契約付録 §9）", () => {
         titleEn: "A Study of the Rashomon Set",
         termCount: 3,
         pdf: { ja: true, bilingual: true },
+        createdAt: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/),
+        updatedAt: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/),
       },
       expect.objectContaining({ id: "2601.00002", titleJa: "ラショモンの集合の研究" }),
     ]);
