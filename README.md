@@ -171,7 +171,7 @@ LLM プロバイダは `LlmClient` の境界で差し替えられる。ローカ
 
 ## 開発ルール
 
-運用ガイドは [`AGENTS.md`](./AGENTS.md)（`CLAUDE.md` は symlink）。issue 駆動・PR 必須・日本語 Conventional Commits・ADR による決定の記録を、最初から lefthook とローカルの検査で機械的に強制している。
+issue や PR を出すときの手順と規約は [`CONTRIBUTING.md`](./CONTRIBUTING.md)。運用ガイドは [`AGENTS.md`](./AGENTS.md)（`CLAUDE.md` は symlink）。issue 駆動・PR 必須・日本語 Conventional Commits・ADR による決定の記録を、最初から lefthook とローカルの検査で機械的に強制している。
 
 検証はローカル script が正本（`bash tests/run-tests.sh` と `scripts/check-pr.sh`）。GitHub Actions（`.github/workflows/` の node-checks・pr-checks・self-test）は、同じ検査を Linux（self-test は macOS でも）でもう一度走らせる（[ADR](./docs/adr/20261014-enable-github-actions-on-public-repo.md)）。
 
