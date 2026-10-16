@@ -83,6 +83,7 @@
 | 2026-09-26 | [repo 内 producer による template provenance の採用](./20260926-adopt-repo-owned-template-provenance.md) | accepted |
 | 2026-09-26 | [二段 PR backlog policy の採用](./20260926-adopt-two-stage-pr-backlog.md) | accepted |
 | 2026-10-02 | [worktree の標準配置・終了記録・安全な回収の採用](./20261002-adopt-worktree-lifecycle-management.md) | accepted（管理機能の実装は後続） |
+| 2026-10-06 | [claude / codex プロバイダは論文 1 本ごとに CLI セッションを再利用する](./20261006-reuse-cli-sessions-per-paper.md) | rejected |
 | 2026-10-06 | [worktree 標準配置へのエージェント作業許可の採用](./20261006-allow-agent-access-to-worktree-root.md) | accepted |
 | 2026-10-06 | [横長の対訳 PDF（A4 縦 2 枚分・左=原文／右=和訳）を標準の出力にする](./20261006-bilingual-side-by-side-pdf.md) | accepted |
 | 2026-10-07 | [図表のキャプションは全プロバイダの翻訳指示で訳す](./20261007-translate-captions-in-all-prompt-profiles.md) | accepted |
