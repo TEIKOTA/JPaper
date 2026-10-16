@@ -33,7 +33,7 @@ issue と PR を歓迎します。この repo は、PR のタイトルなどの�
 - type は `feat` `fix` `docs` `style` `refactor` `perf` `test` `build` `ci` `chore` `revert` のどれか（正本は [`scripts/check-commit-msg.sh`](./scripts/check-commit-msg.sh)）
 - 説明に日本語（ASCII 以外の文字）が含まれている必要があります
 
-commit の件名も同じ形式にしてください。commit が 1 つだけの PR では、merge したときにその commit の件名が main に残ります。
+PR は squash merge し、main に残る commit の件名は PR のタイトルになります。個々の commit も同じ形式にすることを勧めますが、必須ではありません。
 
 ### PR の本文
 
