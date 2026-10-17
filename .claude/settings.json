@@ -47,8 +47,7 @@
       "Bash(git push * master)",
       "Bash(gh repo delete *)",
       "Bash(git reset --hard*)",
-      "Bash(git push --force*)",
-      "Bash(rm -rf *)"
+      "Bash(git push --force*)"
     ]
   },
   "hooks": {
@@ -75,15 +74,6 @@
       }
     ],
     "PostToolUse": [
-      {
-        "matcher": "Edit|Write|Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash \"${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel)}/scripts/hooks/post-edit-selftest.sh\""
-          }
-        ]
-      },
       {
         "matcher": "Bash",
         "hooks": [

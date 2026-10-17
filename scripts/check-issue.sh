@@ -112,7 +112,8 @@ section="$(printf '%s\n' "$visible_body" | awk '
     active = (count == 1)
     next
   }
-  active && /^#{1,2}[[:space:]]/ { active = 0 }
+  # 次の # / ## 見出しで節を閉じる（区間表現 {1,2} は mawk で使えない。#135）
+  active && /^##?[[:space:]]/ { active = 0 }
   active { print }
   END { if (count != 1) exit 1 }
 ')" && section_ok=1

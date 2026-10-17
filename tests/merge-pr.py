@@ -1,0 +1,482 @@
+#!/usr/bin/env python3
+"""scripts/merge-pr.sh（#159）の test。gh は fake（本物の PR を merge しない）、origin はローカルの bare repo。
+
+承認の写し・head・条件のどれかが欠ければ merge せず、揃えば fake の `gh pr merge` を --match-head-commit 付きで 1 回だけ呼び、
+その前に判定表のコメントを残す。
+
+--mutation は保護を 1 つ外した script をコピーして作り、対応する --case が red になることを示す。
+実装ファイルは変更しない。注入先が 1 か所に決まらなければ exit 3（保護の喪失の red = exit 1 と区別する）。
+"""
+import argparse
+import json
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+import tempfile
+import unittest
+
+sys.dont_write_bytecode = True
+ROOT = Path(__file__).resolve().parents[1]
+SCRIPT = ROOT / "scripts/merge-pr.sh"
+
+MUTATIONS = {
+    "state": [('[[ "$STATE" == "OPEN" && "$DRAFT" == "false" ]]', "true")],
+    "headmatch": [('[[ "$LIVE_HEAD" == "$HEAD_SHA" ]]', "true")],
+    "base": [('[[ "$BASE" == "main" ]]', "true")],
+    "mergeable": [('[[ "$MERGEABLE" == "MERGEABLE" && "$STATE_STATUS" == "CLEAN" ]]', "true")],
+    "retryunknown": [('UNKNOWN_RETRIES="${MERGE_PR_UNKNOWN_RETRIES:-5}"', "UNKNOWN_RETRIES=0")],
+    "mergetree": [(' \\\n   && git merge-tree --write-tree "refs/merge-pr/$PR_NUM/base" "refs/merge-pr/$PR_NUM/head" >/dev/null 2>&1; then', "; then")],
+    "fetchhead": [(' \\\n   && [[ "$(git rev-parse "refs/merge-pr/$PR_NUM/head")" == "$HEAD_SHA" ]]', "")],
+    "diffcheck": [('if [[ "$mt_ok" -eq 1 ]] && git diff --check', "if true || git diff --check")],
+    "checkpr": [('bash "$ROOT/check-pr.sh" "$PR_NUM"', "true")],
+    "threads": [('[[ "$unresolved" == "0" ]]', "true")],
+    "review": [('if comment_has "review: head $HEAD_SHA blocking=なし"; then', "if true; then")],
+    "selftest": [('if comment_has "self-test: head $HEAD_SHA bash=PASS /bin/bash=PASS"; then', "if true; then")],
+    "judge": [('if [[ -n "$value" ]]; then row root 申告', "if true; then row root 申告")],
+    "approval": [('if [[ -n "$approval" ]]; then row script PASS "merge の承認', 'if true; then row script PASS "merge の承認')],
+    "preapproval": [("if printf '%s\\n' \"$section\" | grep -qE '^- 条件:'; then", "if true; then")],
+    "perceptual": [('if [[ "$perceptual" == なし* ]]; then', "if true; then")],
+    "heading": [('inside = line.strip() == "## merge の事前承認"', "inside = True")],
+    "owner": [('if not owner or ((comment.get("author") or {}).get("login") or "").lower() != owner:', "if False:")],
+    "ownerempty": [('if not owner or ((comment.get("author")', 'if owner and ((comment.get("author")')],
+    "fullmatch": [("pattern.fullmatch(line.strip())", "pattern.search(line.strip())")],
+    "preblocked": [('elif [[ -n "$pre_blocked" ]]; then', "elif false; then")],
+    "preunconditional": [('elif [[ -n "$pre_blocked" ]]; then', "fi; if [[ -n \"$pre_blocked\" ]]; then")],
+    "quote": [("not need_quote or any(re.match", "True or any(re.match")],
+    "cphead": [('comment_has "merge 承認: head $HEAD_SHA" quote', 'comment_has "merge 承認: head [0-9a-f]{40}" quote')],
+    "dryrun": [('if [[ "$DRY_RUN" -eq 1 ]]; then echo', 'if false; then echo')],
+    "failstop": [('if [[ "$FAILS" -gt 0 ]]; then exit 1; fi', "if false; then exit 1; fi")],
+    "matchhead": [('--squash --match-head-commit "$HEAD_SHA"', "--squash")],
+    "comment": [('gh pr comment "$PR_NUM" ${REPO_ARGS[@]+"${REPO_ARGS[@]}"} --body-file "$body_file"', "true")],
+}
+CASES = {
+    "state": "test_closed_or_draft_pr_is_not_merged",
+    "headmatch": "test_head_mismatch_is_not_merged",
+    "base": "test_non_main_base_is_not_merged",
+    "mergeable": "test_unmergeable_is_not_merged",
+    "retryunknown": "test_unknown_mergeable_is_reread_until_settled",
+    "mergetree": "test_merge_tree_conflict_is_not_merged",
+    "fetchhead": "test_pull_ref_behind_live_head_is_not_merged",
+    "diffcheck": "test_whitespace_error_is_not_merged",
+    "checkpr": "test_check_pr_failure_is_not_merged",
+    "threads": "test_unresolved_threads_are_not_merged",
+    "review": "test_missing_or_stale_review_record_is_not_merged",
+    "selftest": "test_missing_or_stale_selftest_record_is_not_merged",
+    "judge": "test_missing_judge_is_not_merged",
+    "approval": "test_no_approval_is_not_merged",
+    "preapproval": "test_no_approval_is_not_merged",
+    "perceptual": "test_pre_approval_needs_no_perceptual_external",
+    "heading": "test_other_issue_section_is_not_pre_approval",
+    "owner": "test_records_from_non_owner_are_not_counted",
+    "ownerempty": "test_unobtainable_owner_is_not_merged",
+    "fullmatch": "test_record_lines_must_match_exactly",
+    "preblocked": "test_pre_approval_needs_no_perceptual_external",
+    "preunconditional": "test_checkpoint_approval_skips_perceptual_judge",
+    "quote": "test_checkpoint_approval_needs_quote_and_head",
+    "cphead": "test_checkpoint_approval_needs_quote_and_head",
+    "dryrun": "test_dry_run_changes_nothing",
+    "failstop": "test_no_approval_is_not_merged",
+    "matchhead": "test_approved_pr_is_merged_once_after_comment",
+    "comment": "test_approved_pr_is_merged_once_after_comment",
+}
+parser = argparse.ArgumentParser()
+parser.add_argument("--mutation", choices=sorted(MUTATIONS))
+parser.add_argument("--case", choices=sorted(CASES))
+arguments = parser.parse_args()
+
+WORK = Path(tempfile.mkdtemp(prefix="merge-pr-"))
+shutil.copytree(ROOT / "scripts", WORK / "scripts", ignore=shutil.ignore_patterns("__pycache__"))
+text = SCRIPT.read_text()
+if arguments.mutation:
+    for needle, replacement in MUTATIONS[arguments.mutation]:
+        if text.count(needle) != 1:
+            print("regression injection target changed: %r" % needle[:60], file=sys.stderr)
+            sys.exit(3)
+        text = text.replace(needle, replacement)
+(WORK / "scripts/merge-pr.sh").write_text(text)
+
+FAKE_GH = r'''#!/usr/bin/env python3
+import json, os, sys
+state = os.environ["FAKE_DIR"]
+args = sys.argv[1:]
+with open(state + "/log", "a") as log:
+    log.write(" ".join(args) + "\n")
+def load(name):
+    with open(state + "/" + name) as handle:
+        return json.load(handle)
+if args[:2] == ["pr", "view"]:
+    pr = load("pr.json")
+    if "mergeable" in args[args.index("--json") + 1] and os.path.exists(state + "/unknown-count"):
+        remaining = int(open(state + "/unknown-count").read())
+        if remaining > 0:
+            open(state + "/unknown-count", "w").write(str(remaining - 1))
+            pr = {**pr, "mergeable": "UNKNOWN", "mergeStateStatus": "UNKNOWN"}
+    fields = args[args.index("--json") + 1].split(",")
+    if "--jq" in args:
+        print(pr[args[args.index("--jq") + 1].lstrip(".")])
+    else:
+        print(json.dumps({field: pr[field] for field in fields}))
+elif args[:2] == ["issue", "view"]:
+    print(json.dumps({"body": load("issue-%s.json" % args[2])["body"]}))
+elif args[:2] == ["repo", "view"]:
+    if os.path.exists(state + "/repo-fail"):
+        sys.exit(1)
+    if os.path.exists(state + "/repo-garbage"):
+        print("これは JSON ではない")
+        sys.exit(0)
+    print(json.dumps({"nameWithOwner": "o/r"}))
+elif args[:2] == ["api", "graphql"]:
+    if os.path.exists(state + "/threads-fail"):
+        sys.exit(1)
+    print(json.dumps(load("threads.json")))
+elif args[:1] == ["api"]:
+    print("issue")
+elif args[:2] == ["pr", "comment"]:
+    with open(state + "/comment.md", "w") as out:
+        out.write(open(args[args.index("--body-file") + 1]).read())
+'''
+
+
+def git(cwd, *command):
+    subprocess.run(["git", *command], cwd=cwd, check=True, capture_output=True,
+                   env={**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@e", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@e"})
+
+
+def rev(cwd, ref):
+    return subprocess.run(["git", "rev-parse", ref], cwd=cwd, check=True, capture_output=True, text=True).stdout.strip()
+
+
+class Fixture:
+    """origin（bare）・clone・fake gh の状態 dir。conflict=True なら head が main と衝突する。"""
+
+    def __init__(self, conflict=False, trailing_space=False):
+        self.dir = Path(tempfile.mkdtemp(dir=WORK))
+        origin, self.clone, self.state, bin_dir = (self.dir / name for name in ("origin.git", "clone", "state", "bin"))
+        for path in (self.state, bin_dir):
+            path.mkdir()
+        git(self.dir, "init", "-q", "--bare", "-b", "main", str(origin))
+        git(self.dir, "clone", "-q", str(origin), str(self.clone))
+        git(self.clone, "checkout", "-q", "-b", "main")
+        (self.clone / "a.txt").write_text("base\n")
+        git(self.clone, "add", "."); git(self.clone, "commit", "-q", "-m", "base"); git(self.clone, "push", "-q", "origin", "main")
+        git(self.clone, "checkout", "-q", "-b", "feat")
+        (self.clone / ("a.txt" if conflict else "b.txt")).write_text("feature \n" if trailing_space else "feature\n")
+        git(self.clone, "add", "."); git(self.clone, "commit", "-q", "-m", "feat")
+        self.head = rev(self.clone, "HEAD")
+        git(self.clone, "push", "-q", "origin", "feat:refs/pull/7/head")
+        git(self.clone, "checkout", "-q", "main")
+        if conflict:
+            (self.clone / "a.txt").write_text("main side\n")
+            git(self.clone, "commit", "-q", "-am", "main side"); git(self.clone, "push", "-q", "origin", "main")
+        self.base = rev(self.clone, "main")
+        (bin_dir / "gh").write_text(FAKE_GH)
+        (bin_dir / "gh").chmod(0o755)
+        self.bin = bin_dir
+        self.pr = {
+            "number": 7, "state": "OPEN", "isDraft": False, "title": "feat(x): テスト", "body": "Closes #5\n",
+            "headRefOid": self.head, "baseRefName": "main", "baseRefOid": self.base, "mergeable": "MERGEABLE",
+            "mergeStateStatus": "CLEAN",
+            "comments": [self.comment(f"review: head {self.head} blocking=なし"), self.comment(f"self-test: head {self.head} bash=PASS /bin/bash=PASS")],
+        }
+        self.issue = "## Problem\nx\n\n## merge の事前承認\n\n- 2026-10-16 ユーザーが「事前承認」を選んだ\n- 条件: 別 context の独立レビュー / 退行注入\n- 条件から外れたら merge しない\n\n## Risks\nx\n"
+        self.threads = {"data": {"repository": {"pullRequest": {"reviewThreads": {"pageInfo": {"hasNextPage": False}, "nodes": [{"isResolved": True}]}}}}}
+        self.judges = ["scope=範囲内", "injection=対象外（docs のみ）", "no-perceptual-external=なし"]
+
+    @staticmethod
+    def comment(body, author="o"):
+        return {"author": {"login": author}, "body": body, "createdAt": "2026-10-16T00:00:00Z"}
+
+    def run(self, head=None, extra=(), pr_number="7", judges=None):
+        (self.state / "pr.json").write_text(json.dumps(self.pr))
+        (self.state / "issue-5.json").write_text(json.dumps({"body": self.issue}))
+        (self.state / "threads.json").write_text(json.dumps(self.threads))
+        command = ["bash", str(WORK / "scripts/merge-pr.sh"), pr_number, "--head", head or self.head, *extra]
+        for judge in (self.judges if judges is None else judges):
+            command += ["--judge", judge]
+        env = {**os.environ, "PATH": f"{self.bin}:{os.environ['PATH']}", "FAKE_DIR": str(self.state), "PROJECT_TEMPLATE_ALLOW_TMP_WORKTREE": "1", "MERGE_PR_UNKNOWN_WAIT": "0"}
+        done = subprocess.run(command, cwd=self.clone, env=env, text=True, errors="replace", capture_output=True, check=False)
+        log = (self.state / "log").read_text().splitlines() if (self.state / "log").exists() else []
+        self.done, self.log = done, log
+        return done
+
+    def merges(self):
+        return [line for line in self.log if line.startswith("pr merge")]
+
+    def comments(self):
+        return [line for line in self.log if line.startswith("pr comment")]
+
+
+class MergePr(unittest.TestCase):
+    def assert_not_merged(self, fixture, code=1, comment=False):
+        self.assertEqual(fixture.done.returncode, code, fixture.done.stdout + fixture.done.stderr)
+        self.assertEqual(fixture.merges(), [], "merge してはいけない")
+        if not comment:
+            self.assertEqual(fixture.comments(), [], "失敗した判定表はコメントしない")
+
+    def test_approved_pr_is_merged_once_after_comment(self):
+        fixture = Fixture()
+        done = fixture.run()
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertEqual(fixture.merges(), [f"pr merge 7 --squash --match-head-commit {fixture.head}"])
+        self.assertEqual(len(fixture.comments()), 1)
+        self.assertLess(fixture.log.index(fixture.comments()[0]), fixture.log.index(fixture.merges()[0]), "判定表のコメントが先")
+        table = (fixture.state / "comment.md").read_text()
+        for needle in ("## merge 判定", fixture.head, "| 条件 | 確認者 | 結果 | 詳細 |", "事前承認（issue #5", "root | 申告", "merge する"):
+            self.assertIn(needle, table)
+        self.assertNotIn("FAIL", table)
+
+    def test_repo_option_is_passed_to_gh(self):
+        fixture = Fixture()
+        fixture.run(extra=["--repo", "o/r"])
+        self.assertEqual(fixture.done.returncode, 0, fixture.done.stdout + fixture.done.stderr)
+        self.assertEqual(fixture.merges(), [f"pr merge 7 --repo o/r --squash --match-head-commit {fixture.head}"])
+
+    def test_no_approval_is_not_merged(self):
+        fixture = Fixture()
+        fixture.issue = "## Problem\nx\n"
+        fixture.run()
+        self.assert_not_merged(fixture)
+        self.assertIn("merge の承認の写しが記録されている", fixture.done.stdout)
+        self.assertIn("FAIL", fixture.done.stdout)
+
+    def test_other_issue_section_is_not_pre_approval(self):
+        # 「merge の承認」節（事前承認の対象外とする記述）は事前承認でない
+        fixture = Fixture()
+        fixture.issue = "## merge の承認\n\n- 本 issue の PR は事前承認の対象外とし、区切りで確認する\n- 条件: 区切りで見る\n"
+        fixture.run()
+        self.assert_not_merged(fixture)
+
+    def test_checkpoint_approval_merges_without_pre_approval(self):
+        fixture = Fixture()
+        fixture.issue = "## Problem\nx\n"
+        fixture.pr["comments"].append(fixture.comment(f"区切りの承認\n\nmerge 承認: head {fixture.head}\n> OK、merge していい"))
+        fixture.run(judges=["scope=範囲内", "injection=対象外"])
+        self.assertEqual(fixture.done.returncode, 0, fixture.done.stdout + fixture.done.stderr)
+        self.assertEqual(len(fixture.merges()), 1)
+        self.assertIn("区切りでの承認", fixture.done.stdout)
+
+    def test_checkpoint_approval_needs_quote_and_head(self):
+        for body in (f"merge 承認: head {'0' * 40}\n> OK", f"merge 承認: head {'a' * 40}\n> OK"):
+            fixture = Fixture()
+            fixture.issue = "## Problem\nx\n"
+            fixture.pr["comments"].append(fixture.comment(body))
+            fixture.run()
+            self.assert_not_merged(fixture)
+        fixture = Fixture()
+        fixture.issue = "## Problem\nx\n"
+        fixture.pr["comments"].append(fixture.comment(f"merge 承認: head {fixture.head}"))
+        fixture.run()
+        self.assert_not_merged(fixture)
+
+    def test_checkpoint_approval_skips_perceptual_judge(self):
+        # 事前承認の節がある issue でも、区切りの承認があれば no-perceptual-external は求めない（知覚の成果物の PR を区切りで承認できる）
+        fixture = Fixture()
+        fixture.pr["comments"].append(fixture.comment(f"merge 承認: head {fixture.head}\n> 見た。merge していい"))
+        fixture.run(judges=["scope=範囲内", "injection=対象外", "no-perceptual-external=あり（PDF）"])
+        self.assertEqual(fixture.done.returncode, 0, fixture.done.stdout + fixture.done.stderr)
+        self.assertEqual(len(fixture.merges()), 1)
+        self.assertNotIn("FAIL", fixture.done.stdout)
+
+    def test_records_from_non_owner_are_not_counted(self):
+        for kind in ("review", "self-test", "approval"):
+            fixture = Fixture()
+            fixture.issue = "## Problem\nx\n"
+            records = {
+                "review": f"review: head {fixture.head} blocking=なし",
+                "self-test": f"self-test: head {fixture.head} bash=PASS /bin/bash=PASS",
+                "approval": f"merge 承認: head {fixture.head}\n> OK",
+            }
+            fixture.pr["comments"] = [fixture.comment(body) for key, body in records.items() if key != kind]
+            fixture.pr["comments"].append(fixture.comment(records[kind], author="mallory"))
+            fixture.run()
+            self.assert_not_merged(fixture)
+        # owner の大文字小文字は区別しない
+        fixture = Fixture()
+        fixture.pr["comments"] = [dict(comment, author={"login": "O"}) for comment in fixture.pr["comments"]]
+        fixture.run()
+        self.assertEqual(fixture.done.returncode, 0, fixture.done.stdout + fixture.done.stderr)
+
+    def test_unobtainable_owner_is_not_merged(self):
+        # owner が取れない（gh の失敗・JSON でない出力）ときは、どの記録も数えず、FAIL の行を出して merge しない
+        for marker in ("repo-fail", "repo-garbage"):
+            fixture = Fixture()
+            (fixture.state / marker).write_text("")
+            fixture.run()
+            self.assert_not_merged(fixture)
+            self.assertIn("FAIL", fixture.done.stdout)
+            self.assertIn("別 context の独立レビューが head に対して blocking なし | script | FAIL", fixture.done.stdout)
+
+    def test_record_lines_must_match_exactly(self):
+        for kind, text in (
+            ("review", "review: head {head} blocking=なし"),
+            ("self-test", "self-test: head {head} bash=PASS /bin/bash=PASS"),
+        ):
+            for variant in ("{line} だと思う", "> {line}", "確認: {line}", "{line}\u3000と、後ろに文が続く"):
+                fixture = Fixture()
+                line = text.format(head=fixture.head)
+                fixture.pr["comments"] = [c for c in fixture.pr["comments"] if not c["body"].startswith(kind + ":")]
+                fixture.pr["comments"].append(fixture.comment(variant.format(line=line)))
+                fixture.run()
+                self.assert_not_merged(fixture)
+        # 区切りの承認の行も同じ
+        for variant in ("{line} OK", "確認 {line}"):
+            fixture = Fixture()
+            fixture.issue = "## Problem\nx\n"
+            fixture.pr["comments"].append(fixture.comment(variant.format(line=f"merge 承認: head {fixture.head}") + "\n> OK"))
+            fixture.run()
+            self.assert_not_merged(fixture)
+
+    def test_pre_approval_needs_no_perceptual_external(self):
+        for judges in (["scope=a", "injection=b"], ["scope=a", "injection=b", "no-perceptual-external=あり（PDF）"]):
+            fixture = Fixture()
+            fixture.run(judges=judges)
+            self.assert_not_merged(fixture)
+            self.assertIn("事前承認は知覚の成果物・外部影響を含まない PR に使えない", fixture.done.stdout)
+
+    def test_head_mismatch_is_not_merged(self):
+        fixture = Fixture()
+        fixture.run(head="b" * 40)
+        self.assert_not_merged(fixture)
+        # 承認・記録が古い head に結ばれたまま、head が進んだ場合
+        fixture = Fixture()
+        fixture.pr["headRefOid"] = "c" * 40
+        fixture.run()
+        self.assert_not_merged(fixture)
+
+    def test_pull_ref_behind_live_head_is_not_merged(self):
+        fixture = Fixture()
+        fixture.pr["headRefOid"] = fixture.head  # gh の head は一致しているが、取り直した pull ref が古い
+        git(fixture.clone, "checkout", "-q", "-b", "other")
+        (fixture.clone / "c.txt").write_text("x\n")
+        git(fixture.clone, "add", "."); git(fixture.clone, "commit", "-q", "-m", "c")
+        git(fixture.clone, "push", "-q", "-f", "origin", "other:refs/pull/7/head")
+        fixture.run()
+        self.assert_not_merged(fixture)
+
+    def test_closed_or_draft_pr_is_not_merged(self):
+        for change in ({"state": "MERGED"}, {"state": "CLOSED"}, {"isDraft": True}):
+            fixture = Fixture()
+            fixture.pr.update(change)
+            fixture.run()
+            self.assert_not_merged(fixture)
+
+    def test_non_main_base_is_not_merged(self):
+        fixture = Fixture()
+        fixture.pr["baseRefName"] = "feat/parent"
+        git(fixture.clone, "push", "-q", "origin", "main:refs/heads/feat/parent")  # base の取得・merge-tree 自体は通る状態にする
+        fixture.run()
+        self.assert_not_merged(fixture)
+
+    def test_unmergeable_is_not_merged(self):
+        for change in ({"mergeable": "CONFLICTING"}, {"mergeable": "UNKNOWN"}, {"mergeStateStatus": "BLOCKED"}, {"mergeStateStatus": "BEHIND"}):
+            fixture = Fixture()
+            fixture.pr.update(change)
+            fixture.run()
+            self.assert_not_merged(fixture)
+
+    def views(self, fixture):
+        return [line for line in fixture.log if line.startswith("pr view") and "mergeable" in line]
+
+    def test_unknown_mergeable_is_reread_until_settled(self):
+        fixture = Fixture()
+        (fixture.state / "unknown-count").write_text("1")
+        fixture.run()
+        self.assertEqual(fixture.done.returncode, 0, fixture.done.stdout + fixture.done.stderr)
+        self.assertEqual(len(fixture.merges()), 1)
+        self.assertEqual(len(self.views(fixture)), 2, "UNKNOWN の 1 回目の後に 1 回読み直す")
+
+    def test_unknown_forever_is_not_merged_and_says_computing(self):
+        fixture = Fixture()
+        (fixture.state / "unknown-count").write_text("99")
+        fixture.run()
+        self.assert_not_merged(fixture)
+        self.assertEqual(len(self.views(fixture)), 6, "最初の 1 回 + 読み直し 5 回")
+        self.assertIn("GitHub が計算中", fixture.done.stdout + fixture.done.stderr)
+
+    def test_settled_mergeable_is_not_reread(self):
+        fixture = Fixture()
+        fixture.run()
+        self.assertEqual(len(self.views(fixture)), 1)
+
+    def test_merge_tree_conflict_is_not_merged(self):
+        fixture = Fixture(conflict=True)
+        fixture.run()
+        self.assert_not_merged(fixture)
+        self.assertIn("merge-tree に衝突が無い", fixture.done.stdout)
+
+    def test_whitespace_error_is_not_merged(self):
+        fixture = Fixture(trailing_space=True)
+        fixture.run()
+        self.assert_not_merged(fixture)
+        self.assertIn("git diff --check", fixture.done.stdout)
+
+    def test_check_pr_failure_is_not_merged(self):
+        fixture = Fixture()
+        fixture.pr["title"] = "タイトルが規約に合わない"
+        fixture.run()
+        self.assert_not_merged(fixture)
+
+    def test_unresolved_threads_are_not_merged(self):
+        fixture = Fixture()
+        fixture.threads["data"]["repository"]["pullRequest"]["reviewThreads"]["nodes"].append({"isResolved": False})
+        fixture.run()
+        self.assert_not_merged(fixture)
+        fixture = Fixture()
+        fixture.threads["data"]["repository"]["pullRequest"]["reviewThreads"]["pageInfo"]["hasNextPage"] = True
+        fixture.run()
+        self.assert_not_merged(fixture)
+        fixture = Fixture()
+        (fixture.state / "threads-fail").write_text("")
+        fixture.run()
+        self.assert_not_merged(fixture)
+
+    def test_missing_or_stale_review_record_is_not_merged(self):
+        for body in (None, f"review: head {'d' * 40} blocking=なし", f"review: head {{head}} blocking=あり"):
+            fixture = Fixture()
+            fixture.pr["comments"] = [c for c in fixture.pr["comments"] if not c["body"].startswith("review:")]
+            if body:
+                fixture.pr["comments"].append(fixture.comment(body.replace("{head}", fixture.head)))
+            fixture.run()
+            self.assert_not_merged(fixture)
+
+    def test_missing_or_stale_selftest_record_is_not_merged(self):
+        for body in (None, f"self-test: head {'d' * 40} bash=PASS /bin/bash=PASS", "self-test: head {head} bash=PASS /bin/bash=FAIL"):
+            fixture = Fixture()
+            fixture.pr["comments"] = [c for c in fixture.pr["comments"] if not c["body"].startswith("self-test:")]
+            if body:
+                fixture.pr["comments"].append(fixture.comment(body.replace("{head}", fixture.head)))
+            fixture.run()
+            self.assert_not_merged(fixture)
+
+    def test_missing_judge_is_not_merged(self):
+        for judges in (["injection=対象外", "no-perceptual-external=なし"], ["scope=範囲内", "no-perceptual-external=なし"],
+                       ["scope=", "injection=x", "no-perceptual-external=なし"]):
+            fixture = Fixture()
+            fixture.run(judges=judges)
+            self.assert_not_merged(fixture)
+
+    def test_dry_run_changes_nothing(self):
+        fixture = Fixture()
+        fixture.run(extra=["--dry-run"])
+        self.assertEqual(fixture.done.returncode, 0)
+        self.assertEqual((fixture.merges(), fixture.comments()), ([], []))
+        self.assertIn("merge する", fixture.done.stdout)
+
+    def test_arguments_are_validated(self):
+        fixture = Fixture()
+        fixture.run(pr_number="abc")
+        self.assert_not_merged(fixture, code=2)
+        fixture.run(head="short")
+        self.assert_not_merged(fixture, code=2)
+
+
+if __name__ == "__main__":
+    selected = unittest.TestSuite()
+    if arguments.case:
+        selected.addTest(MergePr(CASES[arguments.case]))
+    else:
+        selected.addTests(unittest.defaultTestLoader.loadTestsFromTestCase(MergePr))
+    result = unittest.TextTestRunner(verbosity=0, stream=sys.stderr).run(selected)
+    sys.exit(0 if result.wasSuccessful() else 1)
