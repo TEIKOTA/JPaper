@@ -2,7 +2,13 @@
 
 ## Status
 
-accepted
+superseded（後継 ADR = [`20261014-remove-worktree-lifecycle-management.md`](./20261014-remove-worktree-lifecycle-management.md)）
+
+2026-10-14 supersede: worktree 管理の撤去に伴い、標準配置・終了記録・安全な回収の全条項を置き換える（#139）。以下の過去の記録は変えない。
+
+2026-10-08 部分 supersede: 置換された条項 =「通常の worktree はユーザーが対象を承認した後に回収する」の root 自身が作った worktree への適用 / 存続する条項 = それ以外の対象承認・子回収の例外・安全条件・配置 / 後継 ADR = [`20261008-allow-root-owned-worktree-reclaim-after-pr.md`](./20261008-allow-root-owned-worktree-reclaim-after-pr.md)。
+
+2026-10-08 部分 supersede: 置換された条項 = 新しく始める委譲・並行作業の作業場所を worktree で分け、capability と承認 JSON で回収すること / 存続する条項 = 既存の worktree の管理・回収と安全条件・配置 / 後継 ADR = [`20261008-adopt-container-isolated-agent-sessions.md`](./20261008-adopt-container-isolated-agent-sessions.md)。
 
 2026-10-02、ユーザーが `grill-me` の認識合わせサマリ（補完案を含む）に明示的に合意した。
 本 ADR は方針の採択を記録する。管理コマンド・hook・手順の実装と既存分の棚卸しは [issue #105](https://github.com/TEIKOTA/project-template/issues/105) の後続作業であり、本 ADR の追加だけで適用済みとは扱わない。

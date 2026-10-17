@@ -7,13 +7,25 @@ commit-msg:
       run: bash scripts/check-commit-msg.sh {1}
 
 pre-push:
+  # lefthook は pre-push で push するファイル（HEAD と push 先の差）が空だと、ファイルの置換（{files} 等）を
+  # 含まない command を「no matching push files」で skip する。checkout 中でない branch を push すると
+  # （owner が子の成果を push する流れ）差が空になり、全 command が飛ぶ（#177）。
+  # そこで hook 全体のファイル一覧を固定の 1 件（この設定ファイル）にし、各 run の先頭の環境変数（PREPUSH_FILES={files}。script は読まない）に {files} を
+  # 渡して「ファイルを使う command」と見せ、push の中身によらず必ず実行させる。
+  files: echo lefthook.yml
   commands:
     check-branch-name:
       # ブランチ名が <type>/<issue番号>-<slug>（chore は issue なし可）かを検証する
-      run: bash scripts/check-branch-name.sh
+      run: PREPUSH_FILES={files} bash scripts/check-branch-name.sh
       # Git pre-push が渡す ref 一覧を検査スクリプトへ転送する。
       use_stdin: true
     check-branch-topology:
       # 実際に push する local branch を pre-push refspec から取り、live PR topology を検査する。
-      run: bash scripts/check-branch-topology.sh --stdin
+      run: PREPUSH_FILES={files} bash scripts/check-branch-topology.sh --stdin
+      use_stdin: true
+    selftest:
+      # push する commit が作業ツリー（HEAD）のときに self-test を全件流す（見つけ方と上書き（SELFTEST_CMD）は script のヘッダ）。
+      # checkout 中でない branch の push は流さず、その旨を表示して通す（検証は PR の前のホストでの全件と merge-pr.sh の記録）。
+      # macOS の Bash 3.2 での全件はここで流さず、PR の前に owner が流す。
+      run: PREPUSH_FILES={files} bash scripts/run-selftest.sh --stdin
       use_stdin: true

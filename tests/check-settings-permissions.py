@@ -30,8 +30,10 @@ EXPECTED_ASK = {
     "Bash(gh repo delete *)",
     "Bash(git reset --hard*)",
     "Bash(git push --force*)",
-    "Bash(rm -rf *)",
 }
+# rm -rf の確認は guard-bash.py が対象の path で判定する（#158）。静的な ask 規則を足すと、guard が通した一時領域の
+# 中の削除にも確認が出る
+FORBIDDEN_ASK_PREFIX = "Bash(rm "
 
 DESTRUCTIVE_BRANCH_COMMANDS = (
     "git branch -D topic",
@@ -99,6 +101,8 @@ def main() -> int:
 
     if set(ask) != EXPECTED_ASK or len(ask) != len(EXPECTED_ASK):
         errors.append("ask rules must match the fixed destructive-command set")
+    if any(rule.startswith(FORBIDDEN_ASK_PREFIX) for rule in ask):
+        errors.append("ask must not carry a static rm rule; guard-bash.py judges rm -rf by target path")
 
     if errors:
         for error in errors:

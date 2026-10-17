@@ -24,18 +24,15 @@ issue 起点タスクの入口。テンプレの既存部品を**順番どおり
    `grill-spec`）で認識を揃え、結論を issue 本文へ固定してから続行する。
    大きな実装は結論固定後に fresh session で始めるのがよい。
 4. **branch 作成**: `scripts/new-branch.sh <type> <issue番号> <slug>`
-   （配置・終了・回収の正本は [`worktree lifecycle`](../../../docs/process/worktree-lifecycle.md)。
-   既定は fetch 後の `origin/main` から分岐・命名検証込み。並列作業では
-   `--worktree <home配下のdir>` を指定できる）。
+   （既定は fetch 後の `origin/main` から分岐・命名検証込み。ホストの owner は main checkout で作業し、
+   並列作業・委譲は子のコンテナ（[`agent-containers`](../../../docs/process/agent-containers.md)）で行う）。
 5. **実装＋テスト**: issue の Done When を満たす変更とテストを書く。
    `scripts/` を変更したら `bash tests/run-tests.sh`（AGENTS.md コマンド）。
 6. **commit**: `git-commit` skill で message を生成し、ファイル経由（`-F`）で commit する。
 7. **PR**: 検証が終わってから `gh pr create`（body はファイル経由・`Closes #<番号>`）。
    作成後に `scripts/check-pr.sh` で自己検査する。
-
-8. **使用終了**: 修正ラウンド終端で結果・対象 SHA・根拠を worktree 外へ保存し、
-   `scripts/worktree.sh end` の明示終了記録と `candidates` の保護理由を報告する。
-   使用終了と回収は別。child は root の現物・session/job 終了確認へ返し、自分で回収しない。
+8. **merge**: issue 本文に「merge の事前承認」節があり条件を満たすときだけ、root が `scripts/merge-pr.sh` で merge する。
+   節が無い・条件から外れた PR は「承認待ち」にして区切りで聞く（正本: [ADR](../../../docs/adr/20261016-gate-merge-behind-script-and-recorded-approval.md)。`gh pr merge` は guard が拒否する）。
 
 ## 途中判断
 

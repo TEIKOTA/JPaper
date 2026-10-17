@@ -6,6 +6,8 @@ accepted
 
 部分 supersede: 新規 worktree の home 配下の配置条項を [`20261002-adopt-worktree-lifecycle-management.md`](./20261002-adopt-worktree-lifecycle-management.md) の標準配置・例外規約で置換する。一時領域への配置禁止、待機規律、重複確認・失敗ログの条項は存続する。新方式の実装は後続 issue #105 で行う。
 
+2026-10-14 部分 supersede: 置換された条項 = 新規 worktree の標準配置・例外規約（20261002 で置換済みの方式を含む）/ 存続する条項 = 一時領域への配置禁止、待機規律、重複確認・失敗ログ / 後継 ADR = [`20261014-remove-worktree-lifecycle-management.md`](./20261014-remove-worktree-lifecycle-management.md)。
+
 ## Situation
 
 本 template は AI コーディングエージェントとの協働を前提にした汎用の土台であり、生成されたプロジェクトでは複数の AI セッション（および人間）が並行して issue 起票・実装・レビューを行う。母体プロジェクト（Nowflo）での数週間の運用から、環境やワークフローに起因する失敗クラスとその対策が実測付きで蓄積された。

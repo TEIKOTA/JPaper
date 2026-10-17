@@ -8,11 +8,42 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # self-test は一時 directory に worktree を作る。グローバル git の一時領域 worktree guard（setup-user-hooks.sh --git）
 # を導入済みの環境でも通るよう明示的に許可し、guard 自体の検査だけ個別に外す。
 export PROJECT_TEMPLATE_ALLOW_TMP_WORKTREE=1
+# 子のコンテナ（AGENT_BOX=1 と /.dockerenv）では guard が外れる（#126）。self-test は guard 自体を検査するので、
+# ホストと同じく guard が効く状態で走らせる。外れる条件の検査は tests/agent-box.py が AGENT_BOX を明示して行う（#135）。
+unset AGENT_BOX
+# self-test の中から scripts/run-selftest.sh が全件を始めると再帰になる。入れ子を拒否する印（#161）。
+# run-selftest.sh 自体の検査は、この印を外した子 process（env -u）で行う。
+export PROJECT_TEMPLATE_SELFTEST_RUNNING=1
+# 一時 HOME の fixture でも commit できるよう、git の作者を環境変数で与える（子のコンテナには ~/.gitconfig の作者が無い。#135）。
+export GIT_AUTHOR_NAME=selftest GIT_AUTHOR_EMAIL=selftest@example.com
+export GIT_COMMITTER_NAME=selftest GIT_COMMITTER_EMAIL=selftest@example.com
 PASS=0
 FAIL=0
 . "$ROOT/tests/reporting.sh"
+# 子のコンテナ（Linux）に無い前提。無い環境では、該当する判定を skip_begin / skip_end で skip に数える（#135）。
+in_container() { [ -f /.dockerenv ]; }
+has_bash32() { /bin/bash -c '[ "${BASH_VERSINFO[0]}" -lt 4 ]'; }
+has_git_config_hooks() {
+  git -C "$ROOT" -c hook.selftest-probe.event=post-checkout -c hook.selftest-probe.command=true \
+    hook list post-checkout 2>/dev/null | grep -qx selftest-probe
+}
 
 # ---- helpers -----------------------------------------------------------
+
+# mutate_copy <src> <dst> <from> <to>: 退行注入。<from> が src にちょうど 1 か所なければ exit 3
+# （注入の失敗。保護が外れた結果の assertion の失敗 exit 1 と区別し、注入できないまま green に数えない）
+mutate_copy() {
+  python3 - "$@" <<'PY'
+import sys
+src, dst, old, new = sys.argv[1:]
+text = open(src).read()
+if text.count(old) != 1:
+    print("注入先が 1 か所でない: %r（%d 件）" % (old, text.count(old)), file=sys.stderr)
+    sys.exit(3)
+with open(dst, "w") as handle:
+    handle.write(text.replace(old, new))
+PY
+}
 
 # ---- contributor-facing contract (#93) --------------------------------
 
@@ -57,7 +88,38 @@ check_contributor_help() {
 }
 
 expect 0 "issue #93: contributor 構造契約" check_contributor_structure "$ROOT"
+
+# 検証の証跡は repo にコミットしない（#138）。docs/ は派生 repo へ写るので、証跡の置き場（*evidence* の dir）を拒否する。
+check_no_committed_evidence() {
+  local listed
+  listed="$(git -C "$1" ls-files -- docs)" || return 1  # git が失敗したら素通りさせない
+  ! printf '%s\n' "$listed" | grep -Eiq '(^|/)[^/]*evidence[^/]*/'
+}
+expect 0 "issue #138: docs/ に検証の証跡の dir をコミットしていない" check_no_committed_evidence "$ROOT"
+ev_fixture="$(mktemp -d)"
+git -C "$ev_fixture" init -q -b main
+mkdir -p "$ev_fixture/docs/process/Demo-Evidence"
+printf 'log\n' > "$ev_fixture/docs/process/Demo-Evidence/run.txt"
+git -C "$ev_fixture" add docs
+expect 1 "issue #138: docs/ 配下の *evidence* dir を大文字小文字によらず検出する（red）" check_no_committed_evidence "$ev_fixture"
+expect 1 "issue #138: git 管理外では検査を通さない" check_no_committed_evidence "$(dirname "$ev_fixture")/no-such-repo-$$"
+rm -rf "$ev_fixture"
 expect 0 "issue #93: top-level -h は clean stdout / exit 0" check_contributor_help "$ROOT"
+
+# macOS の bash は `$BASE（` を変数名 BASE\xef と読んで落ちる（Linux では通る）。変数の直後の非 ASCII を ${} で囲ませる（#159）
+expect 0 "issue #159: shell script に \$名前 の直後が非 ASCII の形が無い" python3 "$ROOT/tests/check-var-ascii.py" "$ROOT"
+va_fixture="$(mktemp -d)"
+mkdir -p "$va_fixture/scripts" "$va_fixture/tests"
+printf '# echo "\044BASE（コメント）"\necho "\044{BASE}（ok）"\n' > "$va_fixture/scripts/ok.sh"
+expect 0 "issue #159: コメントと \${} で囲んだ形は通す" python3 "$ROOT/tests/check-var-ascii.py" "$va_fixture"
+printf 'echo "base=\044BASE（x）"\n' > "$va_fixture/tests/bad.sh"
+expect 1 "issue #159: \$名前（ の形を検出する（red）" python3 "$ROOT/tests/check-var-ascii.py" "$va_fixture"
+# 退行注入: 検出の正規表現を外すと、わざと入れた例が通ってしまう（red）。注入の失敗は exit 3
+va_mutant="$va_fixture/mutant.py"
+mutate_copy "$ROOT/tests/check-var-ascii.py" "$va_mutant" '[^\x00-\x7F]")' 'NEVER")' || { echo "注入に失敗" >&2; }
+expect_code 1 "issue #159: 非 ASCII の検出を外すと bad 例を見逃す（red）" bash -c \
+  'python3 "$1" "$2" >/dev/null && exit 1 || exit 0' _ "$va_mutant" "$va_fixture"
+rm -rf "$va_fixture"
 
 prereq_fixture="$(mktemp -d)" || exit 1
 for fixture_path in AGENTS.md .gitignore .github docs; do
@@ -242,11 +304,9 @@ expect 0 "stdin: tag push は対象外" branch_stdin "refs/tags/v1 s1 refs/tags/
 nb_repo="$(mktemp -d)"
 nb_remote="$(mktemp -d)"
 nb_upstream="$(mktemp -d)"
-nb_home="$(mktemp -d "$ROOT/.test-new-branch-home.XXXXXX")"
-nb_tmp="$nb_repo/temporary"
-mkdir -p "$nb_tmp"
 git -C "$nb_repo" init -q -b main
 git -C "$nb_repo" -c user.email=t@example.com -c user.name=t commit -q --allow-empty -m init
+# 既定 branch を明示する（init.defaultBranch の既定は git の版で異なる。#135）
 git init -q --bare -b main "$nb_remote"
 git -C "$nb_repo" remote add origin "$nb_remote"
 git -C "$nb_repo" push -q -u origin main
@@ -254,8 +314,6 @@ git clone -q "$nb_remote" "$nb_upstream"
 git -C "$nb_upstream" -c user.email=t@example.com -c user.name=t commit -q --allow-empty -m upstream
 git -C "$nb_upstream" push -q origin main
 run_newbranch() { (cd "$nb_repo" && bash "$ROOT/scripts/new-branch.sh" "$@"); }
-run_newbranch_home() { (cd "$nb_repo" && HOME="$nb_home" bash "$ROOT/scripts/new-branch.sh" "$@"); }
-run_newbranch_tmpdir() { (cd "$nb_repo" && TMPDIR="$nb_tmp" bash "$ROOT/scripts/new-branch.sh" "$@"); }
 nb_backlog_log="$(mktemp)"
 nb_backlog_4=$'31|2026-09-01T00:00:00Z|feat/31-a|main|false\n32|2026-09-02T00:00:00Z|feat/32-b|main|false\n33|2026-09-03T00:00:00Z|feat/33-c|main|false\n34|2026-09-04T00:00:00Z|feat/34-d|main|false'
 nb_backlog_13="$(for n in {1..13}; do printf '%04d|2026-09-01T00:00:00Z|feat/%04d-a|main|false\n' "$n" "$n"; done)"
@@ -302,62 +360,11 @@ rc=0; grep -Fq "origin/main を取得できなかったため local main を使�
 report 0 "$rc" "new-branch: fetch 失敗時に warning を表示する"
 rm -f "$nb_fallback_log"
 git -C "$nb_repo" remote set-url origin "$nb_remote"
-nb_standard="$nb_home/worktrees/$(basename "$nb_repo")"
-expect 1 "new-branch: 標準外 home 配下も拒否" run_newbranch_home --worktree "$nb_home/feature-worktree" feat 55 nonstandard
-expect 0 "new-branch: --worktree は標準配置に作成" run_newbranch_home --worktree "$nb_standard/feature-worktree" feat 55 worktree
-rc=0; [ "$(git -C "$nb_standard/feature-worktree" branch --show-current)" = "feat/55-worktree" ] || rc=1
-report 0 "$rc" "new-branch: --worktree 作成先を checkout する"
-expect 1 "new-branch: /tmp 配下の --worktree を拒否" run_newbranch --worktree /tmp/new-branch-worktree feat 55 tmp-worktree
-rc=0; git -C "$nb_repo" show-ref --verify -q refs/heads/feat/55-tmp-worktree && rc=1
-report 0 "$rc" "new-branch: /tmp 拒否時に branch を作らない"
-expect 1 "new-branch: /private/tmp 配下の --worktree を拒否" run_newbranch --worktree /private/tmp/new-branch-worktree feat 55 private-tmp-worktree
-expect 1 "new-branch: TMPDIR 配下の --worktree を拒否" run_newbranch_tmpdir --worktree "$nb_tmp/new-branch-worktree" feat 55 tmpdir-worktree
-rc=0; git -C "$nb_repo" show-ref --verify -q refs/heads/feat/55-tmpdir-worktree && rc=1
-report 0 "$rc" "new-branch: TMPDIR 拒否時に branch を作らない"
-nb_link="$nb_home/tmp-link"
-nb_marker="$nb_repo/worktree-add-called"
-nb_fakebin="$nb_repo/fake-bin"
-nb_before="$nb_repo/worktree-before"
-nb_after="$nb_repo/worktree-after"
-mkdir "$nb_fakebin"
-ln -s /private/tmp "$nb_link"
-printf '%s\n' '#!/usr/bin/env bash' \
-  'if [ "$1" = worktree ] && [ "$2" = add ]; then' \
-  '  : > "$NB_WORKTREE_MARKER"' \
-  '  exit 99' \
-  'fi' \
-  'exec /usr/bin/git "$@"' > "$nb_fakebin/git"
-chmod +x "$nb_fakebin/git"
-git -C "$nb_repo" worktree list --porcelain > "$nb_before"
-expect 1 "new-branch: home 内 symlink 経由の /private/tmp を拒否" \
-  env HOME="$nb_home" NB_WORKTREE_MARKER="$nb_marker" PATH="$nb_fakebin:$PATH" \
-  bash -c 'cd "$1" && bash "$2" --worktree "$3/tmp-link/worktree" feat 55 symlink-tmp' \
-  _ "$nb_repo" "$ROOT/scripts/new-branch.sh" "$nb_home"
-rc=0; [ ! -e "$nb_marker" ] || rc=1
-report 0 "$rc" "new-branch: symlink 経由の拒否は git worktree add 前に行う"
-rc=0; git -C "$nb_repo" show-ref --verify -q refs/heads/feat/55-symlink-tmp && rc=1
-report 0 "$rc" "new-branch: symlink 経由の拒否時に branch を作らない"
-git -C "$nb_repo" worktree list --porcelain > "$nb_after"
-rc=0; cmp -s "$nb_before" "$nb_after" || rc=1
-report 0 "$rc" "new-branch: symlink 経由の拒否時に worktree list を変えない"
-nb_existing="$nb_home/existing-worktree"
-mkdir "$nb_existing"
-git -C "$nb_repo" worktree list --porcelain > "$nb_before"
-expect 1 "new-branch: 既存の空 directory を --worktree に使えない" \
-  run_newbranch_home --worktree "$nb_existing" feat 55 existing-path
-rc=0; [ -d "$nb_existing" ] && [ -z "$(ls -A "$nb_existing")" ] || rc=1
-report 0 "$rc" "new-branch: 既存の空 directory を変更しない"
-rc=0; git -C "$nb_repo" show-ref --verify -q refs/heads/feat/55-existing-path && rc=1
-report 0 "$rc" "new-branch: 既存 path 拒否時に branch を作らない"
-git -C "$nb_repo" worktree list --porcelain > "$nb_after"
-rc=0; cmp -s "$nb_before" "$nb_after" || rc=1
-report 0 "$rc" "new-branch: 既存 path 拒否時に worktree list を変えない"
-if git -C "$nb_repo" worktree list --porcelain | grep -Fqx "worktree $nb_existing"; then
-  git -C "$nb_repo" worktree remove --force "$nb_existing"
-fi
-git -C "$nb_repo" branch -D feat/55-existing-path >/dev/null 2>&1 || true
+expect 1 "new-branch: 撤去した --worktree は不明な引数として拒否" run_newbranch --worktree "$nb_repo/wt" feat 55 removed-worktree
+rc=0; git -C "$nb_repo" show-ref --verify -q refs/heads/feat/55-removed-worktree && rc=1
+report 0 "$rc" "new-branch: --worktree 拒否時に branch を作らない"
 rm -f "$nb_backlog_log"
-rm -rf "$nb_repo" "$nb_remote" "$nb_upstream" "$nb_home"
+rm -rf "$nb_repo" "$nb_remote" "$nb_upstream"
 
 # skill frontmatter の検査は scripts/check-skill-frontmatter.test.ts（vitest）が持つ（issue #416）。
 
@@ -686,6 +693,9 @@ rm -f "$wm_log"
 # ---- hooks/guard-bash.sh（PreToolUse hook）------------------------------
 
 HOOK_DRIVER="$ROOT/tests/run-hook.py"
+# 相対 path の rm -rf は作業 dir を基準に一時領域かを判定する（#158）。cwd を渡さないと hook の process の cwd（= $ROOT）が基準になり、
+# repo を一時領域（~/.trashable・/tmp 等）の下に置くと ask にならない。相対 path や repo の位置に判定が依る test には一時領域の外の実在 dir を渡す（#170）
+HOOK_OUTSIDE_TEMP_CWD=/usr
 run_hook_expect() { # run_hook_expect <return-code> <bash-command-string> [driver-options...]
   local return_code="$1" command="$2"
   shift 2
@@ -699,11 +709,100 @@ run_hook_ask() { # run_hook_ask <bash-command-string> [driver-options...]
 }
 
 expect 0 "hook: 通常コマンドは許可" run_hook_expect 0 "ls -la src"
-expect 0 "hook: 標準外 home 配下への worktree add は拒否" run_hook_expect 2 "git worktree add ~/repo-worktrees/wt feat/1-x"
-hook_common="$(git -C "$ROOT" rev-parse --path-format=absolute --git-common-dir)"
-hook_repo_name="$(basename "$(dirname "$hook_common")")"
-expect 0 "hook: 標準配置への worktree add は許可" run_hook_expect 0 "git worktree add ~/worktrees/$hook_repo_name/wt feat/1-x"
+expect 0 "hook: 標準外 home 配下への worktree add は拒否しない（標準配置の限定を撤去, #139）" run_hook_expect 0 "git worktree add ~/repo-worktrees/wt feat/1-x" --cwd "$HOOK_OUTSIDE_TEMP_CWD"
+expect 0 "hook: 標準配置への worktree add も許可" run_hook_expect 0 "git worktree add ~/worktrees/anyrepo/wt feat/1-x" --cwd "$HOOK_OUTSIDE_TEMP_CWD"
+expect 0 "hook: repo 外の任意の path への worktree add も拒否しない" run_hook_expect 0 "git worktree add ../sibling-wt feat/1-x" --cwd "$HOOK_OUTSIDE_TEMP_CWD"
 expect 0 "hook: /tmp への worktree add を exit 2 で拒否" run_hook_expect 2 "git worktree add /tmp/wt feat/1-x"
+# 書き方を変えた一時領域も拒否する（#139 の review B1。前方一致だけだと通っていた）
+for wt_cmd in "git worktree add //tmp/wt x" "git worktree add ~/../../../tmp/wt x" "git worktree add /./tmp/wt x" \
+  "git worktree add /private/var/folders/a/T/wt x" "cd /tmp && git worktree add wt x" "git -C /tmp worktree add wt x" \
+  'git worktree add $(mktemp -d) x' 'git worktree add `echo /tmp/wt` x' "cd - && git worktree add wt x"; do
+  expect 0 "hook: 一時領域への worktree add を書き方によらず拒否: $wt_cmd" run_hook_expect 2 "$wt_cmd"
+done
+expect 0 "hook: cwd 基準の ../../tmp も拒否" run_hook_expect 2 "git worktree add ../../tmp/wt x" --cwd /work
+expect 0 "hook: cd の後でも一時領域の外への相対 path は拒否しない" run_hook_expect 0 "cd ~/somewhere && git worktree add ../sib x"
+# #147: PR #145 のレビュー N1〜N4。書き方を変えると通った入力。判定できないものは拒否する側に倒す
+for wt_cmd in "cd /tmp; bash -c 'git worktree add wt x'; cd /work" \
+  "env -C /tmp git worktree add wt x" "env --chdir=/tmp git worktree add wt x" "env --chdir /tmp git worktree add wt x" \
+  "env --chd=/tmp git worktree add wt x" "env -S '-C /tmp git worktree add wt x'" "env -C /tmp bash -c 'git worktree add wt x'" \
+  "sudo -D /tmp git worktree add wt x" "sudo --chdir=/tmp git worktree add wt x" \
+  'x=/tmp; git -C $x worktree add wt x' 'for d in /tmp; do git -C $d worktree add wt x; done' \
+  'git -C `echo /tmp` worktree add wt x' 'git -C $(echo /tmp) worktree add wt x' 'git -C $(echo /tmp) worktree add wt x' "git -C /tm? worktree add wt x" "git -C '~+' worktree add wt x" \
+  "git worktree add --orphan br /tmp/wt" "git worktree add --orphan -b br /tmp/wt" "git worktree add -fb br ../../tmp/wt x" \
+  "git worktree add /TMP/wt x" "git worktree add /Private/Var/Folders/a/T/wt x" "git worktree add /tmp/../TMP/wt x" \
+  "git worktree add /t[m]p/wt x" "git worktree add /tm?/wt x" "git worktree add /{tmp,x}/wt x" "git worktree add ~+/wt x"; do
+  expect 0 "hook: 一時領域への worktree add の書き方のすり抜けを拒否: $wt_cmd" run_hook_expect 2 "$wt_cmd" --cwd /work
+done
+# 拒否しない対（一時領域の外への通常の追加、cd の無い相対 path、内側で完結する cd）
+for wt_cmd in "git worktree add ../sib x" "git worktree add /home/node/wt x" "git worktree add -b br ../wt origin/main" \
+  "git worktree add --orphan -b br ../wt" "git worktree add -fb br ../wt origin/main" "git worktree add /tmpfoo/wt x" \
+  "git worktree add /tmp-wt x" "git -C /work/sub worktree add ../x y" "env -C /work git worktree add /home/node/wt x" \
+  "env -u FOO git worktree add ../wt x" "sudo -u me git worktree add ../wt x" 'git -C "$PWD" worktree add /home/node/wt x' \
+  "bash -c 'cd /work/sub && git worktree add ../x y'" "cd /work; bash -c 'git worktree add /home/node/wt x'" \
+  'cd $X; git worktree add /home/node/wt origin/main'; do
+  expect 0 "hook: 一時領域の外への通常の worktree add は拒否しない: $wt_cmd" run_hook_expect 0 "$wt_cmd" --cwd /work
+done
+# #155 N-a: コマンド名の前（や git の option の間）のリダイレクトを読み飛ばす。他の検査（secret・削除の ask・polling）にも効く
+for wt_cmd in ">/dev/null git worktree add /tmp/wt x" "2>&1 git worktree add /tmp/wt x" "> /dev/null git worktree add /tmp/wt x" \
+  "&>/dev/null git worktree add /tmp/wt x" "</dev/null git worktree add /tmp/wt x" "2>/dev/null 1>&2 git worktree add /private/tmp/wt x" \
+  "cd /tmp; >/dev/null git worktree add wt x" "git >/dev/null worktree add /tmp/wt x" "git -C /tmp 2>&1 worktree add wt x" \
+  ">/dev/null sudo git worktree add /tmp/wt x" "x=1 >/dev/null git worktree add /tmp/wt x" "bash -c '>/dev/null git worktree add /tmp/wt x'" \
+  "git worktree add /tmp/wt x 2>&1" "git worktree add >/dev/null /tmp/wt x" ">&2 git worktree add /tmp/wt x"; do
+  expect 0 "hook: 先頭のリダイレクトがあっても一時領域の worktree add を拒否: $wt_cmd" run_hook_expect 2 "$wt_cmd" --cwd /work
+done
+for wt_cmd in ">/dev/null git worktree add /home/node/wt x" "2>&1 git worktree add ../wt x" "git -C /work 2>&1 worktree add ../wt x" \
+  "git worktree add ../wt x >/dev/null 2>&1" "bash -c '2>&1 git worktree add /home/node/wt x'"; do
+  expect 0 "hook: リダイレクトつきの通常の worktree add は拒否しない: $wt_cmd" run_hook_expect 0 "$wt_cmd" --cwd /work
+done
+expect 0 "hook: 先頭のリダイレクト越しの secret 読み取りを拒否" run_hook_expect 2 ">/dev/null cat .env"
+expect 0 "hook: < 先頭の secret 読み取りを拒否" run_hook_expect 2 "2>&1 cat ~/.ssh/id_rsa"
+expect 0 "hook: bash -c 内の先頭リダイレクト越しの secret 読み取りを拒否" run_hook_expect 2 "bash -c '>/dev/null cat .env'"
+expect 0 "hook: リダイレクトつきの .env.example は拒否しない" run_hook_expect 0 ">/dev/null cat .env.example"
+expect 0 "hook: 先頭のリダイレクト越しの rm -rf は ask" run_hook_ask "2>&1 rm -rf build/cache" --cwd "$HOOK_OUTSIDE_TEMP_CWD"
+expect 0 "hook: 先頭のリダイレクト越しの git worktree remove は ask" run_hook_ask ">/dev/null git worktree remove x"
+expect 0 "hook: 先頭のリダイレクト越しの git push --force は ask" run_hook_ask "2>&1 git push --force origin feat/1-x"
+expect 0 "hook: x >& git push --force（旧来の分割）は ask のまま" run_hook_ask "x >& git push --force"
+expect 0 "hook: 引用された -c の script（>/dev/null;…）はリダイレクトと取り違えず検査する" run_hook_expect 2 "bash -c '>/dev/null;cat .env'"
+expect 0 "hook: リダイレクトが先頭の polling loop を拒否" run_hook_expect 2 "while true; do >/dev/null sleep 5; done"
+# #156 B1: 引用された '>' 等は引数であり、リダイレクトとして次の語ごと除かない（除くと旧来の ask / deny が緩む）
+for wt_cmd in "git worktree add -b '>' /tmp/wt" "git worktree add --reason '>' /tmp/wt x" "git worktree add -b x '<' /tmp/wt" \
+  'git worktree add -b ">" /tmp/wt' 'git worktree add -b \> /tmp/wt'; do
+  expect 0 "hook: 引用された > を挟んでも一時領域の worktree add を拒否: $wt_cmd" run_hook_expect 2 "$wt_cmd" --cwd /work
+done
+for ask_cmd in "git push origin '>' --force" 'git push ">>" --force' "git push '&>' --force-with-lease" 'git push \> --force' \
+  "git reset '>' --hard" "git clean '>' -fd" "git branch '>' -D x"; do
+  expect 0 "hook: 引用された > を挟んでも ask のまま: $ask_cmd" run_hook_ask "$ask_cmd"
+done
+# #155 N-b: 間接実行は作成先を判定できないので、git worktree add を含む形に限って拒否する
+for wt_cmd in "echo x | xargs git worktree add /tmp/wt" "echo x | xargs git worktree add ../wt" "xargs -I{} git -C {} worktree add wt x" \
+  "env -C /tmp xargs git worktree add wt" "eval 'git worktree add /tmp/wt x'" "eval git worktree add /tmp/wt x" \
+  "bash <<<'git worktree add /tmp/wt x'" "echo 'git worktree add /tmp/wt x' | bash" "echo 'git worktree add /tmp/wt x' | sh -s" \
+  "cd /tmp && setsid git worktree add wt x" '$g worktree add /tmp/wt x' 'g worktree add /tmp/wt x' "alias g=git; g worktree add /tmp/wt x" \
+  "bash <<EOF
+cd /tmp
+git worktree add wt x
+EOF"; do
+  expect 0 "hook: 間接実行の git worktree add を拒否: $wt_cmd" run_hook_expect 2 "$wt_cmd" --cwd /work
+done
+for wt_cmd in "setsid git worktree add ../wt x" "eval 'echo hi'" "eval git worktree add ../wt x" "ls | xargs -n1 echo" "xargs cat" \
+  "bash scripts/x.sh" "bash scripts/x.sh && git worktree add ../wt y" "bash <<EOF
+echo hi
+EOF" "echo worktree add" "git worktree list" "grep worktree add docs/x.md" "git commit -m 'worktree add を直す'"; do
+  expect 0 "hook: 一般の xargs・eval・setsid・shell は拒否しない: $wt_cmd" run_hook_expect 0 "$wt_cmd" --cwd /work
+done
+expect 0 "hook: eval の中の secret 読み取りは拒否" run_hook_expect 2 "eval 'cat .env'"
+# #155 N-c: chroot 越し（意図の判断が要る）は判定できないものとして拒否する
+for wt_cmd in "chroot /tmp git worktree add wt x" "sudo -R /tmp git worktree add wt x" "sudo --chroot=/tmp git worktree add wt x" \
+  "sudo --chroot /tmp git worktree add wt x" "sudo -nR /tmp git worktree add wt x" "sudo -R /tmp git worktree add /wt x" \
+  "sudo --chroot=/tmp git worktree add /wt x" "chroot /tmp git worktree add /wt x"; do
+  expect 0 "hook: chroot 越しの git worktree add を拒否: $wt_cmd" run_hook_expect 2 "$wt_cmd" --cwd /work
+done
+expect 0 "hook: chroot を使わない sudo の worktree add は拒否しない" run_hook_expect 0 "sudo -n git worktree add ../wt x" --cwd /work
+# #155 N-d: /proc/self/cwd/../.. は normpath が先に畳むので別の場所に見える。判定できないものとして拒否する
+for wt_cmd in "git worktree add /proc/self/cwd/../../tmp/wt x" "git -C /proc/self/cwd/../../tmp worktree add wt x" "git worktree add //proc/self/root/tmp/wt x"; do
+  expect 0 "hook: /proc 経由の worktree add を拒否: $wt_cmd" run_hook_expect 2 "$wt_cmd" --cwd /work
+done
+expect 0 "hook: /proc を含まない path は拒否しない" run_hook_expect 0 "git worktree add /home/node/proc/wt x" --cwd /work
 expect 0 "hook: bash -c の内側の /tmp worktree add を拒否" run_hook_expect 2 "bash -c 'git worktree add /tmp/wt feat/1-x'"
 expect 0 "hook: bash -lc（結合フラグ）の内側も拒否" run_hook_expect 2 "bash -lc 'git worktree add /tmp/wt feat/1-x'"
 expect 0 "hook: zsh -lc の内側も拒否" run_hook_expect 2 "zsh -lc 'git worktree add /tmp/wt feat/1-x'"
@@ -714,6 +813,44 @@ expect 0 "hook: -euo pipefail -c の内側も拒否" run_hook_expect 2 "bash -eu
 expect 0 "hook: -co pipefail（c と o の結合）の内側も拒否" run_hook_expect 2 "bash -co pipefail 'git worktree add /tmp/wt feat/1-x'"
 expect 0 "hook: -c - の後の command string も拒否" run_hook_expect 2 "bash -c - 'git worktree add /tmp/wt feat/1-x'"
 expect 0 "hook: +c の内側も拒否" run_hook_expect 2 "bash +c 'git worktree add /tmp/wt feat/1-x'"
+expect 0 "hook: exec 前置の bash -c の内側も拒否" run_hook_expect 2 "exec bash -c 'git worktree add /tmp/wt feat/1-x'"
+expect 0 "hook: exec -a NAME の値を剥がして本体を検査する" run_hook_expect 2 "exec -a foo bash -c 'git worktree add /tmp/wt feat/1-x'"
+expect 0 "hook: nice -n N 前置の bash -lc の内側も拒否" run_hook_expect 2 "nice -n 5 bash -lc 'git worktree add /tmp/wt feat/1-x'"
+expect 0 "hook: path 指定の nice -5 も剥がす" run_hook_expect 2 "/usr/bin/nice -5 git worktree add /tmp/wt feat/1-x"
+expect 0 "hook: timeout の option と期間を剥がす" run_hook_expect 2 "timeout -s KILL -k 3 10 git worktree add /tmp/wt feat/1-x"
+expect 0 "hook: stdbuf の option を剥がす" run_hook_expect 2 "stdbuf -o L bash -c 'git worktree add /tmp/wt feat/1-x'"
+expect 0 "hook: env -u NAME の値を剥がす" run_hook_expect 2 "env -u FOO bash -c 'git worktree add /tmp/wt feat/1-x'"
+expect 0 "hook: env -S の文字列を command として検査する" run_hook_expect 2 "env -S 'git worktree add /tmp/wt feat/1-x'"
+expect 0 "hook: time -p / command -p の option を剥がす" run_hook_expect 2 "time -p command -p git worktree add /tmp/wt feat/1-x"
+expect 0 "hook: wrapper を重ねても剥がす" run_hook_expect 2 "nohup nice timeout 3 exec git worktree add /tmp/wt feat/1-x"
+expect 0 "hook: wrapper 前置でも無害なコマンドは許可" run_hook_expect 0 "nice -n 5 timeout 3 ls"
+expect 0 "hook: exec 前置の secret 読み取りを拒否" run_hook_expect 2 "exec bash -c 'cat .env'"
+expect 0 "hook: exec -afoo（値の結合）の後ろの本体を取り違えない" run_hook_expect 2 "exec -afoo cat .env"
+expect 0 "hook: exec -al（値 l の結合）の後ろの本体を取り違えない" run_hook_expect 2 "exec -al cat .env"
+expect 0 "hook: env -iS（結合した -S）の文字列を検査する" run_hook_expect 2 "env -iS 'cat .env'"
+expect 0 "hook: env -S'...'（値の結合）の文字列を検査する" run_hook_expect 2 "env -S'cat .env'"
+expect 0 "hook: env --split-string= の文字列を検査する" run_hook_expect 2 "env --split-string='cat .env'"
+expect 0 "hook: env -iu NAME（結合した -u）の値を剥がす" run_hook_expect 2 "env -iu FOO cat .env"
+expect 0 "hook: time -o FILE の値を剥がす" run_hook_expect 2 "/usr/bin/time -a -o out.txt cat .env"
+expect 0 "hook: command time -o FILE も剥がす" run_hook_expect 2 "command time -o out.txt cat .env"
+expect 0 "hook: timeout -vs SIG（結合した -s）の値と期間を剥がす" run_hook_expect 2 "gtimeout -vs KILL 5 cat .env"
+expect 0 "hook: 旧来の読み（env -u の値を本体とみなす）も検査候補に残す" run_hook_expect 2 "env -u cat .env"
+expect 0 "hook: #114 より前の読み（sudo の -- の後の option を剥がす）も検査候補に残す" run_hook_expect 2 "sudo -- -u r cat .env"
+expect 0 "hook: zsh の noglob / nocorrect / - を剥がす" run_hook_expect 2 "noglob nocorrect - git worktree add /tmp/wt feat/1-x"
+expect 0 "hook: zsh の noglob の後の無害なコマンドは許可" run_hook_expect 0 "noglob ls *.md"
+expect 0 "hook: env - と代入の後の option も剥がす" run_hook_expect 2 "env - A=1 --chdir=/x bash -c 'cat .env'"
+expect 0 "hook: wrapper 前置の polling loop も拒否" run_hook_expect 2 "timeout 3 bash -c 'while true; do sleep 1; done'"
+expect 0 "hook: env -S の閉じていない引用でも guard は落ちない" run_hook_expect 0 "env -S 'echo \".x'"
+expect 0 "hook: wrapper の option 付きでも無害なコマンドは許可" run_hook_expect 0 "exec -a x env -S 'echo hi'"
+expect 0 "hook: ask 対象の後ろの secret 読み取りは deny を優先する" run_hook_expect 2 "bash -c 'git worktree remove x'; cat .env"
+expect 0 "hook: worktree.sh reclaim の文字列は特別扱いしない（例外・ask を撤去, #139）" run_hook_expect 0 "scripts/worktree.sh reclaim x --capability c --confirmation f"
+expect 0 "hook: worktree.sh reclaim の後ろの secret 読み取りは通常どおり deny" run_hook_expect 2 "scripts/worktree.sh reclaim x; cat .env"
+expect 0 "hook: ask 対象の後ろの一時領域 worktree add も deny" run_hook_expect 2 "git worktree remove x && git worktree add /tmp/wt feat/1-x"
+expect 0 "hook: ask 対象の後ろの polling loop も deny" run_hook_expect 2 "git worktree remove x; while true; do sleep 1; done"
+expect 0 "hook: deny 対象が無ければ ask のまま" run_hook_ask "git worktree remove x; rm -rf foo"
+expect_out "hook: ask が複数なら最初に当たった理由を出す" "1" bash -c 'printf "%s" "{\"tool_input\":{\"command\":\"git worktree remove x; rm -rf foo\"},\"cwd\":\"$2\"}" | python3 "$1" | grep -c "git worktree の回収・移動は"' _ "$ROOT/scripts/hooks/guard-bash.py" "$ROOT"
+expect_out "hook: 溜めた ask は後ろの検査の例外で失わない" "1" bash -c 'printf "%s" "{\"tool_input\":{\"command\":\"git worktree remove x; git worktree add ~\\u0000u/a b\"},\"cwd\":\"$2\"}" | python3 "$1" 2>/dev/null | grep -c "git worktree の回収・移動は"' _ "$ROOT/scripts/hooks/guard-bash.py" "$ROOT"
+expect 0 "hook: \$( ) の内側の deny も ask より優先する" run_hook_expect 2 "git worktree remove x; echo \$(cat .env)"
 expect 0 "hook: -Oc extglob（c と O の結合）の内側も拒否" run_hook_expect 2 "bash -Oc extglob 'git worktree add /tmp/wt feat/1-x'"
 expect 0 "hook: zsh -O -c の内側も拒否" run_hook_expect 2 "zsh -O -c 'git worktree add /tmp/wt feat/1-x'"
 expect 0 "hook: zsh +O の後の -c も拒否" run_hook_expect 2 "zsh +O -c 'git worktree add /tmp/wt feat/1-x'"
@@ -740,7 +877,7 @@ expect 0 "hook: c を含む option の後ろに引数が無ければ許可" run_
 expect 0 "hook: /private/tmp への worktree add を拒否" run_hook_expect 2 "git worktree add /private/tmp/wt feat/1-x"
 expect 0 "hook: git -C 経由の worktree add を拒否" run_hook_expect 2 "git -C repo worktree add /var/folders/x/wt feat/1-x"
 expect 0 "hook: 変数 worktree path は実パスを求めて拒否" run_hook_expect 2 'SCR=/safe && git worktree add "$SCR/wt" feat/1-x' --expect-stderr-contains "実パス"
-expect 0 "hook: 明示 path 後の branch 変数は許可" run_hook_expect 0 "git worktree add ~/worktrees/$hook_repo_name/wt \"\$BRANCH\""
+expect 0 "hook: 明示 path 後の branch 変数は許可" run_hook_expect 0 "git worktree add ~/worktrees/anyrepo/wt \"\$BRANCH\""
 expect 0 "hook: 連結記号の後の worktree add も拒否" run_hook_expect 2 "cd repo && git worktree add /tmp/wt"
 
 expect 0 "hook: cat .env を拒否" run_hook_expect 2 "cat .env"
@@ -769,7 +906,7 @@ expect 0 "hook: パイプ後段の reader に .env は拒否" run_hook_expect 2 
 expect 0 "hook: && 後段の cat .env は拒否" run_hook_expect 2 "cd repo && cat .env"
 expect 0 "hook: if 条件内の cat .env も拒否" run_hook_expect 2 "if cat .env; then echo safe; fi"
 
-expect 0 "hook: rm -rf は ask" run_hook_ask "rm -rf build/cache"
+expect 0 "hook: rm -rf は ask" run_hook_ask "rm -rf build/cache" --cwd "$HOOK_OUTSIDE_TEMP_CWD"
 expect 0 "hook: git reset --hard は ask" run_hook_ask "git reset --hard HEAD~1"
 expect 0 "hook: git push --force-with-lease は ask" run_hook_ask "git push --force-with-lease origin feature/48-x"
 expect 0 "hook: git branch -D は ask" run_hook_ask "git branch -D feature/old"
@@ -784,8 +921,8 @@ git -C "$gb_repo" init -q -b main
 git -C "$gb_repo" -c user.email=t@example.com -c user.name=t commit -q --allow-empty -m init
 expect 0 "hook: main 上の暗黙 git push は ask" run_hook_ask "git push" --cwd "$gb_repo"
 rm -rf "$gb_repo"
-expect 0 "hook: loop 本体の破壊的コマンドは ask" run_hook_ask "for x in a; do rm -rf cache; done"
-expect 0 "hook: command substitution 内の破壊的コマンドは ask" run_hook_ask 'echo "$(rm -rf cache)"'
+expect 0 "hook: loop 本体の破壊的コマンドは ask" run_hook_ask "for x in a; do rm -rf cache; done" --cwd "$HOOK_OUTSIDE_TEMP_CWD"
+expect 0 "hook: command substitution 内の破壊的コマンドは ask" run_hook_ask 'echo "$(rm -rf cache)"' --cwd "$HOOK_OUTSIDE_TEMP_CWD"
 expect 0 "hook: 散文中の破壊的コマンドは許可" run_hook_expect 0 "printf 'rm -rf /; gh repo delete owner/repo'"
 expect 0 "hook: feature branch の通常 push は許可" run_hook_expect 0 "git push origin feature/48-x"
 expect 0 "hook: remote command のない ssh は許可" run_hook_expect 0 "ssh host.example"
@@ -826,6 +963,8 @@ elif mutation == "missing-secret-deny":
     permissions["deny"].remove("Read(id_ed25519)")
 elif mutation == "missing-destructive-ask":
     permissions["ask"].remove("Bash(git reset --hard*)")
+elif mutation == "static-rm-ask":
+    permissions["ask"].append("Bash(rm -rf *)")
 else:
     raise SystemExit(f"unknown mutation: {mutation}")
 
@@ -851,7 +990,33 @@ expect 1 "settings permissions: secret deny の欠落を拒否（red）" \
 make_settings_fixture missing-destructive-ask
 expect 1 "settings permissions: destructive ask の欠落を拒否（red）" \
   python3 "$ROOT/tests/check-settings-permissions.py" "$settings_fixture"
+make_settings_fixture static-rm-ask
+expect 1 "settings permissions: rm -rf の静的な ask 規則を拒否（guard が path で判定する, #158）（red）" \
+  python3 "$ROOT/tests/check-settings-permissions.py" "$settings_fixture"
 rm -f "$settings_fixture"
+
+# ask の絞り込み（#158）: 一時領域の中の rm -rf は通り、ルート・展開・..・symlink 越し・一時領域の外は確認になる。
+# cd の移動先が main でない push は確認にならない
+expect 0 "issue #158: rm -rf の一時領域の判定と、cd 後の push の branch 判定" \
+  env PYTHONDONTWRITEBYTECODE=1 python3 "$ROOT/tests/guard-ask.py"
+# 保護を 1 つずつ外すと、対応する test が落ちる（退行注入）。注入の失敗（exit 3）を red と数えない。fold* は #166（行の継続）
+for mutation in root expansion dotdot parentreal trailing realroot longopt shortopt notes tilde quoted hint cdfollow cdcount cdisdir cdpipe cdsubst gitcwd subst lnmv except fold foldmain foldquote ansic; do
+  expect_code 1 "issue #158: ${mutation} の保護を外すと ask の判定が崩れる（red）" \
+    env PYTHONDONTWRITEBYTECODE=1 python3 "$ROOT/tests/guard-ask.py" --case "$mutation" --mutation "$mutation"
+done
+# merge の経路（#159）: script を通らない merge（gh pr merge・merge の API・GraphQL）は guard が拒否する
+expect 0 "issue #159: script を通らない merge の拒否と、merge しない形の素通し" \
+  env PYTHONDONTWRITEBYTECODE=1 python3 "$ROOT/tests/guard-merge.py"
+for mutation in prmerge apimerge apiget graphql graphqlpos graphqlpath apiquery xargs helpvalue repoopt wired scriptcheck scriptonly cdfollowed cdunknown; do
+  expect_code 1 "issue #159 / #184: guard の ${mutation} の保護を外すと merge の拒否が崩れる（red）" \
+    env PYTHONDONTWRITEBYTECODE=1 python3 "$ROOT/tests/guard-merge.py" --case "$mutation" --mutation "$mutation"
+done
+# scripts/merge-pr.sh: 承認の写し・head・条件が欠ければ merge せず、揃えば判定表のコメントの後に 1 回だけ merge する（gh は fake）
+expect 0 "issue #159: merge-pr.sh の承認・条件の判定" env PYTHONDONTWRITEBYTECODE=1 python3 "$ROOT/tests/merge-pr.py"
+for mutation in owner ownerempty fullmatch preblocked preunconditional state headmatch base mergeable retryunknown mergetree fetchhead diffcheck checkpr threads review selftest judge approval preapproval perceptual heading quote cphead dryrun failstop matchhead comment; do
+  expect_code 1 "issue #159: merge-pr.sh の ${mutation} の保護を外すと判定が崩れる（red）" \
+    env PYTHONDONTWRITEBYTECODE=1 python3 "$ROOT/tests/merge-pr.py" --case "$mutation" --mutation "$mutation"
+done
 expect 0 "hooks.json: 正しい JSON" python3 -m json.tool "$ROOT/.codex/hooks.json"
 expect 0 "Claude settings: 全 hook command に project root fallback" python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); needle="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel)}"; sys.exit(0 if all(needle in h["command"] for gs in d["hooks"].values() for g in gs for h in g["hooks"]) else 1)' "$ROOT/.claude/settings.json"
 expect 0 "Codex hooks: 独立 schema の Stop command を持つ" python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); hs=d["hooks"]["Stop"][0]["hooks"]; sys.exit(0 if "permissions" not in d and len(hs)==1 and hs[0]["type"]=="command" and "guard-stop.sh" in hs[0]["command"] else 1)' "$ROOT/.codex/hooks.json"
@@ -900,6 +1065,7 @@ case "$*" in
     printf 'worktree %s\nHEAD bbbb\nbranch refs/heads/feat/other\n\n' "$SS_OTHER"
     printf 'worktree %s\nHEAD cccc\nbranch refs/heads/main\n\n' "$SS_CLEAN"
     ;;
+  "-C $SS_CURRENT merge-base --is-ancestor origin/main HEAD") exit "${SS_ANCESTOR_RC:-0}" ;;
   *) printf 'unexpected git args: %s\n' "$*" >&2; exit 91 ;;
 esac
 EOF
@@ -943,6 +1109,98 @@ expect 0 "session-start: timeout を未確認として明示" grep -Fq 'open PR:
 expect 0 "session-start: git guard 未配線を警告する" bash -c 'grep -Fq "ガード配線の確認" <<< "$1" && grep -Fq "setup-user-hooks.sh --git" <<< "$1"' _ "$ss_out"
 ss_wired="$(SS_GIT_HOOKS=project-template-tmp-worktree CODEX_HOME="$ss_root/no-codex" run_session_start ok 2 "$ss_json" 2>&1)"
 expect 1 "session-start: git guard 配線済み・Codex 無しなら警告しない" grep -Fq "ガード配線の確認" <<< "$ss_wired"
+# user 側の hook の複製が scripts/hooks とずれていれば、再実行のコマンドを添えて警告する（#157）
+mkdir -p "$ss_current/scripts/hooks"
+printf 'a\n' > "$ss_current/scripts/hooks/a.sh"
+printf 'b\n' > "$ss_current/scripts/hooks/b.py"
+printf 'c\n' > "$ss_current/scripts/hooks/git-tmp-worktree-guard.sh"
+: > "$ss_current/scripts/setup-user-hooks.sh"
+ss_cfg="$ss_root/cfg"
+ss_seed() { # ss_seed: 3 か所の複製を repo と同じ内容で作り直す
+  rm -rf "$ss_cfg"
+  mkdir -p "$ss_cfg/claude/hooks/template" "$ss_cfg/codex/hooks/template" "$ss_cfg/xdg/git/project-template-hooks"
+  cp "$ss_current/scripts/hooks/a.sh" "$ss_current/scripts/hooks/b.py" "$ss_current/scripts/hooks/git-tmp-worktree-guard.sh" "$ss_cfg/claude/hooks/template/"
+  cp "$ss_current/scripts/hooks/a.sh" "$ss_current/scripts/hooks/b.py" "$ss_current/scripts/hooks/git-tmp-worktree-guard.sh" "$ss_cfg/codex/hooks/template/"
+  cp "$ss_current/scripts/hooks/git-tmp-worktree-guard.sh" "$ss_cfg/xdg/git/project-template-hooks/"
+}
+ss_sync_out() { # ss_sync_out <session-start script>
+  env CLAUDE_CONFIG_DIR="$ss_cfg/claude" CODEX_HOME="$ss_cfg/codex" XDG_CONFIG_HOME="$ss_cfg/xdg" HOME="$ss_root/home" \
+    SS_CURRENT="$ss_current" SS_OTHER="$ss_other" SS_CLEAN="$ss_clean" SS_GH_LOG="$ss_gh_log" SS_GH_MODE=ok SESSION_START_GH_TIMEOUT=2 \
+    SS_ANCESTOR_RC="${SS_ANCESTOR_RC:-0}" \
+    PATH="$ss_bin:$PATH" bash "$1" <<< "$ss_json" 2>&1
+}
+ss_drift_flags() { # ss_drift_flags <session-start script>: 警告の再実行コマンドの引数（警告が無ければ空）
+  ss_sync_out "$1" | sed -n 's/^.*複製が scripts\/hooks と一致しない.*: scripts\/setup-user-hooks\.sh//p'
+}
+ss_sync_checks() { # ss_sync_checks <session-start script>: 全部通れば 0。どれか外れれば 1
+  local script="$1" rc=0
+  ss_seed
+  [ -z "$(ss_drift_flags "$script")" ] || { printf 'ずれ無しで警告\n' >&2; rc=1; }
+  printf 'x\n' > "$ss_cfg/claude/hooks/template/b.py"
+  [ "$(ss_drift_flags "$script")" = " --claude" ] || { printf 'claude の内容差を拾えない\n' >&2; rc=1; }
+  ss_seed
+  rm "$ss_cfg/codex/hooks/template/a.sh"
+  [ "$(ss_drift_flags "$script")" = " --codex" ] || { printf 'codex の欠落を拾えない\n' >&2; rc=1; }
+  ss_seed
+  printf 'x\n' > "$ss_cfg/xdg/git/project-template-hooks/git-tmp-worktree-guard.sh"
+  [ "$(ss_drift_flags "$script")" = " --git" ] || { printf 'git の内容差を拾えない\n' >&2; rc=1; }
+  printf 'x\n' > "$ss_cfg/claude/hooks/template/a.sh"
+  printf 'x\n' > "$ss_cfg/codex/hooks/template/a.sh"
+  [ "$(ss_drift_flags "$script")" = " --claude --codex --git" ] || { printf '全部のずれを 1 つのコマンドにまとめない\n' >&2; rc=1; }
+  rm -rf "$ss_cfg"
+  [ -z "$(ss_drift_flags "$script")" ] || { printf '複製 dir が無いのに警告\n' >&2; rc=1; }
+  ss_seed
+  printf 'x\n' > "$ss_cfg/claude/hooks/template/a.sh"
+  : > "$ss_current/.template-version"
+  [ -z "$(ss_drift_flags "$script")" ] || { printf '派生 repo で警告\n' >&2; rc=1; }
+  rm -f "$ss_current/.template-version"
+  return "$rc"
+}
+ss_stale_checks() { # ss_stale_checks <session-start script>: 古い checkout の注意の出し分け。全部通れば 0
+  local script="$1" rc=0 out
+  ss_seed
+  printf 'x\n' > "$ss_cfg/claude/hooks/template/a.sh"
+  out="$(SS_ANCESTOR_RC=0 ss_sync_out "$script")"
+  ! grep -Fq 'origin/main より古い' <<< "$out" || { printf 'origin/main を含むのに注意を添える\n' >&2; rc=1; }
+  out="$(SS_ANCESTOR_RC=1 ss_sync_out "$script")"
+  grep -Fq 'origin/main より古い' <<< "$out" || { printf '古い checkout で注意を添えない\n' >&2; rc=1; }
+  grep -Fq 'pull・merge' <<< "$out" || { printf '取り込みの案内が無い\n' >&2; rc=1; }
+  ! grep -Fq 'rebase' <<< "$out" || { printf '案内に rebase を書いている\n' >&2; rc=1; }
+  out="$(SS_ANCESTOR_RC=128 ss_sync_out "$script")"
+  grep -Fq 'origin/main より古い' <<< "$out" || { printf 'origin/main が無いのに注意を添えない\n' >&2; rc=1; }
+  ss_seed
+  out="$(SS_ANCESTOR_RC=1 ss_sync_out "$script")"
+  ! grep -Fq 'origin/main より古い' <<< "$out" || { printf 'ずれ無しで古い注意を添える\n' >&2; rc=1; }
+  return "$rc"
+}
+ss_wording_checks() { # ss_wording_checks <session-start script>: 警告文がずれの向きを決めつけない
+  local out
+  ss_seed
+  printf 'x\n' > "$ss_cfg/claude/hooks/template/a.sh"
+  out="$(ss_sync_out "$1")"
+  grep -Fq '一致しない' <<< "$out" && ! grep -Fq '古い版の guard が動く' <<< "$out"
+}
+expect 0 "session-start: 複製のずれ（claude・codex・git）を再実行コマンド付きで警告し、ずれ無し・dir 無し・派生 repo では警告しない" ss_sync_checks "$ROOT/scripts/hooks/session-start.sh"
+ss_mut="$ss_root/session-start-mut.sh"
+expect_code 0 "session-start 退行注入: 内容の比較を外す（適用）" mutate_copy "$ROOT/scripts/hooks/session-start.sh" "$ss_mut" 'cmp -s "$root/scripts/hooks/$f" "$dir/$f" 2>/dev/null || return 0' ': || return 0'
+expect_code 1 "session-start 退行注入: 内容の比較を外すと red" ss_sync_checks "$ss_mut"
+expect_code 0 "session-start 退行注入: 存在しない dir を飛ばす判定を外す（適用）" mutate_copy "$ROOT/scripts/hooks/session-start.sh" "$ss_mut" '[ -d "$dir" ] || return 1' ':'
+expect_code 1 "session-start 退行注入: 存在しない dir を飛ばす判定を外すと red" ss_sync_checks "$ss_mut"
+expect_code 0 "session-start 退行注入: 派生 repo を除く判定を外す（適用）" mutate_copy "$ROOT/scripts/hooks/session-start.sh" "$ss_mut" '[ ! -e "$root/.template-version" ]' ':'
+expect_code 1 "session-start 退行注入: 派生 repo を除く判定を外すと red" ss_sync_checks "$ss_mut"
+expect 0 "session-start: 古い checkout だけ pull・merge の注意を添える（含む・古い・ref 無し・ずれ無し）" ss_stale_checks "$ROOT/scripts/hooks/session-start.sh"
+expect 0 "session-start: 警告文がずれの向きに依存しない" ss_wording_checks "$ROOT/scripts/hooks/session-start.sh"
+expect_code 0 "session-start 退行注入: 祖先判定の否定を外す（適用）" mutate_copy "$ROOT/scripts/hooks/session-start.sh" "$ss_mut" 'if ! git -C "$root" merge-base' 'if git -C "$root" merge-base'
+expect_code 1 "session-start 退行注入: 祖先判定の否定を外すと red" ss_stale_checks "$ss_mut"
+expect_code 0 "session-start 退行注入: 常に注意を添えない（適用）" mutate_copy "$ROOT/scripts/hooks/session-start.sh" "$ss_mut" 'if ! git -C "$root" merge-base --is-ancestor origin/main HEAD >/dev/null 2>&1; then' 'if false; then'
+expect_code 1 "session-start 退行注入: 常に注意を添えないと red" ss_stale_checks "$ss_mut"
+expect_code 0 "session-start 退行注入: ref 無しを含む扱いにする（適用）" mutate_copy "$ROOT/scripts/hooks/session-start.sh" "$ss_mut" 'if ! git -C "$root" merge-base --is-ancestor origin/main HEAD >/dev/null 2>&1; then' 'if [ "$(git -C "$root" merge-base --is-ancestor origin/main HEAD >/dev/null 2>&1; echo $?)" = 1 ]; then'
+expect_code 1 "session-start 退行注入: ref 無しを含む扱いにすると red" ss_stale_checks "$ss_mut"
+expect_code 0 "session-start 退行注入: 古い版の決めつけ文言に戻す（適用）" mutate_copy "$ROOT/scripts/hooks/session-start.sh" "$ss_mut" 'scripts/hooks と一致しない:' 'scripts/hooks とずれている（古い版の guard が動く）:'
+expect_code 1 "session-start 退行注入: 古い版の決めつけ文言に戻すと red" ss_wording_checks "$ss_mut"
+rm -rf "$ss_cfg" "$ss_mut"
+rm -f "$ss_current/scripts/setup-user-hooks.sh"
+rm -rf "$ss_current/scripts/hooks"
 mkdir -p "$ss_current/scripts" "$ss_current/.codex" "$ss_root/codex"
 cp "$ROOT/scripts/check-codex-hooks.sh" "$ss_current/scripts/"
 printf '%s\n' '{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"bash guard-codex.sh"}]}]}}' > "$ss_current/.codex/hooks.json"
@@ -960,197 +1218,243 @@ expect 1 "session-start: trust 済みなら警告しない" grep -Fq "ガード�
 expect 0 "Claude settings: SessionStart matcher と command を配線" python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); gs=d["hooks"]["SessionStart"]; sys.exit(0 if len(gs)==1 and gs[0].get("matcher")=="startup|resume|compact" and len(gs[0]["hooks"])==1 and gs[0]["hooks"][0]["type"]=="command" and "scripts/hooks/session-start.sh" in gs[0]["hooks"][0]["command"] else 1)' "$ROOT/.claude/settings.json"
 rm -rf "$ss_root"
 
-# ---- hooks/post-edit-selftest.sh（PostToolUse hook）---------------------
+# ---- run-selftest.sh（lefthook pre-push から呼ぶ self-test 実行）-----------
 
-pe_root="$(mktemp -d)"
-mkdir -p "$pe_root/scripts/tests" "$pe_root/tests" "$pe_root/docs" "$pe_root/src"
-printf '#!/usr/bin/env bash\nexit 0\n' > "$pe_root/tests/run-tests.sh"
-run_pe() { # run_pe <edited-file-path>
-  printf '{"tool_input":{"file_path":"%s"}}' "$1" | CLAUDE_PROJECT_DIR="$pe_root" bash "$ROOT/scripts/hooks/post-edit-selftest.sh"
+rs_root="$(mktemp -d)"
+mkdir -p "$rs_root/scripts/tests" "$rs_root/tests"
+cp "$ROOT/scripts/run-selftest.sh" "$rs_root/scripts/run-selftest.sh"
+run_rs() { env -u SELFTEST_CMD -u PROJECT_TEMPLATE_SELFTEST_RUNNING bash "$rs_root/scripts/run-selftest.sh"; }
+printf '#!/usr/bin/env bash\necho passed: 3\nexit 0\n' > "$rs_root/tests/run-tests.sh"
+expect 0 "run-selftest: tests/run-tests.sh が成功なら通す" run_rs
+expect_out "run-selftest: 成功時は最終行を表示する" "self-test: passed: 3" run_rs
+printf '#!/usr/bin/env bash\necho FAIL: x\nexit 1\n' > "$rs_root/tests/run-tests.sh"
+expect 1 "run-selftest: tests/run-tests.sh が失敗なら止める" run_rs
+expect_out "run-selftest: 失敗時は FAIL 行を stderr に出す" "FAIL: x" bash -c 'env -u SELFTEST_CMD -u PROJECT_TEMPLATE_SELFTEST_RUNNING bash "$1" 2>&1 >/dev/null | grep -F "FAIL: x"' _ "$rs_root/scripts/run-selftest.sh"
+printf '#!/usr/bin/env bash\nexit 1\n' > "$rs_root/scripts/tests/lower-priority.test.sh"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$rs_root/tests/run-tests.sh"
+expect 0 "run-selftest: tests/run-tests.sh を scripts/tests/*.test.sh より優先" run_rs
+rs_override="$rs_root/override-ran"
+expect 0 "run-selftest: SELFTEST_CMD は run-tests.sh より優先して実行する" \
+  env -u PROJECT_TEMPLATE_SELFTEST_RUNNING SELFTEST_CMD="printf override > '$rs_override'" bash "$rs_root/scripts/run-selftest.sh"
+rc=0; [ "$(cat "$rs_override" 2>/dev/null)" = "override" ] || rc=1
+report 0 "$rc" "run-selftest: SELFTEST_CMD のコマンドを実行する"
+expect 1 "run-selftest: SELFTEST_CMD の失敗は push を止める" env -u PROJECT_TEMPLATE_SELFTEST_RUNNING SELFTEST_CMD='exit 37' bash "$rs_root/scripts/run-selftest.sh"
+expect 0 "run-selftest: SELFTEST_CMD が空なら test なしとして通す" env -u PROJECT_TEMPLATE_SELFTEST_RUNNING SELFTEST_CMD= bash "$rs_root/scripts/run-selftest.sh"
+
+# -h と入れ子の拒否（#161）。stub の tests/run-tests.sh が走った印を残し、本物の全件は呼ばない。
+rs_ran="$rs_root/ran"
+printf '#!/usr/bin/env bash\nprintf x >> "%s"\n' "$rs_ran" > "$rs_root/tests/run-tests.sh"
+rs_help_out="$(env -u PROJECT_TEMPLATE_SELFTEST_RUNNING bash "$rs_root/scripts/run-selftest.sh" -h 2>"$rs_root/help.err")"; rc=$?
+rc2=0; { [ "$rc" -eq 0 ] && [ -n "$rs_help_out" ] && [ ! -s "$rs_root/help.err" ] && [ ! -e "$rs_ran" ] \
+  && ! printf '%s\n' "$rs_help_out" | grep -Eq '^#!|^!/|^set[[:space:]]+-' \
+  && printf '%s\n' "$rs_help_out" | grep -Fq 'usage:'; } || rc2=1
+report 0 "$rc2" "run-selftest: -h は usage を stdout に出して exit 0、test を実行しない"
+rs_help_out="$(env -u PROJECT_TEMPLATE_SELFTEST_RUNNING bash "$rs_root/scripts/run-selftest.sh" --help 2>&1)"; rc=$?
+rc2=0; { [ "$rc" -eq 0 ] && [ ! -e "$rs_ran" ] && printf '%s\n' "$rs_help_out" | grep -Fq 'usage:'; } || rc2=1
+report 0 "$rc2" "run-selftest: --help も同じ"
+expect_code 2 "run-selftest: self-test の中（印あり）から呼ぶと全件を流さず exit 2" \
+  env PROJECT_TEMPLATE_SELFTEST_RUNNING=1 bash "$rs_root/scripts/run-selftest.sh"
+rc=0; [ ! -e "$rs_ran" ] || rc=1
+report 0 "$rc" "run-selftest: 入れ子の拒否では test を実行しない"
+expect_code 0 "run-selftest: -h は印があっても通る（help の検査から再帰しない）" \
+  env PROJECT_TEMPLATE_SELFTEST_RUNNING=1 bash "$rs_root/scripts/run-selftest.sh" -h
+# 実行中の test には印が渡る（手動で tests/run-tests.sh を直接流した場合も、ここで立つ）
+printf '#!/usr/bin/env bash\nprintf "%%s" "${PROJECT_TEMPLATE_SELFTEST_RUNNING:-}" > "%s"\n' "$rs_root/mark" > "$rs_root/tests/run-tests.sh"
+env -u PROJECT_TEMPLATE_SELFTEST_RUNNING bash "$rs_root/scripts/run-selftest.sh" >/dev/null 2>&1
+rc=0; [ "$(cat "$rs_root/mark" 2>/dev/null)" = "1" ] || rc=1
+report 0 "$rc" "run-selftest: 実行する test に入れ子拒否の印を渡す"
+rc=0; grep -Fq 'export PROJECT_TEMPLATE_SELFTEST_RUNNING=1' "$ROOT/tests/run-tests.sh" || rc=1
+report 0 "$rc" "run-tests: 全件の実行は入れ子拒否の印を立てる"
+rm -f "$rs_root/tests/run-tests.sh"
+
+rs_glob_log="$rs_root/glob-tests-ran"
+printf '#!/usr/bin/env bash\nprintf a >> "%s"\nexit 1\n' "$rs_glob_log" > "$rs_root/scripts/tests/a.test.sh"
+printf '#!/usr/bin/env bash\nprintf b >> "%s"\n' "$rs_glob_log" > "$rs_root/scripts/tests/b.test.sh"
+rm "$rs_root/scripts/tests/lower-priority.test.sh"
+expect 1 "run-selftest: scripts/tests/*.test.sh は 1 つ失敗でも失敗にする" run_rs
+rc=0; [ "$(cat "$rs_glob_log" 2>/dev/null)" = "ab" ] || rc=1
+report 0 "$rc" "run-selftest: scripts/tests/*.test.sh を失敗後も名前順にすべて実行する"
+
+rm "$rs_root/scripts/tests/"*.test.sh
+rs_fake_bin="$rs_root/fake-bin"
+rs_pytest_log="$rs_root/pytest-ran"
+mkdir -p "$rs_fake_bin"
+printf '#!/usr/bin/env bash\nprintf pytest > "%s"\n' "$rs_pytest_log" > "$rs_fake_bin/pytest"
+chmod +x "$rs_fake_bin/pytest"
+expect 0 "run-selftest: pytest を最後の候補として自動検出" env -u SELFTEST_CMD -u PROJECT_TEMPLATE_SELFTEST_RUNNING PATH="$rs_fake_bin:$PATH" bash "$rs_root/scripts/run-selftest.sh"
+rc=0; [ "$(cat "$rs_pytest_log" 2>/dev/null)" = "pytest" ] || rc=1
+report 0 "$rc" "run-selftest: pytest を実行する"
+rm "$rs_fake_bin/pytest"
+expect 0 "run-selftest: test が見つからなければ通す" env -u SELFTEST_CMD -u PROJECT_TEMPLATE_SELFTEST_RUNNING PATH="$rs_fake_bin:/usr/bin:/bin" bash "$rs_root/scripts/run-selftest.sh"
+# 退行注入（#161）: -h の扱いと入れ子の拒否を外すと red。stub の run-tests.sh だけを使い、本物の全件は呼ばない
+# stub の run-tests.sh は printf するだけで再帰しないので、macOS に無い timeout は使わない（#161）
+rs_protect() { # rs_protect <script>: -h で test を実行せず、印がある中では exit 2 で実行しなければ 0（保護が効いている）
+  local d ran rc
+  d="$(mktemp -d)" || return 1
+  mkdir -p "$d/scripts" "$d/tests"
+  cp "$1" "$d/scripts/run-selftest.sh"
+  ran="$d/ran"
+  printf '#!/usr/bin/env bash\nprintf x >> "%s"\n' "$ran" > "$d/tests/run-tests.sh"
+  env -u PROJECT_TEMPLATE_SELFTEST_RUNNING -u SELFTEST_CMD bash "$d/scripts/run-selftest.sh" -h >/dev/null 2>&1
+  [ ! -e "$ran" ] || { rm -rf "$d"; return 1; }
+  env PROJECT_TEMPLATE_SELFTEST_RUNNING=1 bash "$d/scripts/run-selftest.sh" >/dev/null 2>&1; rc=$?
+  [ "$rc" -eq 2 ] && [ ! -e "$ran" ]; rc=$?
+  rm -rf "$d"; return "$rc"
 }
-run_pe_bash() { # run_pe_bash <command>
-  python3 -c 'import json,sys; print(json.dumps({"tool_input":{"command":sys.argv[1]}}))' "$1" \
-    | CLAUDE_PROJECT_DIR="$pe_root" bash "$ROOT/scripts/hooks/post-edit-selftest.sh"
+rs_mut="$rs_root/mut.sh"
+expect 0 "run-selftest 退行注入: 本物は保護が効いている" rs_protect "$ROOT/scripts/run-selftest.sh"
+expect_code 0 "run-selftest 退行注入: -h の扱いを外す（適用）" mutate_copy "$ROOT/scripts/run-selftest.sh" "$rs_mut" '  -h|--help) sed' '  -X|--no-such) sed'
+expect_code 1 "run-selftest 退行注入: -h の扱いを外すと再帰の入口が開く（red）" rs_protect "$rs_mut"
+expect_code 0 "run-selftest 退行注入: 入れ子の拒否を外す（適用）" mutate_copy "$ROOT/scripts/run-selftest.sh" "$rs_mut" '  exit 2
+fi' '  :
+fi'
+expect_code 1 "run-selftest 退行注入: 入れ子の拒否を外すと全件が入れ子で走る（red）" rs_protect "$rs_mut"
+expect_code 3 "run-selftest 退行注入: 注入先が無ければ exit 3（注入の失敗を red と区別）" mutate_copy "$ROOT/scripts/run-selftest.sh" "$rs_mut" 'no such text' x
+
+# --stdin の削除だけの push（#182）。SELFTEST_CMD は印を作るだけの軽い command で、本物の全件は呼ばない。
+rs_stdin_check() { # rs_stdin_check <script>: 削除だけは流さず、それ以外は今どおりなら 0（外れたら 1、fixture が作れなければ 3）
+  local d head z rc=0 m out
+  d="$(mktemp -d)" || return 3
+  mkdir -p "$d/scripts"
+  cp "$1" "$d/scripts/run-selftest.sh"
+  git -C "$d" init -q && git -C "$d" commit --no-verify -q --allow-empty -m "chore: init" || { rm -rf "$d"; return 3; }
+  head="$(git -C "$d" rev-parse HEAD)"
+  z="0000000000000000000000000000000000000000"
+  m="$d/ran"
+  rs_run() { # rs_run <--stdin|none> <ref 行...>: 印を消してから流し、出力を $d/out に残す
+    local mode="$1"
+    shift
+    rm -f "$m"
+    if [ "$mode" = "none" ]; then
+      printf '%s\n' "$@" | env -u PROJECT_TEMPLATE_SELFTEST_RUNNING SELFTEST_CMD="touch '$m'" bash "$d/scripts/run-selftest.sh" >"$d/out" 2>&1 || rc=1
+    else
+      printf '%s\n' "$@" | env -u PROJECT_TEMPLATE_SELFTEST_RUNNING SELFTEST_CMD="touch '$m'" bash "$d/scripts/run-selftest.sh" --stdin >"$d/out" 2>&1 || rc=1
+    fi
+  }
+  rs_run --stdin "(delete) $z refs/heads/feat/1-x $head"
+  [ ! -e "$m" ] && grep -Fq "削除だけ" "$d/out" || rc=1
+  rs_run --stdin "(delete) $z refs/heads/feat/1-x $head" "(delete) $z refs/heads/feat/2-y $head"
+  [ ! -e "$m" ] && grep -Fq "削除だけ" "$d/out" || rc=1
+  rs_run --stdin "(delete) $z refs/heads/feat/1-x $head" "refs/heads/main $head refs/heads/main $z"
+  [ -e "$m" ] || rc=1
+  rs_run --stdin "(delete) $z refs/heads/feat/1-x $head" "refs/heads/other 1111111111111111111111111111111111111111 refs/heads/other $z"
+  [ ! -e "$m" ] && grep -Fq "HEAD" "$d/out" && ! grep -Fq "削除だけ" "$d/out" || rc=1
+  rs_run --stdin "refs/tags/v1 $head refs/tags/v1 $z"
+  [ -e "$m" ] || rc=1
+  rs_run --stdin
+  [ -e "$m" ] || rc=1
+  rs_run none "(delete) $z refs/heads/feat/1-x $head"
+  [ -e "$m" ] || rc=1
+  rm -rf "$d"; return "$rc"
 }
-run_pe_detector() { # run_pe_detector <command>
-  python3 -c 'import json,sys; print(json.dumps({"hook_event_name":"PostToolUse","tool_name":"Bash","tool_input":{"command":sys.argv[1]}}))' "$1" \
-    | SELFTEST_CMD='exit 37' CLAUDE_PROJECT_DIR="$pe_root" bash "$ROOT/scripts/hooks/post-edit-selftest.sh"
+expect 0 "run-selftest(#182): 削除だけの push は流さず、混在・同じ tag・空・--stdin なしは今どおり" rs_stdin_check "$ROOT/scripts/run-selftest.sh"
+expect_code 0 "run-selftest 退行注入: 削除だけの判定を外す（適用）" mutate_copy "$ROOT/scripts/run-selftest.sh" "$rs_mut" '[ "$pushed" -eq 0 ] && [ "$deleted" -gt 0 ]' 'false'
+expect_code 1 "run-selftest 退行注入: 削除だけの判定を外すと削除の push でも全件が走る（red）" rs_stdin_check "$rs_mut"
+expect_code 0 "run-selftest 退行注入: 削除だけの判定を緩める（pushed を見ない）（適用）" mutate_copy "$ROOT/scripts/run-selftest.sh" "$rs_mut" '[ "$pushed" -eq 0 ] && [ "$deleted" -gt 0 ]' '[ "$deleted" -gt 0 ]'
+expect_code 1 "run-selftest 退行注入: 削除が混ざるだけで通常の ref の self-test も飛ぶ（red）" rs_stdin_check "$rs_mut"
+rm -rf "$rs_root"
+
+# pre-push の配線: lefthook.yml が run-selftest.sh を呼び、PostToolUse の self-test hook は無い
+rc=0
+python3 - "$ROOT/lefthook.yml" <<'PY' || rc=1
+import re, sys
+text = open(sys.argv[1]).read()
+pre = text.split("pre-push:", 1)[1]
+m = re.search(r"^    selftest:\n(?:      .*\n|\s*\n)+", pre, re.M)
+sys.exit(0 if m and re.search(r"^      run: PREPUSH_FILES=\{files\} bash scripts/run-selftest\.sh --stdin$", m.group(0), re.M) else 1)
+PY
+report 0 "$rc" "lefthook: pre-push が scripts/run-selftest.sh を実行する"
+# checkout 中でない branch の push でも pre-push が走る（#177）。実物の lefthook と bare repo の fixture で確かめる。
+# lefthook は push するファイルが空（checkout 中の HEAD と push 先に差が無い）と、ファイルの置換（{files} 等）を含まない
+# command を「no matching push files」で skip する。self-test は SELFTEST_CMD で印を残すだけの軽い command にし、本物の全件は呼ばない。
+lh_fixture() { # lh_fixture <dir> <lefthook.yml> <run-selftest.sh>: main を push 済み（上流あり）で lefthook install 済みの clone を <dir>/w に作る
+  local d="$1" w
+  w="$d/w"
+  mkdir -p "$d/gh-stub"
+  printf '#!/bin/sh\nexit 1\n' > "$d/gh-stub/gh"; chmod +x "$d/gh-stub/gh"
+  git init -q --bare "$d/bare" || return 1
+  git clone -q "$d/bare" "$w" 2>/dev/null || return 1
+  mkdir -p "$w/scripts"
+  cp "$2" "$w/lefthook.yml"
+  cp "$ROOT/scripts/check-branch-name.sh" "$ROOT/scripts/check-commit-msg.sh" "$ROOT/scripts/check-branch-topology.sh" "$w/scripts/"
+  cp "$3" "$w/scripts/run-selftest.sh"
+  git -C "$w" checkout -q -b main || return 1
+  git -C "$w" add -A && git -C "$w" commit --no-verify -q -m "chore: init" || return 1
+  git -C "$w" push -q -u origin main 2>/dev/null || return 1 # 上流を持たせ、HEAD と push 先の差を空にする（owner の main と同じ）
+  (cd "$w" && env -u GIT_DIR lefthook install >/dev/null 2>&1) || return 1
+  git -C "$w" checkout -q -b feat/1-x && git -C "$w" commit --no-verify -q --allow-empty -m "feat: x" || return 1
+  git -C "$w" branch Bad_Name && git -C "$w" checkout -q Bad_Name && git -C "$w" commit --no-verify -q --allow-empty -m "feat: y" || return 1
+  git -C "$w" checkout -q main
 }
-run_pe_detector_at() { # run_pe_detector_at <cwd> <command>
-  python3 -c 'import json,sys; print(json.dumps({"hook_event_name":"PostToolUse","tool_name":"Bash","cwd":sys.argv[1],"tool_input":{"command":sys.argv[2]}}))' "$1" "$2" \
-    | SELFTEST_CMD='exit 37' CLAUDE_PROJECT_DIR="$pe_root" bash "$ROOT/scripts/hooks/post-edit-selftest.sh"
+lh_push() { # lh_push <dir> <marker> <refspec...>: SELFTEST_CMD が <marker> を作る状態で push し、出力を <dir>/out に残す
+  local d="$1" marker="$2"
+  shift 2
+  (cd "$d/w" && env -u PROJECT_TEMPLATE_SELFTEST_RUNNING PATH="$d/gh-stub:$PATH" SELFTEST_CMD="touch '$marker'" \
+    git push origin "$@" >"$d/out" 2>&1)
 }
-expect 0 "post-edit: scripts/ 編集後に self-test 成功なら許可" run_pe "$pe_root/scripts/x.sh"
-printf '#!/usr/bin/env bash\nexit 1\n' > "$pe_root/scripts/tests/lower-priority.test.sh"
-expect 0 "post-edit: tests/run-tests.sh を scripts/tests/*.test.sh より優先" run_pe "$pe_root/scripts/x.sh"
-rm "$pe_root/scripts/tests/lower-priority.test.sh"
-printf '#!/usr/bin/env bash\necho FAIL: x\nexit 1\n' > "$pe_root/tests/run-tests.sh"
-expect 1 "post-edit: scripts/ 編集後に self-test 失敗なら拒否" run_pe "$pe_root/scripts/x.sh"
-expect 1 "post-edit: tests/ 編集も対象" run_pe "$pe_root/tests/run-tests.sh"
-expect 0 "post-edit: docs 編集は self-test を実行しない" run_pe "$pe_root/docs/a.md"
-expect 1 "post-edit: Bash redirect の scripts/ 書き込みを検知" run_pe_bash 'printf x > scripts/x.sh'
-expect 1 "post-edit: Bash stdout/stderr redirect の scripts/ 書き込みを検知" run_pe_bash 'make &> scripts/build.log'
-expect 1 "post-edit: Bash heredoc の tests/ 書き込みを検知" run_pe_bash $'cat <<\'EOF\' > tests/x.sh\nx\nEOF'
-expect 1 "post-edit: Bash tee の scripts/ 書き込みを検知" run_pe_bash 'printf x | tee scripts/x.sh'
-expect 1 "post-edit: Bash sed -i の tests/ 書き込みを検知" run_pe_bash "sed -i '' 's/x/y/' tests/x.sh"
-expect 1 "post-edit: Bash Python open(w) の scripts/ 書き込みを検知" \
-  run_pe_bash $'python3 - <<\'PY\'\nopen("scripts/x.py", "w").write("x")\nPY'
-expect 0 "post-edit: Bash の読み取りは対象外" run_pe_bash 'cat scripts/x.sh'
-expect 0 "post-edit: Bash の docs/ 書き込みは対象外" run_pe_bash 'printf x > docs/x.md'
-expect 0 "post-edit: scripts/ を含む散文は対象外" run_pe_bash "printf 'write scripts/x.sh'"
-
-# issue #83 の各 reproduction は 1 invariant だけを壊す独立 fixture とする。
-expect_code 2 "post-edit regression: control redirect を検知" \
-  run_pe_detector 'printf x > scripts/control.sh'
-
-pe_cd_and='cd scripts && printf x > cd-and.sh'
-(cd "$pe_root" && bash -c "$pe_cd_and")
-expect_code 2 "post-edit regression: cd + && 後の relative write を検知" \
-  run_pe_detector "$pe_cd_and"
-rc=0; [ -f "$pe_root/scripts/cd-and.sh" ] || rc=1
-report 0 "$rc" "post-edit regression: cd + && fixture は実ファイルを書いた"
-
-pe_cd_semi='cd tests; printf x > cd-semi.sh'
-(cd "$pe_root" && bash -c "$pe_cd_semi")
-expect_code 2 "post-edit regression: cd + ; 後の relative write を検知" \
-  run_pe_detector "$pe_cd_semi"
-rc=0; [ -f "$pe_root/tests/cd-semi.sh" ] || rc=1
-report 0 "$rc" "post-edit regression: cd + ; fixture は実ファイルを書いた"
-
-pe_cd_subshell='(cd scripts && printf x > cd-subshell.sh)'
-(cd "$pe_root" && bash -c "$pe_cd_subshell")
-expect_code 2 "post-edit regression: subshell 内 cd 後の relative write を検知" \
-  run_pe_detector "$pe_cd_subshell"
-rc=0; [ -f "$pe_root/scripts/cd-subshell.sh" ] || rc=1
-report 0 "$rc" "post-edit regression: subshell cd fixture は実ファイルを書いた"
-
-expect_code 0 "post-edit regression: quoted standalone > は redirect でない" \
-  run_pe_detector "printf '%s\\n' '>' scripts/not-a-target.sh"
-expect_code 0 "post-edit regression: [[ ]] 内の > は比較演算子" \
-  run_pe_detector '[[ scripts/a > scripts/b ]]'
-expect_code 0 "post-edit regression: sed -i の -f operand は編集対象でない" \
-  run_pe_detector 'sed -i -f scripts/rules.sed docs/x.md'
-expect_code 0 "post-edit regression: Python comment/string 内の open(w) は対象外" \
-  run_pe_detector $'python3 - <<\'PY\'\n# open("scripts/comment.py", "w")\nmessage = \'open("scripts/string.py", "w")\'\nprint(message)\nPY'
-
-pe_escaped_heredoc=$'python3 - <<\\PY\nopen("scripts/escaped-heredoc.py", "w").write("x")\nPY'
-(cd "$pe_root" && bash -c "$pe_escaped_heredoc")
-expect_code 2 "post-edit regression: backslash-quoted heredoc の Python write を検知" \
-  run_pe_detector "$pe_escaped_heredoc"
-rc=0; [ -f "$pe_root/scripts/escaped-heredoc.py" ] || rc=1
-report 0 "$rc" "post-edit regression: backslash-quoted heredoc は実ファイルを書いた"
-
-pe_nonidentifier_heredoc=$'python3 - <<\'PY-END\'\nopen("tests/nonidentifier-heredoc.py", "w").write("x")\nPY-END'
-(cd "$pe_root" && bash -c "$pe_nonidentifier_heredoc")
-expect_code 2 "post-edit regression: non-identifier heredoc の Python write を検知" \
-  run_pe_detector "$pe_nonidentifier_heredoc"
-rc=0; [ -f "$pe_root/tests/nonidentifier-heredoc.py" ] || rc=1
-report 0 "$rc" "post-edit regression: non-identifier heredoc は実ファイルを書いた"
-
-pe_multi_heredoc="$(printf '%s\n' \
-  "cat <<'TEXT'; python3 - <<'PY'" \
-  'open("scripts/multi-heredoc-not-written.py", "w").write("x")' \
-  'TEXT' \
-  'print("safe")' \
-  'PY')"
-(cd "$pe_root" && bash -c "$pe_multi_heredoc") >/dev/null
-expect_code 0 "post-edit regression: 複数 heredoc は owning command の body だけを解析" \
-  run_pe_detector "$pe_multi_heredoc"
-rc=0; [ ! -e "$pe_root/scripts/multi-heredoc-not-written.py" ] || rc=1
-report 0 "$rc" "post-edit regression: cat 所有 heredoc の Python 風本文は実行されない"
-
-pe_ansi_c_heredoc="$(printf '%s\n' \
-  "python3 - <<\$'PY\\x2dEND'" \
-  'open("scripts/ansi-c-heredoc.py", "w").write("x")' \
-  'PY-END')"
-(cd "$pe_root" && bash -c "$pe_ansi_c_heredoc")
-expect_code 2 "post-edit regression: ANSI-C quoted heredoc の Python write を検知" \
-  run_pe_detector "$pe_ansi_c_heredoc"
-rc=0; [ -f "$pe_root/scripts/ansi-c-heredoc.py" ] || rc=1
-report 0 "$rc" "post-edit regression: ANSI-C quoted heredoc は実ファイルを書いた"
-
-pe_ansi_c_unicode_u_heredoc="$(printf '%s\n' \
-  "python3 - <<\$'PY\\u002dEND'" \
-  'open("scripts/unicode-u-escape.py", "w").write("x")' \
-  'PY\u002dEND')"
-(cd "$pe_root" && /bin/bash -c "$pe_ansi_c_unicode_u_heredoc")
-expect_code 2 "post-edit regression: Bash 3.2 の \\u literal heredoc を検知" \
-  run_pe_detector "$pe_ansi_c_unicode_u_heredoc"
-if /bin/bash -c '[ "${BASH_VERSINFO[0]}" -eq 3 ]'; then
-  rc=0; [ -f "$pe_root/scripts/unicode-u-escape.py" ] || rc=1
-  report 0 "$rc" "post-edit regression: Bash 3.2 の \\u literal heredoc は実ファイルを書いた"
-else
-  printf 'SKIP: %s\n' "post-edit regression: Bash 3.2 の \\u literal heredoc は実ファイルを書いた（/bin/bash が 3 系でない）"
-fi
-
-pe_ansi_c_unicode_U_heredoc="$(printf '%s\n' \
-  "python3 - <<\$'PY\\U0000002dEND'" \
-  'open("scripts/unicode-U-escape.py", "w").write("x")' \
-  'PY\U0000002dEND')"
-(cd "$pe_root" && /bin/bash -c "$pe_ansi_c_unicode_U_heredoc")
-expect_code 2 "post-edit regression: Bash 3.2 の \\U literal heredoc を検知" \
-  run_pe_detector "$pe_ansi_c_unicode_U_heredoc"
-if /bin/bash -c '[ "${BASH_VERSINFO[0]}" -eq 3 ]'; then
-  rc=0; [ -f "$pe_root/scripts/unicode-U-escape.py" ] || rc=1
-  report 0 "$rc" "post-edit regression: Bash 3.2 の \\U literal heredoc は実ファイルを書いた"
-else
-  printf 'SKIP: %s\n' "post-edit regression: Bash 3.2 の \\U literal heredoc は実ファイルを書いた（/bin/bash が 3 系でない）"
-fi
-
-# focused adversarial matrix: 隣接する構文境界を個別に固定する。
-expect_code 2 "post-edit matrix: hook input cwd から relative target を解決" \
-  run_pe_detector_at "$pe_root/scripts" 'printf x > from-input-cwd.sh'
-expect_code 0 "post-edit matrix: 動的 cd は cwd を推測せず fail-open" \
-  run_pe_detector 'cd "$target" && printf x > scripts/unresolved.sh'
-expect_code 0 "post-edit matrix: subshell を抜けたら cwd を親へ復元" \
-  run_pe_detector '(cd scripts); printf x > docs/after-subshell.md'
-expect_code 2 "post-edit matrix: sed -i -f の編集対象は検知" \
-  run_pe_detector 'sed -i -f docs/rules.sed tests/edited.txt'
-expect_code 2 "post-edit matrix: sed -i -e の編集対象は検知" \
-  run_pe_detector 'sed -i -e s/x/y/ scripts/edited.txt'
-expect_code 2 "post-edit matrix: Python -c の実 open(w) を AST で検知" \
-  run_pe_detector 'python3 -c '\''open("scripts/from-c.py", "w").write("x")'\'''
-expect_code 0 "post-edit matrix: Python -c の string 内 open(w) は対象外" \
-  run_pe_detector 'python3 -c '\''message = "open(\\"scripts/not-code.py\\", \\"w\\")"'\'''
-expect_code 0 "post-edit matrix: 通常 heredoc は tab 付き終端を受理しない" \
-  run_pe_detector $'python3 - <<\'PY\'\nprint("safe")\n\tPY\nprintf x > scripts/hidden-by-unclosed-heredoc.sh'
-expect 0 "post-edit: SKIP_SELFTEST_HOOK=1 は対象編集も許可" \
-  env SKIP_SELFTEST_HOOK=1 CLAUDE_PROJECT_DIR="$pe_root" bash -c \
-    'printf '\''{"tool_input":{"file_path":"scripts/x.sh"}}'\'' | bash "$1/scripts/hooks/post-edit-selftest.sh"' _ "$ROOT"
-expect 1 "post-edit: SELFTEST_WATCH で監視先を上書き" \
-  env SELFTEST_WATCH='src/' CLAUDE_PROJECT_DIR="$pe_root" bash -c \
-    'printf '\''{"tool_input":{"command":"printf x > src/x.sh"}}'\'' | bash "$1/scripts/hooks/post-edit-selftest.sh"' _ "$ROOT"
-expect 0 "post-edit: SELFTEST_WATCH 上書き時は既定 scripts/ を監視しない" \
-  env SELFTEST_WATCH='src/' CLAUDE_PROJECT_DIR="$pe_root" bash -c \
-    'printf '\''{"tool_input":{"command":"printf x > scripts/x.sh"}}'\'' | bash "$1/scripts/hooks/post-edit-selftest.sh"' _ "$ROOT"
-pe_override="$pe_root/override-ran"
-expect 0 "post-edit: SELFTEST_CMD で実行コマンドを上書き" \
-  env SELFTEST_CMD="printf override > '$pe_override'" CLAUDE_PROJECT_DIR="$pe_root" bash -c \
-    'printf '\''{"tool_input":{"file_path":"scripts/x.sh"}}'\'' | bash "$1/scripts/hooks/post-edit-selftest.sh"' _ "$ROOT"
-rc=0; [ "$(cat "$pe_override" 2>/dev/null)" = "override" ] || rc=1
-report 0 "$rc" "post-edit: SELFTEST_CMD のコマンドを実行する"
-
-rm "$pe_root/tests/run-tests.sh"
-pe_glob_log="$pe_root/glob-tests-ran"
-printf '#!/usr/bin/env bash\nprintf a >> "%s"\n' "$pe_glob_log" > "$pe_root/scripts/tests/a.test.sh"
-printf '#!/usr/bin/env bash\nprintf b >> "%s"\n' "$pe_glob_log" > "$pe_root/scripts/tests/b.test.sh"
-expect 0 "post-edit: scripts/tests/*.test.sh を名前順ですべて自動検出" run_pe "$pe_root/scripts/x.sh"
-rc=0; [ "$(cat "$pe_glob_log" 2>/dev/null)" = "ab" ] || rc=1
-report 0 "$rc" "post-edit: scripts/tests/*.test.sh を実行する"
-
-rm "$pe_root/scripts/tests/"*.test.sh
-pe_fake_bin="$pe_root/fake-bin"
-pe_pytest_log="$pe_root/pytest-ran"
-mkdir -p "$pe_fake_bin"
-printf '#!/usr/bin/env bash\nprintf pytest > "%s"\n' "$pe_pytest_log" > "$pe_fake_bin/pytest"
-chmod +x "$pe_fake_bin/pytest"
-expect 0 "post-edit: pytest を最後の候補として自動検出" \
-  env PATH="$pe_fake_bin:$PATH" CLAUDE_PROJECT_DIR="$pe_root" bash -c \
-    'printf '\''{"tool_input":{"file_path":"scripts/x.sh"}}'\'' | bash "$1/scripts/hooks/post-edit-selftest.sh"' _ "$ROOT"
-rc=0; [ "$(cat "$pe_pytest_log" 2>/dev/null)" = "pytest" ] || rc=1
-report 0 "$rc" "post-edit: pytest を実行する"
-expect 0 "post-edit: 空入力は許可" bash "$ROOT/scripts/hooks/post-edit-selftest.sh" < /dev/null
-rm -rf "$pe_root"
+lh_prepush_checks() { # lh_prepush_checks <lefthook.yml> <run-selftest.sh>: 3 つの振る舞いがそろえば 0、外れたら 1
+  local d rc=0 m1 m2
+  d="$(mktemp -d)" || return 1
+  lh_fixture "$d" "$1" "$2" || { rm -rf "$d"; return 3; }
+  m1="$d/selftest-ran-1"; m2="$d/selftest-ran-2"
+  # main を checkout したまま、別の valid な branch を push: 検査が走り、self-test は流さない旨を出して通す
+  lh_push "$d" "$m1" feat/1-x || rc=1
+  grep -Fq "no matching push files" "$d/out" && rc=1
+  grep -Fq "流さない" "$d/out" || rc=1
+  [ ! -e "$m1" ] || rc=1
+  # 削除だけの push（#182）: 検査する中身が無いので self-test は流さず、その旨を出して通す。branch は消える
+  lh_push "$d" "$d/selftest-ran-del" --delete feat/1-x || rc=1
+  grep -Fq "削除だけ" "$d/out" || rc=1
+  [ ! -e "$d/selftest-ran-del" ] || rc=1
+  git -C "$d/w" ls-remote --exit-code --heads origin feat/1-x >/dev/null 2>&1 && rc=1
+  # main を checkout したまま、不正な名前の branch を push: branch 名の検査で止まり、push されない
+  if lh_push "$d" "$d/selftest-ran-bad" Bad_Name; then rc=1; fi
+  git -C "$d/w" ls-remote --exit-code --heads origin Bad_Name >/dev/null 2>&1 && rc=1
+  # checkout 中の branch を push: 今どおり self-test が走る
+  git -C "$d/w" checkout -q feat/1-x && git -C "$d/w" commit --no-verify -q --allow-empty -m "feat: z" || rc=1
+  lh_push "$d" "$m2" feat/1-x || rc=1
+  [ -e "$m2" ] || rc=1
+  rm -rf "$d"; return "$rc"
+}
+command -v lefthook >/dev/null 2>&1 || skip_begin "lefthook が無い"
+expect 0 "pre-push(#177/#182): checkout 中でない branch の push でも名前の検査が走り、self-test は流さない旨を出す。削除だけの push も流さない。checkout 中なら流す" \
+  lh_prepush_checks "$ROOT/lefthook.yml" "$ROOT/scripts/run-selftest.sh"
+lh_files_exist() { # lh_files_exist <lefthook.yml>: pre-push の hook 全体の files: が出す名前がすべて repo に実在すれば 0
+  local cmd out f n=0
+  cmd="$(awk '/^pre-push:/ { in_pp = 1; next } /^[^ #]/ { in_pp = 0 } in_pp && /^  files: / { sub(/^  files: /, ""); print; exit }' "$1")"
+  [ -n "$cmd" ] || return 1
+  out="$(cd "$ROOT" && bash -c "$cmd")" || return 1
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    [ -f "$ROOT/$f" ] || return 1
+    n=$((n + 1))
+  done <<< "$out"
+  [ "$n" -gt 0 ]
+}
+expect 0 "pre-push(#177): hook 全体の files: が出すファイルが repo に実在する（派生 repo の改名で検査が黙って外れない）" lh_files_exist "$ROOT/lefthook.yml"
+lh_mut="$(mktemp -d)"
+expect_code 0 "pre-push 退行注入: branch 名の検査から {files} を外す（適用）" \
+  mutate_copy "$ROOT/lefthook.yml" "$lh_mut/lefthook.yml" 'run: PREPUSH_FILES={files} bash scripts/check-branch-name.sh' 'run: bash scripts/check-branch-name.sh'
+expect_code 1 "pre-push 退行注入: branch 名の検査から {files} を外すと checkout 中でない push で skip される（red）" \
+  lh_prepush_checks "$lh_mut/lefthook.yml" "$ROOT/scripts/run-selftest.sh"
+expect_code 0 "pre-push 退行注入: self-test に --stdin を渡さない（適用）" \
+  mutate_copy "$ROOT/lefthook.yml" "$lh_mut/lefthook.yml" 'scripts/run-selftest.sh --stdin' 'scripts/run-selftest.sh'
+expect_code 1 "pre-push 退行注入: self-test に --stdin を渡さないと checkout 中でない push でも全件が走る（red）" \
+  lh_prepush_checks "$lh_mut/lefthook.yml" "$ROOT/scripts/run-selftest.sh"
+expect_code 0 "pre-push 退行注入: self-test の HEAD との比較を外す（適用）" \
+  mutate_copy "$ROOT/scripts/run-selftest.sh" "$lh_mut/run-selftest.sh" '[ "$same" -eq 0 ]' 'false'
+expect_code 1 "pre-push 退行注入: self-test の HEAD との比較を外すと流さない旨が出ない（red）" \
+  lh_prepush_checks "$ROOT/lefthook.yml" "$lh_mut/run-selftest.sh"
+expect_code 0 "pre-push 退行注入: files: が実在しない名前を出す（適用）" \
+  mutate_copy "$ROOT/lefthook.yml" "$lh_mut/lefthook.yml" '  files: echo lefthook.yml' '  files: echo no-such-file.yml'
+expect_code 1 "pre-push 退行注入: files: が実在しない名前を出すと red" lh_files_exist "$lh_mut/lefthook.yml"
+expect_code 3 "pre-push 退行注入: 注入先が無ければ exit 3（注入の失敗を red と区別）" \
+  mutate_copy "$ROOT/lefthook.yml" "$lh_mut/lefthook.yml" 'no such text' x
+rm -rf "$lh_mut"
+skip_end
+expect 1 "Claude settings: PostToolUse に self-test hook を配線しない" \
+  grep -Fq "post-edit-selftest" "$ROOT/.claude/settings.json"
+expect 1 "scripts/hooks: 書き込みごとの self-test hook を持たない" test -e "$ROOT/scripts/hooks/post-edit-selftest.sh"
 
 # ---- check-branch-topology.sh（fake gh）---------------------------------
 
@@ -1377,18 +1681,21 @@ expect 0 "post-pr: --body= の空値でも明示 PR を検査して違反を拒�
   run_pp_e2e 2 "gh pr edit 71 --body=" "feat: 機能を追加" "" ""
 rc=0; grep -q '^pr view 71 ' "$pp_log" || rc=1
 report 0 "$rc" "post-pr: 空の既知 option 値を target 解釈の迂回に使わせない"
-# CI の checkout は detached HEAD なので、current branch を持つ fixture repo を cwd にする。
-pp_branch_repo="$(mktemp -d)" || { echo "FATAL: post-pr fixture repo を作成できません" >&2; exit 1; }
-git -c init.defaultBranch=fix/71-post-pr-target init -q "$pp_branch_repo" || exit 1
-cp -R "$ROOT/scripts" "$pp_branch_repo/scripts" || exit 1
-run_pp_e2e_on_branch() { PP_CWD="$pp_branch_repo" run_pp_e2e "$@"; }
+# current branch の解決は実行する checkout の状態に依存させない（detached HEAD の clone でも通す。#144）。
+# branch 上の fixture repo から、scripts は symlink で作業ツリーの正本を使う。
+pp_branch_repo="$(mktemp -d)"
+git -C "$pp_branch_repo" init -q -b feat/71-post-pr-target
+ln -s "$ROOT/scripts" "$pp_branch_repo/scripts"
+PP_CWD="$pp_branch_repo"
 expect 0 "post-pr: gh pr edit の option 値を PR 番号と誤認しない" \
-  run_pp_e2e_on_branch 0 "gh pr edit --body 42" "feat: 機能を追加" "Closes #12" "12" \
+  run_pp_e2e 0 "gh pr edit --body 42" "feat: 機能を追加" "Closes #12" "12" \
   FAKE_GH_PR_NUMBER=71
+PP_CWD=
 rc=0; grep -q '^pr view 42 ' "$pp_log" && rc=1
 report 0 "$rc" "post-pr: --body の値 42 を target にしない"
 rc=0; grep -q '^pr view 71 ' "$pp_log" || rc=1
 report 0 "$rc" "post-pr: target 省略時は current branch の PR を検査"
+rm -rf "$pp_branch_repo"
 expect 0 "post-pr: 複数の option 値より明示 target を優先" \
   run_pp_e2e 0 "gh pr edit 71 --body 42 --add-label 43 --title 44" \
   "feat: 機能を追加" "Closes #12" "12"
@@ -1532,12 +1839,20 @@ rm -rf "$gs_repo"
 
 # ---- setup-user-hooks.sh / hooks/user-hook-runner.sh（一時 HOME）--------
 
+# setup-user-hooks.sh は派生 repo（root に .template-version がある）では止まる（#157）。派生 repo の self-test でも
+# 配る経路を試せるよう、.template-version の無い fixture root から scripts/・.claude/・.codex/ を symlink で指して呼ぶ。
+UH_ROOT="$ROOT"
+if [ -e "$ROOT/.template-version" ]; then
+  UH_ROOT="$(mktemp -d)" || { echo "FATAL: setup-user-hooks の fixture root を作成できません" >&2; exit 1; }
+  git init -q "$UH_ROOT" || exit 1
+  for uh_link in scripts .claude .codex; do ln -s "$ROOT/$uh_link" "$UH_ROOT/$uh_link" || exit 1; done
+fi
 uh_home="$(mktemp -d)"
 uh_settings="$uh_home/.claude/settings.json"
 uh_tmpl="$uh_home/.claude/hooks/template"
 mkdir -p "$uh_home/.claude"
 printf '%s\n' '{"model":"keep-me","hooks":{"PreCompact":[{"matcher":"auto","hooks":[{"type":"command","command":"bash /x/guard-auto-compact.sh"}]}],"PostToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"bash /x/stamp.sh"}]}]}}' > "$uh_settings"
-run_uh() { HOME="$uh_home" CLAUDE_CONFIG_DIR= bash "$ROOT/scripts/setup-user-hooks.sh" "$@"; }
+run_uh() { HOME="$uh_home" CLAUDE_CONFIG_DIR= bash "$UH_ROOT/scripts/setup-user-hooks.sh" "$@"; }
 uh_query() { # uh_query <python-expr over d(settings)> → 真なら 0
   python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); sys.exit(0 if eval(sys.argv[2]) else 1)' "$uh_settings" "$1"
 }
@@ -1545,13 +1860,14 @@ uh_sum0="$(cksum < "$uh_settings")"
 expect 0 "setup-user-hooks: --dry-run は成功する" run_uh --dry-run
 rc=0; [ "$(cksum < "$uh_settings")" = "$uh_sum0" ] && [ ! -e "$uh_tmpl" ] || rc=1
 report 0 "$rc" "setup-user-hooks: --dry-run は settings も複製も書かない"
-expect_out "setup-user-hooks: --dry-run は差分を表示する" "1" bash -c 'HOME="$1" CLAUDE_CONFIG_DIR= bash "$2" --dry-run | grep -c "^+.*user-hook-runner.sh.*guard-bash"' _ "$uh_home" "$ROOT/scripts/setup-user-hooks.sh"
+expect_out "setup-user-hooks: --dry-run は差分を表示する" "1" bash -c 'HOME="$1" CLAUDE_CONFIG_DIR= bash "$2" --dry-run | grep -c "^+.*user-hook-runner.sh.*guard-bash"' _ "$uh_home" "$UH_ROOT/scripts/setup-user-hooks.sh"
 expect 0 "setup-user-hooks: 実行が成功する" run_uh
 expect 0 "setup-user-hooks: settings.json が正しい JSON" python3 -m json.tool "$uh_settings"
 expect 0 "setup-user-hooks: PreToolUse(Bash) に guard-bash を配線" uh_query 'any(g.get("matcher")=="Bash" and any("user-hook-runner.sh" in h["command"] and "guard-bash" in h["command"] for h in g["hooks"]) for g in d["hooks"]["PreToolUse"])'
 expect 0 "setup-user-hooks: SessionStart matcher と session-start を正本から写す" uh_query 'any(g.get("matcher")=="startup|resume|compact" and any("session-start" in h["command"] for h in g["hooks"]) for g in d["hooks"]["SessionStart"])'
-expect 0 "setup-user-hooks: PostToolUse の matcher を正本から写す" uh_query 'any(g.get("matcher")=="Edit|Write|Bash" and any("post-edit-selftest" in h["command"] for h in g["hooks"]) for g in d["hooks"]["PostToolUse"])'
-expect 0 "setup-user-hooks: runner に event 名を渡す" uh_query 'any("post-edit-selftest PostToolUse" in h["command"] for g in d["hooks"]["PostToolUse"] for h in g["hooks"])'
+expect 0 "setup-user-hooks: PostToolUse の matcher を正本から写す" uh_query 'any(g.get("matcher")=="Bash" and any("post-pr-check" in h["command"] for h in g["hooks"]) for g in d["hooks"]["PostToolUse"])'
+expect 0 "setup-user-hooks: runner に event 名を渡す" uh_query 'any("post-pr-check PostToolUse" in h["command"] for g in d["hooks"]["PostToolUse"] for h in g["hooks"])'
+expect 1 "setup-user-hooks: 正本に無い self-test hook は配線しない（#161）" uh_query 'any("post-edit-selftest" in h["command"] for gs in d["hooks"].values() for g in gs for h in g["hooks"])'
 expect 0 "setup-user-hooks: PostToolUse(Bash) に post-pr-check を配線" uh_query 'any(g.get("matcher")=="Bash" and any("post-pr-check" in h["command"] for h in g["hooks"]) for g in d["hooks"]["PostToolUse"])'
 expect 0 "setup-user-hooks: Stop に guard-stop を配線" uh_query 'any("user-hook-runner.sh" in h["command"] and "guard-stop" in h["command"] for g in d["hooks"]["Stop"] for h in g["hooks"])'
 expect 0 "setup-user-hooks: 既存 hook と他キーを保持" uh_query 'd["model"]=="keep-me" and d["hooks"]["PreCompact"][0]["hooks"][0]["command"]=="bash /x/guard-auto-compact.sh" and any("stamp.sh" in h["command"] for g in d["hooks"]["PostToolUse"] for h in g["hooks"])'
@@ -1559,12 +1875,10 @@ rc=0
 [ -x "$uh_tmpl/guard-bash.sh" ] && [ -x "$uh_tmpl/user-hook-runner.sh" ] \
   && [ -x "$uh_tmpl/session-start.sh" ] \
   && [ -x "$uh_tmpl/post-pr-check.sh" ] \
-  && [ -x "$uh_tmpl/post-edit-selftest.sh" ] && [ -f "$uh_tmpl/post-edit-selftest.py" ] \
   && cmp -s "$ROOT/scripts/hooks/guard-bash.sh" "$uh_tmpl/guard-bash.sh" \
   && cmp -s "$ROOT/scripts/hooks/guard-bash.py" "$uh_tmpl/guard-bash.py" \
   && cmp -s "$ROOT/scripts/hooks/session-start.sh" "$uh_tmpl/session-start.sh" \
-  && cmp -s "$ROOT/scripts/hooks/post-edit-selftest.sh" "$uh_tmpl/post-edit-selftest.sh" \
-  && cmp -s "$ROOT/scripts/hooks/post-edit-selftest.py" "$uh_tmpl/post-edit-selftest.py" || rc=1
+  && cmp -s "$ROOT/scripts/hooks/post-pr-check.sh" "$uh_tmpl/post-pr-check.sh" || rc=1
 report 0 "$rc" "setup-user-hooks: hook 本体・Python 判定器・ランナーを複製する"
 expect_out "setup-user-hooks: 書き換え前に backup を取る" "1" bash -c 'ls "$1"/.claude/settings.json.bak-* | wc -l | tr -d " "' _ "$uh_home"
 uh_sum1="$(cksum < "$uh_settings")"
@@ -1603,41 +1917,102 @@ rc=0
 run_runner_at "$uh_old" guard-bash '{"tool_input":{"command":"git worktree add /private/tmp/legacy-wt"}}' >/dev/null 2>&1 || rc=$?
 report 2 "$rc" "runner E2E: hook 未導入の古い branch でも複製 guard-bash が効く"
 
+printf '#!/usr/bin/env bash\nexit 2\n' > "$uh_tmpl/probe-post.sh"
 runner_bash_payload='{"hook_event_name":"PostToolUse","tool_name":"Bash","tool_input":{"command":"printf x > scripts/x.sh"}}'
 expect_code 2 "runner regression: project hook なしなら global PostToolUse fallback が効く" \
-  env SELFTEST_CMD='exit 37' CLAUDE_PROJECT_DIR="$uh_old" bash -c \
-  'printf "%s" "$1" | bash "$2" post-edit-selftest PostToolUse' _ "$runner_bash_payload" "$uh_tmpl/user-hook-runner.sh"
+  env CLAUDE_PROJECT_DIR="$uh_old" bash -c \
+  'printf "%s" "$1" | bash "$2" probe-post PostToolUse' _ "$runner_bash_payload" "$uh_tmpl/user-hook-runner.sh"
 
 mkdir -p "$uh_old/.claude"
-printf '%s\n' '{"hooks":{"PostToolUse":[{"matcher":"Edit|Write|MultiEdit","hooks":[{"type":"command","command":"bash \"$CLAUDE_PROJECT_DIR/scripts/hooks/post-edit-selftest.sh\""}]}]}}' > "$uh_old/.claude/settings.json"
+printf '%s\n' '{"hooks":{"PostToolUse":[{"matcher":"Edit|Write|MultiEdit","hooks":[{"type":"command","command":"bash \"$CLAUDE_PROJECT_DIR/scripts/hooks/probe-post.sh\""}]}]}}' > "$uh_old/.claude/settings.json"
 expect_code 2 "runner regression: stale project matcher は global Bash fallback を抑止しない" \
-  env SELFTEST_CMD='exit 37' CLAUDE_PROJECT_DIR="$uh_old" bash -c \
-  'printf "%s" "$1" | bash "$2" post-edit-selftest PostToolUse' _ "$runner_bash_payload" "$uh_tmpl/user-hook-runner.sh"
+  env CLAUDE_PROJECT_DIR="$uh_old" bash -c \
+  'printf "%s" "$1" | bash "$2" probe-post PostToolUse' _ "$runner_bash_payload" "$uh_tmpl/user-hook-runner.sh"
 
-printf '%s\n' '{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"bash \"$CLAUDE_PROJECT_DIR/scripts/hooks/post-edit-selftest.sh\""}]}]}}' > "$uh_old/.claude/settings.json"
+printf '%s\n' '{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"bash \"$CLAUDE_PROJECT_DIR/scripts/hooks/probe-post.sh\""}]}]}}' > "$uh_old/.claude/settings.json"
 expect_code 2 "runner matrix: 別 event の同名 hook は fallback を抑止しない" \
-  env SELFTEST_CMD='exit 37' CLAUDE_PROJECT_DIR="$uh_old" bash -c \
-  'printf "%s" "$1" | bash "$2" post-edit-selftest PostToolUse' _ "$runner_bash_payload" "$uh_tmpl/user-hook-runner.sh"
+  env CLAUDE_PROJECT_DIR="$uh_old" bash -c \
+  'printf "%s" "$1" | bash "$2" probe-post PostToolUse' _ "$runner_bash_payload" "$uh_tmpl/user-hook-runner.sh"
 
 runner_once="$uh_old/runner-once.log"
 mkdir -p "$uh_old/scripts/hooks"
-printf '#!/usr/bin/env bash\nprintf x >> "%s"\n' "$runner_once" > "$uh_old/scripts/hooks/post-edit-selftest.sh"
-printf '%s\n' '{"hooks":{"PostToolUse":[{"matcher":"Edit|Write|Bash","hooks":[{"type":"command","command":"bash \"$CLAUDE_PROJECT_DIR/scripts/hooks/post-edit-selftest.sh\""}]}]}}' > "$uh_old/.claude/settings.json"
-printf '%s' "$runner_bash_payload" | CLAUDE_PROJECT_DIR="$uh_old" bash "$uh_old/scripts/hooks/post-edit-selftest.sh"
+printf '#!/usr/bin/env bash\nprintf x >> "%s"\n' "$runner_once" > "$uh_old/scripts/hooks/probe-post.sh"
+printf '%s\n' '{"hooks":{"PostToolUse":[{"matcher":"Edit|Write|Bash","hooks":[{"type":"command","command":"bash \"$CLAUDE_PROJECT_DIR/scripts/hooks/probe-post.sh\""}]}]}}' > "$uh_old/.claude/settings.json"
+printf '%s' "$runner_bash_payload" | CLAUDE_PROJECT_DIR="$uh_old" bash "$uh_old/scripts/hooks/probe-post.sh"
 expect_code 0 "runner regression: current project matcher では global runner を抑止" \
   env CLAUDE_PROJECT_DIR="$uh_old" bash -c \
-  'printf "%s" "$1" | bash "$2" post-edit-selftest PostToolUse' _ "$runner_bash_payload" "$uh_tmpl/user-hook-runner.sh"
+  'printf "%s" "$1" | bash "$2" probe-post PostToolUse' _ "$runner_bash_payload" "$uh_tmpl/user-hook-runner.sh"
 rc=0; [ "$(wc -c < "$runner_once" | tr -d ' ')" = "1" ] || rc=1
 report 0 "$rc" "runner regression: current matcher の hook は exactly once"
+
+# 旧版（#161 より前）が配った self-test の配線は、配り直しで外れる（正本の .claude/settings.json に無いため）
+python3 - "$uh_settings" "$uh_tmpl" <<'PY'
+import json, sys
+path, tmpl = sys.argv[1:]
+d = json.load(open(path))
+d["hooks"]["PostToolUse"].append({"matcher": "Edit|Write|Bash", "hooks": [{"type": "command", "command": "bash %s/user-hook-runner.sh post-edit-selftest PostToolUse" % tmpl}]})
+json.dump(d, open(path, "w"))
+PY
+expect 0 "setup-user-hooks: 旧版が配った self-test の配線が残った状態で再実行できる" run_uh
+expect 1 "setup-user-hooks: 再実行で旧版の self-test 配線は外れる（#161）" uh_query 'any("post-edit-selftest" in h["command"] for gs in d["hooks"].values() for g in gs for h in g["hooks"])'
+expect 0 "setup-user-hooks: 旧配線の除去で他の hook を残す" uh_query 'any("stamp.sh" in h["command"] for g in d["hooks"]["PostToolUse"] for h in g["hooks"]) and any("post-pr-check" in h["command"] for g in d["hooks"]["PostToolUse"] for h in g["hooks"])'
 
 expect 0 "setup-user-hooks: --uninstall が成功する" run_uh --uninstall
 expect 1 "setup-user-hooks: --uninstall で自分の配線を外す" uh_query 'any("user-hook-runner" in h["command"] for gs in d["hooks"].values() for g in gs for h in g["hooks"])'
 expect 0 "setup-user-hooks: --uninstall は他の hook を残す" uh_query 'd["model"]=="keep-me" and "PreCompact" in d["hooks"] and any("stamp.sh" in h["command"] for g in d["hooks"]["PostToolUse"] for h in g["hooks"])'
 rc=0; [ ! -e "$uh_tmpl" ] || rc=1
 report 0 "$rc" "setup-user-hooks: --uninstall は複製ディレクトリを削除する"
-expect 0 "setup-user-hooks: settings.json が無い HOME でも作成できる" env HOME="$uh_proj" CLAUDE_CONFIG_DIR= bash "$ROOT/scripts/setup-user-hooks.sh"
+expect 0 "setup-user-hooks: settings.json が無い HOME でも作成できる" env HOME="$uh_proj" CLAUDE_CONFIG_DIR= bash "$UH_ROOT/scripts/setup-user-hooks.sh"
 expect 0 "setup-user-hooks: 新規作成した settings.json が正しい JSON" python3 -m json.tool "$uh_proj/.claude/settings.json"
 expect 1 "setup-user-hooks: 不明なオプションは拒否" run_uh --bogus
+
+# SessionStart は tool_name が無い。project 側の group の matcher は source と照らす（#157）
+rn_log="$uh_old/runner-session.log"
+printf '#!/usr/bin/env bash\nprintf x >> "%s"\n' "$rn_log" > "$uh_old/scripts/hooks/session-start.sh"
+printf '%s\n' '{"hooks":{"SessionStart":[{"matcher":"startup|resume|compact","hooks":[{"type":"command","command":"bash \"$CLAUDE_PROJECT_DIR/scripts/hooks/session-start.sh\""}]}]}}' > "$uh_old/.claude/settings.json"
+rn_session() { # rn_session <runner> <source>: runner を通した SessionStart が session-start を何回起動したか
+  : > "$rn_log"
+  printf '{"hook_event_name":"SessionStart","source":"%s"}' "$2" | CLAUDE_PROJECT_DIR="$uh_old" bash "$1" session-start SessionStart >/dev/null 2>&1
+  wc -c < "$rn_log" | tr -d ' '
+}
+rn_session_checks() { # rn_session_checks <runner>: project 側の matcher が一致する source では走らず、一致しなければ走る
+  local runner="$1" rc=0 src
+  for src in startup resume compact; do
+    [ "$(rn_session "$runner" "$src")" = "0" ] || { printf 'source=%s: project 側と二重に走る\n' "$src" >&2; rc=1; }
+  done
+  [ "$(rn_session "$runner" clear)" = "1" ] || { printf 'source=clear: matcher 外なのに抑止された\n' >&2; rc=1; }
+  return "$rc"
+}
+expect 0 "runner regression: SessionStart は matcher を source と照らし、project 側の group があれば二重に走らない" rn_session_checks "$ROOT/scripts/hooks/user-hook-runner.sh"
+expect_code 0 "runner 退行注入: matcher の照合対象を tool_name に戻す（適用）" mutate_copy "$ROOT/scripts/hooks/user-hook-runner.sh" "$uh_old/runner-mut.sh" 'subject="$(payload_field source)"' 'subject="$tool"'
+expect_code 1 "runner 退行注入: matcher の照合対象を tool_name に戻すと red" rn_session_checks "$uh_old/runner-mut.sh"
+rm -f "$uh_old/runner-mut.sh"
+
+# 派生 repo（root に .template-version がある）では、複製を古い版で上書きしないよう理由を出して止まる（#157）
+dr_root="$(mktemp -d)"
+mkdir -p "$dr_root/scripts" "$dr_root/.claude"
+cp -R "$ROOT/scripts/hooks" "$dr_root/scripts/hooks"
+cp "$ROOT/.claude/settings.json" "$dr_root/.claude/settings.json"
+cp "$ROOT/scripts/setup-user-hooks.sh" "$dr_root/scripts/setup-user-hooks.sh"
+printf '{}\n' > "$dr_root/.template-version"
+dr_checks() { # dr_checks <root 内の setup script>: 派生 repo では理由を出して止まり何も書かず、印が無ければ配れる
+  local script="$1" rc=0 home err code
+  home="$(mktemp -d)"
+  code=0
+  err="$(HOME="$home" CLAUDE_CONFIG_DIR= bash "$script" --claude 2>&1 >/dev/null)" || code=$?
+  [ "$code" -eq 1 ] || { printf '派生 repo で exit=%s\n' "$code" >&2; rc=1; }
+  grep -Fq '.template-version' <<< "$err" || { printf '理由を出さない\n' >&2; rc=1; }
+  [ ! -e "$home/.claude" ] || { printf '派生 repo で user 側へ書いた\n' >&2; rc=1; }
+  mv "$dr_root/.template-version" "$dr_root/.template-version.off"
+  HOME="$home" CLAUDE_CONFIG_DIR= bash "$script" --claude >/dev/null 2>&1 || { printf '印が無い repo で配れない\n' >&2; rc=1; }
+  mv "$dr_root/.template-version.off" "$dr_root/.template-version"
+  rm -rf "$home"
+  return "$rc"
+}
+expect 0 "setup-user-hooks: 派生 repo（.template-version あり）では理由を出して止まり、テンプレート repo では配れる" dr_checks "$dr_root/scripts/setup-user-hooks.sh"
+expect_code 0 "setup-user-hooks 退行注入: 派生 repo の判定を外す（適用）" mutate_copy "$ROOT/scripts/setup-user-hooks.sh" "$dr_root/scripts/setup-mut.sh" 'if [ -e "$root/.template-version" ]; then' 'if false; then'
+expect_code 1 "setup-user-hooks 退行注入: 派生 repo の判定を外すと red" dr_checks "$dr_root/scripts/setup-mut.sh"
+rm -rf "$dr_root"
 rm -rf "$uh_home" "$uh_proj" "$uh_old"
 
 # ---- setup-user-hooks.sh --codex / user-hook-runner.sh codex host（一時 HOME）----
@@ -1645,7 +2020,7 @@ rm -rf "$uh_home" "$uh_proj" "$uh_old"
 cx_home="$(mktemp -d)"
 cx_hooks="$cx_home/.codex/hooks.json"
 cx_tmpl="$cx_home/.codex/hooks/template"
-run_cx() { HOME="$cx_home" CODEX_HOME= bash "$ROOT/scripts/setup-user-hooks.sh" "$@"; }
+run_cx() { HOME="$cx_home" CODEX_HOME= bash "$UH_ROOT/scripts/setup-user-hooks.sh" "$@"; }
 cx_query() { python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); sys.exit(0 if eval(sys.argv[2]) else 1)' "$cx_hooks" "$1"; }
 expect 0 "setup-user-hooks --codex: --dry-run は成功する" run_cx --codex --dry-run
 rc=0; [ ! -e "$cx_hooks" ] && [ ! -e "$cx_tmpl" ] || rc=1
@@ -1716,9 +2091,10 @@ rm -rf "$ck_root"
 # ---- setup-user-hooks.sh --git / hooks/git-tmp-worktree-guard.sh -----------
 # Bash 文字列 guard を通らない経路（ここでは test script からの直接 git 実行）でも一時領域 worktree を取り消す。
 
+has_git_config_hooks || skip_begin "git が設定ベースの hook（hook.<name>.event）に対応していない"
 gg_home="$(mktemp -d)"
 gg_cfg="$gg_home/gitconfig"
-run_gg() { HOME="$gg_home" GIT_CONFIG_GLOBAL="$gg_cfg" XDG_CONFIG_HOME= bash "$ROOT/scripts/setup-user-hooks.sh" "$@"; }
+run_gg() { HOME="$gg_home" GIT_CONFIG_GLOBAL="$gg_cfg" XDG_CONFIG_HOME= bash "$UH_ROOT/scripts/setup-user-hooks.sh" "$@"; }
 gg_git() { env -u PROJECT_TEMPLATE_ALLOW_TMP_WORKTREE HOME="$gg_home" GIT_CONFIG_GLOBAL="$gg_cfg" git "$@"; }
 gg_repo="$gg_home/repo"
 git init -q -b main "$gg_repo"
@@ -1726,6 +2102,8 @@ git -C "$gg_repo" -c user.email=t@example.com -c user.name=t commit -q --allow-e
 expect 0 "setup-user-hooks --git: --dry-run は成功する" run_gg --git --dry-run
 rc=0; [ ! -e "$gg_cfg" ] && [ ! -e "$gg_home/.config" ] || rc=1
 report 0 "$rc" "setup-user-hooks --git: --dry-run は何も書かない"
+expect_out "setup-user-hooks --git: --dry-run は「反映した」と表示しない" "0" bash -c 'run() { HOME="$1" GIT_CONFIG_GLOBAL="$2" XDG_CONFIG_HOME= bash "$3" --git --dry-run; }; run "$@" | grep -c "反映した"' _ "$gg_home" "$gg_cfg" "$UH_ROOT/scripts/setup-user-hooks.sh"
+expect_out "setup-user-hooks --git --uninstall: --dry-run は「撤去した」と表示しない" "0" bash -c 'run() { HOME="$1" GIT_CONFIG_GLOBAL="$2" XDG_CONFIG_HOME= bash "$3" --git --uninstall --dry-run; }; run "$@" | grep -c "撤去した"' _ "$gg_home" "$gg_cfg" "$UH_ROOT/scripts/setup-user-hooks.sh"
 gg_git -C "$gg_repo" worktree add -q "$gg_home/wt-before" -b before >/dev/null 2>&1
 rc=0; [ -d "$gg_home/wt-before" ] || rc=1
 report 0 "$rc" "git guard 退行注入: 未配線なら一時領域に worktree が作られる"
@@ -1761,12 +2139,13 @@ gg_git -C "$gg_home/ign-wt" switch -q --orphan scratch2 >/dev/null 2>&1
 gg_git -C "$gg_home/ign-wt" switch -q ign-wt >/dev/null 2>&1
 rc=0; [ -f "$gg_home/ign-wt/.env" ] || rc=1
 report 0 "$rc" "git guard regression: 既存の一時領域 worktree の ignore 対象ファイルを削除しない"
-expect 0 "setup-user-hooks --git: repo 外から実行しても対応 git を検出する" bash -c 'cd / && HOME="$1" GIT_CONFIG_GLOBAL="$2" XDG_CONFIG_HOME= bash "$3" --git --dry-run' _ "$gg_home" "$gg_cfg" "$ROOT/scripts/setup-user-hooks.sh"
+expect 0 "setup-user-hooks --git: repo 外から実行しても対応 git を検出する" bash -c 'cd / && HOME="$1" GIT_CONFIG_GLOBAL="$2" XDG_CONFIG_HOME= bash "$3" --git --dry-run' _ "$gg_home" "$gg_cfg" "$UH_ROOT/scripts/setup-user-hooks.sh"
 expect 0 "setup-user-hooks --git: --uninstall が成功する" run_gg --git --uninstall
 expect_out "setup-user-hooks --git: --uninstall で配線を外す" "" bash -c 'HOME="$1" GIT_CONFIG_GLOBAL="$2" git config --global --get-regexp "^hook\." || true' _ "$gg_home" "$gg_cfg"
 rc=0; [ ! -e "$gg_home/.config/git/project-template-hooks" ] || rc=1
 report 0 "$rc" "setup-user-hooks --git: --uninstall は複製ディレクトリを削除する"
 rm -rf "$gg_home"
+skip_end
 
 # ---- setup-user-hooks.sh --worktree-access（一時 HOME / CODEX_HOME）----------
 
@@ -1775,7 +2154,7 @@ wa_wt="$wa_home/worktrees"
 mkdir -p "$wa_home/.codex" "$wa_home/.claude"
 printf '%s\n' '{"model":"keep-me","permissions":{"additionalDirectories":["/keep/dir"],"allow":["Bash(ls)"]}}' > "$wa_home/.claude/settings.json"
 printf '# comment\nmodel = "x"\n\n[sandbox_workspace_write]\nexclude_slash_tmp = false\nwritable_roots = [\n  "/keep/root",\n]\n\n[other]\nk = 1\n' > "$wa_home/.codex/config.toml"
-run_wa() { HOME="$wa_home" CODEX_HOME= CLAUDE_CONFIG_DIR= bash "$ROOT/scripts/setup-user-hooks.sh" --claude --codex --worktree-access "$@"; }
+run_wa() { HOME="$wa_home" CODEX_HOME= CLAUDE_CONFIG_DIR= bash "$UH_ROOT/scripts/setup-user-hooks.sh" --claude --codex --worktree-access "$@"; }
 wa_claude() { python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); sys.exit(0 if eval(sys.argv[2]) else 1)' "$wa_home/.claude/settings.json" "$1"; }
 wa_codex() { python3 -c 'import tomllib,sys; d=tomllib.load(open(sys.argv[1],"rb")); sys.exit(0 if eval(sys.argv[2]) else 1)' "$wa_home/.codex/config.toml" "$1"; }
 wa_sum0="$(cat "$wa_home/.claude/settings.json" "$wa_home/.codex/config.toml" | cksum)"
@@ -1800,16 +2179,16 @@ expect 0 "worktree-access: 追加した section が正しい" wa_codex "d[\"sand
 printf 'not = = toml\n' > "$wa_home/.codex/config.toml"
 expect 1 "worktree-access: 壊れた config.toml は解析失敗で止める" run_wa
 expect 0 "worktree-access: 壊れた config.toml を書き換えない" grep -Fqx 'not = = toml' "$wa_home/.codex/config.toml"
-rc=0; HOME="$wa_home" CODEX_HOME= CLAUDE_CONFIG_DIR= bash "$ROOT/scripts/setup-user-hooks.sh" --claude >/dev/null 2>&1 || rc=$?
+rc=0; HOME="$wa_home" CODEX_HOME= CLAUDE_CONFIG_DIR= bash "$UH_ROOT/scripts/setup-user-hooks.sh" --claude >/dev/null 2>&1 || rc=$?
 report 0 "$rc" "worktree-access: 指定しなければ従来どおり成功する（exit 0）"
 rm -rf "$wa_home"
 # 独立 review（5d7d4d6）の回帰: --uninstall は許可だけを外し hook 配線を残す / 編集範囲外を壊さない / 自動編集できない形式は止める
 wb_home="$(mktemp -d)"
 wb_wt="$wb_home/worktrees"
-run_wb() { HOME="$wb_home" CODEX_HOME= CLAUDE_CONFIG_DIR= bash "$ROOT/scripts/setup-user-hooks.sh" "$@"; }
+run_wb() { HOME="$wb_home" CODEX_HOME= CLAUDE_CONFIG_DIR= bash "$UH_ROOT/scripts/setup-user-hooks.sh" "$@"; }
 mkdir -p "$wb_home/.codex"
 run_wb --claude --codex --worktree-access >/dev/null 2>&1
-expect 0 "worktree-access --uninstall: 許可を外しても Claude の guard hook 配線を残す" bash -c 'run() { HOME="$1" CODEX_HOME= CLAUDE_CONFIG_DIR= bash "$2" --claude --codex --worktree-access --uninstall >/dev/null; }; run "$1" "$2" && python3 -c "import json,sys; d=json.load(open(sys.argv[1])); sys.exit(0 if any(\"guard-bash\" in h[\"command\"] for g in d[\"hooks\"][\"PreToolUse\"] for h in g[\"hooks\"]) and \"additionalDirectories\" not in d.get(\"permissions\", {}) else 1)" "$1/.claude/settings.json"' _ "$wb_home" "$ROOT/scripts/setup-user-hooks.sh"
+expect 0 "worktree-access --uninstall: 許可を外しても Claude の guard hook 配線を残す" bash -c 'run() { HOME="$1" CODEX_HOME= CLAUDE_CONFIG_DIR= bash "$2" --claude --codex --worktree-access --uninstall >/dev/null; }; run "$1" "$2" && python3 -c "import json,sys; d=json.load(open(sys.argv[1])); sys.exit(0 if any(\"guard-bash\" in h[\"command\"] for g in d[\"hooks\"][\"PreToolUse\"] for h in g[\"hooks\"]) and \"additionalDirectories\" not in d.get(\"permissions\", {}) else 1)" "$1/.claude/settings.json"' _ "$wb_home" "$UH_ROOT/scripts/setup-user-hooks.sh"
 rc=0; [ -x "$wb_home/.claude/hooks/template/guard-bash.sh" ] && [ -x "$wb_home/.codex/hooks/template/guard-codex.sh" ] || rc=1
 report 0 "$rc" "worktree-access --uninstall: hook の複製ディレクトリを残す"
 printf '[sandbox_workspace_write]\nwritable_roots = [\n  "/a",\n  "]x[",\n]\n# keep me\n\n[other]\nk = 1\n' > "$wb_home/.codex/config.toml"
@@ -1829,23 +2208,38 @@ printf 'model = "x"\r\n\r\n[sandbox_workspace_write]\r\nwritable_roots = ["/a"]\
 expect 0 "worktree-access: CRLF の config.toml に追加できる" run_wb --codex --worktree-access
 expect 0 "worktree-access: CRLF の改行を保持する" python3 -c 'import sys; b=open(sys.argv[1],"rb").read(); sys.exit(0 if b.count(b"\n")==b.count(b"\r\n")>0 else 1)' "$wb_home/.codex/config.toml"
 printf 'sandbox_workspace_write = { writable_roots = ["/a"] }\n' > "$wb_home/.codex/config.toml"
-expect_out "worktree-access: インラインテーブルは Traceback でなく中止メッセージで止める" "1" bash -c 'HOME="$1" CODEX_HOME= bash "$2" --codex --worktree-access 2>&1 >/dev/null | grep -c "自動編集できない形式"' _ "$wb_home" "$ROOT/scripts/setup-user-hooks.sh"
+expect_out "worktree-access: インラインテーブルは Traceback でなく中止メッセージで止める" "1" bash -c 'HOME="$1" CODEX_HOME= bash "$2" --codex --worktree-access 2>&1 >/dev/null | grep -c "自動編集できない形式"' _ "$wb_home" "$UH_ROOT/scripts/setup-user-hooks.sh"
 printf '[sandbox_workspace_write]\nwritable_roots = ["~/worktrees/"]\n' > "$wb_home/.codex/config.toml"
 wb_sum="$(cksum < "$wb_home/.codex/config.toml")"
 expect 0 "worktree-access: ~ 表記・末尾スラッシュ違いの同じ path があれば成功する" run_wb --codex --worktree-access
 rc=0; [ "$(cksum < "$wb_home/.codex/config.toml")" = "$wb_sum" ] || rc=1
 report 0 "$rc" "worktree-access: 同じ場所を指す別表記の path を重複追加しない"
 printf '{"permissions": null}\n' > "$wb_home/.claude/settings.json"
-expect 0 "worktree-access: permissions が null でも追加できる" bash -c 'HOME="$1" CLAUDE_CONFIG_DIR= bash "$2" --claude --worktree-access >/dev/null && python3 -c "import json,sys; d=json.load(open(sys.argv[1])); sys.exit(0 if d[\"permissions\"][\"additionalDirectories\"]==[sys.argv[2]] else 1)" "$1/.claude/settings.json" "$3"' _ "$wb_home" "$ROOT/scripts/setup-user-hooks.sh" "$wb_wt"
+expect 0 "worktree-access: permissions が null でも追加できる" bash -c 'HOME="$1" CLAUDE_CONFIG_DIR= bash "$2" --claude --worktree-access >/dev/null && python3 -c "import json,sys; d=json.load(open(sys.argv[1])); sys.exit(0 if d[\"permissions\"][\"additionalDirectories\"]==[sys.argv[2]] else 1)" "$1/.claude/settings.json" "$3"' _ "$wb_home" "$UH_ROOT/scripts/setup-user-hooks.sh" "$wb_wt"
 printf '{"model":"m"}\n' > "$wb_home/.claude/settings.json"
-HOME="$wb_home" CLAUDE_CONFIG_DIR= bash "$ROOT/scripts/setup-user-hooks.sh" --claude --worktree-access >/dev/null 2>&1
-HOME="$wb_home" CLAUDE_CONFIG_DIR= bash "$ROOT/scripts/setup-user-hooks.sh" --claude --worktree-access --uninstall >/dev/null 2>&1
+HOME="$wb_home" CLAUDE_CONFIG_DIR= bash "$UH_ROOT/scripts/setup-user-hooks.sh" --claude --worktree-access >/dev/null 2>&1
+HOME="$wb_home" CLAUDE_CONFIG_DIR= bash "$UH_ROOT/scripts/setup-user-hooks.sh" --claude --worktree-access --uninstall >/dev/null 2>&1
 expect 0 "worktree-access: 元から無かった permissions を uninstall 後に残さない" python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); sys.exit(0 if "permissions" not in d else 1)' "$wb_home/.claude/settings.json"
-HOME="$wb_home" CODEX_HOME= CLAUDE_CONFIG_DIR= GIT_CONFIG_GLOBAL="$wb_home/gitconfig" XDG_CONFIG_HOME= bash "$ROOT/scripts/setup-user-hooks.sh" --git >/dev/null 2>&1
-HOME="$wb_home" CODEX_HOME= CLAUDE_CONFIG_DIR= GIT_CONFIG_GLOBAL="$wb_home/gitconfig" XDG_CONFIG_HOME= bash "$ROOT/scripts/setup-user-hooks.sh" --claude --git --worktree-access --uninstall >/dev/null 2>&1
+HOME="$wb_home" CODEX_HOME= CLAUDE_CONFIG_DIR= GIT_CONFIG_GLOBAL="$wb_home/gitconfig" XDG_CONFIG_HOME= bash "$UH_ROOT/scripts/setup-user-hooks.sh" --git >/dev/null 2>&1
+HOME="$wb_home" CODEX_HOME= CLAUDE_CONFIG_DIR= GIT_CONFIG_GLOBAL="$wb_home/gitconfig" XDG_CONFIG_HOME= bash "$UH_ROOT/scripts/setup-user-hooks.sh" --claude --git --worktree-access --uninstall >/dev/null 2>&1
+has_git_config_hooks || skip_begin "git が設定ベースの hook（hook.<name>.event）に対応していない"
 expect_out "worktree-access --uninstall: --git を併記しても git guard を残す" "post-checkout" bash -c 'HOME="$1" GIT_CONFIG_GLOBAL="$1/gitconfig" git config --global --get hook.project-template-tmp-worktree.event' _ "$wb_home"
-expect_out "worktree-access: claude / codex 以外の対象だけなら警告する" "1" bash -c 'HOME="$1" GIT_CONFIG_GLOBAL="$1/gitconfig" XDG_CONFIG_HOME= bash "$2" --git --worktree-access --dry-run 2>&1 >/dev/null | grep -c "併用する"' _ "$wb_home" "$ROOT/scripts/setup-user-hooks.sh"
+skip_end
+expect_out "worktree-access: claude / codex 以外の対象だけなら警告する" "1" bash -c 'HOME="$1" GIT_CONFIG_GLOBAL="$1/gitconfig" XDG_CONFIG_HOME= bash "$2" --git --worktree-access --dry-run 2>&1 >/dev/null | grep -c "併用する"' _ "$wb_home" "$UH_ROOT/scripts/setup-user-hooks.sh"
 rm -rf "$wb_home"
+# #116: 1 回の実行で同じファイルを 2 回書き換えても、既存の backup を上書きせず元の内容の backup を残す
+bk_home="$(mktemp -d)"
+mkdir -p "$bk_home/.claude"
+printf '{"theme": "original-116"}\n' > "$bk_home/.claude/settings.json"
+# 実行中の秒に当たりうる backup 名を 2 分ぶん先に置き、上書きされないことを確かめる（秒の衝突を決定的に再現する）
+python3 -c 'import sys,time; [open("%s.bak-%s" % (sys.argv[1], time.strftime("%Y%m%d-%H%M%S", time.localtime(time.time()+i))), "w").write("sentinel\n") for i in range(-1, 120)]' "$bk_home/.claude/settings.json"
+HOME="$bk_home" CODEX_HOME= CLAUDE_CONFIG_DIR= bash "$UH_ROOT/scripts/setup-user-hooks.sh" --claude --worktree-access >/dev/null 2>&1
+rc=0; for f in "$bk_home"/.claude/settings.json.bak-*; do case "$f" in *-[0-9]) ;; *) grep -qx sentinel "$f" || rc=1 ;; esac; done
+report 0 "$rc" "setup-user-hooks: 既存の同名 backup を上書きしない"
+expect_out "setup-user-hooks: 2 回の書き換え後も元の内容の backup が残る" "1" bash -c 'n=0; for f in "$1"/.claude/settings.json.bak-*; do printf "{\"theme\": \"original-116\"}\n" | cmp -s - "$f" && n=$((n+1)); done; echo "$n"' _ "$bk_home"
+expect_out "setup-user-hooks: 2 回の書き換えで backup を 2 つ取る" "2" bash -c 'ls "$1"/.claude/settings.json.bak-*-[0-9] | wc -l | tr -d " "' _ "$bk_home"
+rm -rf "$bk_home"
+[ "$UH_ROOT" = "$ROOT" ] || rm -rf "$UH_ROOT"
 
 # ---- setup-github-repo.sh（fake gh）------------------------------------
 
@@ -2056,7 +2450,7 @@ expect 0 "decisions: 見送り判断と配布形式を記録する" bash -c \
   'bridge-session' 'headless' '外部 LLM' 'memory 運用' \
   'check-branch-topology.sh' 'main 直コミット禁止' 'user-level' 'Agent Skills'
 expect 0 "merge authority: ADR と index の accepted が一致する" bash -c \
-  'adr=$1; index=$2; [ "$(awk "/^## Status$/{getline; getline; print; exit}" "$adr")" = accepted ] && [ "$(grep -Fc "./20260918-adopt-ai-merge-authority.md" "$index")" -eq 1 ] && grep -Fq "| 2026-09-18 | [AI の merge authority と human review boundary の採用](./20260918-adopt-ai-merge-authority.md) | accepted |" "$index"' \
+  'adr=$1; index=$2; [ "$(awk "/^## Status$/{getline; getline; print; exit}" "$adr")" = accepted ] && [ "$(grep -Fc "./20260918-adopt-ai-merge-authority.md" "$index")" -eq 1 ] && grep -Fq "| 2026-09-18 | [AI の merge authority と human review boundary の採用](./20260918-adopt-ai-merge-authority.md) | accepted（HUMAN の承認の形と時点・AUTO 条件 1 の観測手段のみ 2026-10-16 に部分 supersede） |" "$index"' \
   _ "$ROOT/docs/adr/20260918-adopt-ai-merge-authority.md" "$ROOT/docs/adr/README.md"
 expect 0 "merge authority: AGENTS と delegate-work は ADR を一度だけ参照する" bash -c \
   'for file in "$1" "$2"; do [ "$(grep -Fc "20260918-adopt-ai-merge-authority.md" "$file")" -eq 1 ] || exit 1; done' \
@@ -2107,7 +2501,8 @@ check_issue57_delegate_contracts() { # check_issue57_delegate_contracts <skill>
 
   [ "$(printf '%s\n' "$prompt" | grep -Ec '^[1-5]\. \*\*')" -eq 5 ] || return 1
 
-  for needle in 'scripts/new-branch.sh' '--worktree' 'home 配下' '親の checkout' '共有しない'; do
+  # 委譲の作業場所はコンテナ（#126 ADR 20261008 コンテナ隔離）。worktree は既存分の後始末に限る。
+  for needle in 'scripts/agent-box.sh' 'agent-containers' '親の checkout' '共有しない'; do
     printf '%s\n' "$work" | grep -Fq -- "$needle" || return 1
   done
   for needle in '報告前' '30 分ごと' '通常 commit' 'amend' 'rebase' 'force push'; do
@@ -2146,10 +2541,10 @@ expect 0 "issue #57: 5要素と委譲事故ガードの関係を満たす" \
   check_issue57_delegate_contracts "$ROOT/.claude/skills/delegate-work/SKILL.md"
 delegate_fixture_root="$(mktemp -d)"
 delegate_fixture="$delegate_fixture_root/SKILL.md"
-for negative in worktree checkpoint scratchpad real_api paid workflow concurrency; do
+for negative in isolation checkpoint scratchpad real_api paid workflow concurrency; do
   cp "$ROOT/.claude/skills/delegate-work/SKILL.md" "$delegate_fixture"
   case "$negative" in
-    worktree) remove_issue57_fixture_line "$delegate_fixture" 'scripts/new-branch.sh' ;;
+    isolation) remove_issue57_fixture_line "$delegate_fixture" 'scripts/agent-box.sh' ;;
     checkpoint) remove_issue57_fixture_line "$delegate_fixture" '30 分ごと' ;;
     scratchpad) remove_issue57_fixture_line "$delegate_fixture" '子ごとのサブディレクトリ' ;;
     real_api) remove_issue57_fixture_line "$delegate_fixture" '本物の外部 API' ;;
@@ -2378,13 +2773,39 @@ if [ -f "$ROOT/.claude/skills/headless-run/SKILL.md" ]; then
   rm -rf "$headless_fixture_root"
 fi
 
-# ---- worktree lifecycle (#105) -------------------------------------------
-expect 0 "issue #105: lifecycle / protection / ownership / activity / Codex fixtures" \
-  env PYTHONDONTWRITEBYTECODE=1 python3 "$ROOT/tests/worktree-lifecycle.py"
+# ---- agent-box (#126) -----------------------------------------------------
+expect 0 "issue #126: コンテナ隔離の起動・取り込み・片付け・guard fixtures" \
+  env PYTHONDONTWRITEBYTECODE=1 python3 "$ROOT/tests/agent-box.py"
+# 片付けの各条件と、コンテナ内だけ guard を外す条件を外すと、対応する保護 test が落ちる（退行注入）
+for mutation in running dirty retained symlink reuse results artifacts keepdest follow discard boxlink statelink limits inspectlimits cache logs memory disk prunemerge prunehead pruneactive pruneother pruneremote prunename prunebase prunebaseref pruneold prunesearch dockerhint record startcheck stalelog; do
+  # 注入の失敗（exit 3）を red と数えないよう、assertion の失敗（exit 1）だけを期待する
+  expect_code 1 "issue #126: ${mutation} の判定を外すと片付け・guard の保護が失われる（red）" \
+    env PYTHONDONTWRITEBYTECODE=1 python3 "$ROOT/tests/agent-box.py" --case "$mutation" --mutation "$mutation"
+done
+# コンテナの中では /.dockerenv があるので、「ホストでは guard が外れない」ことを確かめられない（agent-box.py も skip する）
+in_container && skip_begin "コンテナの中（/.dockerenv がある）では、ホストで guard が外れないことを確かめられない"
+expect 1 "issue #126: dockerenv の判定を外すと片付け・guard の保護が失われる（red）" \
+  env PYTHONDONTWRITEBYTECODE=1 python3 "$ROOT/tests/agent-box.py" --case dockerenv --mutation dockerenv
+skip_end
+
+# ---- ~/.trashable の定期掃除 (#146) -----------------------------------------
+expect 0 "issue #146: 掃除の条件（7 日・合計・24 時間・symlink）と --trashable の導入・撤去 fixtures" \
+  env PYTHONDONTWRITEBYTECODE=1 python3 "$ROOT/tests/trashable-cleanup.py"
+# 掃除の保護を 1 つずつ外すと、対応する test が落ちる（退行注入）
+# 注入の失敗（exit 3）を red と数えないよう、assertion の失敗（exit 1）だけを期待する
+for mutation in age total order recent warn newest follow linkdelete projectlink nofollow homeguard rootlink dryrun; do
+  expect_code 1 "issue #146: ${mutation} の保護を外すと掃除の条件が守られない（red）" \
+    env PYTHONDONTWRITEBYTECODE=1 python3 "$ROOT/tests/trashable-cleanup.py" --case "$mutation" --mutation "$mutation"
+done
 
 # ---- summary -------------------------------------------------------------
 
 expect 0 "issue #94: commit snapshot / metadata / offline comparison fixtures" \
   python3 "$ROOT/tests/template-provenance.py"
+
+# macOS のホストでは前提がそろっているので、skip が 1 件でもあれば前提の判定の誤り（#135）
+if [ "$(uname -s)" = Darwin ]; then
+  report 0 "$([ "$SKIP" -eq 0 ]; echo $?)" "self-test: macOS のホストでは skip しない（skip=${SKIP}）"
+fi
 
 finish

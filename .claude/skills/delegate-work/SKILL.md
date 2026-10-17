@@ -1,6 +1,6 @@
 ---
 name: delegate-work
-description: Use BEFORE delegating work to subagents or parallel agent sessions - isolates child worktrees and scratchpads, bounds concurrency and workflow size, checkpoints writable work, and supplies the five-element prompt contract with standard safety constraints.
+description: Use BEFORE delegating work to subagents or parallel agent sessions - isolates child containers and scratchpads, bounds concurrency and workflow size, checkpoints writable work, and supplies the five-element prompt contract with standard safety constraints.
 ---
 
 # Delegate Work
@@ -29,13 +29,17 @@ description: Use BEFORE delegating work to subagents or parallel agent sessions 
 2. **スコープ境界**: 触ってよいファイル・ディレクトリの列挙（それ以外は read-only）
 3. **禁止事項**: 下の標準制約ブロック＋タスク固有の禁止
 4. **入力自己完結**: 子は親の会話を読めない前提で、必要な文脈・パス・引用を本文に含める
-5. **出力の型**: 返すべき構造（結論先頭・根拠・変更ファイル一覧など）を指定する
+5. **出力の型**: 返すべき構造（結論先頭・根拠・変更ファイル一覧など）を指定する。コンテナの子には、commit しない成果物は `~/.agent-box/artifacts/` に置くこと、報告の正本は issue / PR へのコメント（`output.log` は予備）であること、コメントを書かない子は最終報告を `~/.agent-box/artifacts/report.md` にも書くことも書く（正本: [`agent-containers`](../../../docs/process/agent-containers.md)）
 
 ## 作業場所と checkpoint
 
-- 子は read-only の調査・review を含め、親の checkout や他 session の checkout を共有しない。
-  `scripts/new-branch.sh ... --worktree <~/worktrees/<repo>/ 配下の専用 path>` を使い、子ごとに専用
-  worktree を割り当てる。配置・物理 path 検査は同 script と AGENTS.md の worktree 規律を正本とする。
+- 子は read-only の review を含め（repo を書かない調査は下の例外 1）、親の checkout や他 session の checkout を共有しない。
+  新しく始める委譲は、子ごとのコンテナ（`scripts/agent-box.sh start <session> --prompt-file <依頼>`）で行う
+  （正本: [`agent-containers`](../../../docs/process/agent-containers.md)。同時 3 個まで、片付けは `clean` で承認不要）。
+  子は L2 トークンで PR にコメントでき、push はできないので、成果は owner が `collect` して push する。
+- 例外 1（repo を書かない調査）: web・docs の調査、読むだけの探索は、Agent tool の子（Explore・claude-code-guide 等）に任せてよい。書き込み・レビュー・実装は上のとおり子のコンテナで行う。
+- 例外 2（Linux のコンテナで動かない repo）: その repo の `AGENTS.md` が節 `## 委譲の作業場所` に `- agent-box: 使えない（理由: …）` と宣言しているときに限り、owner が `~/worktrees/<repo>/<名前>` に worktree を作り、そこを作業 dir にして Agent tool の子に任せる（1 子 = 1 worktree。後始末の `git worktree remove` は guard が確認する）。宣言が無い repo では使わない（正本: [`agent-containers`](../../../docs/process/agent-containers.md) の「Linux で動かない repo」）。
+- Docker が止まっているとき（接続エラー）は、`orb start` で起動してから再実行してよい。`orb restart` / `orb reset` は利用者の判断。
 - 編集を任せた子は、報告前と 30 分ごとに追跡済みの部分成果を WIP checkpoint として
   通常 commit する。commit は履歴に追加し、amend・rebase・force push で書き換えない。
 - 一時ファイルは共有 scratchpad へ置かず、子ごとのサブディレクトリへ隔離する。
@@ -45,9 +49,9 @@ description: Use BEFORE delegating work to subagents or parallel agent sessions 
 
 - repo は read-only。変更が必要なら diff 案を返す（直接編集しない。編集を任せる場合は
   スコープ境界のファイルに限定する）
-- 親の checkout を共有せず、`scripts/new-branch.sh --worktree` で作った home 配下の専用
-  worktree だけを使う
+- 親の checkout を共有せず、渡された子のコンテナの中だけで作業する
 - 一時ファイルは子ごとの scratchpad に隔離し、引き継ぐ成果物は永続位置へ保存する
+- 一時物は `~/.trashable/<repo>/`（子のコンテナでは `/tmp`）に置く。後片付けは不要。自分の一時物を `rm -rf` で消してよいのは、対象が一時領域の「中」の実 path のときだけ（ルート自身・変数や glob・`..`・一時領域の外は確認待ちで委譲が止まるので、使わない）
 - 子は本物の外部 API を呼び出さない。検証は fake / dry-run で行う
 - 親と子の双方で、有料外部 API の呼び出し・provider の変更・クレジット消費を行わない。
   必要性が生じたら [`decide-or-proceed`](../decide-or-proceed/SKILL.md) の停止条件として親へ返す
@@ -64,16 +68,7 @@ description: Use BEFORE delegating work to subagents or parallel agent sessions 
 - JavaScript の command・tool snippet・生成コードでは文字列にバッククォートを使わず、
   single / double quote またはデータオブジェクトで表す。
 
-## 回収
-
-- 作成時に root session / child ownership を管理コマンドへ登録する。正本は
-  [`worktree lifecycle`](../../../docs/process/worktree-lifecycle.md)。既存の未管理 worktree を子専用へ昇格しない。
-- 子は修正ラウンドの終端まで終了記録を出さない。終了時は結果・対象 SHA・根拠を worktree 外へ保存し、
-  `scripts/worktree.sh end` で明示報告する。登録 job の終了も確認する。
-- root は実際の agent session 終了・job 終了・現物・退避根拠を確認し、`inspect` の snapshot に対応する
-  confirmation を外部保存して `reclaim` する。子は回収しない。通常・他 session・未管理分はユーザー承認が必要。
-- 区切りに `scripts/worktree.sh candidates` の候補と保護理由を提示する。PR merge/close や clean だけで終了・回収を推定しない。
-
+## 結果の確認
 
 - 委譲結果を鵜呑みにしない。重要な結論は根拠（コマンド・出力・パス）まで遡って確認する。
 - 大きな委譲には「過程の自己申告」（見なかった観点・自信のない判断）を出力の型に含めさせる。
@@ -84,12 +79,13 @@ description: Use BEFORE delegating work to subagents or parallel agent sessions 
 - writer は scope 内の実装・検証・commit / push / PR 作成までを担い、merge しない。
 - reviewer は writer と別 context で fixed head SHA と根拠を確認し、blocking finding の有無を返すが、merge しない。AI reviewer を HUMAN 判断の代替にしない。
 - root orchestrator だけが正本の AUTO / HUMAN 条件を判定し、AUTO の全条件を満たす場合だけ squash merge できる。HUMAN 条件を含む場合は人間の判断を待つ。
+- merge は `scripts/merge-pr.sh` だけを通す（`gh pr merge` 等は Bash guard が拒否する）。承認は会話で受け、AI がユーザーの発言をそのまま issue 本文の「merge の事前承認」節か PR のコメント（`merge 承認: head <SHA>` と引用。head が変われば無効）へ写す。どちらも無ければ merge しない。事前承認の対象外（知覚の成果物・外部影響を含む PR）と、条件から外れた PR は「承認待ち」に積み、作業を止めずに区切りでまとめて（PR 番号・head SHA・理由）聞く。正本は [`docs/adr/20261016-gate-merge-behind-script-and-recorded-approval.md`](../../../docs/adr/20261016-gate-merge-behind-script-and-recorded-approval.md)。
 - HUMAN 判断は可能なら issue / ADR の scope 確定時に前倒しする。未解決の意味判断を writer / reviewer に委ねず root orchestrator へ返す。
 - stacked child の reviewer には immediate-base の fixed parent head SHA と fixed child head SHA を渡し、その差分だけを対象にさせる。親の squash merge 後は正本の手順で child を再検証する。
 
 ## 関連
 
 - `.claude/skills/decide-or-proceed/SKILL.md` — 委譲中に止まるか進むかの判定
-- `scripts/new-branch.sh` — home 配下の専用 worktree 作成と path 検査
+- `scripts/agent-box.sh` — 子のコンテナの起動・取り込み・片付け
 - `docs/adr/20260905-adopt-session-audit-guards-round2.md` — #55〜#60 に分割した是正方針
 - AGENTS.md 編集ガードレール — 破壊的操作・secrets の正本（子にも適用される）

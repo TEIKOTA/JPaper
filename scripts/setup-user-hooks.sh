@@ -4,7 +4,7 @@
 # （第 2 ラウンド監査の実測: 展開後も 4〜43 時間ガード無し）。ユーザーレベルに同じ配線を置くと
 # checkout の状態に依らず hook が効く。プロジェクト側 .claude/settings.json は他ツール向けに維持する。
 #
-# usage: scripts/setup-user-hooks.sh [--claude] [--codex] [--git] [--worktree-access] [--dry-run] [--uninstall]
+# usage: scripts/setup-user-hooks.sh [--claude] [--codex] [--git] [--trashable] [--worktree-access] [--dry-run] [--uninstall]
 #   - 対象の指定が無ければ --claude のみ（従来どおり）。複数指定で順に処理する
 #   - --claude: 正本は .claude/settings.json の hooks（scripts/hooks/<name>.sh を参照する項目）。scripts/hooks の
 #     hook 実装（.sh / .py）を <config>/hooks/template/ へ複製し、<config>/settings.json に同じ event / matcher で
@@ -16,13 +16,20 @@
 #   - --git: scripts/hooks/git-tmp-worktree-guard.sh を ${XDG_CONFIG_HOME:-$HOME/.config}/git/project-template-hooks/
 #     へ複製し、グローバル git 設定（$GIT_CONFIG_GLOBAL に従う）の hook.project-template-tmp-worktree を
 #     post-checkout に配線する。一時領域への worktree 作成をツールに依らず取り消す（要: 設定ベース hook 対応の git）
+#   - --trashable: 一時物の置き場 ~/.trashable の定期掃除（#146）を macOS の launchd に登録する。scripts/trashable-cleanup.py を
+#     ${XDG_CONFIG_HOME:-$HOME/.config}/project-template/ へ複製し、~/Library/LaunchAgents/com.project-template.trashable-cleanup.plist
+#     （毎日 12:00・ログは ~/Library/Logs/project-template-trashable.log・python3 は導入時に解決した絶対 path）を書いて
+#     launchctl bootstrap gui/<uid> で登録する（再実行は bootout してから登録し直す）。~/.trashable も作る。--uninstall は
+#     登録・plist・複製を外すが ~/.trashable の中身には触れない。launchctl が無ければ理由を出して失敗する
 #   - --worktree-access: 選んだ --claude / --codex の対象に、worktree 標準配置 ~/worktrees（$PROJECT_TEMPLATE_WORKTREES_DIR
 #     で変更可）への作業許可を加える。Claude は settings.json の permissions.additionalDirectories、Codex は
 #     config.toml の [sandbox_workspace_write].writable_roots。--uninstall 併用時はこの path だけを外す
 #     （hook の配線は残す。判断の正本: docs/adr/20261006-allow-agent-access-to-worktree-root.md）
+#   - 複製はテンプレート repo からだけ配る。派生 repo（root に .template-version がある）では理由を出して止まる。
+#     複製が scripts/hooks とずれていないかは、テンプレート repo の SessionStart（scripts/hooks/session-start.sh）が警告する
 #   - 既存の hooks と他のキーは保持する。自分が入れた項目（command に user-hook-runner.sh を含む）だけを
 #     入れ替えるので再実行しても増殖しない（冪等）。hook を追加・変更したら再実行する
-#   - settings.json / hooks.json を書き換える前に <file>.bak-<timestamp> を取る（内容が変わる時だけ）
+#   - settings.json / hooks.json を書き換える前に <file>.bak-<timestamp>[-N] を取る（内容が変わる時だけ。同名は上書きせず連番）
 #   - --dry-run: 複製するファイルと設定の差分を表示して何も書かない
 #   - --uninstall: 自分が入れた配線を外し、複製ディレクトリを削除する（他の hook には触れない）
 set -eu
@@ -36,10 +43,10 @@ targets=""
 for a in "$@"; do
   case "$a" in
     --worktree-access) access=1 ;;
-    --claude|--codex|--git) case " $targets " in *" ${a#--} "*) ;; *) targets="$targets ${a#--}" ;; esac ;;
+    --claude|--codex|--git|--trashable) case " $targets " in *" ${a#--} "*) ;; *) targets="$targets ${a#--}" ;; esac ;;
     --dry-run) dry=1 ;;
     --uninstall) uninstall=1 ;;
-    -h|--help) sed -n '2,27p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,34p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) printf '✖ 不明なオプション: %s\n' "$a" >&2; exit 2 ;;
   esac
 done
@@ -49,12 +56,36 @@ case " $targets " in
   *) [ "$access" = 1 ] && printf '⚠ --worktree-access は --claude / --codex と併用する（今回の対象には適用しない）\n' >&2 ;;
 esac
 
+# user 側の複製はテンプレート repo からだけ配る。派生 repo（root に .template-version がある）の scripts/ は
+# 古い版のことがあり、そこから実行すると新しい複製を古い版で上書きする（#157）
+if [ -e "$root/.template-version" ]; then
+  printf '✖ 派生 repo（%s に .template-version がある）からは実行しない: scripts/ が古い版のことがあり、user 側の複製を古い版で上書きする。テンプレート repo の checkout から実行する\n' "$root" >&2
+  exit 1
+fi
+
 command -v python3 >/dev/null 2>&1 || { printf '✖ python3 が必要\n' >&2; exit 1; }
 
 # setup_json_hooks <正本 json> <config dir> <設定ファイル名> <host> <許可 event（空は全 event）>
 setup_json_hooks() {
 python3 - "$1" "$root/scripts/hooks" "$2" "$dry" "$uninstall" "$3" "$4" "$5" <<'PY'
 import difflib, json, os, re, shlex, shutil, stat, sys, time
+
+
+def backup(path):
+    """<path>.bak-<秒> を排他作成で取る。同名があれば -1, -2… を付け、既存の backup を上書きしない（#116）。"""
+    stem = path + ".bak-" + time.strftime("%Y%m%d-%H%M%S")
+    for n in range(1000):
+        bak = stem if n == 0 else "%s-%d" % (stem, n)
+        try:
+            fd = os.open(bak, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        except FileExistsError:
+            continue
+        with os.fdopen(fd, "wb") as out, open(path, "rb") as src:
+            shutil.copyfileobj(src, out)
+        shutil.copymode(path, bak)
+        print("backup: %s" % bak)
+        return bak
+    raise SystemExit("✖ backup 名が尽きた: %s" % stem)
 
 src, hooks_dir, cfg = sys.argv[1], sys.argv[2], sys.argv[3]
 dry, uninstall = sys.argv[4] == "1", sys.argv[5] == "1"
@@ -173,9 +204,7 @@ else:
 if changed:
     os.makedirs(cfg, exist_ok=True)
     if settings_existed:
-        bak = settings + ".bak-" + time.strftime("%Y%m%d-%H%M%S")
-        shutil.copyfile(settings, bak)
-        print("backup: %s" % bak)
+        backup(settings)
     with open(settings, "w") as f:
         json.dump(new, f, indent=2, ensure_ascii=False)
         f.write("\n")
@@ -188,6 +217,23 @@ PY
 setup_worktree_access() {
 python3 - "$1" "$2" "${PROJECT_TEMPLATE_WORKTREES_DIR:-$HOME/worktrees}" "$dry" "$uninstall" <<'PY'
 import copy, difflib, json, os, re, shutil, sys, time
+
+
+def backup(path):
+    """<path>.bak-<秒> を排他作成で取る。同名があれば -1, -2… を付け、既存の backup を上書きしない（#116）。"""
+    stem = path + ".bak-" + time.strftime("%Y%m%d-%H%M%S")
+    for n in range(1000):
+        bak = stem if n == 0 else "%s-%d" % (stem, n)
+        try:
+            fd = os.open(bak, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        except FileExistsError:
+            continue
+        with os.fdopen(fd, "wb") as out, open(path, "rb") as src:
+            shutil.copyfileobj(src, out)
+        shutil.copymode(path, bak)
+        print("backup: %s" % bak)
+        return bak
+    raise SystemExit("✖ backup 名が尽きた: %s" % stem)
 
 tool, cfg, dry, uninstall = sys.argv[1], sys.argv[2], sys.argv[4] == "1", sys.argv[5] == "1"
 wt = os.path.abspath(os.path.expanduser(sys.argv[3])).rstrip("/") or "/"
@@ -215,9 +261,7 @@ def report_and_write(path, before, after, existed, newline="\n"):
         return
     os.makedirs(os.path.dirname(path), exist_ok=True)
     if existed:
-        bak = path + ".bak-" + time.strftime("%Y%m%d-%H%M%S")
-        shutil.copyfile(path, bak)
-        print("backup: %s" % bak)
+        backup(path)
     with open(path, "w", newline="") as handle:
         handle.write(after.replace("\n", newline) if newline != "\n" else after)
     print("%s: %s の worktree 許可を%s" % (tool, path, "外した" if uninstall else "反映した"))
@@ -387,7 +431,7 @@ setup_git_guard() {
       printf '%sgit: 複製ディレクトリ %s を削除\n' "$tag" "$dir"
       [ "$dry" = 1 ] || rm -rf "$dir"
     fi
-    printf '✔ git の一時領域 worktree guard を撤去した\n'
+    [ "$dry" = 1 ] || printf '✔ git の一時領域 worktree guard を撤去した\n'
     return 0
   fi
   if ! git -C "$root" -c "hook.$name-probe.event=post-checkout" -c "hook.$name-probe.command=true" hook list post-checkout 2>/dev/null | grep -qx "$name-probe"; then
@@ -413,7 +457,89 @@ setup_git_guard() {
       git config --global "hook.$name.command" "$cmd"
     fi
   fi
-  printf '✔ git の一時領域 worktree guard を反映した\n'
+  [ "$dry" = 1 ] || printf '✔ git の一時領域 worktree guard を反映した\n'
+}
+
+# setup_trashable: ~/.trashable の定期掃除（launchd）を導入 / 撤去する（#146）
+setup_trashable() {
+  local label="com.project-template.trashable-cleanup" tag="" dir dst plist logfile store py uid want rc i
+  [ "$dry" = 1 ] && tag="[dry-run] "
+  command -v launchctl >/dev/null 2>&1 || { printf '✖ launchctl が無い（--trashable は macOS の launchd 専用）\n' >&2; return 1; }
+  dir="${XDG_CONFIG_HOME:-$HOME/.config}/project-template"
+  dst="$dir/trashable-cleanup.py"
+  plist="$HOME/Library/LaunchAgents/$label.plist"
+  logfile="$HOME/Library/Logs/project-template-trashable.log"
+  store="$HOME/.trashable"
+  uid="$(id -u)"
+  if [ "$uninstall" = 1 ]; then
+    printf '%slaunchd: gui/%s/%s を bootout\n' "$tag" "$uid" "$label"
+    [ "$dry" = 1 ] || launchctl bootout "gui/$uid/$label" >/dev/null 2>&1 || true
+    if [ -e "$plist" ] || [ -L "$plist" ]; then
+      printf '%slaunchd: %s を削除\n' "$tag" "$plist"
+      [ "$dry" = 1 ] || rm -f "$plist"
+    fi
+    if [ -e "$dst" ] || [ -L "$dst" ]; then
+      printf '%s複製: %s を削除\n' "$tag" "$dst"
+      [ "$dry" = 1 ] || { rm -f "$dst"; rmdir "$dir" 2>/dev/null || true; }
+    fi
+    printf '%s置き場: %s の中身には触れない\n' "$tag" "$store"
+    [ "$dry" = 1 ] || printf '✔ ~/.trashable の定期掃除を撤去した\n'
+    return 0
+  fi
+  py="$(command -v python3)"
+  case "$py" in /*) ;; *) printf '✖ python3 を絶対 path で解決できない: %s\n' "$py" >&2; return 1 ;; esac
+  # 掃除は symlink を辿らない dir_fd 付きの rmtree を使うので Python 3.11 以上が要る（#146 の review N1）
+  if ! "$py" -c 'import shutil, sys; sys.exit(0 if sys.version_info >= (3, 11) and shutil.rmtree.avoids_symlink_attacks else 1)'; then
+    printf '✖ 掃除には Python 3.11 以上が必要: %s (%s)\n' "$py" "$("$py" -V 2>&1)" >&2
+    return 1
+  fi
+  want="$(PY="$py" DST="$dst" STORE="$store" LOG="$logfile" LABEL="$label" python3 - <<'PY'
+import os, plistlib, sys
+data = {
+    "Label": os.environ["LABEL"],
+    "ProgramArguments": [os.environ["PY"], os.environ["DST"], "--root", os.environ["STORE"]],
+    "StartCalendarInterval": {"Hour": 12, "Minute": 0},
+    "StandardOutPath": os.environ["LOG"],
+    "StandardErrorPath": os.environ["LOG"],
+}
+sys.stdout.buffer.write(plistlib.dumps(data))
+PY
+)" || return 1
+  if cmp -s "$root/scripts/trashable-cleanup.py" "$dst"; then
+    printf '%s複製: %s は変更なし\n' "$tag" "$dst"
+  else
+    printf '%s複製: %s を更新\n' "$tag" "$dst"
+    if [ "$dry" != 1 ]; then
+      mkdir -p "$dir"
+      cp "$root/scripts/trashable-cleanup.py" "$dst"
+      chmod +x "$dst"
+    fi
+  fi
+  if [ -f "$plist" ] && [ "$(cat "$plist")" = "$want" ]; then
+    printf '%splist: %s は変更なし\n' "$tag" "$plist"
+  else
+    printf '%splist: %s を書く（毎日 12:00・python3=%s・ログ %s）\n' "$tag" "$plist" "$py" "$logfile"
+    if [ "$dry" = 1 ]; then printf '%s\n' "$want"; else
+      mkdir -p "$HOME/Library/LaunchAgents" "$HOME/Library/Logs"
+      printf '%s\n' "$want" > "$plist"
+    fi
+  fi
+  if [ -d "$store" ] || [ -L "$store" ]; then
+    printf '%s置き場: %s は作成済み\n' "$tag" "$store"
+  else
+    printf '%s置き場: %s を作成\n' "$tag" "$store"
+    [ "$dry" = 1 ] || mkdir -m 700 -p "$store"
+  fi
+  printf '%slaunchd: gui/%s/%s を bootout してから bootstrap %s\n' "$tag" "$uid" "$label" "$plist"
+  [ "$dry" = 1 ] && return 0
+  launchctl bootout "gui/$uid/$label" >/dev/null 2>&1 || true
+  rc=1
+  for i in 1 2 3; do
+    if launchctl bootstrap "gui/$uid" "$plist"; then rc=0; break; fi
+    sleep 1
+  done
+  [ "$rc" = 0 ] || { printf '✖ launchctl bootstrap gui/%s %s に失敗した\n' "$uid" "$plist" >&2; return 1; }
+  printf '✔ ~/.trashable の定期掃除を反映した（毎日 12:00・ログ %s）\n' "$logfile"
 }
 
 for target in $targets; do
@@ -438,6 +564,9 @@ for target in $targets; do
       ;;
     git)
       if [ "$access" != 1 ] || [ "$uninstall" != 1 ]; then setup_git_guard; fi
+      ;;
+    trashable)
+      if [ "$access" != 1 ] || [ "$uninstall" != 1 ]; then setup_trashable || exit 1; fi
       ;;
   esac
 done

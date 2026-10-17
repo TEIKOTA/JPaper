@@ -20,7 +20,7 @@ description: Use when the user wants relentless interview-style alignment before
 使わないとき:
 
 - 書かれた仕様・設計文書への尋問
-  - 正本は `.claude/skills/grill-spec/SKILL.md`
+  - 正本は `.claude/skills/grill-spec/SKILL.md`。併用時は「併用時」節
 - 着手済みタスク内の個別の疑問
   - その場で通常の質問をする
 
@@ -40,9 +40,16 @@ description: Use when the user wants relentless interview-style alignment before
      `AskUserQuestion` は 4 問)。明示上限が無い harness(自由文で何問でも
      書けてしまう場合)では 1 問に落とす。上限不明を「無制限」と読まない。
      frontier がそれより大きければ、依存の根に近い順に切って次ラウンドへ
-     回す。
+     回す。上限は目標値ではない。
+   - 各ラウンドの冒頭で、問数と「各問が frontier である理由」を 1 行で述べる。
+     尋問と無関係な承認(未 merge の PR の承認、別 issue の決定)は同じ
+     ラウンドに混ぜない。ただし、サマリへの合意時にその issue 自身の PR の
+     merge を事前承認してもらうこと(「終了条件と成果物」の規定)は含まない。
    - 回答のたびに決定木は変形する。次のラウンドは frontier を計算し直して
-     から組む。
+     から組む。同じラウンドの回答が別の質問を無効にしたと後で分かったら、
+     その枝を次のラウンドで開き直す。
+   - 見た目・操作感のように話して決められない問い(ungrillable)は、尋問を
+     やめて試作・実レンダの提示に切り替える。
 3. 事実は AI が取りに行く: repo・docs・環境から確認できる事実は質問しない。
    並列に調べる委譲手段(subagent 等)を持つ harness ではそれへ出し、無い
    場合は AI 自身が調べる。いずれの場合も、その事実に依存する質問だけを
@@ -53,10 +60,16 @@ description: Use when the user wants relentless interview-style alignment before
 4. 各質問に選択肢と推奨を付ける: 丸投げしない。推奨には理由を 1 行添える。
    選択肢は番号・記号で即答できる形（「1 a」で返せる形）にし、選択肢内の
    専門用語はその場で 1 行定義する。ユーザーに調べさせない。
+   推奨は「はい」の一言で採用できる問い方にする(`AskUserQuestion` では
+   推奨を先頭に置き「(推奨)」を付ける)。
 5. 同意で埋めない: 回答に矛盾・リスク・既存決定(ADR / 仕様)との衝突が
-   あれば、指摘して問い返す。それが grill。
+   あれば、指摘して問い返す。それが grill。推奨と違う選択肢が選ばれたら、
+   既存 ADR・規約との衝突を必ず照合し、あれば問い返す。
 6. 推測は推測と明示する: AI が補完した前提には「推測」と札を付けて
-   確認を取る。
+   確認を取る。「分からない」は正当な回答として受け、推測で埋めずに
+   「残る未確定」へ送る。
+7. 過大な scope は分ける: scope が過大で質問が膨らむときは、尋問の前・
+   途中で分割(issue / branch の分け方)を提案する。
 
 ## 質問の観点
 
@@ -76,11 +89,20 @@ description: Use when the user wants relentless interview-style alignment before
 
 - 尋問の前に、関連する正本(対象 issue、README、docs、既存 ADR)を読み、
   質問は既存の語彙で行う。定義済みの概念をユーザーに再説明させない。
+- あわせて、会話中・auto-memory・`docs/process/decisions.md` で既に表明
+  された前提(例: 「未公開」「破壊的変更 OK」)を「既知の前提」として列挙し、
+  最初に一括で示して確認する。同じ前提を個別に聞き直さない。
 - 対象の issue 本文や設計メモが既にあるなら、それを尋問の入力として使う。
   入力文書がある方が質問の精度が上がる。
 - 尋問で新しいドメイン概念・用語が出たら、該当 docs への追記候補として扱う。
 - 長く効く判断(architecture / repo-wide rule)に触れる決定が出たら、
   `manage-adrs` skill の ADR 要否判定へ接続する。
+
+## 併用時(`/grill-me /grill-spec`)
+
+- 入力文書があれば、spec の指摘を先に一括で示す(grill-spec の進め方 1・2)。
+- 決定木は 1 本にまとめ、サマリと合意も 1 回にする。skill ごとに尋問・
+  サマリを分けて重複させない。
 
 ## 中断・引き継ぎ後の再開
 
@@ -116,6 +138,7 @@ description: Use when the user wants relentless interview-style alignment before
 - 終了時に認識合わせサマリを提示する:
   目的 / 非目標 / 成功条件(観測方法) / 制約 / 決定事項 / 残る未確定。
 - ユーザーがサマリに明示的に合意するまで、実作業に着手しない。
+- サマリへの合意時に、その issue 自身の PR の merge を、条件つきで事前承認してもらうかを聞く（知覚の成果物・外部影響を含む PR は対象外）。得たら、ユーザーの発言をそのまま issue 本文の「merge の事前承認」節に写す（正本: [ADR](../../../docs/adr/20261016-gate-merge-behind-script-and-recorded-approval.md)）。
 
 ## 反映契約
 
@@ -137,11 +160,21 @@ description: Use when the user wants relentless interview-style alignment before
 ## 出典
 
 - mattpocock/skills の `skills/productivity/grilling/SKILL.md`
-  (rev `170ad4865582`, 2026-07-13。決定木・事実は調べる・合意まで着手
-  しない。上流では一問一答の primitive)
+  (初回取り込み rev `170ad4865582`, 2026-07-13。決定木・事実は調べる・
+  合意まで着手しない。最新の変更は `95249b0b4978`, 2026-10-07。推奨を「はい」で
+  採用できる問い方は、この変更(題名 "grilling: word questions so yes accepts
+  the recommendation (#706)")が足した一文
+  `Word each question so "yes" accepts your recommended answer.` に由来。repo の HEAD は `49dd158d1076`,
+  2026-10-09。引用は HEAD の同ファイルの本文と照合済み)
 - 同 repo の `skills/in-progress/batch-grill-me/SKILL.md`
   (rev `fde4cd58cf9d`, 2026-07-16。frontier をラウンド単位で聞き切る規律と、
-  事実調査で尋問をブロックしない扱い)
+  事実調査で尋問をブロックしない扱い。2026-07-31 の a4b2009 で grilling
+  本体に吸収され、今は存在しない)
 - 同 `grill-with-docs`(対話を用語集・ADR に anchor し決定を文書へ即時反映
   する原則。本 template では専用 CONTEXT.md を作らず既存の docs / ADR を
-  anchor にする)
+  anchor にする。上流の HEAD `49dd158d1076` では、grill-me も
+  grill-with-docs も grilling などを呼ぶ 1 行の本文だけのラッパー。
+  grill-me は 2026-06-12 の `cbf6db4` から、grill-with-docs は同日の
+  `2064fb6` から短いラッパー。2026-08-15 の `fcf0071` は言い回しの
+  変更。パスは `skills/productivity/grill-me/SKILL.md` と
+  `skills/engineering/grill-with-docs/SKILL.md`)

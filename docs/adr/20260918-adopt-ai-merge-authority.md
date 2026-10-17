@@ -4,6 +4,8 @@
 
 accepted
 
+部分 supersede（2026-10-16）: 置換された条項 =「HUMAN の承認の形と時点」と AUTO 条件 1「自律実行として明示」の観測手段／存続する条項 = AUTO / HUMAN の区分・権限分離・stacked PR の統合手順／後継 ADR = [20261016-gate-merge-behind-script-and-recorded-approval.md](./20261016-gate-merge-behind-script-and-recorded-approval.md)。
+
 ## Situation
 
 小さい PR を並行しても、すべてを人間が同じ深さでレビューすると人間の merge 待ちが直列化要因になる。一方、別 context の AI reviewer は機械検査や独立した異論の提示には使えても、仕様・製品意図・知覚品質・security / trust boundary に対する人間の意味判断を代替しない。

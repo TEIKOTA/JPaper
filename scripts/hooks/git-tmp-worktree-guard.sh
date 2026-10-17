@@ -35,10 +35,10 @@ fi
 [ "$is_temp" = 1 ] || exit 0
 
 printf '✖ git worktree を一時領域に作らない（%s）。macOS の一時領域掃除で未 push の成果物ごと消える。\n' "$real" >&2
-printf '  標準配置 ~/worktrees/<repo>/ を使う。test 等で意図的に必要なら PROJECT_TEMPLATE_ALLOW_TMP_WORKTREE=1 を付ける。\n' >&2
+printf '  worktree は一時領域の外に作る。test 等で意図的に必要なら PROJECT_TEMPLATE_ALLOW_TMP_WORKTREE=1 を付ける。\n' >&2
 dirty="$(git -C "$real" status --porcelain --ignored --untracked-files=all 2>/dev/null)" || dirty="(status 取得失敗)"
 if [ -n "$dirty" ]; then
-  printf '  作業ツリーにファイル（変更・未追跡・ignore 対象）があるため取り消さなかった。退避してから標準配置へ移す。\n' >&2
+  printf '  作業ツリーにファイル（変更・未追跡・ignore 対象）があるため取り消さなかった。退避してから一時領域の外へ移す。\n' >&2
 elif (
   unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_PREFIX GIT_COMMON_DIR GIT_OBJECT_DIRECTORY
   cd "$common" && git worktree remove "$real"

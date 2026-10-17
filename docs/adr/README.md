@@ -56,7 +56,7 @@
 | 2026-07-22 | [LLM 呼び出しトレースは local-first JSONL・メタのみ（Langfuse は将来の opt-in exporter）](./20260722-llm-call-trace-local-jsonl.md) | accepted |
 | 2026-07-22 | [プロンプトキャッシュ再利用: system prompt を role ごとに安定化し用語スライスを user へ移す](./20260722-prompt-cache-reuse-stable-system-prompt.md) | accepted |
 | 2026-07-23 | [構造化出力をプロバイダ能力で分岐（Ollama ネイティブ JSON モード・claude プロンプト維持）](./20260723-provider-branched-structured-output.md) | superseded |
-| 2026-07-29 | [AI セッション運用ガード（重複確認・失敗ログ・worktree/待機規律）の採用](./20260729-adopt-ai-session-operational-guards.md) | accepted（新規 worktree の標準配置・例外規約のみ 2026-10-02 に部分 supersede） |
+| 2026-07-29 | [AI セッション運用ガード（重複確認・失敗ログ・worktree/待機規律）の採用](./20260729-adopt-ai-session-operational-guards.md) | accepted（新規 worktree の標準配置・例外規約のみ 2026-10-02 と 2026-10-14 に部分 supersede） |
 | 2026-08-09 | [組版の堅牢化: LuaTeX 互換 shim の注入と共通テンプレによる原前文の吸収](./20260809-typesetting-shims-luatex-compat-and-class-absorption.md) | accepted |
 | 2026-08-11 | [組版サンドボックス: shell escape 明示禁止と同梱パッケージの探索順後置](./20260811-typesetting-sandbox-and-package-precedence.md) | accepted |
 | 2026-08-11 | [プロンプト注入対策: 論文・LLM 由来のテキストを指示面へ載せない](./20260811-untrusted-text-never-becomes-instructions.md) | accepted |
@@ -79,10 +79,10 @@
 | 2026-09-01 | [セッション横断監査に基づく運用ガード第 2 弾の採用](./20260901-adopt-session-audit-guards-v2.md) | accepted（PR 滞留の単一閾値条項のみ 2026-09-26 に部分 supersede） |
 | 2026-09-01 | [GitHub Actions を既定オフにしローカル検証を正とする](./20260901-disable-github-actions-by-default.md) | accepted（workflow の配置と public repo での無効化の条項のみ 2026-10-14 に部分 supersede） |
 | 2026-09-05 | [運用ガード第 2 弾の是正（第 2 ラウンド監査の反映）](./20260905-adopt-session-audit-guards-round2.md) | accepted |
-| 2026-09-18 | [AI の merge authority と human review boundary の採用](./20260918-adopt-ai-merge-authority.md) | accepted |
+| 2026-09-18 | [AI の merge authority と human review boundary の採用](./20260918-adopt-ai-merge-authority.md) | accepted（HUMAN の承認の形と時点・AUTO 条件 1 の観測手段のみ 2026-10-16 に部分 supersede） |
 | 2026-09-26 | [repo 内 producer による template provenance の採用](./20260926-adopt-repo-owned-template-provenance.md) | accepted |
 | 2026-09-26 | [二段 PR backlog policy の採用](./20260926-adopt-two-stage-pr-backlog.md) | accepted |
-| 2026-10-02 | [worktree の標準配置・終了記録・安全な回収の採用](./20261002-adopt-worktree-lifecycle-management.md) | accepted（管理機能の実装は後続） |
+| 2026-10-02 | [worktree の標準配置・終了記録・安全な回収の採用](./20261002-adopt-worktree-lifecycle-management.md) | superseded（2026-10-14 に worktree 管理の撤去 ADR で置換） |
 | 2026-10-06 | [claude / codex プロバイダは論文 1 本ごとに CLI セッションを再利用する](./20261006-reuse-cli-sessions-per-paper.md) | rejected |
 | 2026-10-06 | [worktree 標準配置へのエージェント作業許可の採用](./20261006-allow-agent-access-to-worktree-root.md) | accepted |
 | 2026-10-06 | [横長の対訳 PDF（A4 縦 2 枚分・左=原文／右=和訳）を標準の出力にする](./20261006-bilingual-side-by-side-pdf.md) | accepted |
@@ -96,14 +96,28 @@
 | 2026-10-08 | [codex をプロバイダとして入れ、利用者の設定を読まずに起動する](./20261008-add-codex-provider-isolated-from-user-config.md) | accepted（既定値を持たない点・Web 検索を止める点のみ 2026-10-13 に部分 supersede） |
 | 2026-10-08 | [Web アプリで arXiv を検索し、翻訳は CLI の子プロセスをメモリ上のキューで回す](./20261008-web-app-arxiv-search-and-translate-job-queue.md) | accepted |
 | 2026-10-08 | [本文中の \author は訳さず印で伏せ、伏せた区間の用語は節の用語に数えない](./20261008-keep-author-block-untranslated.md) | accepted |
+| 2026-10-08 | [root 所有 worktree の PR 完了後の承認なし回収の採用](./20261008-allow-root-owned-worktree-reclaim-after-pr.md) | superseded（2026-10-14 に worktree 管理の撤去 ADR で置換） |
+| 2026-10-08 | [セッションごとのコンテナ隔離の採用](./20261008-adopt-container-isolated-agent-sessions.md) | accepted（試作の評価で既存 worktree 管理の撤去を 2026-10-14 に決定。片付けで残すものを 2026-10-12 に補足。「新しく始める委譲は子のコンテナ」のみ、宣言つき worktree・調査の委譲を 2026-10-17 に部分 supersede） |
 | 2026-10-11 | [前付け（タイトル・組む位置・原文のまま残す命令）を論文テンプレートの型の表で決める](./20261011-drive-frontmatter-by-template-profile-table.md) | accepted |
 | 2026-10-12 | [落ちた節の最後の指摘を出力先の .run に既定で残す](./20261012-keep-last-issues-of-failed-segments.md) | accepted |
+| 2026-10-12 | [agent-box の片付けで子の成果物を残す](./20261012-keep-agent-artifacts-on-clean.md) | accepted |
+| 2026-10-12 | [子のコンテナの書き込み層・資源・権限の制限](./20261012-restrict-agent-container-writes-and-resources.md) | accepted |
 | 2026-10-13 | [claude・codex の既定を最新の中位モデル（Sonnet・Sol）と effort medium にする](./20261013-default-to-latest-mid-tier-models-at-medium-effort.md) | accepted |
 | 2026-10-13 | [形式検査が変わったら、以前に通した節を LLM なしで検査し直す](./20261013-recheck-passed-segments-when-formal-check-changes.md) | accepted |
 | 2026-10-13 | [取り込み（ingest）は worker 化せず、有界時間で終わることを契約として守る](./20261013-keep-ingest-synchronous-with-bounded-time.md) | accepted |
 | 2026-10-13 | [承認済みの訳が無い用語は、翻訳の前に CLI 自身の Web 検索で用例を確かめる](./20261013-verify-unconfirmed-terms-with-cli-web-search.md) | accepted |
 | 2026-10-14 | [public にした JPaper では GitHub Actions を有効にする](./20261014-enable-github-actions-on-public-repo.md) | accepted |
+| 2026-10-14 | [子のコンテナの cache を repo ごとに分け、起動前に容量を確かめる](./20261014-separate-agent-cache-per-repo-and-check-capacity.md) | accepted |
+| 2026-10-14 | [merge 済みの子の ref を agent-box.sh prune で消す](./20261014-prune-merged-agent-refs.md) | accepted（HEAD の判定は 20261014-prune-review-sessions-by-commit-search で拡張） |
+| 2026-10-14 | [branch を持たない子の HEAD を commit の検索で merge 済みと判定する](./20261014-prune-review-sessions-by-commit-search.md) | accepted |
+| 2026-10-14 | [worktree 管理の撤去と、残す guard の範囲](./20261014-remove-worktree-lifecycle-management.md) | accepted（「新しい worktree を作らない」のみ、宣言つきの例外を 2026-10-17 に部分 supersede） |
+| 2026-10-14 | [一時物の置き場 ~/.trashable を作り、定期掃除で消す](./20261014-add-trashable-workspace.md) | accepted（`rm -rf` の確認ルールを変えない条項のみ 2026-10-16 に部分 supersede） |
 | 2026-10-15 | [PDF 入力は、本文の語句をテキスト層から取り、数式と構造だけを LLM にページ画像から起こさせる](./20261015-pdf-input-text-layer-as-source-llm-rebuilds-math.md) | accepted |
 | 2026-10-15 | [指定した文字列は取り込みの段で *** に置き換え、どの LLM 呼び出しにも渡さない](./20261015-redact-terms-at-ingest-never-send-to-llm.md) | accepted |
 | 2026-10-15 | [public の repo では、main への merge に CI の全ジョブの成功を要する](./20261015-require-ci-checks-on-public-repo.md) | accepted |
 | 2026-10-15 | [jpaper の起動時に、早送りで追いつける repo の更新を取り込んでから動かす](./20261015-pull-updates-on-jpaper-launch.md) | accepted |
+| 2026-10-16 | [確認(ask)を人の判断が要る操作に絞り、一時領域の中の rm -rf は確認なしで通す](./20261016-narrow-ask-to-human-judgement.md) | accepted |
+| 2026-10-16 | [merge を専用 script に通し、会話での承認を issue・PR の記録で確かめる](./20261016-gate-merge-behind-script-and-recorded-approval.md) | accepted |
+| 2026-10-17 | [Docker の起動を AI に許し、Linux で動かない repo には宣言つきで worktree を許す](./20261017-allow-orb-start-and-declared-worktree-exception.md) | accepted |
+| 2026-10-17 | [self-test の自動実行を PostToolUse から pre-push へ移す](./20261017-move-selftest-from-posttooluse-to-pre-push.md) | accepted（「push の前には必ず通る」の条項のみ 2026-10-17 に部分 supersede） |
+| 2026-10-17 | [checkout 中でない branch の push でも pre-push の検査を走らせ、self-test は流さない旨を表示する](./20261017-run-prepush-checks-for-non-current-branch.md) | accepted |

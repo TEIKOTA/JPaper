@@ -97,16 +97,43 @@ if ! git -C "$root" hook list post-checkout 2>/dev/null | grep -qx 'project-temp
   guard_notes="${guard_notes:+$guard_notes
 }⚠ 一時領域 worktree の git guard が未配線（全ツール共通の防衛線）: scripts/setup-user-hooks.sh --git"
 fi
+# user 側の hook の複製（setup-user-hooks.sh が置く）が scripts/hooks とずれていないか。複製はテンプレート repo からだけ配る（#157）。
+# 存在しない複製 dir は比べない（未配線の警告は上の検査に任せる）。user の設定は書き換えず、再実行のコマンドだけ示す。
+if [ -f "$root/scripts/setup-user-hooks.sh" ] && [ ! -e "$root/.template-version" ]; then
+  hook_files=()
+  for f in "$root"/scripts/hooks/*.sh "$root"/scripts/hooks/*.py; do
+    [ -f "$f" ] && hook_files+=("${f##*/}")
+  done
+  copy_drifted() { # copy_drifted <複製 dir> <file>...: dir があり、どれかの複製が無い・内容が違えば 0
+    local dir="$1" f
+    shift
+    [ -d "$dir" ] || return 1
+    for f in "$@"; do
+      cmp -s "$root/scripts/hooks/$f" "$dir/$f" 2>/dev/null || return 0
+    done
+    return 1
+  }
+  drift_flags=""
+  if [ "${#hook_files[@]}" -gt 0 ]; then
+    copy_drifted "${CLAUDE_CONFIG_DIR:-${HOME:-}/.claude}/hooks/template" "${hook_files[@]}" && drift_flags="$drift_flags --claude"
+    copy_drifted "${CODEX_HOME:-${HOME:-}/.codex}/hooks/template" "${hook_files[@]}" && drift_flags="$drift_flags --codex"
+  fi
+  copy_drifted "${XDG_CONFIG_HOME:-${HOME:-}/.config}/git/project-template-hooks" git-tmp-worktree-guard.sh && drift_flags="$drift_flags --git"
+  if [ -n "$drift_flags" ]; then
+    guard_notes="${guard_notes:+$guard_notes
+}⚠ user 側の hook の複製が scripts/hooks と一致しない: scripts/setup-user-hooks.sh$drift_flags"
+    # この checkout が古いと、再実行は複製を古い版へ戻す。取得済みの origin/main（ネットワークは使わない）を含まない・判定できないときは注意を添える（#164）
+    if ! git -C "$root" merge-base --is-ancestor origin/main HEAD >/dev/null 2>&1; then
+      guard_notes="$guard_notes
+  ※ この checkout は origin/main より古い（または origin/main を確認できない）。先に main を取り込んで（pull・merge）から再実行する。そのまま実行すると複製が古い版に戻る"
+    fi
+  fi
+fi
 if [ -n "$guard_notes" ]; then
   printf '\n## ガード配線の確認（未 trust・未配線のガードは効かない）\n%s\n' "$guard_notes"
 fi
 
 printf '\n## authored open PR\n'
-if [ -f "$root/scripts/worktree.sh" ]; then
-  printf '\n## worktree 使用状態（明示終了なしは要確認）\n'
-  bash "$root/scripts/worktree.sh" --repo "$root" list || printf '(管理状態を取得できません)\n'
-fi
-
 gh_timeout="${SESSION_START_GH_TIMEOUT:-3}"
 pr_result="__PYTHON_MISSING__"
 if command -v python3 >/dev/null 2>&1; then

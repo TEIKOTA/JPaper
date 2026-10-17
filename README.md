@@ -175,7 +175,7 @@ issue や PR を出すときの手順と規約は [`CONTRIBUTING.md`](./CONTRIBU
 
 検証はローカル script が正本（`bash tests/run-tests.sh` と `scripts/check-pr.sh`）。GitHub Actions（`.github/workflows/` の node-checks・pr-checks・self-test）は、同じ検査を Linux（self-test は macOS でも）でもう一度走らせる（[ADR](./docs/adr/20261014-enable-github-actions-on-public-repo.md)）。
 
-Claude Code 用の権限の既定と hook は `.claude/settings.json` にある。read-only コマンドの allowlist、secret ファイルの Read の拒否、`scripts/hooks/` の Bash ガード、scripts を編集した後の自動 self-test、未コミットの差分に対する Stop 時の警告を設定している。
+Claude Code 用の権限の既定と hook は `.claude/settings.json` にある。read-only コマンドの allowlist、secret ファイルの Read の拒否、`scripts/hooks/` の Bash ガード、未コミットの差分に対する Stop 時の警告を設定している。self-test は編集のたびには流さず、push の前に lefthook の pre-push が `scripts/run-selftest.sh` で流す。
 
 ## ライセンス
 

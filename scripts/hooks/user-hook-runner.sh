@@ -3,8 +3,9 @@
 # usage: user-hook-runner.sh <hook-name> [event] [host]   （stdin = hook JSON をそのまま hook へ渡す）
 #   host: 省略時は Claude Code。`codex` は Codex（~/.codex/hooks.json から呼ばれる）
 # 解決順:
-#   1. プロジェクト側 settings の同じ event で、現在の tool に matcher が一致する同名 hook があれば何もしない
+#   1. プロジェクト側 settings の同じ event で、matcher が一致する同名 hook があれば何もしない
 #      （project hook と user-level hook の二重実行防止。stale matcher は fallback を抑止しない）。
+#      matcher は tool_name と照らす。tool_name の無い SessionStart だけは payload の source（startup|resume|clear|compact）と照らす
 #      Codex では行わない: project 側 hook は /hooks で trust されるまで実行されず、抑止すると guard が消える。
 #      Codex に配線するのは二重実行しても結果が同じ PreToolUse guard だけ（setup-user-hooks.sh --codex）。
 #   2. <project>/scripts/hooks/<name>.sh があればそれを実行する（プロジェクト側の fork を優先）。
@@ -23,30 +24,31 @@ event="${2:-}"
 case "$event" in *[!A-Za-z0-9_.-]*) event="" ;; esac
 host="${3:-claude}"
 payload="$(cat)"
-tool="$(printf '%s' "$payload" | python3 -c 'import json,sys
+payload_field() { # payload_field <key>: payload の文字列 field（無い・文字列でない・解析失敗は空）
+  printf '%s' "$payload" | python3 -c 'import json,sys
 try:
-    value=json.load(sys.stdin).get("tool_name", "")
+    value=json.load(sys.stdin).get(sys.argv[1], "")
     print(value if isinstance(value, str) else "")
 except Exception:
-    print("")' 2>/dev/null)"
+    print("")' "$1" 2>/dev/null
+}
+tool="$(payload_field tool_name)"
 if [ -z "$event" ]; then
-  event="$(printf '%s' "$payload" | python3 -c 'import json,sys
-try:
-    value=json.load(sys.stdin).get("hook_event_name", "")
-    print(value if isinstance(value, str) else "")
-except Exception:
-    print("")' 2>/dev/null)"
+  event="$(payload_field hook_event_name)"
 fi
+# matcher と照らす対象: SessionStart は source、それ以外は tool_name
+subject="$tool"
+[ "$event" = "SessionStart" ] && subject="$(payload_field source)"
 
 here="$(cd "$(dirname "$0")" && pwd)"
 proj="${CLAUDE_PROJECT_DIR:-$PWD}"
 
 [ "$host" = "codex" ] || for s in "$proj/.claude/settings.json" "$proj/.claude/settings.local.json" "$proj/.agents/settings.json"; do
   [ -f "$s" ] || continue
-  if python3 - "$s" "$name" "$event" "$tool" <<'PY' 2>/dev/null
+  if python3 - "$s" "$name" "$event" "$subject" <<'PY' 2>/dev/null
 import json, re, sys
 
-settings, name, event, tool = sys.argv[1:]
+settings, name, event, subject = sys.argv[1:]
 with open(settings) as handle:
     data = json.load(handle)
 hooks = data.get("hooks") if isinstance(data.get("hooks"), dict) else {}
@@ -56,10 +58,10 @@ for candidate in events:
     for group in hooks.get(candidate, []):
         matcher = group.get("matcher", "")
         if matcher:
-            if not tool:
+            if not subject:
                 continue
             try:
-                if re.fullmatch(matcher, tool) is None:
+                if re.fullmatch(matcher, subject) is None:
                     continue
             except re.error:
                 continue

@@ -131,12 +131,12 @@ else
 fi
 
 # テスト節に未完了を示す語が残っていても PR 検査自体は落とさず、見落としを警告する。
+# awk の区間表現（{1,6}）は mawk（子のコンテナの awk）で使えないので、# の数は RLENGTH で数える（#135）。
 test_section="$(printf '%s\n' "$body" | awk '
-  /^#{1,6}[[:space:]]/ {
+  /^#+[[:space:]]/ && match($0, /^#+/) && RLENGTH <= 6 {
     heading = $0
-    match(heading, /^#+/)
     level = RLENGTH
-    sub(/^#{1,6}[[:space:]]+/, "", heading)
+    sub(/^#+[[:space:]]+/, "", heading)
     lowered = tolower(heading)
     if (active && level <= active_level) exit
     if (!active && lowered ~ /(テスト|検証|test)/) {

@@ -4,6 +4,8 @@
 
 accepted
 
+部分 supersede（2026-10-17）: #50 の「PostToolUse で self-test を自動実行する」条項は [`20261017-move-selftest-from-posttooluse-to-pre-push.md`](./20261017-move-selftest-from-posttooluse-to-pre-push.md) に置換する。他の条項は存続する。
+
 ## Situation
 
 第 2 弾（[`20260901-adopt-session-audit-guards-v2.md`](./20260901-adopt-session-audit-guards-v2.md)、PR #29〜#45）を 2026-09-01〜03 にテンプレへ導入し派生 6 repo へ展開した後、2026-09-05 に展開後のセッション 11 本・派生 6 repo・テンプレ自身・Claude Code / agents.md / GitHub の 8〜9 月の変化を再監査した（採掘 5・監査 3・Web 1 の一次所見 52 件。統合・審査エージェントは使用上限で停止したため、審査は同じ 3 レンズで手動で行った）。
