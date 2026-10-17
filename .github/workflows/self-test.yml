@@ -20,6 +20,17 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
+      # GitHub の macOS の runner には lefthook が無く、lefthook を使う test が skip される。macOS では
+      # skip 0 件が条件（tests/run-tests.sh）なので、self-test の前に入れる。版は docker/agent/Dockerfile の
+      # LEFTHOOK_VERSION と同じに固定する（ホストで検証した版。Homebrew は版を固定できず runner image で揺れる）。
+      # 上げるときは Dockerfile の ARG と同時に変える。
+      - name: lefthook を入れる（macOS）
+        if: runner.os == 'macOS'
+        env:
+          LEFTHOOK_VERSION: 2.1.9
+        run: |
+          npm install -g "lefthook@${LEFTHOOK_VERSION}"
+          lefthook version
       - name: self-test を実行
         run: |
           if [ "$RUNNER_OS" = "macOS" ]; then
