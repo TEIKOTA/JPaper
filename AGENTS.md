@@ -89,6 +89,9 @@
 - **ソースは事実のみ**。理由（why）は正本（ADR・契約付録・設計メモ）に置き、コード内のコメントは正本への参照（`// 契約付録 §N`）と、中身を持たない地雷の目印（`// ⚠ landmines.md`）だけにする。規約の正本は [ソースコメント ADR](./docs/adr/20260710-source-comments-facts-only-rationale-to-docs.md)。
 - コードが不自然に見えても、**直す前に [`docs/design/landmines.md`](./docs/design/landmines.md) を確認する**。載っていれば意図的な書き方なので、そのまま残す。
 
+## 委譲の作業場所
+- agent-box: 使えない（理由: token と image を未準備。準備したら宣言を外す）
+
 ## コマンド
 
 - `pnpm install` — 依存を入れる（初回。パッケージ管理は pnpm。[pnpm ADR](./docs/adr/20261007-adopt-pnpm-for-package-management.md)）
