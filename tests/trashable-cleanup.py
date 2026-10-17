@@ -268,6 +268,13 @@ class SetupTrashable(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp(prefix="trashable-setup-")).resolve()
         self.addCleanup(shutil.rmtree, self.tmp, True)
+        # setup-user-hooks.sh は派生 repo（root に .template-version がある）では止まる（#157）。派生 repo の self-test でも
+        # 試せるよう、.template-version の無い fixture root から scripts/ を symlink で指して呼ぶ。
+        self.src = ROOT
+        if (ROOT / ".template-version").exists():
+            self.src = self.tmp / "src"
+            self.src.mkdir()
+            (self.src / "scripts").symlink_to(ROOT / "scripts")
         self.home = self.tmp / "home"
         self.home.mkdir()
         self.bin = self.tmp / "bin"
@@ -286,7 +293,7 @@ class SetupTrashable(unittest.TestCase):
 
     def run_setup(self, *args, path=None):
         path = path or (str(self.bin) + os.pathsep + os.environ["PATH"])
-        return subprocess.run(["bash", str(ROOT / "scripts/setup-user-hooks.sh"), "--trashable"] + list(args),
+        return subprocess.run(["bash", str(self.src / "scripts/setup-user-hooks.sh"), "--trashable"] + list(args),
                               env=self.env(path), text=True, capture_output=True)
 
     def calls(self):

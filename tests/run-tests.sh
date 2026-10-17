@@ -1839,12 +1839,20 @@ rm -rf "$gs_repo"
 
 # ---- setup-user-hooks.sh / hooks/user-hook-runner.sh（一時 HOME）--------
 
+# setup-user-hooks.sh は派生 repo（root に .template-version がある）では止まる（#157）。派生 repo の self-test でも
+# 配る経路を試せるよう、.template-version の無い fixture root から scripts/・.claude/・.codex/ を symlink で指して呼ぶ。
+UH_ROOT="$ROOT"
+if [ -e "$ROOT/.template-version" ]; then
+  UH_ROOT="$(mktemp -d)" || { echo "FATAL: setup-user-hooks の fixture root を作成できません" >&2; exit 1; }
+  git init -q "$UH_ROOT" || exit 1
+  for uh_link in scripts .claude .codex; do ln -s "$ROOT/$uh_link" "$UH_ROOT/$uh_link" || exit 1; done
+fi
 uh_home="$(mktemp -d)"
 uh_settings="$uh_home/.claude/settings.json"
 uh_tmpl="$uh_home/.claude/hooks/template"
 mkdir -p "$uh_home/.claude"
 printf '%s\n' '{"model":"keep-me","hooks":{"PreCompact":[{"matcher":"auto","hooks":[{"type":"command","command":"bash /x/guard-auto-compact.sh"}]}],"PostToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"bash /x/stamp.sh"}]}]}}' > "$uh_settings"
-run_uh() { HOME="$uh_home" CLAUDE_CONFIG_DIR= bash "$ROOT/scripts/setup-user-hooks.sh" "$@"; }
+run_uh() { HOME="$uh_home" CLAUDE_CONFIG_DIR= bash "$UH_ROOT/scripts/setup-user-hooks.sh" "$@"; }
 uh_query() { # uh_query <python-expr over d(settings)> → 真なら 0
   python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); sys.exit(0 if eval(sys.argv[2]) else 1)' "$uh_settings" "$1"
 }
@@ -1852,7 +1860,7 @@ uh_sum0="$(cksum < "$uh_settings")"
 expect 0 "setup-user-hooks: --dry-run は成功する" run_uh --dry-run
 rc=0; [ "$(cksum < "$uh_settings")" = "$uh_sum0" ] && [ ! -e "$uh_tmpl" ] || rc=1
 report 0 "$rc" "setup-user-hooks: --dry-run は settings も複製も書かない"
-expect_out "setup-user-hooks: --dry-run は差分を表示する" "1" bash -c 'HOME="$1" CLAUDE_CONFIG_DIR= bash "$2" --dry-run | grep -c "^+.*user-hook-runner.sh.*guard-bash"' _ "$uh_home" "$ROOT/scripts/setup-user-hooks.sh"
+expect_out "setup-user-hooks: --dry-run は差分を表示する" "1" bash -c 'HOME="$1" CLAUDE_CONFIG_DIR= bash "$2" --dry-run | grep -c "^+.*user-hook-runner.sh.*guard-bash"' _ "$uh_home" "$UH_ROOT/scripts/setup-user-hooks.sh"
 expect 0 "setup-user-hooks: 実行が成功する" run_uh
 expect 0 "setup-user-hooks: settings.json が正しい JSON" python3 -m json.tool "$uh_settings"
 expect 0 "setup-user-hooks: PreToolUse(Bash) に guard-bash を配線" uh_query 'any(g.get("matcher")=="Bash" and any("user-hook-runner.sh" in h["command"] and "guard-bash" in h["command"] for h in g["hooks"]) for g in d["hooks"]["PreToolUse"])'
@@ -1954,7 +1962,7 @@ expect 1 "setup-user-hooks: --uninstall で自分の配線を外す" uh_query 'a
 expect 0 "setup-user-hooks: --uninstall は他の hook を残す" uh_query 'd["model"]=="keep-me" and "PreCompact" in d["hooks"] and any("stamp.sh" in h["command"] for g in d["hooks"]["PostToolUse"] for h in g["hooks"])'
 rc=0; [ ! -e "$uh_tmpl" ] || rc=1
 report 0 "$rc" "setup-user-hooks: --uninstall は複製ディレクトリを削除する"
-expect 0 "setup-user-hooks: settings.json が無い HOME でも作成できる" env HOME="$uh_proj" CLAUDE_CONFIG_DIR= bash "$ROOT/scripts/setup-user-hooks.sh"
+expect 0 "setup-user-hooks: settings.json が無い HOME でも作成できる" env HOME="$uh_proj" CLAUDE_CONFIG_DIR= bash "$UH_ROOT/scripts/setup-user-hooks.sh"
 expect 0 "setup-user-hooks: 新規作成した settings.json が正しい JSON" python3 -m json.tool "$uh_proj/.claude/settings.json"
 expect 1 "setup-user-hooks: 不明なオプションは拒否" run_uh --bogus
 
@@ -2012,7 +2020,7 @@ rm -rf "$uh_home" "$uh_proj" "$uh_old"
 cx_home="$(mktemp -d)"
 cx_hooks="$cx_home/.codex/hooks.json"
 cx_tmpl="$cx_home/.codex/hooks/template"
-run_cx() { HOME="$cx_home" CODEX_HOME= bash "$ROOT/scripts/setup-user-hooks.sh" "$@"; }
+run_cx() { HOME="$cx_home" CODEX_HOME= bash "$UH_ROOT/scripts/setup-user-hooks.sh" "$@"; }
 cx_query() { python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); sys.exit(0 if eval(sys.argv[2]) else 1)' "$cx_hooks" "$1"; }
 expect 0 "setup-user-hooks --codex: --dry-run は成功する" run_cx --codex --dry-run
 rc=0; [ ! -e "$cx_hooks" ] && [ ! -e "$cx_tmpl" ] || rc=1
@@ -2086,7 +2094,7 @@ rm -rf "$ck_root"
 has_git_config_hooks || skip_begin "git が設定ベースの hook（hook.<name>.event）に対応していない"
 gg_home="$(mktemp -d)"
 gg_cfg="$gg_home/gitconfig"
-run_gg() { HOME="$gg_home" GIT_CONFIG_GLOBAL="$gg_cfg" XDG_CONFIG_HOME= bash "$ROOT/scripts/setup-user-hooks.sh" "$@"; }
+run_gg() { HOME="$gg_home" GIT_CONFIG_GLOBAL="$gg_cfg" XDG_CONFIG_HOME= bash "$UH_ROOT/scripts/setup-user-hooks.sh" "$@"; }
 gg_git() { env -u PROJECT_TEMPLATE_ALLOW_TMP_WORKTREE HOME="$gg_home" GIT_CONFIG_GLOBAL="$gg_cfg" git "$@"; }
 gg_repo="$gg_home/repo"
 git init -q -b main "$gg_repo"
@@ -2094,8 +2102,8 @@ git -C "$gg_repo" -c user.email=t@example.com -c user.name=t commit -q --allow-e
 expect 0 "setup-user-hooks --git: --dry-run は成功する" run_gg --git --dry-run
 rc=0; [ ! -e "$gg_cfg" ] && [ ! -e "$gg_home/.config" ] || rc=1
 report 0 "$rc" "setup-user-hooks --git: --dry-run は何も書かない"
-expect_out "setup-user-hooks --git: --dry-run は「反映した」と表示しない" "0" bash -c 'run() { HOME="$1" GIT_CONFIG_GLOBAL="$2" XDG_CONFIG_HOME= bash "$3" --git --dry-run; }; run "$@" | grep -c "反映した"' _ "$gg_home" "$gg_cfg" "$ROOT/scripts/setup-user-hooks.sh"
-expect_out "setup-user-hooks --git --uninstall: --dry-run は「撤去した」と表示しない" "0" bash -c 'run() { HOME="$1" GIT_CONFIG_GLOBAL="$2" XDG_CONFIG_HOME= bash "$3" --git --uninstall --dry-run; }; run "$@" | grep -c "撤去した"' _ "$gg_home" "$gg_cfg" "$ROOT/scripts/setup-user-hooks.sh"
+expect_out "setup-user-hooks --git: --dry-run は「反映した」と表示しない" "0" bash -c 'run() { HOME="$1" GIT_CONFIG_GLOBAL="$2" XDG_CONFIG_HOME= bash "$3" --git --dry-run; }; run "$@" | grep -c "反映した"' _ "$gg_home" "$gg_cfg" "$UH_ROOT/scripts/setup-user-hooks.sh"
+expect_out "setup-user-hooks --git --uninstall: --dry-run は「撤去した」と表示しない" "0" bash -c 'run() { HOME="$1" GIT_CONFIG_GLOBAL="$2" XDG_CONFIG_HOME= bash "$3" --git --uninstall --dry-run; }; run "$@" | grep -c "撤去した"' _ "$gg_home" "$gg_cfg" "$UH_ROOT/scripts/setup-user-hooks.sh"
 gg_git -C "$gg_repo" worktree add -q "$gg_home/wt-before" -b before >/dev/null 2>&1
 rc=0; [ -d "$gg_home/wt-before" ] || rc=1
 report 0 "$rc" "git guard 退行注入: 未配線なら一時領域に worktree が作られる"
@@ -2131,7 +2139,7 @@ gg_git -C "$gg_home/ign-wt" switch -q --orphan scratch2 >/dev/null 2>&1
 gg_git -C "$gg_home/ign-wt" switch -q ign-wt >/dev/null 2>&1
 rc=0; [ -f "$gg_home/ign-wt/.env" ] || rc=1
 report 0 "$rc" "git guard regression: 既存の一時領域 worktree の ignore 対象ファイルを削除しない"
-expect 0 "setup-user-hooks --git: repo 外から実行しても対応 git を検出する" bash -c 'cd / && HOME="$1" GIT_CONFIG_GLOBAL="$2" XDG_CONFIG_HOME= bash "$3" --git --dry-run' _ "$gg_home" "$gg_cfg" "$ROOT/scripts/setup-user-hooks.sh"
+expect 0 "setup-user-hooks --git: repo 外から実行しても対応 git を検出する" bash -c 'cd / && HOME="$1" GIT_CONFIG_GLOBAL="$2" XDG_CONFIG_HOME= bash "$3" --git --dry-run' _ "$gg_home" "$gg_cfg" "$UH_ROOT/scripts/setup-user-hooks.sh"
 expect 0 "setup-user-hooks --git: --uninstall が成功する" run_gg --git --uninstall
 expect_out "setup-user-hooks --git: --uninstall で配線を外す" "" bash -c 'HOME="$1" GIT_CONFIG_GLOBAL="$2" git config --global --get-regexp "^hook\." || true' _ "$gg_home" "$gg_cfg"
 rc=0; [ ! -e "$gg_home/.config/git/project-template-hooks" ] || rc=1
@@ -2146,7 +2154,7 @@ wa_wt="$wa_home/worktrees"
 mkdir -p "$wa_home/.codex" "$wa_home/.claude"
 printf '%s\n' '{"model":"keep-me","permissions":{"additionalDirectories":["/keep/dir"],"allow":["Bash(ls)"]}}' > "$wa_home/.claude/settings.json"
 printf '# comment\nmodel = "x"\n\n[sandbox_workspace_write]\nexclude_slash_tmp = false\nwritable_roots = [\n  "/keep/root",\n]\n\n[other]\nk = 1\n' > "$wa_home/.codex/config.toml"
-run_wa() { HOME="$wa_home" CODEX_HOME= CLAUDE_CONFIG_DIR= bash "$ROOT/scripts/setup-user-hooks.sh" --claude --codex --worktree-access "$@"; }
+run_wa() { HOME="$wa_home" CODEX_HOME= CLAUDE_CONFIG_DIR= bash "$UH_ROOT/scripts/setup-user-hooks.sh" --claude --codex --worktree-access "$@"; }
 wa_claude() { python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); sys.exit(0 if eval(sys.argv[2]) else 1)' "$wa_home/.claude/settings.json" "$1"; }
 wa_codex() { python3 -c 'import tomllib,sys; d=tomllib.load(open(sys.argv[1],"rb")); sys.exit(0 if eval(sys.argv[2]) else 1)' "$wa_home/.codex/config.toml" "$1"; }
 wa_sum0="$(cat "$wa_home/.claude/settings.json" "$wa_home/.codex/config.toml" | cksum)"
@@ -2171,16 +2179,16 @@ expect 0 "worktree-access: 追加した section が正しい" wa_codex "d[\"sand
 printf 'not = = toml\n' > "$wa_home/.codex/config.toml"
 expect 1 "worktree-access: 壊れた config.toml は解析失敗で止める" run_wa
 expect 0 "worktree-access: 壊れた config.toml を書き換えない" grep -Fqx 'not = = toml' "$wa_home/.codex/config.toml"
-rc=0; HOME="$wa_home" CODEX_HOME= CLAUDE_CONFIG_DIR= bash "$ROOT/scripts/setup-user-hooks.sh" --claude >/dev/null 2>&1 || rc=$?
+rc=0; HOME="$wa_home" CODEX_HOME= CLAUDE_CONFIG_DIR= bash "$UH_ROOT/scripts/setup-user-hooks.sh" --claude >/dev/null 2>&1 || rc=$?
 report 0 "$rc" "worktree-access: 指定しなければ従来どおり成功する（exit 0）"
 rm -rf "$wa_home"
 # 独立 review（5d7d4d6）の回帰: --uninstall は許可だけを外し hook 配線を残す / 編集範囲外を壊さない / 自動編集できない形式は止める
 wb_home="$(mktemp -d)"
 wb_wt="$wb_home/worktrees"
-run_wb() { HOME="$wb_home" CODEX_HOME= CLAUDE_CONFIG_DIR= bash "$ROOT/scripts/setup-user-hooks.sh" "$@"; }
+run_wb() { HOME="$wb_home" CODEX_HOME= CLAUDE_CONFIG_DIR= bash "$UH_ROOT/scripts/setup-user-hooks.sh" "$@"; }
 mkdir -p "$wb_home/.codex"
 run_wb --claude --codex --worktree-access >/dev/null 2>&1
-expect 0 "worktree-access --uninstall: 許可を外しても Claude の guard hook 配線を残す" bash -c 'run() { HOME="$1" CODEX_HOME= CLAUDE_CONFIG_DIR= bash "$2" --claude --codex --worktree-access --uninstall >/dev/null; }; run "$1" "$2" && python3 -c "import json,sys; d=json.load(open(sys.argv[1])); sys.exit(0 if any(\"guard-bash\" in h[\"command\"] for g in d[\"hooks\"][\"PreToolUse\"] for h in g[\"hooks\"]) and \"additionalDirectories\" not in d.get(\"permissions\", {}) else 1)" "$1/.claude/settings.json"' _ "$wb_home" "$ROOT/scripts/setup-user-hooks.sh"
+expect 0 "worktree-access --uninstall: 許可を外しても Claude の guard hook 配線を残す" bash -c 'run() { HOME="$1" CODEX_HOME= CLAUDE_CONFIG_DIR= bash "$2" --claude --codex --worktree-access --uninstall >/dev/null; }; run "$1" "$2" && python3 -c "import json,sys; d=json.load(open(sys.argv[1])); sys.exit(0 if any(\"guard-bash\" in h[\"command\"] for g in d[\"hooks\"][\"PreToolUse\"] for h in g[\"hooks\"]) and \"additionalDirectories\" not in d.get(\"permissions\", {}) else 1)" "$1/.claude/settings.json"' _ "$wb_home" "$UH_ROOT/scripts/setup-user-hooks.sh"
 rc=0; [ -x "$wb_home/.claude/hooks/template/guard-bash.sh" ] && [ -x "$wb_home/.codex/hooks/template/guard-codex.sh" ] || rc=1
 report 0 "$rc" "worktree-access --uninstall: hook の複製ディレクトリを残す"
 printf '[sandbox_workspace_write]\nwritable_roots = [\n  "/a",\n  "]x[",\n]\n# keep me\n\n[other]\nk = 1\n' > "$wb_home/.codex/config.toml"
@@ -2200,24 +2208,24 @@ printf 'model = "x"\r\n\r\n[sandbox_workspace_write]\r\nwritable_roots = ["/a"]\
 expect 0 "worktree-access: CRLF の config.toml に追加できる" run_wb --codex --worktree-access
 expect 0 "worktree-access: CRLF の改行を保持する" python3 -c 'import sys; b=open(sys.argv[1],"rb").read(); sys.exit(0 if b.count(b"\n")==b.count(b"\r\n")>0 else 1)' "$wb_home/.codex/config.toml"
 printf 'sandbox_workspace_write = { writable_roots = ["/a"] }\n' > "$wb_home/.codex/config.toml"
-expect_out "worktree-access: インラインテーブルは Traceback でなく中止メッセージで止める" "1" bash -c 'HOME="$1" CODEX_HOME= bash "$2" --codex --worktree-access 2>&1 >/dev/null | grep -c "自動編集できない形式"' _ "$wb_home" "$ROOT/scripts/setup-user-hooks.sh"
+expect_out "worktree-access: インラインテーブルは Traceback でなく中止メッセージで止める" "1" bash -c 'HOME="$1" CODEX_HOME= bash "$2" --codex --worktree-access 2>&1 >/dev/null | grep -c "自動編集できない形式"' _ "$wb_home" "$UH_ROOT/scripts/setup-user-hooks.sh"
 printf '[sandbox_workspace_write]\nwritable_roots = ["~/worktrees/"]\n' > "$wb_home/.codex/config.toml"
 wb_sum="$(cksum < "$wb_home/.codex/config.toml")"
 expect 0 "worktree-access: ~ 表記・末尾スラッシュ違いの同じ path があれば成功する" run_wb --codex --worktree-access
 rc=0; [ "$(cksum < "$wb_home/.codex/config.toml")" = "$wb_sum" ] || rc=1
 report 0 "$rc" "worktree-access: 同じ場所を指す別表記の path を重複追加しない"
 printf '{"permissions": null}\n' > "$wb_home/.claude/settings.json"
-expect 0 "worktree-access: permissions が null でも追加できる" bash -c 'HOME="$1" CLAUDE_CONFIG_DIR= bash "$2" --claude --worktree-access >/dev/null && python3 -c "import json,sys; d=json.load(open(sys.argv[1])); sys.exit(0 if d[\"permissions\"][\"additionalDirectories\"]==[sys.argv[2]] else 1)" "$1/.claude/settings.json" "$3"' _ "$wb_home" "$ROOT/scripts/setup-user-hooks.sh" "$wb_wt"
+expect 0 "worktree-access: permissions が null でも追加できる" bash -c 'HOME="$1" CLAUDE_CONFIG_DIR= bash "$2" --claude --worktree-access >/dev/null && python3 -c "import json,sys; d=json.load(open(sys.argv[1])); sys.exit(0 if d[\"permissions\"][\"additionalDirectories\"]==[sys.argv[2]] else 1)" "$1/.claude/settings.json" "$3"' _ "$wb_home" "$UH_ROOT/scripts/setup-user-hooks.sh" "$wb_wt"
 printf '{"model":"m"}\n' > "$wb_home/.claude/settings.json"
-HOME="$wb_home" CLAUDE_CONFIG_DIR= bash "$ROOT/scripts/setup-user-hooks.sh" --claude --worktree-access >/dev/null 2>&1
-HOME="$wb_home" CLAUDE_CONFIG_DIR= bash "$ROOT/scripts/setup-user-hooks.sh" --claude --worktree-access --uninstall >/dev/null 2>&1
+HOME="$wb_home" CLAUDE_CONFIG_DIR= bash "$UH_ROOT/scripts/setup-user-hooks.sh" --claude --worktree-access >/dev/null 2>&1
+HOME="$wb_home" CLAUDE_CONFIG_DIR= bash "$UH_ROOT/scripts/setup-user-hooks.sh" --claude --worktree-access --uninstall >/dev/null 2>&1
 expect 0 "worktree-access: 元から無かった permissions を uninstall 後に残さない" python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); sys.exit(0 if "permissions" not in d else 1)' "$wb_home/.claude/settings.json"
-HOME="$wb_home" CODEX_HOME= CLAUDE_CONFIG_DIR= GIT_CONFIG_GLOBAL="$wb_home/gitconfig" XDG_CONFIG_HOME= bash "$ROOT/scripts/setup-user-hooks.sh" --git >/dev/null 2>&1
-HOME="$wb_home" CODEX_HOME= CLAUDE_CONFIG_DIR= GIT_CONFIG_GLOBAL="$wb_home/gitconfig" XDG_CONFIG_HOME= bash "$ROOT/scripts/setup-user-hooks.sh" --claude --git --worktree-access --uninstall >/dev/null 2>&1
+HOME="$wb_home" CODEX_HOME= CLAUDE_CONFIG_DIR= GIT_CONFIG_GLOBAL="$wb_home/gitconfig" XDG_CONFIG_HOME= bash "$UH_ROOT/scripts/setup-user-hooks.sh" --git >/dev/null 2>&1
+HOME="$wb_home" CODEX_HOME= CLAUDE_CONFIG_DIR= GIT_CONFIG_GLOBAL="$wb_home/gitconfig" XDG_CONFIG_HOME= bash "$UH_ROOT/scripts/setup-user-hooks.sh" --claude --git --worktree-access --uninstall >/dev/null 2>&1
 has_git_config_hooks || skip_begin "git が設定ベースの hook（hook.<name>.event）に対応していない"
 expect_out "worktree-access --uninstall: --git を併記しても git guard を残す" "post-checkout" bash -c 'HOME="$1" GIT_CONFIG_GLOBAL="$1/gitconfig" git config --global --get hook.project-template-tmp-worktree.event' _ "$wb_home"
 skip_end
-expect_out "worktree-access: claude / codex 以外の対象だけなら警告する" "1" bash -c 'HOME="$1" GIT_CONFIG_GLOBAL="$1/gitconfig" XDG_CONFIG_HOME= bash "$2" --git --worktree-access --dry-run 2>&1 >/dev/null | grep -c "併用する"' _ "$wb_home" "$ROOT/scripts/setup-user-hooks.sh"
+expect_out "worktree-access: claude / codex 以外の対象だけなら警告する" "1" bash -c 'HOME="$1" GIT_CONFIG_GLOBAL="$1/gitconfig" XDG_CONFIG_HOME= bash "$2" --git --worktree-access --dry-run 2>&1 >/dev/null | grep -c "併用する"' _ "$wb_home" "$UH_ROOT/scripts/setup-user-hooks.sh"
 rm -rf "$wb_home"
 # #116: 1 回の実行で同じファイルを 2 回書き換えても、既存の backup を上書きせず元の内容の backup を残す
 bk_home="$(mktemp -d)"
@@ -2225,12 +2233,13 @@ mkdir -p "$bk_home/.claude"
 printf '{"theme": "original-116"}\n' > "$bk_home/.claude/settings.json"
 # 実行中の秒に当たりうる backup 名を 2 分ぶん先に置き、上書きされないことを確かめる（秒の衝突を決定的に再現する）
 python3 -c 'import sys,time; [open("%s.bak-%s" % (sys.argv[1], time.strftime("%Y%m%d-%H%M%S", time.localtime(time.time()+i))), "w").write("sentinel\n") for i in range(-1, 120)]' "$bk_home/.claude/settings.json"
-HOME="$bk_home" CODEX_HOME= CLAUDE_CONFIG_DIR= bash "$ROOT/scripts/setup-user-hooks.sh" --claude --worktree-access >/dev/null 2>&1
+HOME="$bk_home" CODEX_HOME= CLAUDE_CONFIG_DIR= bash "$UH_ROOT/scripts/setup-user-hooks.sh" --claude --worktree-access >/dev/null 2>&1
 rc=0; for f in "$bk_home"/.claude/settings.json.bak-*; do case "$f" in *-[0-9]) ;; *) grep -qx sentinel "$f" || rc=1 ;; esac; done
 report 0 "$rc" "setup-user-hooks: 既存の同名 backup を上書きしない"
 expect_out "setup-user-hooks: 2 回の書き換え後も元の内容の backup が残る" "1" bash -c 'n=0; for f in "$1"/.claude/settings.json.bak-*; do printf "{\"theme\": \"original-116\"}\n" | cmp -s - "$f" && n=$((n+1)); done; echo "$n"' _ "$bk_home"
 expect_out "setup-user-hooks: 2 回の書き換えで backup を 2 つ取る" "2" bash -c 'ls "$1"/.claude/settings.json.bak-*-[0-9] | wc -l | tr -d " "' _ "$bk_home"
 rm -rf "$bk_home"
+[ "$UH_ROOT" = "$ROOT" ] || rm -rf "$UH_ROOT"
 
 # ---- setup-github-repo.sh（fake gh）------------------------------------
 
