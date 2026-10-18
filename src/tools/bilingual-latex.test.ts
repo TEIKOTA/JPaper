@@ -26,6 +26,7 @@ import {
   separateAcronyms,
   usesAcronymPackage,
   acronymKeysOf,
+  commentOutCommentEnvs,
 } from "./bilingual-latex.js";
 import { findUnsafeTexCommands } from "./tex-safety.js";
 import { fastestMs } from "../testing/timing.js";
@@ -170,6 +171,15 @@ describe("\\providecommand 置換", () => {
     );
   });
 
+  it("\\newtheorem と \\newtheorem* を定義済みなら読み飛ばす命令に置き換え、似た名前は残す（issue #440）", () => {
+    expect(provideCommands("\\newtheorem{question}{Question}\\newtheorem*{rem}{R}\\newtheoremstyle{s}")).toBe(
+      "\\jpProvideTheorem{question}{Question}\\jpProvideTheorem*{rem}{R}\\newtheoremstyle{s}",
+    );
+    const pre = bilingualPreamble("");
+    expect(pre).toContain("\\newcommand{\\jpProvideTheorem}{\\@ifstar{\\jp@providetheorem@s}{\\jp@providetheorem}}");
+    expect(pre).toContain("\\def\\jp@providetheorem#1{\\@ifundefined{#1}{\\newtheorem{#1}}{\\jp@skiptheorem}}");
+  });
+
   it("訳文側（右）だけを置き換える", () => {
     const {
       blocks: [block],
@@ -292,8 +302,15 @@ describe("タイトル", () => {
     expect(bilingualPreamble("")).toContain("\\bfseries\\begingroup\\let\\thanks\\@gobble #1\\endgroup");
     // 著者欄は表の外で組むので、\and 系を区切りの空白にしてから展開する（issue #324）。
     expect(bilingualPreamble("")).toContain(
-      "\\begingroup\\let\\thanks\\@gobble\\def\\and{\\unskip\\quad}\\let\\And\\and\\def\\AND{\\unskip\\par}#2\\endgroup",
+      "\\begingroup\\let\\thanks\\@gobble\\def\\and{\\unskip\\quad}\\let\\And\\and\\def\\AND{\\unskip\\par}",
     );
+  });
+
+  it("著者欄では未定義の \\name・\\email・\\addr（jmlr2e の \\maketitle の中だけの命令）を補ってから展開する（issue #440）", () => {
+    const pre = bilingualPreamble("");
+    const author = pre.slice(pre.indexOf("\\def\\and{\\unskip\\quad}"), pre.indexOf("#2\\endgroup") + 2);
+    for (const name of ["name", "email", "addr"]) expect(author).toContain(`\\@ifundefined{${name}}{\\def\\${name}{`);
+    expect(author.endsWith("{}#2")).toBe(true);
   });
 
   it("環境の中の \\maketitle のようにタイトルブロックへ置き換えられなければ titleUnplaced で知らせる", () => {
@@ -937,5 +954,34 @@ describe("略語（acronym パッケージ）を左右の段で分ける（issue
     expect(on).toContain("a \\ac{MF}\n\\switchcolumn\n甲 \\ac{jpRMF}");
     const off = renderPairs(pairs, { left: "", right: "" }).blocks.join("\n");
     expect(off).toContain("甲 \\ac{MF}");
+  });
+});
+
+describe("comment 環境（issue #440）", () => {
+  it("開始から終了までの行を % で始め、セグメントをまたいでも追う。行内の開始の前は残す", () => {
+    const out = commentOutCommentEnvs([
+      { id: "a", tex: "A\n\n\\begin{comment}\nX\n\nY" },
+      { id: "b", tex: "Z\n\\end{comment}\nB" },
+      { id: "c", tex: "C \\begin{comment}\nW\n\\end{comment}\n% \\begin{comment}\nD" },
+    ]);
+    expect(out.map((s) => s.tex)).toEqual([
+      "A\n\n%\\begin{comment}\n%X\n%\n%Y",
+      "%Z\n%\\end{comment}\nB",
+      "C %\\begin{comment}\n%W\n%\\end{comment}\n% \\begin{comment}\nD",
+    ]);
+  });
+
+  it("中の空行で段落を分けず、\\switchcolumn を comment 環境の中に置かない", () => {
+    const seg = (id: string, body: string, tail: string) => ({ id, tex: body + tail });
+    const out = assembleBilingual({
+      cleanLatex: "\\documentclass{article}\\begin{document}\\end{document}",
+      translatedMainTex: "\\documentclass{article}\n\\begin{document}\n\\end{document}\n",
+      source: [seg("seg-0000", "A\n\n\\begin{comment}\nX\n\nY", ""), seg("seg-0001", "Z\n\\end{comment}\n\nB", "")],
+      translated: [seg("seg-0000", "甲\n\n\\begin{comment}\n乙\n\n丙\n\n丁", ""), seg("seg-0001", "戊\n\\end{comment}\n\n己", "")],
+    });
+    expect(out.fallbackSegments).toEqual([]);
+    for (const line of out.mainTex.split("\n")) {
+      if (/\\(begin|end)\{comment\}/.test(line)) expect(line.startsWith("%")).toBe(true);
+    }
   });
 });

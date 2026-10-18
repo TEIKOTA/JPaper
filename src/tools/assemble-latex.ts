@@ -117,6 +117,8 @@ export function fuseCaptionParagraphs(tex: string): string {
   return out + tex.slice(from);
 }
 
+const KEYWORDS_SHIM = Symbol("keywords");
+
 // 契約付録 §7・組版 shim ADR(20260809)。原 class 固有のマークアップを article 上で吸収する。
 const CLASS_SHIM = [
   "% --- JPaper 注入: class 固有マークアップの吸収 ---",
@@ -145,7 +147,7 @@ const CLASS_SHIM = [
   // acmart（CCSXML は XML なので verbatim の comment で丸ごと捨てる）
   "\\jpaper@env{CCSXML}{\\comment}{\\endcomment}",
   "\\providecommand{\\ccsdesc}[2][]{}",
-  "\\providecommand{\\keywords}[1]{\\par\\noindent\\textbf{キーワード: }#1\\par}",
+  KEYWORDS_SHIM,
   "\\providecommand{\\institution}[1]{#1}",
   "\\providecommand{\\city}[1]{#1}",
   "\\providecommand{\\country}[1]{#1}",
@@ -166,7 +168,7 @@ const CLASS_SHIM = [
   "\\providecommand{\\subtitle}[1]{}",
   "\\makeatother",
   "% --- JPaper 注入ここまで ---",
-].join("\n");
+];
 
 const DOCUMENTCLASS = /\\documentclass(?:\[[^\]]*\])?\{[^}]*\}[ \t]*\r?\n?/;
 
@@ -187,6 +189,14 @@ export function classPackages(cleanLatex: string): string[] {
   return [`\\usepackage[${bib ? `${base},${bib}` : base}]{natbib}`];
 }
 
+// keywords を環境で使う論文（jmlr2e）は \keywords を前文で定義しない（後から読むパッケージの定義とぶつかる）。⚠ landmines.md
+function classShim(cleanLatex: string): string {
+  const keywords = /\\begin\s*\{keywords\}/.test(cleanLatex)
+    ? "\\AtBeginDocument{\\jpaper@env{keywords}{\\par\\noindent\\textbf{キーワード: }}{\\par}}"
+    : "\\providecommand{\\keywords}[1]{\\par\\noindent\\textbf{キーワード: }#1\\par}";
+  return CLASS_SHIM.map((l) => (l === KEYWORDS_SHIM ? keywords : l)).join("\n");
+}
+
 function templatePreamble(originalPreamble: string, cleanLatex: string): string {
   const carried = stripDocumentClass(neutralizePreamble(originalPreamble)).trim();
   return [
@@ -196,7 +206,7 @@ function templatePreamble(originalPreamble: string, cleanLatex: string): string 
     "\\usepackage[ipaex]{luatexja-preset}",
     "\\title{}",
     "\\author{}",
-    CLASS_SHIM,
+    classShim(cleanLatex),
     ...classPackages(cleanLatex),
     ...(carried === "" ? [] : ["% --- JPaper 注入: 原前文の引き継ぎ（documentclass のみ差し替え）---", carried]),
     "% --- JPaper 注入: 日本語組版・共有引用 ---",

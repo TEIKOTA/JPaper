@@ -154,6 +154,29 @@ export function paragraphsOf(tex: string, profile: FrontMatterProfile = DEFAULT_
   return balanceParagraphs(splitParagraphs(sanitizeMath(separateCjkAfterControlWords(unwrapTitleBlock(tex, profile)))));
 }
 
+const COMMENT_BEGIN = /\\begin\s*\{comment\}/;
+const COMMENT_END = /\\end\s*\{comment\}/;
+
+// comment 環境（comment パッケージ）の行を、開始と終了の行も含めて % で始まる行にする（空行も）。
+// 開始と終了が別のセグメントにあっても前から順に追う。⚠ landmines.md
+export function commentOutCommentEnvs(segments: readonly BilingualSegment[]): BilingualSegment[] {
+  let inside = false;
+  return segments.map((s) => {
+    const lines = s.tex.split("\n").map((line) => {
+      const code = stripComments(line);
+      if (inside) {
+        if (COMMENT_END.test(code)) inside = false;
+        return `%${line}`;
+      }
+      const at = code.search(COMMENT_BEGIN);
+      if (at === -1) return line;
+      inside = !COMMENT_END.test(code.slice(at));
+      return `${line.slice(0, at)}%${line.slice(at)}`;
+    });
+    return { ...s, tex: lines.join("\n") };
+  });
+}
+
 // 訳文セグメントの順に並べる。原文に同じ id が無いもの（訳注一覧）は左を空にする。
 export function pairSegments(
   source: BilingualSegment[],
@@ -183,7 +206,9 @@ export function pairSegments(
 
 // ⚠ landmines.md
 export function provideCommands(tex: string): string {
-  return tex.replace(/\\newcommand(?![A-Za-z@])/g, "\\providecommand");
+  return tex
+    .replace(/\\newcommand(?![A-Za-z@])/g, "\\providecommand")
+    .replace(/\\newtheorem(?![A-Za-z@])/g, "\\jpProvideTheorem");
 }
 
 // ⚠ landmines.md
@@ -296,7 +321,10 @@ const SETUP = [
   "  {\\centering\\Large\\bfseries\\begingroup\\let\\thanks\\@gobble #1\\endgroup\\par}",
   "  \\vskip 0.2in\\hrule height 1\\p@\\vskip 0.1in",
   // 著者の \\and / \\And / \\AND はタイトルの表組みの中でしか使えないので、ここでは区切りの空白にする。⚠ landmines.md
-  "  {\\centering\\begingroup\\let\\thanks\\@gobble\\def\\and{\\unskip\\quad}\\let\\And\\and\\def\\AND{\\unskip\\par}#2\\endgroup\\par}",
+  // jmlr2e の \name・\email・\addr は \maketitle の中でだけ定義されるので、未定義なら同じ意味で補う。⚠ landmines.md
+  "  {\\centering\\begingroup\\let\\thanks\\@gobble\\def\\and{\\unskip\\quad}\\let\\And\\and\\def\\AND{\\unskip\\par}" +
+    "\\@ifundefined{name}{\\def\\name{\\normalsize\\bfseries}}{}\\@ifundefined{email}{\\def\\email{\\hfill\\small\\scshape}}{}" +
+    "\\@ifundefined{addr}{\\def\\addr{\\small\\itshape}}{}#2\\endgroup\\par}",
   "  \\vskip 0.15in}",
   "\\newcommand{\\jpTitleBlock}[1]{\\jp@titleblock{#1}{\\@author}}",
   // ⚠ landmines.md
@@ -319,6 +347,14 @@ const SETUP = [
   "  \\def\\highlights{\\jp@fmhead\\par\\medskip\\noindent\\textbf{Highlights}\\begin{itemize}}\\def\\endhighlights{\\end{itemize}}%",
   "  \\def\\graphicalabstract{\\jp@fmhead\\par\\medskip\\noindent\\textbf{Graphical Abstract}\\par}\\def\\endgraphicalabstract{\\par}%",
   "}{\\jp@fmhead\\par\\medskip}",
+  // \newtheorem{名前}[数え方]{見出し}[親] の定義済みの名前は、引数ごと読み飛ばす。⚠ landmines.md
+  "\\newcommand{\\jpProvideTheorem}{\\@ifstar{\\jp@providetheorem@s}{\\jp@providetheorem}}",
+  "\\def\\jp@providetheorem#1{\\@ifundefined{#1}{\\newtheorem{#1}}{\\jp@skiptheorem}}",
+  "\\def\\jp@providetheorem@s#1{\\@ifundefined{#1}{\\newtheorem*{#1}}{\\@gobble}}",
+  "\\def\\jp@skiptheorem{\\@ifnextchar[{\\jp@skiptheorem@}{\\jp@skiptheorem@@}}",
+  "\\def\\jp@skiptheorem@[#1]#2{}",
+  "\\def\\jp@skiptheorem@@#1{\\@ifnextchar[{\\jp@gobbleopt}{}}",
+  "\\def\\jp@gobbleopt[#1]{}",
   // ⚠ landmines.md
   "\\newcommand{\\jpRobustNotes}{\\MakeRobust\\footnote\\MakeRobust\\footnotemark\\MakeRobust\\footnotetext}",
   // ⚠ landmines.md
@@ -652,7 +688,11 @@ export function assembleBilingual(input: {
 }): BilingualOutput {
   const preamble = extractPreamble(input.translatedMainTex);
   const profile = detectProfile(input.cleanLatex);
-  const { pairs, fallbackSegments } = pairSegments(input.source, input.translated, profile);
+  const { pairs, fallbackSegments } = pairSegments(
+    commentOutCommentEnvs(input.source),
+    commentOutCommentEnvs(input.translated),
+    profile,
+  );
   const { blocks, titled } = renderPairs(pairs, { left: extractPreamble(input.cleanLatex), right: preamble }, profile);
   const mainTex = releaseCounterAnchorNames(
     releaseLuatexjaNames(`${bilingualPreamble(preamble, profile)}${BEGIN}\n${paracolBody(blocks)}\\end{document}\n`),
