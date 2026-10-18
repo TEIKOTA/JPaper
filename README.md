@@ -149,7 +149,7 @@ LLM に渡したくない語（自分の名前など）は、1 行 1 語のフ�
 
 和訳 PDF（例 `article/2507.17845-ja/2507.17845_pathorob-ja.pdf`）と対訳 PDF（例 `article/2507.17845-ja/2507.17845_pathorob-bilingual.pdf`）のパスを標準出力に出し、`RunSummary` を JSON で出す。
 
-claude・codex では、翻訳の前に用語集の訳を CLI の Web 検索で既存の日本語の用例と照らし、出典の取れた表記に差し替える。用例を確かめられない語は「未確認」の訳注になる。`--no-verify-terms` で止められる（[用語の検証 ADR](./docs/adr/20261013-verify-unconfirmed-terms-with-cli-web-search.md)）。オプションの一覧は `jpaper --help` で表示できる。オプションの正本は [契約付録 §5](./docs/design/contract-appendix.md)。
+claude・codex では、翻訳の前に用語集の訳を CLI の Web 検索で既存の日本語の用例と照らし、出典の取れた表記に差し替える。用例を確かめられない語は「未確認」の訳注になる。`--no-verify-terms` で止められる（[用語の検証 ADR](./docs/adr/20261013-verify-unconfirmed-terms-with-cli-web-search.md)）。訳注は和訳 PDF の各ページの脚注（語の初出の位置）と最後の訳注一覧に載る。`--no-page-notes`・`--no-end-notes` でそれぞれ止められる（Web アプリでは設定の画面。`notes.json` には残る）。オプションの一覧は `jpaper --help` で表示できる。オプションの正本は [契約付録 §5](./docs/design/contract-appendix.md)。
 
 ### LLM プロバイダ
 

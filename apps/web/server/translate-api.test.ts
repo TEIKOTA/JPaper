@@ -78,7 +78,7 @@ describe("設定 API（契約付録 §9）", () => {
     const { status, body } = await req("/api/settings");
     expect(status).toBe(200);
     expect(body).toEqual({
-      settings: { providers: {}, concurrency: 1, verifyTerms: true, history: {} },
+      settings: { providers: {}, concurrency: 1, verifyTerms: true, pageNotes: true, endNotes: true, history: {} },
       providers: [
         { name: "ollama", effort: false },
         { name: "claude", effort: true },
@@ -103,6 +103,8 @@ describe("設定 API（契約付録 §9）", () => {
       providers: { claude: { model: "sonnet", effort: "medium" } },
       concurrency: 2,
       verifyTerms: true,
+      pageNotes: true,
+      endNotes: true,
       history: {},
     };
     expect(saved.body.settings).toEqual(want);
@@ -127,13 +129,13 @@ describe("設定 API（契約付録 §9）", () => {
     const root = tmp();
     const file = path.join(root, "web-settings.json");
     writeFileSync(file, "{");
-    expect(readSettings(file)).toEqual({ providers: {}, concurrency: 1, verifyTerms: true, history: {} });
+    expect(readSettings(file)).toEqual({ providers: {}, concurrency: 1, verifyTerms: true, pageNotes: true, endNotes: true, history: {} });
     writeFileSync(
       file,
       JSON.stringify({ provider: "nope", concurrency: 9, providers: { ollama: { model: "m", effort: "x" }, claude: { model: "opus" } } }),
     );
-    expect(readSettings(file)).toEqual({ providers: { claude: { model: "opus" } }, concurrency: 1, verifyTerms: true, history: {} });
-    expect(readSettings(path.join(root, "none.json"))).toEqual({ providers: {}, concurrency: 1, verifyTerms: true, history: {} });
+    expect(readSettings(file)).toEqual({ providers: { claude: { model: "opus" } }, concurrency: 1, verifyTerms: true, pageNotes: true, endNotes: true, history: {} });
+    expect(readSettings(path.join(root, "none.json"))).toEqual({ providers: {}, concurrency: 1, verifyTerms: true, pageNotes: true, endNotes: true, history: {} });
   });
 
   it("設定ファイルの場所は JPAPER_HOME/web-settings.json", () => {
@@ -307,7 +309,7 @@ describe("model・effort の候補（契約付録 §9・issue #339）", () => {
     await post("/api/jobs", { arxivId: "2601.00001", provider: "claude", model: "sonnet" });
     const cleared = await post("/api/settings/history/clear", {});
     expect(cleared.status).toBe(200);
-    expect(cleared.body.settings).toEqual({ provider: "claude", providers: {}, concurrency: 2, verifyTerms: true, history: {} });
+    expect(cleared.body.settings).toEqual({ provider: "claude", providers: {}, concurrency: 2, verifyTerms: true, pageNotes: true, endNotes: true, history: {} });
     expect((await req("/api/settings")).body.settings.history).toEqual({});
   });
 
@@ -414,5 +416,32 @@ describe("用語を Web 検索で確かめる設定（契約付録 §4・§9・i
     // verifyTerms を送らない保存は、切った設定を戻さない。
     await post("/api/settings", { concurrency: 1 });
     expect((await req("/api/settings")).body.settings.verifyTerms).toBe(false);
+  });
+});
+
+describe("PDF の訳注の設定（契約付録 §8・§9・issue #439）", () => {
+  it("既定は両方入。切った方だけジョブの CLI に --no-page-notes・--no-end-notes を渡す。真偽値以外は 400", async () => {
+    const { req, post, specs } = setup();
+    const before = (await req("/api/settings")).body.settings;
+    expect([before.pageNotes, before.endNotes]).toEqual([true, true]);
+    await post("/api/jobs", { arxivId: "2601.00001", provider: "claude" });
+    expect(specs[0]).not.toContain("--no-page-notes");
+    expect(specs[0]).not.toContain("--no-end-notes");
+
+    for (const key of ["pageNotes", "endNotes"]) {
+      expect((await post("/api/settings", { concurrency: 4, [key]: "no" })).status).toBe(400);
+    }
+    await post("/api/settings", { concurrency: 4, pageNotes: false });
+    await post("/api/jobs", { arxivId: "2601.00002", provider: "claude" });
+    expect(specs[1]).toContain("--no-page-notes");
+    expect(specs[1]).not.toContain("--no-end-notes");
+
+    await post("/api/settings", { concurrency: 4, pageNotes: true, endNotes: false });
+    await post("/api/jobs", { arxivId: "2601.00003", provider: "claude" });
+    expect(specs[2]).not.toContain("--no-page-notes");
+    expect(specs[2]).toContain("--no-end-notes");
+    // 送らない保存は、切った設定を戻さない。
+    await post("/api/settings", { concurrency: 4 });
+    expect((await req("/api/settings")).body.settings.endNotes).toBe(false);
   });
 });

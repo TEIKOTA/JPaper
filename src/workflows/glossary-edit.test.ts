@@ -159,6 +159,26 @@ describe("用語集の編集（契約付録 §9）", () => {
     db.close();
   });
 
+  it("適用: 組み直しは pageNotes・endNotes の指定どおりに訳注を載せる（issue #439）", async () => {
+    const { outDir, db } = await translated();
+    const texs: string[] = [];
+    const capture: LatexRunner = (dir) => {
+      const tex = readFileSync(path.join(dir, "main.tex"), "utf8");
+      if (!tex.includes("\\begin{paracol}")) texs.push(tex);
+      return okRunner(dir);
+    };
+    await applyTermEdit(outDir, "Rashomon set", "羅生門集合", {}, { db, cacheKey: KEY, latexRunner: capture });
+    expect(texs.at(-1)).toContain("\\footnote{訳注");
+    expect(texs.at(-1)).toContain("訳注一覧");
+    await applyTermEdit(outDir, "Rashomon set", "羅生門の集合", { pageNotes: false, endNotes: false }, {
+      db,
+      cacheKey: KEY,
+      latexRunner: capture,
+    });
+    expect(texs.at(-1)).not.toContain("\\footnote{訳注");
+    expect(texs.at(-1)).not.toContain("訳注一覧");
+  });
+
   it("適用: 訳文・md・PDF を書き換え、その後の translatePaper は LLM を呼ばずに置換を保つ", async () => {
     const { outDir, db } = await translated();
     const before = deliverables(outDir);

@@ -10,6 +10,9 @@ export interface TranslateOptions {
   effort?: string;
   // false なら CLI に --no-verify-terms を渡す（設定の「用語を Web 検索で確かめる」）。
   verifyTerms?: false;
+  // false なら CLI に --no-page-notes・--no-end-notes を渡す（設定の訳注の脚注・巻末の一覧）。
+  pageNotes?: false;
+  endNotes?: false;
 }
 
 export interface ProviderInfo {
@@ -86,6 +89,8 @@ export function cliArgs(
     ...(opts.model === undefined ? [] : ["--model", opts.model]),
     ...(opts.effort === undefined ? [] : ["--effort", opts.effort]),
     ...(opts.verifyTerms === false ? ["--no-verify-terms"] : []),
+    ...(opts.pageNotes === false ? ["--no-page-notes"] : []),
+    ...(opts.endNotes === false ? ["--no-end-notes"] : []),
     ...(pdf.pages === undefined ? [] : ["--pages", pdf.pages]),
     ...(pdf.yes === true ? ["--yes"] : []),
     ...(pdf.redactFile === undefined ? [] : ["--redact-file", pdf.redactFile]),

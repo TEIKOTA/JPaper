@@ -687,3 +687,64 @@ describe("summarizeGateFailure（契約付録 §6）", () => {
     expect(summarizeGateFailure(gate({}))).toBe("未解決参照: a2020, b2021");
   });
 });
+
+describe("訳注の描画の切り替え（pageNotes・endNotes）", () => {
+  const noteClient = () =>
+    new FakeLlmClient((req) => {
+      if (req.system.includes("編纂者")) {
+        return JSON.stringify({
+          resolved: [
+            { src: "Alpha", form: "Alpha", class: "paper-defined", rendering: "keep-original", note: "甲の説明" },
+          ],
+          brief: { thesis: "核", sectionRoles: [], notationConventions: [] },
+          style: { tensePolicy: "a", headingStyle: "b", numberStyle: "c" },
+        });
+      }
+      if (req.system.includes("審査者")) return '{"verdict":"pass","issues":[]}';
+      return '{"segmentId":"x","ja":"Alpha の訳文"}';
+    });
+  const run = async (opts: Partial<TranslateOptions>): Promise<string> => {
+    const outDir = path.join(tmp(), "out");
+    const db = new GlossaryDb();
+    let tex = "";
+    const runner: LatexRunner = (dir) => {
+      tex = readFileSync(path.join(dir, "main.tex"), "utf8");
+      return okRunner(dir);
+    };
+    const r = await tp({ kind: "path", path: makePaperTar() }, { provider: "claude", outDir, bilingual: false, ...opts }, {
+      client: noteClient(),
+      db,
+      latexRunner: runner,
+    });
+    db.close();
+    expect(r.exitCode).toBe(0);
+    expect(JSON.parse(readFileSync(path.join(outDir, "notes.json"), "utf8"))).toHaveLength(1);
+    return tex;
+  };
+
+  it("既定は初出の脚注と巻末の訳注一覧の両方に載せる", async () => {
+    const tex = await run({});
+    expect(tex).toContain("Alpha\\footnote{訳注: 甲の説明}");
+    expect(tex).toContain("\\section*{訳注一覧}");
+  });
+
+  it("pageNotes: false は脚注だけを、endNotes: false は巻末の一覧だけを止める", async () => {
+    const noPage = await run({ pageNotes: false });
+    expect(noPage).not.toContain("\\footnote{訳注");
+    expect(noPage).toContain("\\section*{訳注一覧}");
+    const noEnd = await run({ endNotes: false });
+    expect(noEnd).toContain("Alpha\\footnote{訳注: 甲の説明}");
+    expect(noEnd).not.toContain("訳注一覧");
+  });
+
+  it("真偽値でない pageNotes・endNotes は input で返る", async () => {
+    for (const key of ["pageNotes", "endNotes"] as const) {
+      const r = await tp({ kind: "path", path: makePaperTar() }, { provider: "claude", outDir: path.join(tmp(), "out"), [key]: "no" as unknown as boolean }, {
+        client: noteClient(),
+        db: new GlossaryDb(),
+      });
+      expect(r.error?.kind).toBe("input");
+      expect(r.error?.message).toContain(key);
+    }
+  });
+});

@@ -126,6 +126,8 @@ export interface WebSettings {
   providers: Record<string, ProviderDefaults | undefined>;
   concurrency: number;
   verifyTerms: boolean;
+  pageNotes: boolean;
+  endNotes: boolean;
   history: Record<string, ProviderHistory | undefined>;
 }
 

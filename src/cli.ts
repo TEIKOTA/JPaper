@@ -38,7 +38,7 @@ export interface CliDeps {
 }
 
 export const VALUE_FLAGS = ["--provider", "--out", "--model", "--context-window", "--effort", "--concurrency", "--pages", "--redact-file"];
-export const BOOL_FLAGS = ["--think", "--no-think", "--no-bilingual", "--no-verify-terms", "--yes"];
+export const BOOL_FLAGS = ["--think", "--no-think", "--no-bilingual", "--no-verify-terms", "--no-page-notes", "--no-end-notes", "--yes"];
 const HELP_FLAGS = ["--help", "-h"];
 const HELP_HINT = "使い方は jpaper --help で表示できます\n";
 
@@ -67,6 +67,8 @@ Web アプリの依存が無ければ、先に jpaper の repo で pnpm install 
   --concurrency N       同時に走らせる LLM 呼び出しの数（1〜${String(MAX_CONCURRENCY)}。既定は ollama が ${String(defaultConcurrencyFor("ollama"))}、ほかは ${String(defaultConcurrencyFor("claude"))}）
   --no-bilingual        対訳 PDF を作らない
   --no-verify-terms     用語の訳を Web 検索で確かめない（確かめるのは claude・codex だけ）
+  --no-page-notes       訳注を PDF の各ページの脚注に載せない
+  --no-end-notes        訳注の一覧を PDF の最後に載せない
   --pages RANGE         PDF の読むページ（例 1-72・3,5-9。PDF の何枚目かで数える）
   --yes                 PDF の読むページが ${String(LARGE_PDF_PAGES)} を超えても確認せずに進む
   --redact-file PATH    伏せ字にする語のファイル（1 行 1 語。空行と # で始まる行は読まない）。
@@ -361,6 +363,8 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number
         ...(allowLargePdf ? { allowLargePdf: true } : {}),
         ...(flags.has("--no-bilingual") ? { bilingual: false } : {}),
         ...(flags.has("--no-verify-terms") ? { verifyTerms: false } : {}),
+        ...(flags.has("--no-page-notes") ? { pageNotes: false } : {}),
+        ...(flags.has("--no-end-notes") ? { endNotes: false } : {}),
       },
       {
         // 契約付録 §8（CLI は単一ユーザ既定の通知を出さない）。

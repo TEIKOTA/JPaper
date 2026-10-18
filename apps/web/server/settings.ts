@@ -28,11 +28,14 @@ export interface WebSettings {
   concurrency: number;
   // 用語を Web 検索で確かめる（claude・GPT）。既定 true。契約付録 §4・§9
   verifyTerms: boolean;
+  // 訳注を PDF の各ページの脚注・最後の一覧に載せる。既定 true。契約付録 §8・§9
+  pageNotes: boolean;
+  endNotes: boolean;
   history: Partial<Record<Provider, ProviderHistory>>;
 }
 
 export function emptySettings(): WebSettings {
-  return { providers: {}, concurrency: DEFAULT_JOB_CONCURRENCY, verifyTerms: true, history: {} };
+  return { providers: {}, concurrency: DEFAULT_JOB_CONCURRENCY, verifyTerms: true, pageNotes: true, endNotes: true, history: {} };
 }
 
 function isConcurrency(v: unknown): v is number {
@@ -68,6 +71,14 @@ export function settingsFrom(raw: Record<string, unknown>): WebSettings {
 export function readSettings(file: string): WebSettings {
   const raw = readSettingsObject(file);
   return raw === undefined ? emptySettings() : settingsFrom(raw);
+}
+
+// 真偽値の設定（POST /api/settings で送らなければ保存済みの値を残す）。
+export const BOOLEAN_SETTINGS = ["verifyTerms", "pageNotes", "endNotes"] as const;
+
+// 止めた訳注の描画だけを false で返す（ジョブの引数・用語集の組み直しに渡す）。
+export function notesOf(s: WebSettings): { pageNotes?: false; endNotes?: false } {
+  return { ...(s.pageNotes ? {} : { pageNotes: false }), ...(s.endNotes ? {} : { endNotes: false }) };
 }
 
 // 履歴は読むときだけ検査する。検査に通らない値・重複は捨て、MAX_HISTORY 件で切る。
@@ -123,7 +134,9 @@ export function recordHistory(
 // lenient: 検査に通らない項目を捨てる（読み込み）。false なら入力の誤りとして投げる（保存）。
 export function parseSettings(body: unknown, lenient = false): WebSettings {
   if (typeof body !== "object" || body === null) throw new JpaperError(2, "input", "設定を JSON で送ってください");
-  const b = body as { provider?: unknown; providers?: unknown; concurrency?: unknown; verifyTerms?: unknown };
+  const b = body as { provider?: unknown; providers?: unknown; concurrency?: unknown } & Partial<
+    Record<(typeof BOOLEAN_SETTINGS)[number], unknown>
+  >;
   const attempt = <T>(fn: () => T): T | undefined => {
     if (!lenient) return fn();
     try {
@@ -143,9 +156,11 @@ export function parseSettings(body: unknown, lenient = false): WebSettings {
       throw new JpaperError(2, "input", `並行数は 1〜${String(MAX_JOB_CONCURRENCY)} で指定してください`);
     }
   }
-  if (b.verifyTerms !== undefined) {
-    if (typeof b.verifyTerms === "boolean") out.verifyTerms = b.verifyTerms;
-    else if (!lenient) throw new JpaperError(2, "input", "verifyTerms は true か false で指定してください");
+  for (const key of BOOLEAN_SETTINGS) {
+    const v = b[key];
+    if (v === undefined) continue;
+    if (typeof v === "boolean") out[key] = v;
+    else if (!lenient) throw new JpaperError(2, "input", `${key} は true か false で指定してください`);
   }
   if (b.providers !== undefined && b.providers !== null) {
     if (typeof b.providers !== "object") {
