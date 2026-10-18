@@ -327,6 +327,13 @@ input {
   font-size: 15px;
   cursor: pointer;
 }
+.check-list {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 16px;
+  margin-bottom: 16px;
+}
 .check input {
   appearance: none;
   width: 22px;

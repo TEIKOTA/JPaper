@@ -161,28 +161,30 @@ function SettingsForm(props: { initial: SettingsResponse }) {
 
       <h2 className="section-title">PDF の訳注</h2>
       <p className="form-note">翻訳を始めるときと、用語集の編集で PDF を組み直すときに使います。</p>
-      <label className="check">
-        <input
-          type="checkbox"
-          checked={pageNotes}
-          onChange={(e) => {
-            setMessage(undefined);
-            setPageNotes(e.target.checked);
-          }}
-        />
-        <span>各ページの脚注に載せる（語の初出の位置）</span>
-      </label>
-      <label className="check">
-        <input
-          type="checkbox"
-          checked={endNotes}
-          onChange={(e) => {
-            setMessage(undefined);
-            setEndNotes(e.target.checked);
-          }}
-        />
-        <span>最後に訳注一覧として載せる</span>
-      </label>
+      <div className="check-list">
+        <label className="check">
+          <input
+            type="checkbox"
+            checked={pageNotes}
+            onChange={(e) => {
+              setMessage(undefined);
+              setPageNotes(e.target.checked);
+            }}
+          />
+          <span>各ページの脚注に載せる（語の初出の位置）</span>
+        </label>
+        <label className="check">
+          <input
+            type="checkbox"
+            checked={endNotes}
+            onChange={(e) => {
+              setMessage(undefined);
+              setEndNotes(e.target.checked);
+            }}
+          />
+          <span>最後に訳注一覧として載せる</span>
+        </label>
+      </div>
 
       <div className="form-actions">
         <button className="primary" type="submit" disabled={busy}>
