@@ -231,6 +231,30 @@
 - **なぜ意図的か**: `\and` はタイトルの表組み（`\maketitle` の中の tabular）で使う前提の命令で、`\end{tabular}…\begin{tabular}` に展開される。対訳のタイトルブロックは著者を表の外で組むので、そのままだと `Misplaced \crcr` で対訳 PDF が落ちる（実測: llncs の 2606.22649・2605.18329 ほか 4 本）。
 - **正本ポインタ**: 契約付録 §8（対訳 PDF）、issue #324。回帰テストは `src/tools/bilingual-latex.test.ts`。
 
+## `src/tools/bilingual-latex.ts` — 対訳のタイトルブロックで未定義の `\name`・`\email`・`\addr` を補う
+
+- **おかしく見える点**: タイトルブロックの著者欄でだけ、未定義なら `\name`・`\email`・`\addr` を書体の切り替えとして定義している。
+- **なぜ意図的か**: jmlr2e は `\author{\name 著者 \email … \addr …}` と書かせるが、この 3 つを `\maketitle` の中でだけ定義する。対訳のタイトルブロックは `\maketitle` を使わず `\@author` を直接展開するので、そのままだと `Undefined control sequence` で対訳 PDF が落ちる（実測: 2011.03395）。定義済みの型（acmart の `\email{…}` など）はそのまま使う。
+- **正本ポインタ**: 契約付録 §8（対訳 PDF）、issue #440。回帰テストは `src/tools/bilingual-latex.test.ts`。
+
+## `src/tools/bilingual-latex.ts` — 右の段の `\newtheorem` を、定義済みなら読み飛ばす命令に置き換える
+
+- **おかしく見える点**: `provideCommands` が右（和訳）の段の `\newtheorem` / `\newtheorem*` を `\jpProvideTheorem` に書き換え、名前が定義済みなら引数ごと読み飛ばしている。
+- **なぜ意図的か**: 本文中の `\newtheorem` は左と右の両方の段で実行されるので、そのままだと右で `Command \question already defined` になって落ちる（実測: 2011.03395）。`\newcommand` を `\providecommand` にするのと同じ理由。
+- **正本ポインタ**: 契約付録 §8（対訳 PDF）、issue #440。回帰テストは `src/tools/bilingual-latex.test.ts`。
+
+## `src/tools/bilingual-latex.ts` — 対訳では comment 環境の行を `%` で始める
+
+- **おかしく見える点**: 対訳を組み立てる前に、`\begin{comment}` から `\end{comment}` までの行（空行も）を `%` で始まる行にしている。消してはいない。
+- **なぜ意図的か**: comment 環境は節（セグメント）をまたぐことがあり、段落を組にすると `\begin{comment}` と `\end{comment}` が別の組に入って、左右の切り替え（`\switchcolumn`）まで飲み込み、`\begin{paracol} … ended by \end{comment}` で落ちる（実測: 2011.03395）。行ごと消すと、comment 環境の中でだけ使っている図が「原文の図が対訳に無い」と組版ゲートで落ちる（ゲートは `%` の行の `\includegraphics` も数える）ので、`%` で始める。
+- **正本ポインタ**: 契約付録 §8（対訳 PDF）、issue #440。回帰テストは `src/tools/bilingual-latex.test.ts`。
+
+## `src/tools/assemble-latex.ts` — keywords を環境で使う論文では、共通テンプレートの shim が `\keywords` を前文で定義しない
+
+- **おかしく見える点**: 共通テンプレートの class shim は `\keywords` を `\providecommand` で用意するが、本文が `\begin{keywords}` を使う論文だけは前文で定義せず、`\begin{document}` の時点で未定義のときだけ環境として補う。
+- **なぜ意図的か**: shim は原文の前文より前に置くので、後から読む jmlr2e の `\newenvironment{keywords}` が `Command \keywords already defined` で落ちる（実測: 2011.03395 の対訳を共通テンプレートで組み直したとき）。
+- **正本ポインタ**: 契約付録 §7、issue #440。回帰テストは `src/tools/assemble-latex.test.ts`。
+
 ## `src/tools/bilingual-latex.ts` — 対訳 PDF ではリンクを作らない（hyperref の draft）
 
 - **おかしく見える点**: 対訳の main.tex の先頭で `\PassOptionsToPackage{draft}{hyperref}` を渡し、引用・参照・URL をクリックできないようにしている。和訳 PDF はリンクがある。

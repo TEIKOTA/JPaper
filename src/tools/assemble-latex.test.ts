@@ -235,6 +235,16 @@ describe("assembleLatex: template は原前文を吸収する", () => {
     }
   });
 
+  it("keywords を環境で使う論文は \\keywords を前文で定義せず、\\begin{document} の時点で未定義なら環境を補う（issue #440）", () => {
+    const jmlr = "\\documentclass{article}\\usepackage{jmlr2e}\\begin{document}\\begin{keywords}x\\end{keywords}\\end{document}";
+    const env = assembleLatex({ cleanLatex: jmlr, chapters: ["X"], mode: "template" }).mainTex;
+    expect(env).not.toContain("\\providecommand{\\keywords}");
+    expect(env).toContain("\\AtBeginDocument{\\jpaper@env{keywords}{");
+    const cmd = assembleLatex({ cleanLatex: ELS, chapters: ["X"], mode: "template" }).mainTex;
+    expect(cmd).toContain("\\providecommand{\\keywords}[1]");
+    expect(cmd).not.toContain("\\jpaper@env{keywords}");
+  });
+
   it("shim は原前文より前に置き、原前文中の class 固有コマンド呼び出しを成立させる", () => {
     const r = assembleLatex({ cleanLatex: ELS, chapters: ["X"], mode: "template" });
     expect(r.mainTex.indexOf("jpaper@env")).toBeLessThan(r.mainTex.indexOf("threeparttable"));
