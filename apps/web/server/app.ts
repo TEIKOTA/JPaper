@@ -32,7 +32,9 @@ import { DEFAULT_API_PORT, DEFAULT_WEB_PORT, localOrigins, uploadDirOf, type Web
 import { ArxivClient, ArxivError, ArxivQueryError } from "./arxiv.js";
 import { JobQueue } from "./jobs.js";
 import {
+  BOOLEAN_SETTINGS,
   emptySettings,
+  notesOf,
   MAX_HISTORY,
   MAX_JOB_CONCURRENCY,
   parseSettings,
@@ -217,7 +219,7 @@ export function createApp(config: WebConfig, services: Services = createServices
         dirOf(id),
         body.data.src,
         body.data.ja,
-        { registerGlobal: body.data.registerGlobal === true },
+        { registerGlobal: body.data.registerGlobal === true, ...notesOf(readSettings(config.settingsPath)) },
         editDeps(),
       );
       const affected = out.registered
@@ -256,16 +258,21 @@ export function createApp(config: WebConfig, services: Services = createServices
     }),
   );
 
-  // 保存は provider・providers・concurrency・verifyTerms を置き換え、ファイルの他のキー（history など）は残す。
+  // 保存は provider・providers・concurrency・真偽値の設定を置き換え、ファイルの他のキー（history など）は残す。
   app.post("/api/settings", async (c) => {
     try {
       const body: unknown = await c.req.json().catch(() => undefined);
       const { history: _h, ...parsed } = parseSettings(body);
       const raw = readSettingsObject(config.settingsPath) ?? {};
-      const { provider: _p, providers: _ps, concurrency: _c, verifyTerms: _v, ...rest } = raw;
-      // verifyTerms を送らない保存（古い画面）は、保存済みの値を残す。
-      const sent = typeof body === "object" && body !== null && Object.hasOwn(body, "verifyTerms");
-      if (!sent) parsed.verifyTerms = settingsFrom(raw).verifyTerms;
+      const { provider: _p, providers: _ps, concurrency: _c, ...others } = raw;
+      const rest = Object.fromEntries(
+        Object.entries(others).filter(([k]) => !(BOOLEAN_SETTINGS as readonly string[]).includes(k)),
+      );
+      // 真偽値の設定を送らない保存（古い画面）は、保存済みの値を残す。
+      const saved = settingsFrom(raw);
+      for (const key of BOOLEAN_SETTINGS) {
+        if (typeof body !== "object" || body === null || !Object.hasOwn(body, key)) parsed[key] = saved[key];
+      }
       writeSettings(config.settingsPath, { ...rest, ...parsed });
       jobs.pump();
       return c.json({ settings: { ...parsed, history: settingsFrom(raw).history } });
@@ -391,8 +398,12 @@ export function createApp(config: WebConfig, services: Services = createServices
       const options = parseTranslateOptions(body);
       // 伏せ字の語（arXiv・PDF のどちらのジョブにも付けられる）。契約付録 §9（伏せ字の範囲選択）
       const redact = body.redact === undefined ? undefined : termsOf(body.redact);
-      const verify = readSettings(config.settingsPath).verifyTerms;
-      const jobOptions = { ...options, ...(verify ? {} : { verifyTerms: false as const }) };
+      const saved = readSettings(config.settingsPath);
+      const jobOptions = {
+        ...options,
+        ...(saved.verifyTerms ? {} : { verifyTerms: false as const }),
+        ...notesOf(saved),
+      };
       let job;
       if (body.upload !== undefined) {
         // PDF 入力: 画像を渡せる provider だけ。100 ページ超は同意（confirmLarge）が要る。契約付録 §8・§9

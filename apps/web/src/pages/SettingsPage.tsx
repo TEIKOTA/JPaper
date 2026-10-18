@@ -21,6 +21,8 @@ function SettingsForm(props: { initial: SettingsResponse }) {
   );
   const [concurrency, setConcurrency] = useState(props.initial.settings.concurrency);
   const [verifyTerms, setVerifyTerms] = useState(props.initial.settings.verifyTerms);
+  const [pageNotes, setPageNotes] = useState(props.initial.settings.pageNotes);
+  const [endNotes, setEndNotes] = useState(props.initial.settings.endNotes);
   const [history, setHistory] = useState(props.initial.settings.history);
   const [historyMessage, setHistoryMessage] = useState<{ ok: boolean; text: string }>();
   const used = providers.filter((p) => {
@@ -47,12 +49,16 @@ function SettingsForm(props: { initial: SettingsResponse }) {
             providers: defaults,
             concurrency,
             verifyTerms,
+            pageNotes,
+            endNotes,
           })
           .then(
             (r) => {
               setBusy(false);
               setDefaults(r.settings.providers);
               setVerifyTerms(r.settings.verifyTerms);
+              setPageNotes(r.settings.pageNotes);
+              setEndNotes(r.settings.endNotes);
               setHistory(r.settings.history);
               setMessage({ ok: true, text: "保存しました。" });
             },
@@ -152,6 +158,33 @@ function SettingsForm(props: { initial: SettingsResponse }) {
         />
         <span>用語を Web 検索で確かめる（claude・GPT）</span>
       </label>
+
+      <h2 className="section-title">PDF の訳注</h2>
+      <p className="form-note">翻訳を始めるときと、用語集の編集で PDF を組み直すときに使います。</p>
+      <div className="check-list">
+        <label className="check">
+          <input
+            type="checkbox"
+            checked={pageNotes}
+            onChange={(e) => {
+              setMessage(undefined);
+              setPageNotes(e.target.checked);
+            }}
+          />
+          <span>各ページの脚注に載せる（語の初出の位置）</span>
+        </label>
+        <label className="check">
+          <input
+            type="checkbox"
+            checked={endNotes}
+            onChange={(e) => {
+              setMessage(undefined);
+              setEndNotes(e.target.checked);
+            }}
+          />
+          <span>最後に訳注一覧として載せる</span>
+        </label>
+      </div>
 
       <div className="form-actions">
         <button className="primary" type="submit" disabled={busy}>

@@ -644,7 +644,11 @@ export interface RetypesetOutcome {
 }
 
 // 契約付録 §9。呼ばれたら失敗するクライアントで translatePaper を回し、checkpoint から組版だけを行う。
-export async function retypesetWithoutLlm(state: PaperState, deps: EditDeps = {}): Promise<RetypesetOutcome> {
+export async function retypesetWithoutLlm(
+  state: PaperState,
+  deps: EditDeps = {},
+  notes: Pick<ApplyOptions, "pageNotes" | "endNotes"> = {},
+): Promise<RetypesetOutcome> {
   const llmCalls: string[] = [];
   const notices: string[] = [];
   const client: LlmClient = {
@@ -660,6 +664,8 @@ export async function retypesetWithoutLlm(state: PaperState, deps: EditDeps = {}
       openrouter: { ...DEFAULT_OPENROUTER, contextWindow: state.contextWindow },
       outDir: state.outDir,
       bilingual: true,
+      ...(notes.pageNotes === false ? { pageNotes: false } : {}),
+      ...(notes.endNotes === false ? { endNotes: false } : {}),
       signal: deps.signal,
     },
     {
@@ -680,6 +686,9 @@ export async function retypesetWithoutLlm(state: PaperState, deps: EditDeps = {}
 
 export interface ApplyOptions {
   registerGlobal?: boolean;
+  // 組み直しの訳注の描画（TranslateOptions と同じ。既定 true）。
+  pageNotes?: boolean;
+  endNotes?: boolean;
 }
 
 export interface ApplyOutcome {
@@ -745,7 +754,7 @@ export async function applyTermEdit(
       return { state, plan };
     });
 
-    const out = await retypesetWithoutLlm(state, deps);
+    const out = await retypesetWithoutLlm(state, deps, opts);
     const failure =
       out.llmCalls.length > 0
         ? new JpaperError(
