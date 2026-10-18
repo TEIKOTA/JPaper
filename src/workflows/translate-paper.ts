@@ -75,7 +75,8 @@ import {
   renderGlossaryMd,
   parseGlossaryMd,
   renderBriefMd,
-  parseBriefMd,
+  briefFromMd,
+  styleFromMd,
   renderStyleMd,
   parseStyleMd,
   type ResolvedRow,
@@ -371,12 +372,17 @@ async function loadOrBuildContext(
     pending[glossaryMd] = renderGlossaryMd(resolved, checks);
   }
 
+  // 出力先の md が checkpoint の値を書き出したものと同じ（未編集）なら、読み戻さずにその値を使う。契約付録 §4
+  const stored = readStep(runDir, VERIFY_STEP, cacheKey);
+  const verified = stored === undefined ? undefined : VerifiedGlossary.safeParse(stored.value);
+  const saved = [...(verified?.success === true ? [verified.data] : []), context, built];
+
   let brief = context.brief;
-  if (adopt(briefMd)) brief = parseBriefMd(readFileSync(briefMd, "utf8"));
+  if (adopt(briefMd)) brief = briefFromMd(readFileSync(briefMd, "utf8"), saved.map((c) => c.brief));
   else pending[briefMd] = renderBriefMd(context.brief);
 
   let style = context.style;
-  if (adopt(styleMd)) style = parseStyleMd(readFileSync(styleMd, "utf8"));
+  if (adopt(styleMd)) style = styleFromMd(readFileSync(styleMd, "utf8"), saved.map((c) => c.style));
   else pending[styleMd] = renderStyleMd(context.style);
 
   // 用語集は全セグメントのプロンプトへ載るので、内部矛盾はそのまま訳文全体へ伝播する。

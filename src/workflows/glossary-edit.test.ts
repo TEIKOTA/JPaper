@@ -72,7 +72,7 @@ function translator(user: string): string {
   return "\\maketitle";
 }
 
-function paperClient(): FakeLlmClient {
+function paperClient(sectionRoles: { id: string; role: string }[] = []): FakeLlmClient {
   return new FakeLlmClient((req) => {
     if (req.system.includes("編纂者")) {
       return JSON.stringify({
@@ -81,7 +81,7 @@ function paperClient(): FakeLlmClient {
           { src: "empirical Rashomon set", form: "経験的ラショモン集合", class: "paper-defined", rendering: "translate" },
           { src: "CMA-ES", form: "CMA-ES", class: "do-not-translate", rendering: "keep-original" },
         ],
-        brief: { thesis: "ラショモン集合を調べる", sectionRoles: [], notationConventions: ["ラショモン集合は初出で併記する"] },
+        brief: { thesis: "ラショモン集合を調べる", sectionRoles, notationConventions: ["ラショモン集合は初出で併記する"] },
         style: { tensePolicy: "a", headingStyle: "b", numberStyle: "c" },
       });
     }
@@ -104,11 +104,14 @@ function forbidden(): { client: LlmClient; calls: string[] } {
   };
 }
 
-async function translated(latex = LATEX): Promise<{ outDir: string; db: GlossaryDb }> {
+async function translated(
+  latex = LATEX,
+  sectionRoles: { id: string; role: string }[] = [],
+): Promise<{ outDir: string; db: GlossaryDb }> {
   const outDir = path.join(tmp(), `${ID}-ja`);
   const db = new GlossaryDb();
   const r = await translatePaper(INPUT, { provider: "claude", outDir }, {
-    client: paperClient(),
+    client: paperClient(sectionRoles),
     db,
     cacheKey: KEY,
     latexRunner: okRunner,
@@ -177,6 +180,17 @@ describe("用語集の編集（契約付録 §9）", () => {
     });
     expect(texs.at(-1)).not.toContain("\\footnote{訳注");
     expect(texs.at(-1)).not.toContain("訳注一覧");
+  });
+
+  it("適用: 節名に「: 」を含む brief でも LLM を呼ばずに組み直せる（issue #442）", async () => {
+    for (const role of ["ラショモン集合を導入する", "導入する"]) {
+      const { outDir, db } = await translated(LATEX, [{ id: "Intro: Rashomon sets", role }]);
+      expect(loadPaperState(outDir, KEY).migrated).toBe(false);
+      const out = await applyTermEdit(outDir, "Rashomon set", "羅生門集合", {}, { db, cacheKey: KEY, latexRunner: okRunner });
+      expect(out.bilingualStatus).toBe("ok");
+      const { calls } = await rerun(outDir, db);
+      expect(calls).toEqual([]);
+    }
   });
 
   it("適用: 訳文・md・PDF を書き換え、その後の translatePaper は LLM を呼ばずに置換を保つ", async () => {
