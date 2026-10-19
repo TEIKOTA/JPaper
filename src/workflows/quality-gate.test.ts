@@ -810,3 +810,49 @@ describe("untranslated: keep-original の語を地の文に数えない", () => 
     expect(untranslated(`\\section{A}\n${body}`, `\\section{謝辞}\n${ja}`, terms)).toEqual([]);
   });
 });
+
+describe("untranslated: keep-original の照合は地の文と同じ正規化をかける", () => {
+  const keep = (src: string): ResolvedTerm => ({
+    src,
+    form: src,
+    class: "do-not-translate",
+    rendering: "keep-original",
+    firstOccurrence: false,
+  });
+  const names = ["Peter Schneider-Kamp", "Anna Lindqvist", "Marco Rossi", "Yuki Tanaka", "Sofia Alvarez"];
+  const plain = ["Conceptualization", "Methodology", "Software", "Validation"];
+  const draft = "Writing -- original draft";
+  const review = "Writing -- review \\& editing";
+  const items = names
+    .map(
+      (n) =>
+        `\\item[${n}] ${[...plain, draft, review].map((r) => `\\emph{${r}}`).join(", ")}`,
+    )
+    .join("\n");
+  const intro =
+    "Contributions are listed using the CRediT taxonomy\\footnote{\\url{https://credit.niso.org}}, and every role follows its standard name.";
+  const src = `\\section{Contributors}\n${intro}\n\\begin{description}\n${items}\n\\end{description}`;
+  const ja = src
+    .replace("Contributors", "貢献者")
+    .replace(intro, "貢献は CRediT 分類に従って記載し、各役割は標準名のままとする。");
+  const untranslated = (terms: ResolvedTerm[], s = src, j = ja) =>
+    formalCheck(s, j, terms).filter((i) => i.kind === "untranslated");
+  const base = [...names, ...plain, draft].map(keep);
+
+  it("辞書の役割名が LaTeX の綴り（-- と \\&）でも落ちない", () => {
+    expect(untranslated([...base, keep(review)])).toEqual([]);
+  });
+
+  it("辞書の役割名が en dash と & の綴りでも落ちない", () => {
+    expect(untranslated([...base, keep("Writing – review & editing"), keep("Writing – original draft")])).toEqual([]);
+  });
+
+  it("正規化後に空・空白だけになる辞書語は除外に使わない", () => {
+    const empties = ["{}", " ", "\\&", "--"].map(keep);
+    expect(untranslated(empties).length).toBeGreaterThan(0);
+  });
+
+  it("未訳の地の文は辞書語を除いても落ちる", () => {
+    expect(untranslated([...base, keep(review)], src, src).length).toBeGreaterThan(0);
+  });
+});

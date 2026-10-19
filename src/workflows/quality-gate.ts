@@ -174,11 +174,21 @@ function proseOf(tex: string): string {
     .replace(/[{}[\]$&%#_^~\\]/g, " ");
 }
 
+// 地の文と辞書語に同じ正規化をかける: proseOf、ダッシュ（-- --- – —）の統一、空白の連続を 1 つに。
+function normalizeProse(tex: string): string {
+  return proseOf(tex)
+    .replace(/---|--|[–—]/g, "-")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 // 3 文字以上のラテン語の語数。数式記号や略号を「地の文」と数えないための近似。
-// keep-original の語は原文のまま残すのが正しいので数えない（原文・訳文の両方から同じ規則で除く）。
+// keepOriginal の語は正規化後の地の文から除いて数える。契約付録 §8
 function proseWordCount(tex: string, keepOriginal: string[] = []): number {
-  let prose = proseOf(tex);
-  const keeps = [...new Set(keepOriginal)].sort((a, b) => b.length - a.length);
+  let prose = normalizeProse(tex);
+  const keeps = [...new Set(keepOriginal.map(normalizeProse))]
+    .filter((k) => /[A-Za-z]/.test(k))
+    .sort((a, b) => b.length - a.length);
   for (const k of keeps) {
     for (const i of termOccurrences(prose, k)) {
       prose = prose.slice(0, i) + " ".repeat(k.length) + prose.slice(i + k.length);
