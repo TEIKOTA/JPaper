@@ -75,6 +75,7 @@ import { listDeliverables } from "../tools/pdf-name.js";
 import { formalCheck } from "./quality-gate.js";
 import {
   IngestCache,
+  rebaseIngest,
   SectionLoopCache,
   foundTitle,
   planSegments,
@@ -208,7 +209,7 @@ export function loadPaperState(outDir: string, key: Buffer = loadCacheKey()): Pa
   if (ingestStored === undefined) {
     throw inputError("取り込みの checkpoint がありません。CLI で一度翻訳を完了させてください");
   }
-  const ingest = IngestCache.parse(ingestStored.value);
+  const ingest = rebaseIngest(IngestCache.parse(ingestStored.value), runDir);
   const input = arxivInputFor(ingest.paperId, ingestStored.invalidation);
   if (input === undefined) {
     throw inputError("arXiv ID 以外の入力から訳した論文は、元の入力が分からないため組み直せません");

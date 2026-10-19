@@ -87,6 +87,7 @@ import { segmentBudgetFor, type Segment } from "../segment/segmenter.js";
 import { recheckFormal, runSectionLoop } from "./section-loop.js";
 import {
   IngestCache,
+  rebaseIngest,
   SectionLoopCache,
   planSegments,
   foundTitle,
@@ -1223,7 +1224,7 @@ export async function translatePaper(
       );
     }
     const pdfMain = pdf === undefined ? "" : readFileSync(path.join(pdf.dir, "main.tex"), "utf8");
-    const ingested = await checkpoint(
+    const ingestStored = await checkpoint(
       runDir,
       "ingest",
       IngestCache,
@@ -1245,6 +1246,7 @@ export async function translatePaper(
         key: deps.cacheKey,
       },
     );
+    const ingested = rebaseIngest(ingestStored, runDir);
 
     // プリアンブルは翻訳対象ではなく verbatim に持ち越されるため、節ループの品質ゲートでは
     // 検査されない。LLM を呼ぶ前にここで弾く（悪意ある論文にコストを払わない）。組版安全 ADR。

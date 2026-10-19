@@ -1,4 +1,6 @@
 // 契約付録 §8（checkpoint の値の形と無効化キー）。translatePaper と用語集の編集（§9）が同じ関数で鍵を作る。
+import { existsSync } from "node:fs";
+import path from "node:path";
 import { z } from "zod";
 import type { DocumentBrief, ResolvedTerm, StyleContract } from "../types/contract.js";
 import { EvalIssue } from "../types/contract.js";
@@ -29,6 +31,45 @@ export const IngestCache = z.object({
   redacted: z.number().int().nonnegative().default(0),
 });
 export type IngestCache = z.infer<typeof IngestCache>;
+
+const INGEST_RUN_SUBDIRS = ["source", "pdf-source"] as const;
+
+// 契約付録 §8（取り込みの checkpoint のパス）
+function ingestRunDirOf(p: string): string | undefined {
+  if (!path.isAbsolute(p)) return undefined;
+  const parts = path.normalize(p).split(path.sep);
+  for (let i = parts.length - 2; i >= 0; i--) {
+    if (parts[i] === ".run" && (INGEST_RUN_SUBDIRS as readonly string[]).includes(parts[i + 1]!)) {
+      return parts.slice(0, i + 1).join(path.sep) || path.sep;
+    }
+  }
+  return undefined;
+}
+
+function rebaseUnder(p: string, from: string, to: string): string | undefined {
+  if (!path.isAbsolute(p)) return undefined;
+  for (const sub of INGEST_RUN_SUBDIRS) {
+    const rel = path.relative(path.join(from, sub), p);
+    if (path.isAbsolute(rel) || rel === ".." || rel.startsWith(`..${path.sep}`)) continue;
+    return path.join(to, sub, rel);
+  }
+  return undefined;
+}
+
+// 契約付録 §8（取り込みの checkpoint のパス）
+export function rebaseIngest(cache: IngestCache, runDir: string): IngestCache {
+  const to = path.resolve(runDir);
+  const from = ingestRunDirOf(cache.sourceDir);
+  if (from === undefined || from === to) return cache;
+  const sourceDir = rebaseUnder(cache.sourceDir, from, to);
+  if (sourceDir === undefined || !existsSync(sourceDir)) return cache;
+  return {
+    ...cache,
+    sourceDir,
+    mainDir: rebaseUnder(cache.mainDir, from, to) ?? cache.mainDir,
+    figures: cache.figures.map((f) => rebaseUnder(f, from, to) ?? f),
+  };
+}
 
 export const SectionLoopCache = z.object({
   segmentId: z.string(),
