@@ -28,14 +28,14 @@ export interface WebSettings {
   concurrency: number;
   // 用語を Web 検索で確かめる（claude・GPT）。既定 true。契約付録 §4・§9
   verifyTerms: boolean;
-  // 訳注を PDF の各ページの脚注・最後の一覧に載せる。既定 true。契約付録 §8・§9
+  // 訳注を PDF の各ページの脚注（既定 false）・最後の一覧（既定 true）に載せる。契約付録 §8・§9
   pageNotes: boolean;
   endNotes: boolean;
   history: Partial<Record<Provider, ProviderHistory>>;
 }
 
 export function emptySettings(): WebSettings {
-  return { providers: {}, concurrency: DEFAULT_JOB_CONCURRENCY, verifyTerms: true, pageNotes: true, endNotes: true, history: {} };
+  return { providers: {}, concurrency: DEFAULT_JOB_CONCURRENCY, verifyTerms: true, pageNotes: false, endNotes: true, history: {} };
 }
 
 function isConcurrency(v: unknown): v is number {
@@ -76,9 +76,9 @@ export function readSettings(file: string): WebSettings {
 // 真偽値の設定（POST /api/settings で送らなければ保存済みの値を残す）。
 export const BOOLEAN_SETTINGS = ["verifyTerms", "pageNotes", "endNotes"] as const;
 
-// 止めた訳注の描画だけを false で返す（ジョブの引数・用語集の組み直しに渡す）。
-export function notesOf(s: WebSettings): { pageNotes?: false; endNotes?: false } {
-  return { ...(s.pageNotes ? {} : { pageNotes: false }), ...(s.endNotes ? {} : { endNotes: false }) };
+// 既定と違う訳注の描画だけを返す（ジョブの引数・用語集の組み直しに渡す）。
+export function notesOf(s: WebSettings): { pageNotes?: true; endNotes?: false } {
+  return { ...(s.pageNotes ? { pageNotes: true } : {}), ...(s.endNotes ? {} : { endNotes: false }) };
 }
 
 // 履歴は読むときだけ検査する。検査に通らない値・重複は捨て、MAX_HISTORY 件で切る。

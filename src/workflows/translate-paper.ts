@@ -155,7 +155,7 @@ export interface TranslateOptions {
   bilingual?: boolean;
   // 用語集の訳を Web 検索の用例で確かめるか（claude・codex だけ）。既定 true。契約付録 §4
   verifyTerms?: boolean;
-  // 訳注を PDF の初出の脚注（pageNotes）・巻末の訳注一覧（endNotes）に載せるか。既定 true。notes.json は変えない。契約付録 §8
+  // 訳注を PDF の初出の脚注（pageNotes。既定 false）・巻末の訳注一覧（endNotes。既定 true）に載せるか。notes.json は変えない。契約付録 §8
   pageNotes?: boolean;
   endNotes?: boolean;
   // PDF 入力で読むページ（"1-72" など。PDF の何枚目か）。契約付録 §8（PDF 入力）
@@ -1525,9 +1525,9 @@ export async function translatePaper(
     let bilingual: BilingualSummary = idleBilingual(opts);
     let exitCode = resolveExitCode(results.filter((r) => !r.passed).map((r) => r.failCode ?? 4));
     if (failed === 0) {
-      // 訳注を本文へ反映（初出脚注＋巻末一覧。それぞれ pageNotes・endNotes で止められる）してから組版する。
+      // 訳注を本文へ反映（初出脚注は pageNotes が true のときだけ、巻末一覧は endNotes が false でなければ）してから組版する。
       const formBySrc = new Map(ctx.resolved.map((r) => [r.src, r.form]));
-      const pageNotes = opts.pageNotes === false ? [] : notes;
+      const pageNotes = opts.pageNotes === true ? notes : [];
       const keptSource = segments.find((s) => s.keep !== undefined);
       const keptAt = keptSource?.keep && { latex: keptSource.latex, ...keptSource.keep };
       const rendered = results.map((r) => {

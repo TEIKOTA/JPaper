@@ -182,6 +182,6 @@ async function checkpoint<T>(runDir, stepId, schema, fn: () => Promise<T>): Prom
 
 - 文書ブリーフと文体契約（決定 1）: glossary-builder が全文を 1 回読むときの副産物として、`brief.md`（主張の構造・記法の規約）と `style.md`（既定=である調・常体）を確定・ロックし、すべての translator の run-context に注入する。両者は `<paper>-ja/` にあり、見えて編集できる。研究にある「試訳で先に文体を固定する」ことを、新しいステージなしで実現する。
 - evaluator の評価軸の明文化（決定 2）: 主張の強さ・hedging・統計語（`significantly`=有意）・単位の表記を評価軸に加える。
-- 訳注（決定 3）: 採否は決定的な trigger（paper-defined の preserve／低確信=DB に confirmed が無い／evaluator の warn）、文面は LLM。データは (A) の `notes.json` と `glossary.md` の印で作り、PDF には (B) で**文書の初出だけ脚注にし、巻末に「訳注一覧」を描く**。PDF しか読まない使い方でも訳注が届く。
+- 訳注（決定 3）: 採否は決定的な trigger（paper-defined の preserve／低確信=DB に confirmed が無い／evaluator の warn）、文面は LLM。データは (A) の `notes.json` と `glossary.md` の印で作り、PDF には (B) で**文書の初出だけ脚注にし、巻末に「訳注一覧」を描く**（2026-10-19 から既定は巻末の一覧だけで、初出の脚注は `--page-notes` のときに描く。#445、[`decisions.md`](../process/decisions.md)）。PDF しか読まない使い方でも訳注が届く。
 - 言語整合の lint（決定 4）: 単位・略語の初出・表記ゆれの決定的な検査を (B) の全文ゲートへ入れる（PerfectIt 相当まで）。
 - 落とし穴の skill（決定 5）: 統計語・SI・false friend の注意リストを [`.agents/skills/translation-pitfalls`](../../.agents/skills/translation-pitfalls/SKILL.md) に置き、**evaluator だけ**に段階的に読ませる。DB は空で始める方針を保つ。

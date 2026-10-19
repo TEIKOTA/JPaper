@@ -722,19 +722,22 @@ describe("訳注の描画の切り替え（pageNotes・endNotes）", () => {
     return tex;
   };
 
-  it("既定は初出の脚注と巻末の訳注一覧の両方に載せる", async () => {
-    const tex = await run({});
-    expect(tex).toContain("Alpha\\footnote{訳注: 甲の説明}");
-    expect(tex).toContain("\\section*{訳注一覧}");
+  it("既定は巻末の訳注一覧だけに載せ、初出の脚注は挿さない（issue #445）", async () => {
+    for (const opts of [{}, { pageNotes: false }]) {
+      const tex = await run(opts);
+      expect(tex).not.toContain("\\footnote{訳注");
+      expect(tex).toContain("\\section*{訳注一覧}");
+    }
   });
 
-  it("pageNotes: false は脚注だけを、endNotes: false は巻末の一覧だけを止める", async () => {
-    const noPage = await run({ pageNotes: false });
-    expect(noPage).not.toContain("\\footnote{訳注");
-    expect(noPage).toContain("\\section*{訳注一覧}");
-    const noEnd = await run({ endNotes: false });
-    expect(noEnd).toContain("Alpha\\footnote{訳注: 甲の説明}");
-    expect(noEnd).not.toContain("訳注一覧");
+  it("pageNotes: true は初出の脚注にも載せ、endNotes: false は巻末の一覧を止める", async () => {
+    const both = await run({ pageNotes: true });
+    expect(both).toContain("Alpha\\footnote{訳注: 甲の説明}");
+    expect(both).toContain("\\section*{訳注一覧}");
+    const pageOnly = await run({ pageNotes: true, endNotes: false });
+    expect(pageOnly).toContain("Alpha\\footnote{訳注: 甲の説明}");
+    expect(pageOnly).not.toContain("訳注一覧");
+    expect(await run({ endNotes: false })).not.toMatch(/訳注/);
   });
 
   it("真偽値でない pageNotes・endNotes は input で返る", async () => {
