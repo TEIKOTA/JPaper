@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from "vitest";
-import { existsSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { gzipSync } from "node:zlib";
@@ -537,6 +537,32 @@ describe("出力先を移した後の再実行・組み直し（issue #447）", 
     expect(out.bilingualStatus).toBe("ok");
     expect(seen.length).toBeGreaterThanOrEqual(2);
     expect(seen.every(Boolean)).toBe(true);
+    db.close();
+  });
+
+  it("別の出力先の .run/source をディレクトリ入力として訳すとき、今の出力先の .run/source へ付け替えない", async () => {
+    const { outDir: xDir, db } = await movedPaper();
+    const yDir = path.join(path.dirname(xDir), "Y");
+    mkdirSync(path.join(yDir, ".run", "source", "figs"), { recursive: true });
+    writeFileSync(path.join(yDir, ".run", "source", "figs", "plot.png"), "OTHER");
+    const figs: string[] = [];
+    const runner: LatexRunner = (dir) => {
+      const fig = path.join(dir, "figs", "plot.png");
+      figs.push(existsSync(fig) ? readFileSync(fig, "utf8") : "missing");
+      return okRunner(dir);
+    };
+    const r = await translatePaper({ kind: "path", path: path.join(xDir, ".run", "source") }, { provider: "claude", outDir: yDir }, {
+      client: figClient(),
+      db,
+      cacheKey: KEY,
+      latexRunner: runner,
+      trace: () => undefined,
+    });
+    expect(r.status).toBe("ok");
+    expect(figs.length).toBeGreaterThan(0);
+    expect(figs).toEqual(figs.map(() => "PNG"));
+    const stored = readStep(path.join(yDir, ".run"), "ingest", KEY)!.value as { sourceDir: string };
+    expect(stored.sourceDir).toBe(path.join(xDir, ".run", "source"));
     db.close();
   });
 });

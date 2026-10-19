@@ -553,6 +553,17 @@ function digestTree(h: Hash, dir: string, rel: string, budget: { bytes: number; 
 // 別論文が同じ入力とみなされ、論文 B を投げた利用者に論文 A の訳文が exit 0 で返った
 // （LLM 呼び出し 0 回）。署名の破綻ではなく、署名対象が内容を代表していない設計の穴。
 // 論文 ID の元になる名前（arXiv ID かパス）。
+// 契約付録 §8（取り込みの checkpoint のパス）
+function ingestsIntoRunDir(input: JpaperInput, redacted: boolean): boolean {
+  if (input.kind !== "path" || redacted) return true;
+  try {
+    if (statSync(input.path).isDirectory()) return false;
+  } catch {
+    return false;
+  }
+  return !/\.tex$/i.test(input.path);
+}
+
 function ingestPaperIdSource(input: JpaperInput): string {
   return input.kind === "arxiv" ? input.id : input.path.replace(/[/\\]+$/, "");
 }
@@ -1246,7 +1257,9 @@ export async function translatePaper(
         key: deps.cacheKey,
       },
     );
-    const ingested = rebaseIngest(ingestStored, runDir);
+    const ingested = ingestsIntoRunDir(input, redactor !== undefined)
+      ? rebaseIngest(ingestStored, runDir)
+      : ingestStored;
 
     // プリアンブルは翻訳対象ではなく verbatim に持ち越されるため、節ループの品質ゲートでは
     // 検査されない。LLM を呼ぶ前にここで弾く（悪意ある論文にコストを払わない）。組版安全 ADR。
