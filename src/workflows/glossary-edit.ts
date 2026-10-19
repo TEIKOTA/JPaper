@@ -75,6 +75,7 @@ import { listDeliverables } from "../tools/pdf-name.js";
 import { formalCheck } from "./quality-gate.js";
 import {
   IngestCache,
+  rebaseIngest,
   SectionLoopCache,
   foundTitle,
   planSegments,
@@ -324,7 +325,7 @@ export function loadPaperState(outDir: string, key: Buffer = loadCacheKey()): Pa
     key,
     input,
     contextWindow: chosen.cw,
-    ingest,
+    ingest: rebaseIngest(ingest, runDir),
     md,
     ctx,
     glossaryStep: { stored: glossaryStored, value: glossaryValue },

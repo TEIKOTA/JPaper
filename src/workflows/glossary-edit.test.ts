@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from "vitest";
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { gzipSync } from "node:zlib";
@@ -72,7 +72,10 @@ function translator(user: string): string {
   return "\\maketitle";
 }
 
-function paperClient(sectionRoles: { id: string; role: string }[] = []): FakeLlmClient {
+function paperClient(
+  sectionRoles: { id: string; role: string }[] = [],
+  tr: (user: string) => string = translator,
+): FakeLlmClient {
   return new FakeLlmClient((req) => {
     if (req.system.includes("編纂者")) {
       return JSON.stringify({
@@ -86,7 +89,7 @@ function paperClient(sectionRoles: { id: string; role: string }[] = []): FakeLlm
       });
     }
     if (req.system.includes("審査者")) return '{"verdict":"pass","issues":[]}';
-    return JSON.stringify({ segmentId: req.meta?.segmentId ?? "x", ja: translator(req.user) });
+    return JSON.stringify({ segmentId: req.meta?.segmentId ?? "x", ja: tr(req.user) });
   });
 }
 
@@ -441,6 +444,125 @@ describe("用語集の編集（契約付録 §9）", () => {
     expect(r.status).toBe("ok");
     expect(() => loadPaperState(outDir, KEY)).toThrow(/arXiv ID 以外/);
     expect(existsSync(path.join(outDir, ".run", "glossary-edit"))).toBe(false);
+    db.close();
+  });
+});
+
+describe("出力先を移した後の再実行・組み直し（issue #447）", () => {
+  const FIG_LATEX = LATEX.replace(
+    "We sample the Rashomon set again with CMA-ES.",
+    "We sample the Rashomon set again with CMA-ES.\n\\includegraphics{figs/plot}",
+  );
+  const figClient = (): FakeLlmClient =>
+    paperClient([], (user) =>
+      user.includes("\\section{Body}") ? `${translator(user)}\n\\includegraphics{figs/plot}` : translator(user),
+    );
+  const figDeps = (): TranslateDeps["ingest"] => {
+    const bytes = gzipSync(
+      makeTar([
+        { name: "main.tex", content: FIG_LATEX },
+        { name: "figs/plot.png", content: "PNG" },
+      ]),
+    );
+    const deps = arxivDeps(FIG_LATEX)!;
+    return {
+      ...deps,
+      arxiv: {
+        ...deps.arxiv,
+        fetchImpl: (async () =>
+          ({ ok: true, status: 200, arrayBuffer: async () => bytes }) as unknown as Response) as unknown as typeof fetch,
+      },
+    };
+  };
+  // 組版のたびに build へ図が置かれたかを記録する。
+  const figRunner = (seen: boolean[]): LatexRunner => (dir) => {
+    seen.push(existsSync(path.join(dir, "figs", "plot.png")));
+    return okRunner(dir);
+  };
+
+  async function movedPaper(): Promise<{ oldDir: string; outDir: string; db: GlossaryDb }> {
+    const root = tmp();
+    const oldDir = path.join(root, `${ID}-ja-old`);
+    const db = new GlossaryDb();
+    const seen: boolean[] = [];
+    const r = await translatePaper(INPUT, { provider: "claude", outDir: oldDir }, {
+      client: figClient(),
+      db,
+      cacheKey: KEY,
+      latexRunner: figRunner(seen),
+      ingest: figDeps(),
+      trace: () => undefined,
+    });
+    expect(r.status).toBe("ok");
+    expect(seen.length).toBeGreaterThan(0);
+    expect(seen.every(Boolean)).toBe(true);
+    const outDir = path.join(root, `${ID}-ja`);
+    renameSync(oldDir, outDir);
+    return { oldDir, outDir, db };
+  }
+
+  it("改名した出力先で再実行すると、LLM を呼ばずに新しい場所の図で和訳と対訳を組む", async () => {
+    const { oldDir, outDir, db } = await movedPaper();
+    const f = forbidden();
+    const seen: boolean[] = [];
+    const r = await translatePaper(INPUT, { provider: "claude", outDir }, {
+      client: f.client,
+      db,
+      cacheKey: KEY,
+      latexRunner: figRunner(seen),
+      trace: () => undefined,
+    });
+    expect(f.calls).toEqual([]);
+    expect(r.status).toBe("ok");
+    expect(r.summary.bilingual.status).toBe("ok");
+    expect(seen.length).toBeGreaterThanOrEqual(2);
+    expect(seen.every(Boolean)).toBe(true);
+    expect(existsSync(oldDir)).toBe(false);
+    db.close();
+  });
+
+  it("改名した出力先の組み直しは新しい場所のソースと図を使う", async () => {
+    const { outDir, db } = await movedPaper();
+    const state = loadPaperState(outDir, KEY);
+    const source = path.join(outDir, ".run", "source");
+    expect(state.ingest.sourceDir.startsWith(source)).toBe(true);
+    expect(state.ingest.mainDir.startsWith(source)).toBe(true);
+    expect(state.ingest.figures).toEqual([path.join(source, "figs", "plot.png")]);
+    const seen: boolean[] = [];
+    const out = await applyTermEdit(outDir, "Rashomon set", "羅生門集合", {}, {
+      db,
+      cacheKey: KEY,
+      latexRunner: figRunner(seen),
+    });
+    expect(out.bilingualStatus).toBe("ok");
+    expect(seen.length).toBeGreaterThanOrEqual(2);
+    expect(seen.every(Boolean)).toBe(true);
+    db.close();
+  });
+
+  it("別の出力先の .run/source をディレクトリ入力として訳すとき、今の出力先の .run/source へ付け替えない", async () => {
+    const { outDir: xDir, db } = await movedPaper();
+    const yDir = path.join(path.dirname(xDir), "Y");
+    mkdirSync(path.join(yDir, ".run", "source", "figs"), { recursive: true });
+    writeFileSync(path.join(yDir, ".run", "source", "figs", "plot.png"), "OTHER");
+    const figs: string[] = [];
+    const runner: LatexRunner = (dir) => {
+      const fig = path.join(dir, "figs", "plot.png");
+      figs.push(existsSync(fig) ? readFileSync(fig, "utf8") : "missing");
+      return okRunner(dir);
+    };
+    const r = await translatePaper({ kind: "path", path: path.join(xDir, ".run", "source") }, { provider: "claude", outDir: yDir }, {
+      client: figClient(),
+      db,
+      cacheKey: KEY,
+      latexRunner: runner,
+      trace: () => undefined,
+    });
+    expect(r.status).toBe("ok");
+    expect(figs.length).toBeGreaterThan(0);
+    expect(figs).toEqual(figs.map(() => "PNG"));
+    const stored = readStep(path.join(yDir, ".run"), "ingest", KEY)!.value as { sourceDir: string };
+    expect(stored.sourceDir).toBe(path.join(xDir, ".run", "source"));
     db.close();
   });
 });
