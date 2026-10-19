@@ -25,7 +25,7 @@ export interface FormalIssue {
 }
 
 // 形式検査の規則（閾値・対象の一覧・判定）を変えたら上げる。⚠ landmines.md
-export const FORMAL_CHECK_VERSION = 1;
+export const FORMAL_CHECK_VERSION = 2;
 
 // 通過した節の checkpoint に記録し、違えば形式検査をやり直す。契約付録 §8（形式検査の版）
 export const FORMAL_GATE = `${String(FORMAL_CHECK_VERSION)}:${FORMAL_ISSUE_KINDS.join(",")}`;
@@ -174,9 +174,27 @@ function proseOf(tex: string): string {
     .replace(/[{}[\]$&%#_^~\\]/g, " ");
 }
 
+// 地の文と辞書語に同じ正規化をかける: proseOf、ダッシュ（-- --- – —）の統一、空白の連続を 1 つに。
+function normalizeProse(tex: string): string {
+  return proseOf(tex)
+    .replace(/---|--|[–—]/g, "-")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 // 3 文字以上のラテン語の語数。数式記号や略号を「地の文」と数えないための近似。
-function proseWordCount(tex: string): number {
-  return (proseOf(tex).match(/[A-Za-z]{3,}/g) ?? []).length;
+// keepOriginal の語は正規化後の地の文から除いて数える。契約付録 §8
+function proseWordCount(tex: string, keepOriginal: string[] = []): number {
+  let prose = normalizeProse(tex);
+  const keeps = [...new Set(keepOriginal.map(normalizeProse))]
+    .filter((k) => /[A-Za-z]/.test(k))
+    .sort((a, b) => b.length - a.length);
+  for (const k of keeps) {
+    for (const i of termOccurrences(prose, k)) {
+      prose = prose.slice(0, i) + " ".repeat(k.length) + prose.slice(i + k.length);
+    }
+  }
+  return (prose.match(/[A-Za-z]{3,}/g) ?? []).length;
 }
 
 function japaneseCharCount(tex: string): number {
@@ -469,11 +487,12 @@ export function formalCheck(
   // 判定の入口は**原文側**の地の文の量にする。訳文側の語数を入口にすると、訳文で地の文を
   // 消すだけで検査ごと無効化できた（実測: 訳文「あ」1 文字、% でコメントアウトした
   // \begin{verbatim} で英語を囲む綴り。どちらも 8 種すべて [] で exit 0）。
-  const srcWords = proseWordCount(srcLatex);
+  const keepOriginal = terms.filter((t) => t.rendering === "keep-original").map((t) => t.src);
+  const srcWords = proseWordCount(srcLatex, keepOriginal);
   const jaChars = japaneseCharCount(ja);
   if (srcWords >= MIN_PROSE_WORDS) {
     const identical = normalizeForCompare(srcLatex) === normalizeForCompare(ja);
-    const jaWords = proseWordCount(ja);
+    const jaWords = proseWordCount(ja, keepOriginal);
     if (jaChars < srcWords * MIN_JA_CHARS_PER_WORD) {
       issues.push({
         kind: "untranslated",

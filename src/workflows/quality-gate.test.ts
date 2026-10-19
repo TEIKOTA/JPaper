@@ -758,3 +758,112 @@ describe("formalCheck: 引用・参照・脚注", () => {
     expect(fastestMs(3, () => void formalCheck("\\citep{a}", malformed, []))).toBeLessThan(1000);
   });
 });
+
+describe("untranslated: keep-original の語を地の文に数えない", () => {
+  const keep = (src: string): ResolvedTerm => ({
+    src,
+    form: src,
+    class: "do-not-translate",
+    rendering: "keep-original",
+    firstOccurrence: false,
+  });
+  const names = ["Alice Smith", "Bob Jones", "Carol White", "Dave Brown", "Erin Black"];
+  const roles = ["Conceptualization", "Software", "Methodology", "Validation"];
+  const terms = [...names, ...roles].map(keep);
+  const list = names
+    .map((n, i) => `\\item[${n}] \\emph{${roles[i % roles.length]!}}, \\emph{${roles[(i + 1) % roles.length]!}}`)
+    .join("\n");
+  const src = `\\section{Contributors}\n\\begin{description}\n${list}\n\\end{description}`;
+  const untranslated = (s: string, ja: string, t: ResolvedTerm[]) =>
+    formalCheck(s, ja, t).filter((i) => i.kind === "untranslated");
+
+  it("人名と役割名だけの description 節を原文のまま残した訳を落とさない", () => {
+    const ja = src.replace("Contributors", "貢献者");
+    expect(untranslated(src, ja, terms)).toEqual([]);
+  });
+
+  it("確定辞書が無ければ同じ訳は落ちる（除外は keep-original の語だけ）", () => {
+    const ja = src.replace("Contributors", "貢献者");
+    expect(untranslated(src, ja, []).length).toBeGreaterThan(0);
+  });
+
+  it("keep-original の語を残しつつ地の文を訳さない節は落ちる", () => {
+    const prose =
+      "Alice Smith contributed to the proposed method and reports experimental results on several benchmarks. " +
+      "The remaining sections describe how the Software was evaluated across many datasets and baselines.";
+    const s = `\\section{Notes}\n${prose}`;
+    const t = [keep("Alice Smith"), keep("Software")];
+    expect(untranslated(s, s.replace("Notes", "注"), t).length).toBeGreaterThan(0);
+  });
+
+  it("keep-original に長い語句が入っても、その語句の外の未訳は見逃さない", () => {
+    const phrase = "the proposed method and reports experimental results";
+    const prose = `This section describes ${phrase} on several benchmarks and compares them against many strong baselines.`;
+    const s = `\\section{Method}\n${prose}`;
+    const found = untranslated(s, s.replace("Method", "手法"), [keep(phrase)]);
+    expect(found.length).toBeGreaterThan(0);
+  });
+
+  it("keep-original の語を残した訳が残留ラテン語の判定で落ちない", () => {
+    const body = `${names.join(", ")} and ${roles.join(", ")} are credited here, while the others wrote the rest of this paper.`;
+    const ja = `${names.join("、")}、${roles.join("、")}を記す。その他の著者が本稿の残りを執筆した。`;
+    expect(untranslated(`\\section{A}\n${body}`, `\\section{謝辞}\n${ja}`, terms)).toEqual([]);
+  });
+});
+
+describe("untranslated: keep-original の照合は地の文と同じ正規化をかける", () => {
+  const keep = (src: string): ResolvedTerm => ({
+    src,
+    form: src,
+    class: "do-not-translate",
+    rendering: "keep-original",
+    firstOccurrence: false,
+  });
+  const names = ["Peter Schneider-Kamp", "Anna Lindqvist", "Marco Rossi", "Yuki Tanaka", "Sofia Alvarez"];
+  const plain = ["Conceptualization", "Methodology", "Software", "Validation"];
+  const draft = "Writing -- original draft";
+  const review = "Writing -- review \\& editing";
+  const items = names
+    .map(
+      (n) =>
+        `\\item[${n}] ${[...plain, draft, review].map((r) => `\\emph{${r}}`).join(", ")}`,
+    )
+    .join("\n");
+  const intro =
+    "Contributions are listed using the CRediT taxonomy\\footnote{\\url{https://credit.niso.org}}, and every role follows its standard name.";
+  const src = `\\section{Contributors}\n${intro}\n\\begin{description}\n${items}\n\\end{description}`;
+  const ja = src
+    .replace("Contributors", "貢献者")
+    .replace(intro, "貢献は CRediT 分類に従って記載し、各役割は標準名のままとする。");
+  const untranslated = (terms: ResolvedTerm[], s = src, j = ja) =>
+    formalCheck(s, j, terms).filter((i) => i.kind === "untranslated");
+  const base = [...names, ...plain, draft].map(keep);
+
+  it("辞書の役割名が LaTeX の綴り（-- と \\&）でも落ちない", () => {
+    expect(untranslated([...base, keep(review)])).toEqual([]);
+  });
+
+  it("辞書の役割名が en dash と & の綴りでも落ちない", () => {
+    expect(untranslated([...base, keep("Writing – review & editing"), keep("Writing – original draft")])).toEqual([]);
+  });
+
+  it("正規化後に空・空白だけになる辞書語は除外に使わない", () => {
+    const empties = ["{}", " ", "\\&", "--"].map(keep);
+    expect(untranslated(empties).length).toBeGreaterThan(0);
+  });
+
+  it("未訳の地の文は辞書語を除いても落ちる", () => {
+    expect(untranslated([...base, keep(review)], src, src).length).toBeGreaterThan(0);
+  });
+
+  it("ダッシュの綴りの違い（-- / --- と – / —）と、原文の途中の改行を同じものとして照合する", () => {
+    const people = Array.from({ length: 15 }, (_, i) => `Person${String.fromCharCode(65 + i)} Example`);
+    const list = people
+      .map((n) => `\\item[${n.replace(" ", "\n")}] \\emph{Writing --- original draft}, \\emph{Writing -- review \\& editing}`)
+      .join("\n");
+    const s = `\\section{Contributors}\n\\begin{description}\n${list}\n\\end{description}`;
+    const j = s.replace("Contributors", "貢献者");
+    const dict = [...people, "Writing — original draft", "Writing – review & editing"].map(keep);
+    expect(untranslated(dict, s, j)).toEqual([]);
+  });
+});
