@@ -102,6 +102,15 @@ export function parseBriefMd(md: string): DocumentBrief {
   };
 }
 
+// md が保存した値のどれかを書き出したものと同じ（未編集）なら、読み戻さずにその値を使う。契約付録 §4
+export function briefFromMd(md: string, saved: readonly DocumentBrief[]): DocumentBrief {
+  return saved.find((b) => renderBriefMd(b) === md) ?? parseBriefMd(md);
+}
+
+export function styleFromMd(md: string, saved: readonly StyleContract[]): StyleContract {
+  return saved.find((s) => renderStyleMd(s) === md) ?? parseStyleMd(md);
+}
+
 export function parseStyleMd(md: string): StyleContract {
   const kv = new Map<string, string>();
   for (const line of md.split("\n")) {

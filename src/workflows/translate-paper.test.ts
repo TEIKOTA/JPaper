@@ -748,3 +748,53 @@ describe("訳注の描画の切り替え（pageNotes・endNotes）", () => {
     }
   });
 });
+
+describe("brief.md・style.md の読み戻し（issue #442）", () => {
+  const colonClient = (calls: string[]) =>
+    new FakeLlmClient((req) => {
+      calls.push(req.meta?.role ?? "?");
+      if (req.system.includes("編纂者")) {
+        return JSON.stringify({
+          resolved: [{ src: "Alpha", form: "甲", class: "established", rendering: "translate" }],
+          brief: {
+            thesis: "核",
+            sectionRoles: [{ id: "Warm-Up: Simple Models", role: "直観を築く" }],
+            notationConventions: [],
+          },
+          style: { tensePolicy: "a", headingStyle: "b", numberStyle: "c", notes: ["x / y"] },
+        });
+      }
+      if (req.system.includes("審査者")) return '{"verdict":"pass","issues":[]}';
+      return '{"segmentId":"x","ja":"訳文"}';
+    });
+  const run = async (outDir: string, calls: string[]) => {
+    const db = new GlossaryDb();
+    const r = await tp({ kind: "path", path: makePaperTar() }, { provider: "claude", outDir, bilingual: false }, {
+      client: colonClient(calls),
+      db,
+      cacheKey: Buffer.alloc(32, 7),
+    });
+    db.close();
+    return r;
+  };
+
+  it("節名に「: 」を含んでも、編集していなければ 2 回目は LLM を呼ばずに checkpoint から返す", async () => {
+    const outDir = path.join(tmp(), "out");
+    const first: string[] = [];
+    expect((await run(outDir, first)).exitCode).toBe(0);
+    expect(first.length).toBeGreaterThan(0);
+    const second: string[] = [];
+    expect((await run(outDir, second)).exitCode).toBe(0);
+    expect(second).toEqual([]);
+  });
+
+  it("brief.md を編集したら、編集した内容で訳し直す", async () => {
+    const outDir = path.join(tmp(), "out");
+    expect((await run(outDir, [])).exitCode).toBe(0);
+    const md = path.join(outDir, "brief.md");
+    writeFileSync(md, readFileSync(md, "utf8").replace("直観を築く", "直観を与える"));
+    const again: string[] = [];
+    expect((await run(outDir, again)).exitCode).toBe(0);
+    expect(again.length).toBeGreaterThan(0);
+  });
+});

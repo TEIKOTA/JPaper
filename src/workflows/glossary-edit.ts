@@ -36,12 +36,14 @@ import { segmentBudgetFor, type Segment } from "../segment/segmenter.js";
 import { GlossaryDb } from "../terminology/db.js";
 import { isAcceptableTerm } from "../terminology/glossary.js";
 import {
+  briefFromMd,
   parseBriefMd,
   parseGlossaryMd,
   parseStyleMd,
   renderBriefMd,
   renderGlossaryMd,
   renderStyleMd,
+  styleFromMd,
   type ResolvedRow,
 } from "../terminology/glossary-io.js";
 import {
@@ -146,6 +148,8 @@ export interface PaperState {
   md: { glossary: string; brief: string; style: string };
   ctx: StepContext;
   glossaryStep: { stored: StoredStep; value: GlossaryBuilderOut };
+  // 用語の検証の checkpoint の値（あれば）。
+  verified: GlossaryBuilderOut | undefined;
   segments: StepEntry[];
   title: StepEntry | undefined;
   // 今の版の無効化キーと違う checkpoint を引き継ぐか。
@@ -214,15 +218,19 @@ export function loadPaperState(outDir: string, key: Buffer = loadCacheKey()): Pa
     throw inputError("用語集の checkpoint がありません。CLI で一度翻訳を完了させてください");
   }
   const glossaryValue = GlossaryBuilderOut.parse(glossaryStored.value);
+  const verifiedStored = readStep(runDir, VERIFY_STEP, key);
+  const verified = verifiedStored === undefined ? undefined : VerifiedGlossary.safeParse(verifiedStored.value);
   const md = {
     glossary: readText(path.join(outDir, "glossary.md")),
     brief: readText(path.join(outDir, "brief.md")),
     style: readText(path.join(outDir, "style.md")),
   };
+  // translatePaper と同じ規則で読む（未編集なら checkpoint の値）。契約付録 §4
+  const saved = [...(verified?.success === true ? [verified.data] : []), glossaryValue];
   const ctx: StepContext = {
     resolved: parseGlossaryMd(md.glossary),
-    brief: parseBriefMd(md.brief),
-    style: parseStyleMd(md.style),
+    brief: briefFromMd(md.brief, saved.map((g) => g.brief)),
+    style: styleFromMd(md.style, saved.map((g) => g.style)),
   };
 
   const stepIds = segmentIdsInSteps(runDir);
@@ -290,12 +298,10 @@ export function loadPaperState(outDir: string, key: Buffer = loadCacheKey()): Pa
   if (migrated) {
     // 作った版が違う checkpoint を引き継ぐ条件: md が最後の用語集の生成から変わっていない＋原文と訳文が対応する。
     // 用語の検証で差し替えた run は、検証の後の用語集・brief・style とも比べる。契約付録 §4
-    const verifiedStored = readStep(runDir, VERIFY_STEP, key);
-    const verified = verifiedStored === undefined ? undefined : VerifiedGlossary.safeParse(verifiedStored.value);
     const matches = (base: GlossaryBuilderOut): boolean =>
       sameJson(parseGlossaryMd(renderGlossaryMd(base.resolved)), ctx.resolved) &&
-      sameJson(parseBriefMd(renderBriefMd(base.brief)), ctx.brief) &&
-      sameJson(parseStyleMd(renderStyleMd(base.style)), ctx.style);
+      sameJson(parseBriefMd(renderBriefMd(base.brief)), parseBriefMd(md.brief)) &&
+      sameJson(parseStyleMd(renderStyleMd(base.style)), parseStyleMd(md.style));
     // 用語集の編集は glossary の step を書き直すので、どちらかと一致すれば未編集とみなす。
     const untouched = matches(glossaryValue) || (verified?.success === true && matches(verified.data));
     if (!untouched) {
@@ -322,6 +328,7 @@ export function loadPaperState(outDir: string, key: Buffer = loadCacheKey()): Pa
     md,
     ctx,
     glossaryStep: { stored: glossaryStored, value: glossaryValue },
+    verified: verified?.success === true ? verified.data : undefined,
     segments: chosen.entries,
     title,
     migrated,
@@ -408,10 +415,13 @@ export function planTermEdit(state: PaperState, src: string, input: string): Edi
     brief: rewriteMdBody(state.md.brief, r, false),
     style: rewriteMdBody(state.md.style, r, true),
   };
+  // 書き直した用語集の checkpoint と同じ値を候補に、translatePaper と同じ規則で読む。契約付録 §4
+  const g = state.glossaryStep.value;
+  const saved = [...(state.verified === undefined ? [] : [state.verified]), { brief: rewriteStrings(g.brief, r), style: rewriteStrings(g.style, r) }];
   const ctx: StepContext = {
     resolved: parseGlossaryMd(md.glossary),
-    brief: parseBriefMd(md.brief),
-    style: parseStyleMd(md.style),
+    brief: briefFromMd(md.brief, saved.map((x) => x.brief)),
+    style: styleFromMd(md.style, saved.map((x) => x.style)),
   };
   const sources = state.segments.map((e) => e.source);
   const firstOcc = segmentFirstOccurrence(sources, ctx.resolved);
@@ -460,7 +470,6 @@ export function planTermEdit(state: PaperState, src: string, input: string): Edi
   contextItems.push(...textItems("brief.md", "文書ブリーフ", state.md.brief, r, macros));
   contextItems.push(...textItems("style.md", "文体契約", state.md.style, r, macros));
 
-  const g = state.glossaryStep.value;
   const glossaryValue = GlossaryBuilderOut.parse({
     resolved: g.resolved.map((x) =>
       x.src === src
