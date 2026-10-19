@@ -15,6 +15,7 @@
 # 見つからなければ何もせず exit 0（test の無い派生 repo の push を止めない）。
 # macOS の Bash 3.2 での全件（/bin/bash tests/run-tests.sh）はここでは流さない。PR の前に owner が流す（AGENTS.md）。
 # 一時的に外す: LEFTHOOK_EXCLUDE=selftest git push（lefthook の機能。常用しない）
+# git の repo を指す環境変数（GIT_DIR など。git rev-parse --local-env-vars）は test の実行前に外す（#451）。
 # 入れ子の拒否: 実行中は PROJECT_TEMPLATE_SELFTEST_RUNNING=1 を export する（tests/run-tests.sh も同じ印を立てる）。
 # 印がある中から呼ばれたら全件を流さず exit 2 で止まる（self-test が scripts/ の全 script を -h で呼ぶため、
 # -h を受けず全件を始めると無限に再帰してプロセスが尽きる。#161）。黙って 0 で通さないのは、再帰の混入に気づくため。
@@ -22,7 +23,7 @@ set -u
 
 from_stdin=0
 case "${1:-}" in
-  -h|--help) sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+  -h|--help) sed -n '2,21p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
   --stdin) from_stdin=1 ;;
 esac
 
@@ -56,6 +57,11 @@ if [ "$from_stdin" = "1" ] && [ ! -t 0 ]; then
     exit 0
   fi
 fi
+
+# git が hook に渡す repo を指す環境変数を外す（linked worktree では GIT_DIR が絶対パスで、test の一時 repo への git 操作が
+# 呼び出し元の repo に効く。#451）。上の push 対象の判定は外す前に済ませる。
+unset $(git rev-parse --local-env-vars 2>/dev/null) GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR GIT_OBJECT_DIRECTORY \
+  GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_PREFIX GIT_NAMESPACE
 
 mode=""
 if [ "${SELFTEST_CMD+x}" = "x" ]; then
