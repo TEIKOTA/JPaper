@@ -5,6 +5,10 @@
 set -u
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# 呼び出し元（pre-push の hook など）の repo を指す git の環境変数を外す。linked worktree の hook では GIT_DIR が絶対パスで、
+# 一時 repo の fixture への git 操作が呼び出し元の repo に効く（#451）。
+unset $(git rev-parse --local-env-vars 2>/dev/null) GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR GIT_OBJECT_DIRECTORY \
+  GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_PREFIX GIT_NAMESPACE
 # self-test は一時 directory に worktree を作る。グローバル git の一時領域 worktree guard（setup-user-hooks.sh --git）
 # を導入済みの環境でも通るよう明示的に許可し、guard 自体の検査だけ個別に外す。
 export PROJECT_TEMPLATE_ALLOW_TMP_WORKTREE=1
@@ -1352,6 +1356,45 @@ expect_code 0 "run-selftest 退行注入: 削除だけの判定を外す（適�
 expect_code 1 "run-selftest 退行注入: 削除だけの判定を外すと削除の push でも全件が走る（red）" rs_stdin_check "$rs_mut"
 expect_code 0 "run-selftest 退行注入: 削除だけの判定を緩める（pushed を見ない）（適用）" mutate_copy "$ROOT/scripts/run-selftest.sh" "$rs_mut" '[ "$pushed" -eq 0 ] && [ "$deleted" -gt 0 ]' '[ "$deleted" -gt 0 ]'
 expect_code 1 "run-selftest 退行注入: 削除が混ざるだけで通常の ref の self-test も飛ぶ（red）" rs_stdin_check "$rs_mut"
+
+# linked worktree の pre-push（#451）: git は hook に GIT_DIR=<repo>/.git/worktrees/<名前>（絶対パス）を渡す。
+# 本物役の repo と linked worktree を一時 dir に作り、その GIT_DIR を渡して入口を通し、本物役の config・refs が変わらないことを見る。
+rs_gitenv_body() { # rs_gitenv_body <marker>: 一時 repo を作って git を操作する test の本体（本物の fixture と同じ操作）
+  printf '%s\n' 'd="$(mktemp -d)" && cd "$d" || exit 1' \
+    'git init -q && git commit -q --allow-empty -m x && git branch feat/12-login-screen' \
+    'git config core.bare true; git config remote.origin.url "$d"' \
+    "touch '$1'" 'echo passed: 1'
+}
+rs_gitenv_check() { # rs_gitenv_check <run-selftest.sh> <run-tests.sh>: 両方の入口で本物役が変わらなければ 0、変われば 1、fixture が作れなければ 3
+  local d w gd head before rc=0
+  d="$(mktemp -d)" || return 3
+  w="$d/w"
+  git init -q "$d/real" && git -C "$d/real" commit --no-verify -q --allow-empty -m "chore: init" || { rm -rf "$d"; return 3; }
+  git -C "$d/real" worktree add -q "$w" -b feat/9-w >/dev/null 2>&1 || { rm -rf "$d"; return 3; }
+  gd="$(git -C "$w" rev-parse --absolute-git-dir)" && head="$(git -C "$w" rev-parse HEAD)" || { rm -rf "$d"; return 3; }
+  rs_gitenv_state() { git -C "$d/real" config --list --local; git -C "$d/real" for-each-ref; }
+  before="$(rs_gitenv_state)"
+  mkdir -p "$w/scripts" "$w/tests"
+  cp "$1" "$w/scripts/run-selftest.sh"
+  rs_gitenv_body "$d/ran-rs" > "$w/tests/run-tests.sh"
+  printf 'refs/heads/feat/9-w %s refs/heads/feat/9-w 0000000000000000000000000000000000000000\n' "$head" |
+    (cd "$w" && env -u PROJECT_TEMPLATE_SELFTEST_RUNNING -u SELFTEST_CMD GIT_DIR="$gd" bash scripts/run-selftest.sh --stdin) >/dev/null 2>&1 || rc=1
+  [ -e "$d/ran-rs" ] || rc=1
+  [ "$(rs_gitenv_state)" = "$before" ] || rc=1
+  { sed '/^PASS=0$/q' "$2"; rs_gitenv_body "$d/ran-rt"; } > "$w/tests/prelude.sh"
+  grep -qx 'PASS=0' "$w/tests/prelude.sh" || { rm -rf "$d"; return 3; }
+  (cd "$w" && GIT_DIR="$gd" bash tests/prelude.sh) >/dev/null 2>&1 || rc=1
+  [ -e "$d/ran-rt" ] || rc=1
+  [ "$(rs_gitenv_state)" = "$before" ] || rc=1
+  rm -rf "$d"; return "$rc"
+}
+rs_gitenv_unset='unset $(git rev-parse --local-''env-vars 2>/dev/null) GIT_DIR' # 分けて書くのは、この行が注入先と一致しないため
+expect 0 "run-selftest(#451): linked worktree の GIT_DIR を渡しても、run-selftest.sh と run-tests.sh の入口は呼び出し元の repo の config・refs を変えない" \
+  rs_gitenv_check "$ROOT/scripts/run-selftest.sh" "$ROOT/tests/run-tests.sh"
+expect_code 0 "run-selftest 退行注入: run-selftest.sh の git の環境変数の掃除を外す（適用）" mutate_copy "$ROOT/scripts/run-selftest.sh" "$rs_mut" "$rs_gitenv_unset" ': $(true)'
+expect_code 1 "run-selftest 退行注入: run-selftest.sh の掃除を外すと呼び出し元の repo が書き換わる（red）" rs_gitenv_check "$rs_mut" "$ROOT/tests/run-tests.sh"
+expect_code 0 "run-selftest 退行注入: run-tests.sh の git の環境変数の掃除を外す（適用）" mutate_copy "$ROOT/tests/run-tests.sh" "$rs_root/run-tests-mut.sh" "$rs_gitenv_unset" ': $(true)'
+expect_code 1 "run-selftest 退行注入: run-tests.sh の掃除を外すと呼び出し元の repo が書き換わる（red）" rs_gitenv_check "$ROOT/scripts/run-selftest.sh" "$rs_root/run-tests-mut.sh"
 rm -rf "$rs_root"
 
 # pre-push の配線: lefthook.yml が run-selftest.sh を呼び、PostToolUse の self-test hook は無い
