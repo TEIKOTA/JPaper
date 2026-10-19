@@ -24,7 +24,8 @@ SCRIPT = ROOT / "scripts/merge-pr.sh"
 MUTATIONS = {
     "state": [('[[ "$STATE" == "OPEN" && "$DRAFT" == "false" ]]', "true")],
     "headmatch": [('[[ "$LIVE_HEAD" == "$HEAD_SHA" ]]', "true")],
-    "base": [('[[ "$BASE" == "main" ]]', "true")],
+    "base": [('elif [[ "$BASE" == "main" || "$BASE" == "$DEFAULT_BRANCH" ]]; then', 'elif true; then')],
+    "basefailopen": [('DEFAULT_BRANCH="$(repo_field defaultBranch)"', 'DEFAULT_BRANCH="$(repo_field defaultBranch)"; DEFAULT_BRANCH="${DEFAULT_BRANCH:-main}"')],
     "mergeable": [('[[ "$MERGEABLE" == "MERGEABLE" && "$STATE_STATUS" == "CLEAN" ]]', "true")],
     "retryunknown": [('UNKNOWN_RETRIES="${MERGE_PR_UNKNOWN_RETRIES:-5}"', "UNKNOWN_RETRIES=0")],
     "mergetree": [(' \\\n   && git merge-tree --write-tree "refs/merge-pr/$PR_NUM/base" "refs/merge-pr/$PR_NUM/head" >/dev/null 2>&1; then', "; then")],
@@ -47,6 +48,7 @@ MUTATIONS = {
     "quote": [("not need_quote or any(re.match", "True or any(re.match")],
     "cphead": [('comment_has "merge 承認: head $HEAD_SHA" quote', 'comment_has "merge 承認: head [0-9a-f]{40}" quote')],
     "dryrun": [('if [[ "$DRY_RUN" -eq 1 ]]; then echo', 'if false; then echo')],
+    "approvalhint": [('  if comment_has "merge 承認: head $HEAD_SHA.+"; then', '  if false; then')],
     "failstop": [('if [[ "$FAILS" -gt 0 ]]; then exit 1; fi', "if false; then exit 1; fi")],
     "matchhead": [('--squash --match-head-commit "$HEAD_SHA"', "--squash")],
     "comment": [('gh pr comment "$PR_NUM" ${REPO_ARGS[@]+"${REPO_ARGS[@]}"} --body-file "$body_file"', "true")],
@@ -54,7 +56,8 @@ MUTATIONS = {
 CASES = {
     "state": "test_closed_or_draft_pr_is_not_merged",
     "headmatch": "test_head_mismatch_is_not_merged",
-    "base": "test_non_main_base_is_not_merged",
+    "base": "test_non_default_base_is_not_merged",
+    "basefailopen": "test_unobtainable_default_branch_is_not_merged",
     "mergeable": "test_unmergeable_is_not_merged",
     "retryunknown": "test_unknown_mergeable_is_reread_until_settled",
     "mergetree": "test_merge_tree_conflict_is_not_merged",
@@ -77,6 +80,7 @@ CASES = {
     "quote": "test_checkpoint_approval_needs_quote_and_head",
     "cphead": "test_checkpoint_approval_needs_quote_and_head",
     "dryrun": "test_dry_run_changes_nothing",
+    "approvalhint": "test_approval_fail_shows_expected_format",
     "failstop": "test_no_approval_is_not_merged",
     "matchhead": "test_approved_pr_is_merged_once_after_comment",
     "comment": "test_approved_pr_is_merged_once_after_comment",
@@ -126,7 +130,11 @@ elif args[:2] == ["repo", "view"]:
     if os.path.exists(state + "/repo-garbage"):
         print("これは JSON ではない")
         sys.exit(0)
-    print(json.dumps({"nameWithOwner": "o/r"}))
+    branch = open(state + "/default-branch").read() if os.path.exists(state + "/default-branch") else "main"
+    if os.path.exists(state + "/no-default-branch"):
+        print(json.dumps({"nameWithOwner": "o/r", "defaultBranchRef": None}))
+    else:
+        print(json.dumps({"nameWithOwner": "o/r", "defaultBranchRef": {"name": branch}}))
 elif args[:2] == ["api", "graphql"]:
     if os.path.exists(state + "/threads-fail"):
         sys.exit(1)
@@ -240,6 +248,28 @@ class MergePr(unittest.TestCase):
         self.assert_not_merged(fixture)
         self.assertIn("merge の承認の写しが記録されている", fixture.done.stdout)
         self.assertIn("FAIL", fixture.done.stdout)
+
+    def test_approval_fail_shows_expected_format(self):
+        # 括弧書き付きの承認の行は FAIL のまま、期待する書式と「余計な文字」の旨を出す
+        fixture = Fixture()
+        fixture.issue = "## Problem\nx\n"
+        fixture.pr["comments"].append(fixture.comment(f"merge 承認: head {fixture.head}（区切りでの承認）\n> OK"))
+        fixture.run()
+        self.assert_not_merged(fixture)
+        self.assertIn(f"期待する書式: owner のコメントの 1 行ぜんたいが `merge 承認: head {fixture.head}`", fixture.done.stdout)
+        self.assertIn("行の後ろに余計な文字がある", fixture.done.stdout)
+        # 記録がまったく無いときは書式だけを示し、余計な文字の旨は出さない
+        fixture = Fixture()
+        fixture.issue = "## Problem\nx\n"
+        fixture.run()
+        self.assertIn("期待する書式", fixture.done.stdout)
+        self.assertNotIn("余計な文字", fixture.done.stdout)
+        # 行は正しいが引用が無いときは、その旨を示す
+        fixture = Fixture()
+        fixture.issue = "## Problem\nx\n"
+        fixture.pr["comments"].append(fixture.comment(f"merge 承認: head {fixture.head}"))
+        fixture.run()
+        self.assertIn("引用行が無い", fixture.done.stdout)
 
     def test_other_issue_section_is_not_pre_approval(self):
         # 「merge の承認」節（事前承認の対象外とする記述）は事前承認でない
@@ -362,12 +392,37 @@ class MergePr(unittest.TestCase):
             fixture.run()
             self.assert_not_merged(fixture)
 
-    def test_non_main_base_is_not_merged(self):
+    def test_non_default_base_is_not_merged(self):
         fixture = Fixture()
         fixture.pr["baseRefName"] = "feat/parent"
         git(fixture.clone, "push", "-q", "origin", "main:refs/heads/feat/parent")  # base の取得・merge-tree 自体は通る状態にする
         fixture.run()
         self.assert_not_merged(fixture)
+        self.assertIn("base が main か既定 branch | script | FAIL", fixture.done.stdout)
+
+    def test_base_follows_the_repo_default_branch(self):
+        # 既定 branch が development の repo: development 向けも main 向けも merge でき、別の branch 向けは merge しない
+        for base, merged in (("development", True), ("main", True), ("feat/parent", False)):
+            fixture = Fixture()
+            (fixture.state / "default-branch").write_text("development")
+            git(fixture.clone, "push", "-q", "origin", "main:refs/heads/development", "main:refs/heads/feat/parent")
+            fixture.pr["baseRefName"] = base
+            fixture.run()
+            if merged:
+                self.assertEqual(fixture.done.returncode, 0, base + fixture.done.stdout + fixture.done.stderr)
+                self.assertEqual(len(fixture.merges()), 1)
+            else:
+                self.assert_not_merged(fixture)
+                self.assertIn("base が main か既定 branch | script | FAIL", fixture.done.stdout)
+
+    def test_unobtainable_default_branch_is_not_merged(self):
+        # 既定 branch が取れない（gh の失敗・JSON でない出力・defaultBranchRef が null）ときは通る側に倒さない
+        for marker in ("repo-fail", "repo-garbage", "no-default-branch"):
+            fixture = Fixture()
+            (fixture.state / marker).write_text("")
+            fixture.run()
+            self.assert_not_merged(fixture)
+            self.assertIn("base が main か既定 branch | script | FAIL", fixture.done.stdout)
 
     def test_unmergeable_is_not_merged(self):
         for change in ({"mergeable": "CONFLICTING"}, {"mergeable": "UNKNOWN"}, {"mergeStateStatus": "BLOCKED"}, {"mergeStateStatus": "BEHIND"}):

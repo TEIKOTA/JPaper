@@ -7,9 +7,11 @@
 #   --judge  root の判断（script は中身を確かめず、判定表に「root の申告」として写す）。scope と injection は必須。
 #            事前承認で merge するなら no-perceptual-external=なし（知覚の成果物・外部影響を含まない）も必須
 #   --dry-run  判定表を出すだけで、コメントも merge もしない
-#   PR のコメントに残す記録（行頭一致。書式は ADR 参照）:
-#     review: head <SHA> blocking=なし / self-test: head <SHA> bash=PASS /bin/bash=PASS
-#     merge 承認: head <SHA>（区切りでの承認。続けてユーザーの発言を > で引用）
+#   PR のコメントに残す記録（owner のコメントの 1 行ぜんたいが一致する形。行の後ろに文字を足すと一致しない。書式は ADR 参照）:
+#     review: head <40 桁の SHA> blocking=なし
+#     self-test: head <40 桁の SHA> bash=PASS /bin/bash=PASS
+#     merge 承認: head <40 桁の SHA>
+#   承認は、上の行の次の行以降に、ユーザーの発言を > で引用する（補足は行の後ろでなく引用の行に書く）
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
@@ -24,7 +26,7 @@ while [[ $# -gt 0 ]]; do
     --judge) JUDGES+=("${2:?--judge には <key>=<判断> が必要です}"); shift 2;;
     --repo) REPO="${2:?--repo には <owner>/<name> が必要です}"; shift 2;;
     --dry-run) DRY_RUN=1; shift;;
-    -h|--help) sed -n '2,14p' "$0" | sed -nE 's/^# ?//p'; exit 0;;
+    -h|--help) sed -n '2,16p' "$0" | sed -nE 's/^# ?//p'; exit 0;;
     -*) echo "不明な引数: $1" >&2; exit 2;;
     *)
       if [[ -n "$PR_NUM" ]]; then echo "PR番号は 1 つだけ指定してください" >&2; exit 2; fi
@@ -58,9 +60,17 @@ value = json.load(sys.stdin)[sys.argv[1]]
 print(str(value).lower() if isinstance(value, bool) else value)' "$1"
 }
 
-# リポジトリの owner（記録の行は owner のコメントだけを数える。取れなければ誰のコメントも数えない）
-nwo="$(gh repo view ${REPO:+"$REPO"} --json nameWithOwner 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin)["nameWithOwner"])' 2>/dev/null)" || nwo=""
+# リポジトリの owner（記録の行は owner のコメントだけを数える。取れなければ誰のコメントも数えない）と既定 branch（base の条件。取れなければ base は FAIL）
+repo_json="$(gh repo view ${REPO:+"$REPO"} --json nameWithOwner,defaultBranchRef 2>/dev/null)" || repo_json=""
+repo_field() { # repo_field nameWithOwner|defaultBranch: 取れなければ空
+  printf '%s' "$repo_json" | python3 -c '
+import json, sys
+data = json.load(sys.stdin)
+print(data["nameWithOwner"] if sys.argv[1] == "nameWithOwner" else data["defaultBranchRef"]["name"])' "$1" 2>/dev/null || true
+}
+nwo="$(repo_field nameWithOwner)"
 OWNER="${nwo%%/*}"
+DEFAULT_BRANCH="$(repo_field defaultBranch)"
 
 # comment_has <正規表現> [quote]: owner のコメントに、行全体が正規表現に一致する行があるか。quote なら同じコメントに > の引用行も要る
 comment_has() {
@@ -114,7 +124,10 @@ judge_value() { # judge_value <key>: --judge の値（無ければ空）
 # 1. 状態・head・base
 if [[ "$STATE" == "OPEN" && "$DRAFT" == "false" ]]; then row script PASS "open かつ draft でない" "state=$STATE"; else row script FAIL "open かつ draft でない" "state=$STATE draft=$DRAFT"; fi
 if [[ "$LIVE_HEAD" == "$HEAD_SHA" ]]; then row script PASS "head が提示した SHA と一致" "\`$HEAD_SHA\`"; else row script FAIL "head が提示した SHA と一致" "live=\`$LIVE_HEAD\` 提示=\`$HEAD_SHA\`"; fi
-if [[ "$BASE" == "main" ]]; then row script PASS "base が main" "base=$BASE (\`$BASE_OID\`)"; else row script FAIL "base が main" "base=${BASE}（stacked child は親を merge してから main に付け替える）"; fi
+# 幹は main か、その repo の既定 branch（SabolinGood は development と main、Nowflo は release/v1 と main。テンプレートは main だけ）。既定 branch が取れなければ FAIL
+if [[ -z "$DEFAULT_BRANCH" ]]; then row script FAIL "base が main か既定 branch" "base=${BASE} 既定 branch を取得できない"
+elif [[ "$BASE" == "main" || "$BASE" == "$DEFAULT_BRANCH" ]]; then row script PASS "base が main か既定 branch" "base=$BASE 既定 branch=$DEFAULT_BRANCH (\`$BASE_OID\`)"
+else row script FAIL "base が main か既定 branch" "base=${BASE} 既定 branch=${DEFAULT_BRANCH}（stacked child は親を merge してから ${DEFAULT_BRANCH} に付け替える）"; fi
 if [[ "$MERGEABLE" == "MERGEABLE" && "$STATE_STATUS" == "CLEAN" ]]; then row script PASS "mergeable かつ clean" "mergeable=$MERGEABLE status=$STATE_STATUS"; else
   unknown_note=""
   if [[ "$MERGEABLE" == "UNKNOWN" || "$STATE_STATUS" == "UNKNOWN" ]]; then unknown_note="（GitHub が計算中。少しおいてやり直す）"; fi
@@ -199,7 +212,15 @@ if comment_has "merge 承認: head $HEAD_SHA" quote; then
 elif [[ -n "$pre_blocked" ]]; then
   row script FAIL "事前承認は知覚の成果物・外部影響を含まない PR に使えない" "$pre_blocked"
 fi
-if [[ -n "$approval" ]]; then row script PASS "merge の承認の写しが記録されている" "$approval"; else row script FAIL "merge の承認の写しが記録されている" "issue の「merge の事前承認」も、head に結んだ区切りの承認も無い"; fi
+if [[ -n "$approval" ]]; then row script PASS "merge の承認の写しが記録されている" "$approval"; else
+  hint=""
+  if comment_has "merge 承認: head $HEAD_SHA.+"; then
+    hint="。\`merge 承認: head $HEAD_SHA\` で始まるが行全体が一致しない行がある（行の後ろに余計な文字がある。補足は次の \`>\` の引用行へ）"
+  elif comment_has "merge 承認: head $HEAD_SHA"; then
+    hint="。承認の行はあるが、同じコメントに \`>\` で始まるユーザー発言の引用行が無い"
+  fi
+  row script FAIL "merge の承認の写しが記録されている" "issue の「merge の事前承認」も、head に結んだ区切りの承認も無い。期待する書式: owner のコメントの 1 行ぜんたいが \`merge 承認: head $HEAD_SHA\` で、同じコメントに \`>\` で始まる引用行$hint"
+fi
 
 # ---- 結果 -----------------------------------------------------------------
 

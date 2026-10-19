@@ -232,6 +232,21 @@ def git(cwd, *argv):
     return subprocess.run([REAL_GIT, *argv], cwd=cwd, check=True, capture_output=True, text=True).stdout.strip()
 
 
+def physical(path):
+    """実在の表記に揃えた絶対 path。getcwd は実在の表記を返す（大文字小文字を区別しない FS でも。#200）。存在しない末尾は残す."""
+    path = Path(path)
+    rest = []
+    while not path.exists() and path != path.parent:
+        rest.insert(0, path.name)
+        path = path.parent
+    saved = os.getcwd()
+    try:
+        os.chdir(path)
+        return str(Path(os.getcwd(), *rest))
+    finally:
+        os.chdir(saved)
+
+
 class AgentBox(unittest.TestCase):
     def setUp(self):
         self.fixture = Path(tempfile.mkdtemp(prefix=".test-agent-box-", dir=ROOT)).resolve()
@@ -779,10 +794,13 @@ class AgentBox(unittest.TestCase):
         (self.state / "git.log").unlink(missing_ok=True)
         self.assertEqual(self.cli("collect", "s1")[0], 0)
         self.assertEqual(self.cli("clean", "s1")[0], 0)
-        clone = str(self.clone())
+        clone = physical(self.clone())  # 表記がずれると startswith が外れてホストの呼び出しを見逃す（弱い PASS）ので実在の表記で比べる（#200）
         calls = [json.loads(line) for line in (self.state / "git.log").read_text().splitlines()]
+        for entry in calls:
+            entry["cwd"] = physical(entry["cwd"])
         self.assertTrue(any(entry["container"] for entry in calls))  # fake の経路が実際に通ったこと
-        self.assertTrue(any(entry["cwd"] == str(self.repo) for entry in calls))
+        # 大文字小文字を区別しない FS では表記が違いうる（fake git の getcwd は実在の表記を返す）ので、実在の表記に揃えて比べる（#200）
+        self.assertTrue(any(entry["cwd"] == physical(self.repo) for entry in calls))
         host_calls = [entry for entry in calls
                       if not entry["container"] and (entry["cwd"].startswith(clone) or any(clone in a for a in entry["argv"]))]
         self.assertEqual(host_calls, [])
