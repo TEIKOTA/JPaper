@@ -91,7 +91,7 @@
 - コードが不自然に見えても、**直す前に [`docs/design/landmines.md`](./docs/design/landmines.md) を確認する**。載っていれば意図的な書き方なので、そのまま残す。
 
 ## 委譲の作業場所
-- agent-box: 使えない（理由: token と image を未準備。準備したら宣言を外す）
+- agent-box: 使える。`start` に `--image agent-box-jpaper:latest`（pnpm と TeX Live 入り）を付ける。image の作り方は [`docker/jpaper/README.md`](./docker/jpaper/README.md)
 
 ## コマンド
 
