@@ -271,7 +271,6 @@ describe("runCli", () => {
     expect(err.join("")).toContain("--page-notes と --no-page-notes");
   });
 
-
   it("--model と --context-window を ollama 設定として渡す", async () => {
     let got: unknown;
     const code = await runCli(
