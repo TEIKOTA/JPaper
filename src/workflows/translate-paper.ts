@@ -943,6 +943,11 @@ async function typesetBilingual(
         `対訳: 段落数が一致せずセグメント全体を 1 ペアにしました: ${b.fallbackSegments.slice(0, 10).join(", ")}`,
       );
     }
+    if (b.commentMismatch.length > 0) {
+      surface(
+        `対訳: 訳文の comment 環境の開閉が原文と合いません。右の段の本文が comment として隠れている可能性があります（節の終わりでは原文の開閉に合わせました）: ${b.commentMismatch.slice(0, 10).join(", ")}`,
+      );
+    }
     if (b.titleUnplaced) {
       surface(
         "対訳: タイトルを左右のタイトルブロックに置き換えられませんでした（環境の中の \\maketitle など）。タイトル周りの体裁が崩れている可能性があります",

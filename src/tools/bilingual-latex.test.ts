@@ -959,12 +959,15 @@ describe("略語（acronym パッケージ）を左右の段で分ける（issue
 
 describe("comment 環境（issue #440）", () => {
   it("開始から終了までの行を % で始め、セグメントをまたいでも追う。行内の開始の前は残す", () => {
-    const out = commentOutCommentEnvs([
+    const segs = [
       { id: "a", tex: "A\n\n\\begin{comment}\nX\n\nY" },
       { id: "b", tex: "Z\n\\end{comment}\nB" },
       { id: "c", tex: "C \\begin{comment}\nW\n\\end{comment}\n% \\begin{comment}\nD" },
-    ]);
-    expect(out.map((s) => s.tex)).toEqual([
+    ];
+    const out = commentOutCommentEnvs(segs, segs);
+    expect(out.commentMismatch).toEqual([]);
+    expect(out.translated.map((s) => s.tex)).toEqual(out.source.map((s) => s.tex));
+    expect(out.source.map((s) => s.tex)).toEqual([
       "A\n\n%\\begin{comment}\n%X\n%\n%Y",
       "%Z\n%\\end{comment}\nB",
       "C %\\begin{comment}\n%W\n%\\end{comment}\n% \\begin{comment}\nD",
@@ -983,5 +986,68 @@ describe("comment 環境（issue #440）", () => {
     for (const line of out.mainTex.split("\n")) {
       if (/\\(begin|end)\{comment\}/.test(line)) expect(line.startsWith("%")).toBe(true);
     }
+  });
+
+  describe("訳文の comment 環境が原文と合わない（issue #448）", () => {
+    const source = [
+      { id: "s1", tex: "A\n\\begin{comment}\nX" },
+      { id: "s2", tex: "Y\n\\end{comment}\nB" },
+      { id: "s3", tex: "C" },
+    ];
+
+    it("訳文で \\end{comment} が落ちても、原文が閉じた節の終わりで閉じ、後の節は残して id を返す", () => {
+      const out = commentOutCommentEnvs(source, [
+        { id: "s1", tex: "甲\n\\begin{comment}\n乙" },
+        { id: "s2", tex: "丙\n丁" },
+        { id: "s3", tex: "戊" },
+      ]);
+      expect(out.translated.map((s) => s.tex)).toEqual(["甲\n%\\begin{comment}\n%乙", "%丙\n%丁", "戊"]);
+      expect(out.commentMismatch).toEqual(["s2"]);
+    });
+
+    it("同じ節の中で閉じ忘れて次の comment で閉じた（終わりの状態は同じ）ときも開始の数の違いで知らせる", () => {
+      const out = commentOutCommentEnvs(
+        [{ id: "s1", tex: "\\begin{comment}\nX\n\\end{comment}\nA\n\\begin{comment}\nY\n\\end{comment}" }],
+        [{ id: "s1", tex: "\\begin{comment}\nX\n甲\n\\begin{comment}\nY\n\\end{comment}" }],
+      );
+      expect(out.commentMismatch).toEqual(["s1"]);
+    });
+
+    it("原文に無い節（訳注の一覧）で開いて閉じなければその id を返す", () => {
+      const out = commentOutCommentEnvs(source, [
+        ...source.map((s) => ({ ...s, tex: s.tex.replace(/[A-Z]/g, "訳") })),
+        { id: "backmatter", tex: "注\n\\begin{comment}\n訳注" },
+      ]);
+      expect(out.commentMismatch).toEqual(["backmatter"]);
+    });
+
+    it("原文も閉じない comment は、訳文が同じく閉じなければ知らせない", () => {
+      const src = [
+        { id: "s1", tex: "A\n\\begin{comment}\nX" },
+        { id: "s2", tex: "Y" },
+      ];
+      const out = commentOutCommentEnvs(src, [
+        { id: "s1", tex: "甲\n\\begin{comment}\n乙" },
+        { id: "s2", tex: "丙" },
+        { id: "backmatter", tex: "訳注" },
+      ]);
+      expect(out.commentMismatch).toEqual([]);
+      expect(out.translated.map((s) => s.tex)).toEqual(["甲\n%\\begin{comment}\n%乙", "%丙", "%訳注"]);
+    });
+
+    it("assembleBilingual は commentMismatch を返し、閉じ忘れの後の節の訳文を右の段に残す", () => {
+      const out = assembleBilingual({
+        cleanLatex: "\\documentclass{article}\\begin{document}\\end{document}",
+        translatedMainTex: "\\documentclass{article}\n\\begin{document}\n\\end{document}\n",
+        source,
+        translated: [
+          { id: "s1", tex: "甲\n\\begin{comment}\n乙" },
+          { id: "s2", tex: "丙\n丁" },
+          { id: "s3", tex: "残る訳文" },
+        ],
+      });
+      expect(out.commentMismatch).toEqual(["s2"]);
+      expect(out.mainTex.split("\n")).toContain("残る訳文");
+    });
   });
 });

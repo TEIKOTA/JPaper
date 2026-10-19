@@ -246,8 +246,8 @@
 ## `src/tools/bilingual-latex.ts` — 対訳では comment 環境の行を `%` で始める
 
 - **おかしく見える点**: 対訳を組み立てる前に、`\begin{comment}` から `\end{comment}` までの行（空行も）を `%` で始まる行にしている。消してはいない。
-- **なぜ意図的か**: comment 環境は節（セグメント）をまたぐことがあり、段落を組にすると `\begin{comment}` と `\end{comment}` が別の組に入って、左右の切り替え（`\switchcolumn`）まで飲み込み、`\begin{paracol} … ended by \end{comment}` で落ちる（実測: 2011.03395）。行ごと消すと、comment 環境の中でだけ使っている図が「原文の図が対訳に無い」と組版ゲートで落ちる（ゲートは `%` の行の `\includegraphics` も数える）ので、`%` で始める。
-- **正本ポインタ**: 契約付録 §8（対訳 PDF）、issue #440。回帰テストは `src/tools/bilingual-latex.test.ts`。
+- **なぜ意図的か**: comment 環境は節（セグメント）をまたぐことがあり、段落を組にすると `\begin{comment}` と `\end{comment}` が別の組に入って、左右の切り替え（`\switchcolumn`）まで飲み込み、`\begin{paracol} … ended by \end{comment}` で落ちる（実測: 2011.03395）。行ごと消すと、comment 環境の中でだけ使っている図が「原文の図が対訳に無い」と組版ゲートで落ちる（ゲートは `%` の行の `\includegraphics` も数える）ので、`%` で始める。訳文側の内外を原文と同じ id のセグメントの終わりで原文側に揃えるのは、訳文（LLM の出力）で `\end{comment}` が落ちると、右の段がそこから文書の終わりまで黙ってコメントになり、組版は成功してしまうため（issue #448）。揃えたセグメントは警告する。
+- **正本ポインタ**: 契約付録 §8（対訳 PDF）、issue #440・#448。回帰テストは `src/tools/bilingual-latex.test.ts`。
 
 ## `src/tools/assemble-latex.ts` — keywords を環境で使う論文では、共通テンプレートの shim が `\keywords` を前文で定義しない
 
