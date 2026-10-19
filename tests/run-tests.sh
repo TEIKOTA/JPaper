@@ -4,7 +4,8 @@
 # bash 3.2（macOS /bin/bash）互換。失敗ケースを意図的に踏むため set -e は使わない。
 set -u
 
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# 実在の表記に揃える（run-selftest.sh と同じ理由。組み込みの pwd -P は大文字小文字を揃えないので外部の pwd を使う。#200）
+ROOT="$(cd "$(dirname "$0")/.." && env pwd -P)"
 # 呼び出し元（pre-push の hook など）の repo を指す git の環境変数を外す。linked worktree の hook では GIT_DIR が絶対パスで、
 # 一時 repo の fixture への git 操作が呼び出し元の repo に効く（#451）。
 unset $(git rev-parse --local-env-vars 2>/dev/null) GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR GIT_OBJECT_DIRECTORY \
@@ -675,6 +676,30 @@ expect 1 "pr workflow: pr-check 以外の別 job を拒否（red）" \
   check_pr_workflow_contract "$workflow_fixture"
 rm -f "$workflow_fixture"
 
+# self-test workflow: macOS の job は self-test の前に lefthook を入れる（#192。macOS の runner に lefthook は無く、skip 0 件の検査に落ちる）
+check_selftest_workflow_lefthook() { # check_selftest_workflow_lefthook <workflow>: macOS 限定の lefthook 導入 step が self-test の step より前にあれば 0
+  ruby -ryaml -e '
+    doc = YAML.safe_load(File.read(ARGV[0]), aliases: false)
+    steps = doc.fetch("jobs").fetch("test").fetch("steps")
+    run_index = steps.index { |s| s["run"].to_s.include?("tests/run-tests.sh") }
+    abort unless run_index
+    install_index = steps.index do |s|
+      s["run"].to_s.match?(/lefthook@/) && s["if"].to_s.include?("macOS")
+    end
+    abort unless install_index && install_index < run_index
+  ' "$1"
+}
+expect 0 "self-test workflow: macOS の job で self-test の前に lefthook を入れる" \
+  check_selftest_workflow_lefthook "$ROOT/.github/workflows/self-test.yml"
+st_mut="$(mktemp)" || { echo "FATAL: workflow fixture を作成できません" >&2; exit 1; }
+mutate_copy "$ROOT/.github/workflows/self-test.yml" "$st_mut" 'npm install -g "lefthook@${LEFTHOOK_VERSION}"' 'echo skipped'
+expect 1 "self-test workflow 退行注入: lefthook を入れる手順を外すと red" check_selftest_workflow_lefthook "$st_mut"
+mutate_copy "$ROOT/.github/workflows/self-test.yml" "$st_mut" "if: runner.os == 'macOS'" "if: runner.os == 'Linux'"
+expect 1 "self-test workflow 退行注入: macOS で入れなくなると red" check_selftest_workflow_lefthook "$st_mut"
+expect_code 3 "self-test workflow 退行注入: 注入先が無ければ exit 3（注入の失敗を red と区別）" \
+  mutate_copy "$ROOT/.github/workflows/self-test.yml" "$st_mut" 'no such text' x
+rm -f "$st_mut"
+
 # ---- wait-for-marker.sh -------------------------------------------------
 
 wm_log="$(mktemp)" || { echo "FATAL: waiter fixture を作成できません" >&2; exit 1; }
@@ -714,6 +739,29 @@ run_hook_ask() { # run_hook_ask <bash-command-string> [driver-options...]
 
 expect 0 "hook: 通常コマンドは許可" run_hook_expect 0 "ls -la src"
 expect 0 "hook: 標準外 home 配下への worktree add は拒否しない（標準配置の限定を撤去, #139）" run_hook_expect 0 "git worktree add ~/repo-worktrees/wt feat/1-x" --cwd "$HOOK_OUTSIDE_TEMP_CWD"
+# #195: cwd が一時領域の中でも、作成先が外なら commit-ish を相対 path の作成先と読まない（作成先が一時領域なら従来どおり拒否）
+for wt_cmd in "git worktree add ~/repo-worktrees/wt feat/1-x" "git worktree add /root/repo-worktrees/wt feat/1-x" \
+  "git worktree add -b feat/1-x ~/repo-worktrees/wt origin/main" "git worktree add ~/repo-worktrees/wt"; do
+  expect 0 "hook: cwd が一時領域でも作成先が外の worktree add は許可: $wt_cmd" run_hook_expect 0 "$wt_cmd" --cwd /tmp/w
+done
+expect 0 "hook: cwd が一時領域のとき作成先が一時領域の worktree add は拒否" run_hook_expect 2 "git worktree add wt feat/1-x" --cwd /tmp/w
+# #197 の review: git は long option の略称（--reas = --reason）を受けるので、未知の option があれば例外を使わず拒否に倒す
+for wt_cmd in "git worktree add --lock --reas /home/node/ok wt" "git worktree add --reas /home/node/ok wt" \
+  "git worktree add --unknown-opt /home/node/ok wt" "git worktree add -fx /home/node/ok wt"; do
+  expect 0 "hook: cwd が一時領域で option が未知の worktree add は拒否: $wt_cmd" run_hook_expect 2 "$wt_cmd" --cwd /tmp/w
+done
+for wt_cmd in "git worktree add --lock --reason r ~/x/wt feat/1-x" "git worktree add --reason=r ~/x/wt feat/1-x" \
+  "git worktree add -f ~/x/wt feat/1-x" "git worktree add -fb br ~/x/wt origin/main" "git worktree add --detach --no-checkout ~/x/wt feat/1-x" \
+  "git worktree add -- ~/x/wt feat/1-x"; do
+  expect 0 "hook: cwd が一時領域でも既知の option の worktree add は許可: $wt_cmd" run_hook_expect 0 "$wt_cmd" --cwd /tmp/w
+done
+# #198: `-` 単独は git では位置引数（path）。option と読むと cwd が一時領域のとき作成先 `<cwd>/-` を見逃す
+for wt_cmd in "git worktree add -" "git worktree add - /home/node/ok wt" "git worktree add -f -"; do
+  expect 0 "hook: cwd が一時領域のとき - 単独の作成先は拒否: $wt_cmd" run_hook_expect 2 "$wt_cmd" --cwd /tmp/w
+done
+expect 0 "hook: - が commit-ish の位置で作成先が外なら cwd が一時領域でも許可" run_hook_expect 0 "git worktree add ~/x/wt -" --cwd /tmp/w
+expect 0 "hook: cwd が外で - が commit-ish の位置なら許可" run_hook_expect 0 "git worktree add ~/x/wt -" --cwd "$HOOK_OUTSIDE_TEMP_CWD"
+expect 0 "hook: cwd が一時領域でも後ろの ../../tmp は作成先の取り違えとして拒否" run_hook_expect 2 "git worktree add -fb br ../../tmp/wt x" --cwd /tmp/w
 expect 0 "hook: 標準配置への worktree add も許可" run_hook_expect 0 "git worktree add ~/worktrees/anyrepo/wt feat/1-x" --cwd "$HOOK_OUTSIDE_TEMP_CWD"
 expect 0 "hook: repo 外の任意の path への worktree add も拒否しない" run_hook_expect 0 "git worktree add ../sibling-wt feat/1-x" --cwd "$HOOK_OUTSIDE_TEMP_CWD"
 expect 0 "hook: /tmp への worktree add を exit 2 で拒否" run_hook_expect 2 "git worktree add /tmp/wt feat/1-x"
@@ -1017,7 +1065,7 @@ for mutation in prmerge apimerge apiget graphql graphqlpos graphqlpath apiquery 
 done
 # scripts/merge-pr.sh: 承認の写し・head・条件が欠ければ merge せず、揃えば判定表のコメントの後に 1 回だけ merge する（gh は fake）
 expect 0 "issue #159: merge-pr.sh の承認・条件の判定" env PYTHONDONTWRITEBYTECODE=1 python3 "$ROOT/tests/merge-pr.py"
-for mutation in owner ownerempty fullmatch preblocked preunconditional state headmatch base mergeable retryunknown mergetree fetchhead diffcheck checkpr threads review selftest judge approval preapproval perceptual heading quote cphead dryrun failstop matchhead comment; do
+for mutation in owner ownerempty fullmatch preblocked preunconditional state headmatch base basefailopen mergeable retryunknown mergetree fetchhead diffcheck checkpr threads review selftest judge approval preapproval perceptual heading quote cphead dryrun failstop matchhead comment; do
   expect_code 1 "issue #159: merge-pr.sh の ${mutation} の保護を外すと判定が崩れる（red）" \
     env PYTHONDONTWRITEBYTECODE=1 python3 "$ROOT/tests/merge-pr.py" --case "$mutation" --mutation "$mutation"
 done
@@ -1271,6 +1319,37 @@ rc=0; grep -Fq 'export PROJECT_TEMPLATE_SELFTEST_RUNNING=1' "$ROOT/tests/run-tes
 report 0 "$rc" "run-tests: 全件の実行は入れ子拒否の印を立てる"
 rm -f "$rs_root/tests/run-tests.sh"
 
+# 入口は repo の root を物理パスに揃えてから test を流す（#200）。symlink 経由の呼び出しはどの環境でも物理パスとの差を作れる
+rs_real="$(mktemp -d)"
+mkdir -p "$rs_real/Repo/scripts" "$rs_real/Repo/tests"
+ln -s "$rs_real/Repo" "$rs_real/link"
+cp "$ROOT/scripts/run-selftest.sh" "$rs_real/Repo/scripts/run-selftest.sh"
+printf '#!/usr/bin/env bash\npwd > "%s"\n' "$rs_real/cwd" > "$rs_real/Repo/tests/run-tests.sh"
+rs_phys="$(cd "$rs_real/Repo" && env pwd -P)"
+run_rs_via() { # run_rs_via <呼び出しに使う root>
+  rm -f "$rs_real/cwd"
+  env -u SELFTEST_CMD -u PROJECT_TEMPLATE_SELFTEST_RUNNING bash "$1/scripts/run-selftest.sh" >/dev/null 2>&1
+  [ "$(cat "$rs_real/cwd" 2>/dev/null)" = "$rs_phys" ]
+}
+expect 0 "run-selftest: symlink 経由で呼んでも test は物理パスの cwd で流れる（#200）" run_rs_via "$rs_real/link"
+mutate_copy "$ROOT/scripts/run-selftest.sh" "$rs_real/Repo/scripts/run-selftest.sh" '&& env pwd -P)"' '&& pwd)"' || report 0 1 "run-selftest: 物理パス化の退行注入ができない"
+expect 1 "run-selftest: 外部の pwd を論理の pwd に戻すと symlink 経由の cwd が論理パスのままになる（red。#200）" run_rs_via "$rs_real/link"
+cp "$ROOT/scripts/run-selftest.sh" "$rs_real/Repo/scripts/run-selftest.sh"
+# 大文字小文字を区別しない FS（macOS）では、呼び出しの表記違いが実在の表記に揃うことを実測する。退行注入は組み込みの `pwd -P`
+# （macOS の bash 3.2 では表記を揃えない。#200 の最初の修正がこれで直らなかった）に戻す形にする。区別する FS（Linux）では作れないので skip
+rs_ci_dir="$(mktemp -d)"
+mkdir "$rs_ci_dir/CaseProbe"
+[ -d "$rs_ci_dir/caseprobe" ] && rs_ci=1 || rs_ci=0
+rm -rf "$rs_ci_dir"
+[ "$rs_ci" = 1 ] || skip_begin "大文字小文字を区別するファイルシステムでは、表記違いのパスを作れない"
+rs_lower="$(dirname "$rs_phys")/repo"
+mutate_copy "$ROOT/scripts/run-selftest.sh" "$rs_real/Repo/scripts/run-selftest.sh.nop" '&& env pwd -P)"' '&& pwd -P)"' || report 0 1 "run-selftest: 大文字小文字の退行注入ができない"
+expect 0 "run-selftest: 大文字小文字の違う表記から呼んでも test は実在の表記の cwd で流れる（#200）" run_rs_via "$rs_lower"
+cp "$rs_real/Repo/scripts/run-selftest.sh.nop" "$rs_real/Repo/scripts/run-selftest.sh"
+expect 1 "run-selftest: 外部の pwd を組み込みの pwd -P に戻すと大文字小文字の違う表記が残る（red。#200）" run_rs_via "$rs_lower"
+skip_end
+rm -rf "$rs_real"
+
 rs_glob_log="$rs_root/glob-tests-ran"
 printf '#!/usr/bin/env bash\nprintf a >> "%s"\nexit 1\n' "$rs_glob_log" > "$rs_root/scripts/tests/a.test.sh"
 printf '#!/usr/bin/env bash\nprintf b >> "%s"\n' "$rs_glob_log" > "$rs_root/scripts/tests/b.test.sh"
@@ -1429,11 +1508,17 @@ lh_fixture() { # lh_fixture <dir> <lefthook.yml> <run-selftest.sh>: main を pus
   git -C "$w" branch Bad_Name && git -C "$w" checkout -q Bad_Name && git -C "$w" commit --no-verify -q --allow-empty -m "feat: y" || return 1
   git -C "$w" checkout -q main
 }
+lh_repo_only_cmds() { # lh_repo_only_cmds <lefthook.yml>: pre-push の command のうち、この fixture が試す 3 つ以外（repo 固有）の名前をカンマ区切りで出す
+  awk '/^pre-push:/ { in_pp = 1; next } /^[^ #]/ { in_pp = 0 }
+    in_pp && /^    [A-Za-z0-9_-]+:[[:space:]]*$/ { n = $1; sub(/:$/, "", n)
+      if (n != "check-branch-name" && n != "check-branch-topology" && n != "selftest") printf "%s%s", (c++ ? "," : ""), n }' "$1"
+}
 lh_push() { # lh_push <dir> <marker> <refspec...>: SELFTEST_CMD が <marker> を作る状態で push し、出力を <dir>/out に残す
   local d="$1" marker="$2"
   shift 2
+  # repo 固有の command（派生 repo が足したもの）は fixture に実体が無いので外す（#191）。LH_NO_EXCLUDE は退行注入用（set なら除外をその値にする。空なら何も外さない）
   (cd "$d/w" && env -u PROJECT_TEMPLATE_SELFTEST_RUNNING PATH="$d/gh-stub:$PATH" SELFTEST_CMD="touch '$marker'" \
-    git push origin "$@" >"$d/out" 2>&1)
+    LEFTHOOK_EXCLUDE="${LH_NO_EXCLUDE-$(lh_repo_only_cmds "$d/w/lefthook.yml")}" git push origin "$@" >"$d/out" 2>&1)
 }
 lh_prepush_checks() { # lh_prepush_checks <lefthook.yml> <run-selftest.sh>: 3 つの振る舞いがそろえば 0、外れたら 1
   local d rc=0 m1 m2
@@ -1462,6 +1547,7 @@ lh_prepush_checks() { # lh_prepush_checks <lefthook.yml> <run-selftest.sh>: 3 �
 command -v lefthook >/dev/null 2>&1 || skip_begin "lefthook が無い"
 expect 0 "pre-push(#177/#182): checkout 中でない branch の push でも名前の検査が走り、self-test は流さない旨を出す。削除だけの push も流さない。checkout 中なら流す" \
   lh_prepush_checks "$ROOT/lefthook.yml" "$ROOT/scripts/run-selftest.sh"
+lh_prepush_checks_unexcluded() { LH_NO_EXCLUDE= lh_prepush_checks "$@"; } # 除外を空にして試す（退行注入用。set-but-empty で lh_repo_only_cmds を使わない）
 lh_files_exist() { # lh_files_exist <lefthook.yml>: pre-push の hook 全体の files: が出す名前がすべて repo に実在すれば 0
   local cmd out f n=0
   cmd="$(awk '/^pre-push:/ { in_pp = 1; next } /^[^ #]/ { in_pp = 0 } in_pp && /^  files: / { sub(/^  files: /, ""); print; exit }' "$1")"
@@ -1493,6 +1579,13 @@ expect_code 0 "pre-push 退行注入: files: が実在しない名前を出す�
 expect_code 1 "pre-push 退行注入: files: が実在しない名前を出すと red" lh_files_exist "$lh_mut/lefthook.yml"
 expect_code 3 "pre-push 退行注入: 注入先が無ければ exit 3（注入の失敗を red と区別）" \
   mutate_copy "$ROOT/lefthook.yml" "$lh_mut/lefthook.yml" 'no such text' x
+# 派生 repo 固有の pre-push command（fixture に実体が無い。走ると落ちる）を足しても、3 つだけを試して通る（#191）
+{ cat "$ROOT/lefthook.yml"; printf '    repo-only-check:\n      run: PREPUSH_FILES={files} bash scripts/no-such-repo-only-check.sh\n      use_stdin: true\n'; } > "$lh_mut/lefthook.yml"
+expect 0 "pre-push(#191): 派生 repo 固有の pre-push command があっても lefthook の test は 3 つだけを試して通る" \
+  lh_prepush_checks "$lh_mut/lefthook.yml" "$ROOT/scripts/run-selftest.sh"
+expect 0 "pre-push(#191): 固有 command の名前だけを除外に回す" test "$(lh_repo_only_cmds "$lh_mut/lefthook.yml")" = "repo-only-check"
+expect_code 1 "pre-push 退行注入: 固有 command を除外しないと fixture で落ちる（red。除外が効いている証拠）" \
+  lh_prepush_checks_unexcluded "$lh_mut/lefthook.yml" "$ROOT/scripts/run-selftest.sh"
 rm -rf "$lh_mut"
 skip_end
 expect 1 "Claude settings: PostToolUse に self-test hook を配線しない" \
@@ -2056,6 +2149,28 @@ expect 0 "setup-user-hooks: 派生 repo（.template-version あり）では理�
 expect_code 0 "setup-user-hooks 退行注入: 派生 repo の判定を外す（適用）" mutate_copy "$ROOT/scripts/setup-user-hooks.sh" "$dr_root/scripts/setup-mut.sh" 'if [ -e "$root/.template-version" ]; then' 'if false; then'
 expect_code 1 "setup-user-hooks 退行注入: 派生 repo の判定を外すと red" dr_checks "$dr_root/scripts/setup-mut.sh"
 rm -rf "$dr_root"
+# #189: 派生 repo の self-test が setup-user-hooks を呼ぶ経路（.template-version の無い fixture root から symlink で指す）の再現。
+# テンプレートの self-test は .template-version が無く UH_ROOT の分岐を通らないので、派生 repo に見立てた copy で確かめる。
+dv_root="$(mktemp -d)"
+for dv_dir in scripts .claude .codex; do cp -R "$ROOT/$dv_dir" "$dv_root/$dv_dir"; done
+printf '{}\n' > "$dv_root/.template-version"
+dv_fixture() { # dv_fixture <fixture root を作る(1)/作らない(0)>: 派生 repo の root から配る。作れば成功し、作らなければ止まる
+  local make="$1" fx="$dv_root" home rc=0 uh_link
+  home="$(mktemp -d)"
+  if [ "$make" = 1 ]; then
+    fx="$(mktemp -d)"
+    git init -q "$fx" || return 1
+    for uh_link in scripts .claude .codex; do ln -s "$dv_root/$uh_link" "$fx/$uh_link" || return 1; done
+  fi
+  HOME="$home" CLAUDE_CONFIG_DIR= CODEX_HOME= bash "$fx/scripts/setup-user-hooks.sh" --claude --codex >/dev/null 2>&1 || rc=$?
+  if [ "$rc" -eq 0 ]; then [ -x "$home/.claude/hooks/template/guard-bash.sh" ] && [ -x "$home/.codex/hooks/template/guard-codex.sh" ] || rc=9; fi
+  [ "$make" != 1 ] || rm -rf "$fx"
+  rm -rf "$home"
+  return "$rc"
+}
+expect_code 0 "self-test の派生 repo 経路: .template-version のある root でも fixture root から配れる" dv_fixture 1
+expect_code 1 "self-test の派生 repo 経路 退行注入: fixture root を介さず派生 repo の root から呼ぶと止まる（red）" dv_fixture 0
+rm -rf "$dv_root"
 rm -rf "$uh_home" "$uh_proj" "$uh_old"
 
 # ---- setup-user-hooks.sh --codex / user-hook-runner.sh codex host（一時 HOME）----

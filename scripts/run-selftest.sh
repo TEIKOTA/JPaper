@@ -33,7 +33,12 @@ if [ "${PROJECT_TEMPLATE_SELFTEST_RUNNING:-}" = "1" ]; then
 fi
 export PROJECT_TEMPLATE_SELFTEST_RUNNING=1
 
-root="$(cd "$(dirname "$0")/.." && pwd)"
+# root を実在の表記に揃える（#200）。大文字小文字を区別しない FS（macOS）で呼び出した表記（`~/PROJECT-TEMPLATE`）が残ると、
+# test が実在の表記（`~/project-template`。fake git の getcwd 等）と文字列で比べて落ちる。
+# bash の組み込み `pwd -P` は symlink を解くだけで大文字小文字は揃えない（macOS の /bin/bash 3.2.57 で実測。入力の表記のまま）。
+# 外部の pwd（`env pwd -P`）は getcwd(3) の結果を返し、実在の表記になる。`env` 経由にするのは、組み込みを避けつつ
+# /bin/pwd の絶対 path に依存しない（Linux・macOS のどちらでも PATH から引ける。/bin/pwd の無い環境もある）ため。
+root="$(cd "$(dirname "$0")/.." && env pwd -P)"
 
 # push する commit が HEAD と違うとき、または削除だけのときは流さない（--stdin のとき）。ref の列が読めないときは判断せず流す
 if [ "$from_stdin" = "1" ] && [ ! -t 0 ]; then

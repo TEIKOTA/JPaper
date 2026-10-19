@@ -640,6 +640,48 @@ def git_command(tokens, cwd):
     return tokens[index], tokens[index + 1 :], effective_cwd
 
 
+# 一時領域の外にある、実在しない基準 dir。相対 path が cwd のせいで一時領域と読まれるかの切り分けに使う（#195）
+NEUTRAL_BASE = "/nonexistent-base-dir"
+
+
+# git worktree add の既知の option（`git worktree add -h` / `git help worktree`）。#195 の例外はこれだけで書かれた呼び出しにだけ使う。
+# git は long option の一意な略称（`--reas` = `--reason`）も受けるので、完全一致で読めない option は未知として扱う
+WORKTREE_ADD_FLAGS = {
+    "--force", "--detach", "--checkout", "--no-checkout", "--lock", "--orphan", "--quiet",
+    "--track", "--no-track", "--guess-remote", "--no-guess-remote", "--relative-paths", "--no-relative-paths",
+}
+WORKTREE_ADD_SHORT_FLAGS = "fdq"
+WORKTREE_ADD_VALUE_OPTIONS = {"-b", "-B", "--reason"}
+
+
+def worktree_add_options_known(args):
+    """git worktree add の option がすべて既知の形なら True。略称・未知の long option・未知の短い文字が 1 つでもあれば False."""
+    index = 1
+    while index < len(args):
+        arg = args[index]
+        if arg == "--":
+            return True
+        if arg in WORKTREE_ADD_VALUE_OPTIONS:
+            index += 2
+        elif arg in WORKTREE_ADD_FLAGS or arg.startswith("--reason="):
+            index += 1
+        elif arg.startswith("--"):
+            return False
+        elif arg.startswith("-") and arg != "-":  # `-` 単独は位置引数（#198）
+            letters = arg[1:]
+            for position, letter in enumerate(letters):
+                if letter in "bB":
+                    index += 1 if position < len(letters) - 1 else 2  # 途中の b / B は残りが値
+                    break
+                if letter not in WORKTREE_ADD_SHORT_FLAGS:
+                    return False
+            else:
+                index += 1
+        else:
+            index += 1
+    return True
+
+
 def worktree_paths(args):
     """git worktree add の位置引数を順に返す（先頭が作成先 <path>、続きは <commit-ish>）。
 
@@ -659,6 +701,11 @@ def worktree_paths(args):
             break
         if arg in value_options:
             index += 2
+            continue
+        if arg == "-":
+            # `-` 単独は option でなく位置引数（path。git worktree add - は <cwd>/- を作る, #198）
+            paths.append(arg)
+            index += 1
             continue
         if arg.startswith("-") and not arg.startswith("--"):
             # 結合した短い option（-fb br）。b / B が最後なら次の引数が値、途中なら残りが値
@@ -1244,6 +1291,18 @@ def main():
                         ):
                             continue
                         reason = worktree_temporary_reason(path, git_cwd)
+                        # 直後の位置引数の相対 path（commit-ish `feat/1-x` 等）が一時領域と読めるのが cwd だけのせいなら、
+                        # 作成先とみなさない（#195）。`../..` で上へ出る形・2 つ目以降・絶対 path・~ は従来どおり検査する
+                        if (
+                            reason
+                            and position == 1
+                            and worktree_add_options_known(git_args)
+                            and not os.path.isabs(path)
+                            and not path.startswith("~")
+                            and not os.path.normpath(path).startswith("..")
+                            and not worktree_temporary_reason(path, NEUTRAL_BASE)
+                        ):
+                            continue
                         if reason:
                             deny(reason)
                     if git_args and git_args[0] in ("remove", "move", "prune"):
