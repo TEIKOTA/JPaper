@@ -25,6 +25,7 @@
 - `.claude/` — Claude Code 設定（`settings.json`: 権限・hook 配線）と共有 skill（`skills/`。開発運用: 一覧は各ディレクトリの `SKILL.md` を参照。翻訳の運用: `translation-pitfalls` は evaluator 向けの誤訳チェックリスト。利用者向け: `jpaper` は `/jpaper`・`$jpaper` で呼んだときだけ動くセットアップと和訳の入口）。`.agents` は `.claude` への symlink（agents.md / Codex 互換パス。`.claude` を symlink にすると Claude Code の worktree 機能が拒否するため実ディレクトリが正本）
 - `.codex/` — Codex 用の project-local hook 設定（trust 後に有効）
 - `docker/agent/` — 子セッション用コンテナの共通 image（運用は [`docs/process/agent-containers.md`](./docs/process/agent-containers.md)）
+- `docker/jpaper/` — JPaper の子のコンテナの image（共通 image に pnpm・TeX Live を足す。[`docker/jpaper/README.md`](./docker/jpaper/README.md)）
 
 ## 検索ポリシー
 
@@ -90,7 +91,7 @@
 - コードが不自然に見えても、**直す前に [`docs/design/landmines.md`](./docs/design/landmines.md) を確認する**。載っていれば意図的な書き方なので、そのまま残す。
 
 ## 委譲の作業場所
-- agent-box: 使えない（理由: token と image を未準備。準備したら宣言を外す）
+- agent-box: 使える。`start` に `--image agent-box-jpaper:latest`（pnpm と TeX Live 入り）を付ける。image の作り方は [`docker/jpaper/README.md`](./docker/jpaper/README.md)
 
 ## コマンド
 
