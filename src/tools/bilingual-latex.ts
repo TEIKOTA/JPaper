@@ -32,6 +32,8 @@ export interface BilingualOutput {
   fallbackSegments: string[];
   // 原文にタイトルを組む命令（\maketitle・frontmatter 環境）があるのに、タイトルブロックに置き換えられなかった。
   titleUnplaced: boolean;
+  // 訳文の comment 環境の開閉が原文と違ったセグメントの id（commentOutCommentEnvs）。
+  commentMismatch: string[];
 }
 
 const BLANK_LINES = /\n[ \t]*(?:\n[ \t]*)+/;
@@ -157,24 +159,64 @@ export function paragraphsOf(tex: string, profile: FrontMatterProfile = DEFAULT_
 const COMMENT_BEGIN = /\\begin\s*\{comment\}/;
 const COMMENT_END = /\\end\s*\{comment\}/;
 
-// comment 環境（comment パッケージ）の行を、開始と終了の行も含めて % で始まる行にする（空行も）。
-// 開始と終了が別のセグメントにあっても前から順に追う。⚠ landmines.md
-export function commentOutCommentEnvs(segments: readonly BilingualSegment[]): BilingualSegment[] {
-  let inside = false;
-  return segments.map((s) => {
-    const lines = s.tex.split("\n").map((line) => {
-      const code = stripComments(line);
-      if (inside) {
-        if (COMMENT_END.test(code)) inside = false;
-        return `%${line}`;
-      }
-      const at = code.search(COMMENT_BEGIN);
-      if (at === -1) return line;
-      inside = !COMMENT_END.test(code.slice(at));
-      return `${line.slice(0, at)}%${line.slice(at)}`;
-    });
-    return { ...s, tex: lines.join("\n") };
+function commentOutSegment(tex: string, inside: boolean): { tex: string; inside: boolean; opens: number } {
+  let opens = 0;
+  const lines = tex.split("\n").map((line) => {
+    const code = stripComments(line);
+    if (inside) {
+      if (COMMENT_END.test(code)) inside = false;
+      return `%${line}`;
+    }
+    const at = code.search(COMMENT_BEGIN);
+    if (at === -1) return line;
+    opens++;
+    inside = !COMMENT_END.test(code.slice(at));
+    return `${line.slice(0, at)}%${line.slice(at)}`;
   });
+  return { tex: lines.join("\n"), inside, opens };
+}
+
+export interface CommentedPair {
+  source: BilingualSegment[];
+  translated: BilingualSegment[];
+  // 訳文の comment 環境の開始の数か、セグメントの終わりで comment 環境の中にいるかが原文と違ったセグメントの id。
+  commentMismatch: string[];
+}
+
+// comment 環境（comment パッケージ）の行を、開始と終了の行も含めて % で始まる行にする（空行も）。
+// 開始と終了が別のセグメントにあっても前から順に追う。訳文側の状態は、原文と同じ id のセグメントの終わりで原文側に揃える。
+// 契約付録 §8。⚠ landmines.md
+export function commentOutCommentEnvs(
+  source: readonly BilingualSegment[],
+  translated: readonly BilingualSegment[],
+): CommentedPair {
+  const traces = new Map<string, { opens: number; inside: boolean }>();
+  let inside = false;
+  const src = source.map((s) => {
+    const r = commentOutSegment(s.tex, inside);
+    inside = r.inside;
+    traces.set(s.id, { opens: r.opens, inside: r.inside });
+    return { ...s, tex: r.tex };
+  });
+  const sourceEndsInside = inside;
+  const commentMismatch: string[] = [];
+  let openedAt: string | undefined;
+  inside = false;
+  const tr = translated.map((t) => {
+    const r = commentOutSegment(t.tex, inside);
+    const trace = traces.get(t.id);
+    if (trace === undefined) {
+      if (!inside && r.inside) openedAt = t.id;
+      inside = r.inside;
+    } else {
+      if (r.opens !== trace.opens || r.inside !== trace.inside) commentMismatch.push(t.id);
+      inside = trace.inside;
+      openedAt = undefined;
+    }
+    return { ...t, tex: r.tex };
+  });
+  if (inside && !sourceEndsInside && openedAt !== undefined) commentMismatch.push(openedAt);
+  return { source: src, translated: tr, commentMismatch };
 }
 
 // 訳文セグメントの順に並べる。原文に同じ id が無いもの（訳注一覧）は左を空にする。
@@ -688,15 +730,12 @@ export function assembleBilingual(input: {
 }): BilingualOutput {
   const preamble = extractPreamble(input.translatedMainTex);
   const profile = detectProfile(input.cleanLatex);
-  const { pairs, fallbackSegments } = pairSegments(
-    commentOutCommentEnvs(input.source),
-    commentOutCommentEnvs(input.translated),
-    profile,
-  );
+  const commented = commentOutCommentEnvs(input.source, input.translated);
+  const { pairs, fallbackSegments } = pairSegments(commented.source, commented.translated, profile);
   const { blocks, titled } = renderPairs(pairs, { left: extractPreamble(input.cleanLatex), right: preamble }, profile);
   const mainTex = releaseCounterAnchorNames(
     releaseLuatexjaNames(`${bilingualPreamble(preamble, profile)}${BEGIN}\n${paracolBody(blocks)}\\end{document}\n`),
   );
   const titleUnplaced = profile.maketitle && !titled && input.source.some((s) => TITLE_COMMANDS.test(stripComments(s.tex)));
-  return { mainTex, pairs: blocks.length, fallbackSegments, titleUnplaced };
+  return { mainTex, pairs: blocks.length, fallbackSegments, titleUnplaced, commentMismatch: commented.commentMismatch };
 }
