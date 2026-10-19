@@ -235,9 +235,9 @@ describe("runCli", () => {
     expect(got).toEqual([false, undefined]);
   });
 
-  it("--no-page-notes・--no-end-notes はそれぞれ pageNotes・endNotes を false にし、無指定なら渡さない", async () => {
+  it("--page-notes は pageNotes を true、--no-page-notes は false、--no-end-notes は endNotes を false にし、無指定なら渡さない", async () => {
     const got: unknown[] = [];
-    for (const extra of [["--no-page-notes"], ["--no-end-notes"], []]) {
+    for (const extra of [["--page-notes"], ["--no-page-notes"], ["--no-end-notes"], []]) {
       const code = await runCli(["node", "jpaper", "1706.03762", "--provider", "claude", ...extra], {
         stdout: () => {},
         translate: async (_input, opts) => {
@@ -248,11 +248,29 @@ describe("runCli", () => {
       expect(code).toBe(0);
     }
     expect(got).toEqual([
+      [true, undefined],
       [false, undefined],
       [undefined, false],
       [undefined, undefined],
     ]);
   });
+
+  it("--page-notes と --no-page-notes の同時指定は入力エラー", async () => {
+    let called = false;
+    const err: string[] = [];
+    const code = await runCli(["node", "jpaper", "1706.03762", "--provider", "claude", "--page-notes", "--no-page-notes"], {
+      stdout: () => {},
+      stderr: (m: string) => err.push(m),
+      translate: async () => {
+        called = true;
+        return okResult;
+      },
+    });
+    expect(code).toBe(2);
+    expect(called).toBe(false);
+    expect(err.join("")).toContain("--page-notes と --no-page-notes");
+  });
+
 
   it("--model と --context-window を ollama 設定として渡す", async () => {
     let got: unknown;

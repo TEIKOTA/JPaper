@@ -38,7 +38,7 @@ export interface CliDeps {
 }
 
 export const VALUE_FLAGS = ["--provider", "--out", "--model", "--context-window", "--effort", "--concurrency", "--pages", "--redact-file"];
-export const BOOL_FLAGS = ["--think", "--no-think", "--no-bilingual", "--no-verify-terms", "--no-page-notes", "--no-end-notes", "--yes"];
+export const BOOL_FLAGS = ["--think", "--no-think", "--no-bilingual", "--no-verify-terms", "--page-notes", "--no-page-notes", "--no-end-notes", "--yes"];
 const HELP_FLAGS = ["--help", "-h"];
 const HELP_HINT = "使い方は jpaper --help で表示できます\n";
 
@@ -67,7 +67,8 @@ Web アプリの依存が無ければ、先に jpaper の repo で pnpm install 
   --concurrency N       同時に走らせる LLM 呼び出しの数（1〜${String(MAX_CONCURRENCY)}。既定は ollama が ${String(defaultConcurrencyFor("ollama"))}、ほかは ${String(defaultConcurrencyFor("claude"))}）
   --no-bilingual        対訳 PDF を作らない
   --no-verify-terms     用語の訳を Web 検索で確かめない（確かめるのは claude・codex だけ）
-  --no-page-notes       訳注を PDF の各ページの脚注に載せない
+  --page-notes          訳注を PDF の各ページの脚注（語の初出の位置）にも載せる
+  --no-page-notes       各ページの脚注に載せない（既定）
   --no-end-notes        訳注の一覧を PDF の最後に載せない
   --pages RANGE         PDF の読むページ（例 1-72・3,5-9。PDF の何枚目かで数える）
   --yes                 PDF の読むページが ${String(LARGE_PDF_PAGES)} を超えても確認せずに進む
@@ -301,6 +302,9 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number
     const provider = Provider.parse(providerArg);
     const wantThink = flags.has("--think");
     const wantNoThink = flags.has("--no-think");
+    if (flags.has("--page-notes") && flags.has("--no-page-notes")) {
+      throw new JpaperError(2, "input", "--page-notes と --no-page-notes は同時に指定できません");
+    }
     if (wantThink && wantNoThink) {
       throw new JpaperError(2, "input", "--think と --no-think は同時に指定できません");
     }
@@ -363,7 +367,7 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number
         ...(allowLargePdf ? { allowLargePdf: true } : {}),
         ...(flags.has("--no-bilingual") ? { bilingual: false } : {}),
         ...(flags.has("--no-verify-terms") ? { verifyTerms: false } : {}),
-        ...(flags.has("--no-page-notes") ? { pageNotes: false } : {}),
+        ...(flags.has("--page-notes") ? { pageNotes: true } : flags.has("--no-page-notes") ? { pageNotes: false } : {}),
         ...(flags.has("--no-end-notes") ? { endNotes: false } : {}),
       },
       {

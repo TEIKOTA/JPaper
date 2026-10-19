@@ -673,7 +673,7 @@ export async function retypesetWithoutLlm(
       openrouter: { ...DEFAULT_OPENROUTER, contextWindow: state.contextWindow },
       outDir: state.outDir,
       bilingual: true,
-      ...(notes.pageNotes === false ? { pageNotes: false } : {}),
+      ...(notes.pageNotes === true ? { pageNotes: true } : {}),
       ...(notes.endNotes === false ? { endNotes: false } : {}),
       signal: deps.signal,
     },
@@ -695,7 +695,7 @@ export async function retypesetWithoutLlm(
 
 export interface ApplyOptions {
   registerGlobal?: boolean;
-  // 組み直しの訳注の描画（TranslateOptions と同じ。既定 true）。
+  // 組み直しの訳注の描画（TranslateOptions と同じ。既定は pageNotes が false、endNotes が true）。
   pageNotes?: boolean;
   endNotes?: boolean;
 }
