@@ -758,3 +758,55 @@ describe("formalCheck: 引用・参照・脚注", () => {
     expect(fastestMs(3, () => void formalCheck("\\citep{a}", malformed, []))).toBeLessThan(1000);
   });
 });
+
+describe("untranslated: keep-original の語を地の文に数えない", () => {
+  const keep = (src: string): ResolvedTerm => ({
+    src,
+    form: src,
+    class: "do-not-translate",
+    rendering: "keep-original",
+    firstOccurrence: false,
+  });
+  const names = ["Alice Smith", "Bob Jones", "Carol White", "Dave Brown", "Erin Black"];
+  const roles = ["Conceptualization", "Software", "Methodology", "Validation"];
+  const terms = [...names, ...roles].map(keep);
+  const list = names
+    .map((n, i) => `\\item[${n}] \\emph{${roles[i % roles.length]!}}, \\emph{${roles[(i + 1) % roles.length]!}}`)
+    .join("\n");
+  const src = `\\section{Contributors}\n\\begin{description}\n${list}\n\\end{description}`;
+  const untranslated = (s: string, ja: string, t: ResolvedTerm[]) =>
+    formalCheck(s, ja, t).filter((i) => i.kind === "untranslated");
+
+  it("人名と役割名だけの description 節を原文のまま残した訳を落とさない", () => {
+    const ja = src.replace("Contributors", "貢献者");
+    expect(untranslated(src, ja, terms)).toEqual([]);
+  });
+
+  it("確定辞書が無ければ同じ訳は落ちる（除外は keep-original の語だけ）", () => {
+    const ja = src.replace("Contributors", "貢献者");
+    expect(untranslated(src, ja, []).length).toBeGreaterThan(0);
+  });
+
+  it("keep-original の語を残しつつ地の文を訳さない節は落ちる", () => {
+    const prose =
+      "Alice Smith contributed to the proposed method and reports experimental results on several benchmarks. " +
+      "The remaining sections describe how the Software was evaluated across many datasets and baselines.";
+    const s = `\\section{Notes}\n${prose}`;
+    const t = [keep("Alice Smith"), keep("Software")];
+    expect(untranslated(s, s.replace("Notes", "注"), t).length).toBeGreaterThan(0);
+  });
+
+  it("keep-original に長い語句が入っても、その語句の外の未訳は見逃さない", () => {
+    const phrase = "the proposed method and reports experimental results";
+    const prose = `This section describes ${phrase} on several benchmarks and compares them against many strong baselines.`;
+    const s = `\\section{Method}\n${prose}`;
+    const found = untranslated(s, s.replace("Method", "手法"), [keep(phrase)]);
+    expect(found.length).toBeGreaterThan(0);
+  });
+
+  it("keep-original の語を残した訳が残留ラテン語の判定で落ちない", () => {
+    const body = `${names.join(", ")} and ${roles.join(", ")} are credited here, while the others wrote the rest of this paper.`;
+    const ja = `${names.join("、")}、${roles.join("、")}を記す。その他の著者が本稿の残りを執筆した。`;
+    expect(untranslated(`\\section{A}\n${body}`, `\\section{謝辞}\n${ja}`, terms)).toEqual([]);
+  });
+});
