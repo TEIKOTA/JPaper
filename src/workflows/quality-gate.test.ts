@@ -855,4 +855,15 @@ describe("untranslated: keep-original の照合は地の文と同じ正規化を
   it("未訳の地の文は辞書語を除いても落ちる", () => {
     expect(untranslated([...base, keep(review)], src, src).length).toBeGreaterThan(0);
   });
+
+  it("ダッシュの綴りの違い（-- / --- と – / —）と、原文の途中の改行を同じものとして照合する", () => {
+    const people = Array.from({ length: 15 }, (_, i) => `Person${String.fromCharCode(65 + i)} Example`);
+    const list = people
+      .map((n) => `\\item[${n.replace(" ", "\n")}] \\emph{Writing --- original draft}, \\emph{Writing -- review \\& editing}`)
+      .join("\n");
+    const s = `\\section{Contributors}\n\\begin{description}\n${list}\n\\end{description}`;
+    const j = s.replace("Contributors", "貢献者");
+    const dict = [...people, "Writing — original draft", "Writing – review & editing"].map(keep);
+    expect(untranslated(dict, s, j)).toEqual([]);
+  });
 });
