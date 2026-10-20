@@ -106,7 +106,7 @@ function run(cmd: string, args: string[], signal?: AbortSignal): Promise<string>
         if (err === null) return resolve(stdout);
         if ((err as NodeJS.ErrnoException).code === "ENOENT") {
           return reject(
-            new JpaperError(2, "input", `PDF の読み取りに poppler の ${cmd} が必要です（brew install poppler）`),
+            new JpaperError(2, "input", `PDF の読み取りに poppler の ${cmd} が必要です（macOS は brew install poppler、Debian / Ubuntu は sudo apt install poppler-utils）`),
           );
         }
         if (signal?.aborted === true) return reject(canceledError(`${cmd} 実行中`, signal));
