@@ -117,7 +117,7 @@ export function checkFigures(mainTex: string, mainDir: string, figures: string[]
   const dropped: string[] = [];
   for (const fig of figures) {
     const abs = path.isAbsolute(fig) ? fig : path.join(mainDir, fig);
-    const rel = path.relative(mainDir, abs);
+    const rel = path.relative(mainDir, abs).split(path.sep).join("/");
     const stem = rel.replace(/\.[^./]+$/, "");
     if (!hay.includes(stem) && !hay.includes(path.basename(stem))) dropped.push(rel);
   }

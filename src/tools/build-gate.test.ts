@@ -123,6 +123,11 @@ describe("checkFigures", () => {
     const mainTex = "本文で Figures/a という語に触れるだけ";
     expect(checkFigures(mainTex, mainDir, ["/src/Figures/a.png"])).toEqual(["Figures/a.png"]);
   });
+
+  it("消えた図は OS の区切りに依らず / 区切りで返す", () => {
+    const dir = path.resolve("/src");
+    expect(checkFigures("", dir, [path.join(dir, "Figures", "sub", "gone.pdf")])).toEqual(["Figures/sub/gone.pdf"]);
+  });
 });
 
 describe("stageBuild", () => {

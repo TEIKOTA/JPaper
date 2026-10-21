@@ -174,6 +174,7 @@ describe("PDF の翻訳ジョブ（契約付録 §9）", () => {
   });
 
   it("作業フォルダの既定は設定ファイルと同じフォルダの web-uploads/", () => {
-    expect(uploadDirOf(configFromEnv({ JPAPER_HOME: "/h" }, "/w"))).toBe("/h/web-uploads");
+    const h = path.resolve("/h");
+    expect(uploadDirOf(configFromEnv({ JPAPER_HOME: h }, path.resolve("/w")))).toBe(path.join(h, "web-uploads"));
   });
 });
