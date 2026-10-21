@@ -56,7 +56,7 @@ function escapedTokenCounts(s: string): Map<string, number> {
 }
 
 // 原語の数式の外にあるエスケープした特殊文字が、訳語から消えた語は keep-original（form = src）へ直す。契約付録 §8
-export function keepEscapedSpecials<T extends Pick<ResolvedTerm, "src" | "form" | "rendering">>(
+export function keepEscapedSpecials<T extends { src: string; form: string; rendering: string }>(
   terms: readonly T[],
 ): T[] {
   return terms.map((t) => {
