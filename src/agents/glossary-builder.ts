@@ -34,6 +34,7 @@ function renderUser(input: GlossaryBuilderIn): string {
       '"style":{"register":"plain"|"polite","tensePolicy":"時制方針","headingStyle":"見出し方針","numberStyle":"数字/単位方針","notes":["備考(任意)"]}}',
     "brief（主張の核・節の役割・記法規約）は本文の抜粋に書かれていることから書く。抜粋に無い内容を推測で足さない。sectionRoles の id は抜粋の見出しをそのまま使う。",
     "rendering=bilingual の form は必ず『日本語(原語)』の併記形にする（例: 値(Value) / スケール化ドット積注意(Scaled Dot-Product Attention)）。日本語のみにしない。",
+    "原語に数式の外のエスケープした特殊文字（\\& \\% \\_ など）を含む語は、form でもそのまま残す（例: Math \\& reasoning の form は「数学\\&推論」。「数学・推論」と書かない）。残せない語は rendering=keep-original にして form を原語にする。",
     "note は読者向けの訳注（語の定義・由来・訳語を選んだ理由）に限る。note に訳し方の指示を書かない: form と違う訳語・言い回しを示さない（「〜と訳す」と書かない）、別の語の訳を指定しない。",
     "既定文体は register=plain（である調・常体）。firstOccurrence は付与しない（配線側が決定的に付ける）。",
   ].join("\n\n");
