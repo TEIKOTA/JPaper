@@ -51,6 +51,11 @@ Claude Code か Codex を使っているなら、セットアップも下の「[
 - poppler（`pdfinfo`・`pdftotext`・`pdftocairo`。`brew install poppler`）: PDF を入力にするときだけ
 - LLM プロバイダのどれか 1 つ（下の「[LLM プロバイダ](#llm-プロバイダ)」）
 
+上の `brew` は macOS の入れ方。対応する OS は macOS と Linux で、Windows は WSL2 の中で使う。
+
+- **Linux**（Debian / Ubuntu）: `sudo apt install texlive-full poppler-utils` で LaTeX と poppler を入れる。apt の Node.js は 22.5 より古いことが多いので、Node.js は nvm などで入れ、pnpm は `npm install -g pnpm` で入れる。distro の TeX Live は古い版のことがあり、組めない論文が出たら TeX Live の公式の `install-tl` で入れ直す。シェルが bash なら、下の `source ~/.zshrc` は `source ~/.bashrc` に読み替える。
+- **Windows**: WSL2 の Ubuntu を入れ、その中で Linux と同じ手順で入れる（repo も WSL2 の中に clone する）。Windows で直接（PowerShell・コマンドプロンプトから）動かすことには対応していない。
+
 ```sh
 pnpm install
 pnpm setup         # PATH を通す設定をシェルの設定ファイル（~/.zshrc など）に書き足す（初回だけ）

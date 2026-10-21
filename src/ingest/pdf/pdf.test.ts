@@ -354,3 +354,22 @@ describe("PDF 抽出の段", () => {
     expect(r.fallbackPages).toEqual([1]);
   });
 });
+
+describe("popplerTools", () => {
+  it("poppler が無いときは macOS と Linux の入れ方を案内する", async () => {
+    const { popplerTools } = await import("./poppler.js");
+    const saved = process.env.PATH;
+    process.env.PATH = tmp();
+    try {
+      const err = await popplerTools.pageCount("missing.pdf").then(
+        () => undefined,
+        (e: unknown) => e,
+      );
+      expect(err).toBeInstanceOf(JpaperError);
+      expect((err as Error).message).toContain("brew install poppler");
+      expect((err as Error).message).toContain("apt install poppler-utils");
+    } finally {
+      process.env.PATH = saved;
+    }
+  });
+});
