@@ -241,7 +241,27 @@ export function keepEscapedAfterVerify<T extends ResolvedRow, V extends { resolv
     if (r !== v.resolved[i]) changed.set(r.src, r.form);
   });
   if (changed.size === 0) return v;
-  return { ...v, resolved, checks: v.checks.map((c) => (changed.has(c.src) ? { ...c, form: changed.get(c.src)! } : c)) };
+  return {
+    ...v,
+    resolved,
+    checks: v.checks.map((c) =>
+      changed.has(c.src) ? { ...c, form: changed.get(c.src)!, ...(c.status === "replaced" ? { kept: c.form } : {}) } : c,
+    ),
+  };
+}
+
+// 差し替えを keep-original に戻した語の check か（status は replaced のまま）。kept の無い古い値は form=src で見分ける。契約付録 §4
+export function isKeptOriginalCheck(c: TermCheck): boolean {
+  return c.status === "replaced" && (c.kept !== undefined || c.form === c.src);
+}
+
+// 戻した理由の文言（警告・glossary.md 共通）。
+export function keptReason(c: TermCheck): string {
+  const toks = [...new Set(c.src.match(/\\[%&#$_{}]/g) ?? [])];
+  const what = toks.length === 0 ? "エスケープした特殊文字" : toks.join(" ");
+  if (c.via !== undefined) return `${c.via} の差し替えに揃えると原語の ${what} を落とすため`;
+  if (c.kept === undefined) return `用例の訳が原語の ${what} を落とすため`;
+  return `用例の訳「${c.kept}」が原語の ${what} を落とすため`;
 }
 
 // 対象語の検証の結果か（ほかの語の差し替えに揃えただけの語でないか）。

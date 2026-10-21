@@ -178,6 +178,8 @@ export const TermCheck = z.object({
   reason: z.enum(["not-found", "conflicting", "few-sites", "failed"]).optional(),
   // 差し替えた語の元の訳を含む・同じ訳だったので合わせて書き換えた語なら、差し替えを決めた語の src。
   via: z.string().optional(),
+  // 差し替えを keep-original に戻した語（form=原語）で、戻す前の用例の表記。古い checkpoint には無い（form=src で区別する）。
+  kept: z.string().optional(),
   sources: z.array(z.string()).default([]),
 });
 export type TermCheck = z.infer<typeof TermCheck>;

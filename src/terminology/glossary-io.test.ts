@@ -78,6 +78,18 @@ describe("glossary.md の検証の欄（契約付録 §4・issue #309）", () =>
     expect(render(rows)).not.toContain("検証");
   });
 
+  it("差し替えを原語に戻した語は「原語のまま残した」と書く。kept の無い古い値でも文面が壊れない（issue #471）", async () => {
+    const { renderGlossaryMd: render } = await import("./glossary-io.js");
+    const rows = [{ src: "Math \\& reasoning", form: "Math \\& reasoning", class: "established", rendering: "keep-original" }];
+    const base = { src: "Math \\& reasoning", status: "replaced" as const, form: "Math \\& reasoning", original: "数学\\&推論", sources: ["https://a.jp"] };
+    expect(render(rows, [{ ...base, kept: "数学と推論" }])).toContain(
+      "| 原語のまま残した（用例の訳「数学と推論」が原語の \\& を落とすため。元の訳: 数学\\&推論） |",
+    );
+    const old = render(rows, [base]);
+    expect(old).toContain("| 原語のまま残した（用例の訳が原語の \\& を落とすため。元の訳: 数学\\&推論） |");
+    expect(old).not.toContain("用例に合わせた");
+  });
+
   it("ほかの語の差し替えに揃えた未確認の語は、未確認の理由に揃えたことと元の訳を続ける", () => {
     const md = renderGlossaryMd(
       [{ src: "Widget set ratio", form: "部品集合比", class: "established", rendering: "translate" }],

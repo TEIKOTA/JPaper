@@ -176,11 +176,17 @@ describe("用語の検証（契約付録 §4・issue #309）", () => {
     });
     const outDir = path.join(tmp(), "out");
     const first = await fake(() => found, glossary);
-    const { r } = await run(outDir, first.client);
+    const { r, warnings } = await run(outDir, first.client);
     expect(r.exitCode).toBe(0);
     const keep = "| Widget \\& set | Widget \\& set | established | keep-original |";
     expect(readFileSync(path.join(outDir, "glossary.md"), "utf8")).toContain(keep);
     expect(first.translatorUsers.some((u) => u.includes("部品と集合"))).toBe(false);
+    expect(readFileSync(path.join(outDir, "glossary.md"), "utf8")).toContain(
+      "原語のまま残した（用例の訳「部品と集合」が原語の \\& を落とすため。元の訳: ウィジェット\\&集合）",
+    );
+    expect(readFileSync(path.join(outDir, "glossary.md"), "utf8")).not.toContain("用例に合わせた");
+    expect(warnings).toContain("用語を原語のまま残しました（用例の訳「部品と集合」が原語の \\& を落とすため）: Widget \\& set");
+    expect(warnings.some((w) => w.includes("用例に合わせました"))).toBe(false);
 
     // glossary.md を消すと checkpoint の値から作り直す。検証は呼ばず、同じ keep-original になる。
     rmSync(path.join(outDir, "glossary.md"));

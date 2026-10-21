@@ -63,7 +63,7 @@ import { extractPdf, type PdfExtracted } from "../ingest/pdf/index.js";
 import { isPdfFile, type PdfTools } from "../ingest/pdf/poppler.js";
 import { z } from "zod";
 import { paperExcerpt } from "../terminology/paper-excerpt.js";
-import { applyVerification, carriedUnverified, keepEscapedAfterVerify, isTargetCheck, verifyTargets } from "../terminology/verify.js";
+import { applyVerification, carriedUnverified, isKeptOriginalCheck, isTargetCheck, keepEscapedAfterVerify, keptReason, verifyTargets } from "../terminology/verify.js";
 import { verifyTerms } from "../agents/term-verifier.js";
 import { withCliDefaults } from "../providers/defaults.js";
 import { makeJsonlTrace, withTrace } from "../runtime/trace.js";
@@ -471,7 +471,9 @@ async function verifyGlossary(
   // 後処理の前の版の checkpoint にも効かせる（べき等）。契約付録 §8
   result = keepEscapedAfterVerify(result);
   for (const c of result.checks) {
-    if (c.status === "replaced" && c.via !== undefined) {
+    if (isKeptOriginalCheck(c)) {
+      warn?.(`用語を原語のまま残しました（${keptReason(c)}）: ${c.src}`);
+    } else if (c.status === "replaced" && c.via !== undefined) {
       warn?.(`用語の訳を ${c.via} の差し替えに揃えました: ${c.src}「${c.original ?? ""}」→「${c.form}」`);
     } else if (c.status === "replaced") {
       warn?.(`用語の訳を用例に合わせました: ${c.src}「${c.original ?? ""}」→「${c.form}」（出典 ${c.sources.join(" ")}）`);

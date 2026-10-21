@@ -1,7 +1,9 @@
 import { describe, it, expect } from "vitest";
 import {
   applyVerification,
+  isKeptOriginalCheck,
   keepEscapedAfterVerify,
+  keptReason,
   carriedUnverified,
   usableForm,
   verifyTargets,
@@ -398,7 +400,7 @@ describe("検証の後の \\& の後処理（issue #469・契約付録 §8）", 
       out([{ src, candidates: [{ form: "数学と推論", sources: sites }] }]),
     );
     expect(r.resolved).toEqual([row(src, src, "established", "keep-original")]);
-    expect(r.checks).toEqual([expect.objectContaining({ src, status: "replaced", form: src, original: "数学\\&推論" })]);
+    expect(r.checks).toEqual([expect.objectContaining({ src, status: "replaced", form: src, original: "数学\\&推論", kept: "数学と推論" })]);
   });
 
   it("差し替えた先が \\& を残していれば直さない。べき等", () => {
@@ -406,5 +408,15 @@ describe("検証の後の \\& の後処理（issue #469・契約付録 §8）", 
     expect(keepEscapedAfterVerify(v)).toBe(v);
     const dropped = keepEscapedAfterVerify({ resolved: [row(src, "数学と推論")], checks: [] });
     expect(keepEscapedAfterVerify(dropped)).toEqual(dropped);
+  });
+
+  it("原語に戻した check だけが kept を持ち、ふつうの差し替え・古い値（form=src）の見分けが付く（issue #471）", () => {
+    const base = { src, status: "replaced" as const, original: "数学\\&推論", sources: [] };
+    expect(isKeptOriginalCheck({ ...base, form: src, kept: "数学と推論" })).toBe(true);
+    expect(isKeptOriginalCheck({ ...base, form: src })).toBe(true);
+    expect(isKeptOriginalCheck({ ...base, form: "数学と推論" })).toBe(false);
+    expect(isKeptOriginalCheck({ ...base, status: "unverified", form: src })).toBe(false);
+    expect(keptReason({ ...base, form: src, kept: "数学と推論" })).toBe("用例の訳「数学と推論」が原語の \\& を落とすため");
+    expect(keptReason({ ...base, form: src })).toBe("用例の訳が原語の \\& を落とすため");
   });
 });

@@ -1,4 +1,5 @@
 // 契約付録 §1・§2。編集可能な glossary.md/brief.md/style.md の描画と読み戻し（durable 編集ループ）。
+import { isKeptOriginalCheck, keptReason } from "./verify.js";
 import type { DocumentBrief, StyleContract, TermCheck } from "../types/contract.js";
 
 export interface ResolvedRow {
@@ -17,6 +18,7 @@ function cell(s: string): string {
 function checkCell(c: TermCheck | undefined): string {
   if (c === undefined) return "";
   const src = c.sources.length === 0 ? "" : ` 出典: ${c.sources.join(" ")}`;
+  if (isKeptOriginalCheck(c)) return `原語のまま残した（${keptReason(c)}。元の訳: ${c.original ?? ""}）`;
   if (c.status === "replaced" && c.via !== undefined) {
     return `用例に合わせた ${c.via} の訳に揃えた（元の訳: ${c.original ?? ""}）`;
   }
