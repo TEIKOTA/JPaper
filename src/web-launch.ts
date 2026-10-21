@@ -4,7 +4,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { constants } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { killChild, resolveCommand, ShimError } from "../bin/spawn-cli.mjs";
+import { killChild, resolveCommand } from "../bin/spawn-cli.mjs";
 
 export const REPO_ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 
@@ -61,9 +61,8 @@ const install = (root: string): number | undefined => {
   let cmd: { command: string; args: string[] };
   try {
     cmd = resolveCommand("pnpm", ["install", "--frozen-lockfile"]);
-  } catch (e) {
-    if (e instanceof ShimError) return undefined;
-    throw e;
+  } catch {
+    return undefined;
   }
   const r = spawnSync(cmd.command, cmd.args, { cwd: root, stdio: "inherit" });
   return r.error === undefined ? (r.status ?? 1) : undefined;
@@ -81,7 +80,7 @@ export function serve(root: string, env: NodeJS.ProcessEnv, script = DEV_SCRIPT)
     // SIGINT・SIGTERM・SIGHUP は子（dev.mjs）へ渡し、子の終わりを待つ。
     const forward = (signal: NodeJS.Signals): void => {
       if (child.exitCode !== null || child.signalCode !== null) return;
-      // Windows の Ctrl+C は同じコンソールの子にも届く。
+      // 契約付録 §5「Windows での外部コマンドの起動と停止」
       if (process.platform === "win32" && signal === "SIGINT") return;
       killChild(child, signal);
     };

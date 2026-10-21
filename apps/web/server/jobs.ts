@@ -201,6 +201,7 @@ export const spawnRunner: JobRunner = (spec, onLine) => {
   return {
     done,
     kill: () => {
+      if (exited) return;
       signalGroup("SIGTERM");
       setTimeout(() => {
         if (!exited) signalGroup("SIGKILL");

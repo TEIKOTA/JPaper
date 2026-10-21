@@ -6,6 +6,7 @@ import { CODEX_DISABLED_FEATURES, codexEnv, makeCodexClient } from "./codex.js";
 import { isTransient } from "../types/errors.js";
 import type { LlmCallEvent } from "../types/contract.js";
 import { writeFakeCli } from "../testing/fake-cli.js";
+import { ShimError } from "../../bin/spawn-cli.mjs";
 
 const ISOLATED = [
   "exec",
@@ -66,6 +67,17 @@ describe("makeCodexClient（契約付録 §5）", () => {
     });
     const err = await c.complete({ system: "s", user: "u" }).catch((e: unknown) => e);
     expect(err).toMatchObject({ code: 2, kind: "provider" });
+    expect(isTransient(err)).toBe(false);
+  });
+
+  it("shim を解けない（ShimError）ときは理由つきの非 transient の code 2", async () => {
+    const c = makeCodexClient({}, {
+      run: async () => {
+        throw new ShimError("C:\\npm\\codex.cmd を直接起動できません（node に追加の引数を渡す shim）");
+      },
+    });
+    const err = await c.complete({ system: "s", user: "u" }).catch((e: unknown) => e);
+    expect(err).toMatchObject({ code: 2, kind: "provider", message: expect.stringContaining("node に追加の引数を渡す shim") });
     expect(isTransient(err)).toBe(false);
   });
 

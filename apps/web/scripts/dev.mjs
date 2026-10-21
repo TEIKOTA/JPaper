@@ -19,7 +19,13 @@ mkdirSync(path.dirname(pidFile), { recursive: true });
 writeFileSync(pidFile, "");
 process.on("exit", () => rmSync(pidFile, { force: true }));
 const pnpm = (args) => {
-  const cmd = resolveCommand("pnpm", args, { env });
+  let cmd;
+  try {
+    cmd = resolveCommand("pnpm", args, { env });
+  } catch (e) {
+    process.stderr.write(`pnpm を起動できません: ${e.message}\n`);
+    process.exit(1);
+  }
   return spawn(cmd.command, cmd.args, { stdio: "inherit", env });
 };
 const children = [pnpm(["--filter", "@jpaper/web", "run", "server"]), pnpm(["--filter", "@jpaper/web", "run", "dev"])];

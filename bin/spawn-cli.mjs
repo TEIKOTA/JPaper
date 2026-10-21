@@ -35,9 +35,13 @@ function findOnPath(cmd, env, exists) {
     .filter((e) => e !== "")
     .map((e) => e.toLowerCase());
   const withExt = (base) => (exts.includes(w.extname(base).toLowerCase()) ? [base] : exts.map((e) => base + e));
-  const dirs = /[\\/]/.test(cmd) ? [""] : (envValue(env, "PATH") || "").split(";").filter((d) => d !== "");
+  if (/[\\/]/.test(cmd)) return withExt(cmd).find(exists);
+  const dirs = (envValue(env, "PATH") || "")
+    .split(";")
+    .map((d) => d.replace(/^"(.*)"$/, "$1"))
+    .filter((d) => w.isAbsolute(d));
   for (const dir of dirs) {
-    for (const c of withExt(dir === "" ? cmd : w.join(dir.replace(/^"(.*)"$/, "$1"), cmd))) {
+    for (const c of withExt(w.join(dir, cmd))) {
       if (exists(c)) return c;
     }
   }
@@ -52,7 +56,7 @@ export function resolveCommand(cmd, args, deps = {}) {
   const read = deps.read ?? readText;
   const execPath = deps.execPath ?? process.execPath;
   const found = findOnPath(cmd, env, exists);
-  if (found === undefined) return { command: cmd, args };
+  if (found === undefined) throw Object.assign(new Error(`spawn ${cmd} ENOENT`), { code: "ENOENT" });
   const ext = path.win32.extname(found).toLowerCase();
   if (ext !== ".cmd" && ext !== ".bat") return { command: found, args };
   const shim = parseShim(read(found), found);
@@ -78,7 +82,7 @@ function parseShim(text, file) {
     if (prog === "") return EXE_EXT.has(targetExt) ? { node: false, target } : fail(`対象 ${target} が exe でない`);
     if (/^(?:"[^"]*"|\S+)/.exec(prog)?.[0] !== prog) return fail("node に追加の引数を渡す shim");
     if (!NODE_PROG.test(prog)) return fail("node 以外で起動する shim");
-    return JS_EXT.has(targetExt) ? { node: true, target } : fail(`対象 ${target} が JS でない`);
+    return JS_EXT.has(targetExt) || targetExt === "" ? { node: true, target } : fail(`対象 ${target} が JS でない`);
   });
   const [first] = parsed;
   if (parsed.some((p) => p.node !== first.node || p.target !== first.target)) fail("起動行ごとに対象が違う");
@@ -90,14 +94,19 @@ export function spawnOptions(opts = {}, platform = process.platform) {
   return { ...opts, detached: false, windowsHide: true };
 }
 
-function taskkill(pid, run) {
-  run("taskkill", ["/pid", String(pid), "/T", "/F"], { stdio: "ignore", windowsHide: true });
+const TASKKILL_TIMEOUT_MS = 10_000;
+
+// 止められたら true。
+function taskkill(pid, run, env) {
+  const exe = path.win32.join(envValue(env, "SYSTEMROOT") || "C:\\Windows", "System32", "taskkill.exe");
+  const r = run(exe, ["/pid", String(pid), "/T", "/F"], { stdio: "ignore", windowsHide: true, timeout: TASKKILL_TIMEOUT_MS });
+  return r?.error === undefined && r?.status === 0;
 }
 
 export function killTree(pid, signal = "SIGKILL", deps = {}) {
   if (pid === undefined) return;
   const platform = deps.platform ?? process.platform;
-  if (platform === "win32") return taskkill(pid, deps.run ?? spawnSync);
+  if (platform === "win32") return void taskkill(pid, deps.run ?? spawnSync, deps.env ?? process.env);
   const kill = deps.kill ?? process.kill.bind(process);
   try {
     kill(-pid, signal);
@@ -112,6 +121,7 @@ export function killTree(pid, signal = "SIGKILL", deps = {}) {
 
 export function killChild(child, signal = "SIGKILL", deps = {}) {
   const platform = deps.platform ?? process.platform;
+  if (child.exitCode != null || child.signalCode != null) return;
   if (platform !== "win32") return void child.kill(signal);
-  if (child.pid !== undefined) taskkill(child.pid, deps.run ?? spawnSync);
+  if (child.pid === undefined || !taskkill(child.pid, deps.run ?? spawnSync, deps.env ?? process.env)) child.kill(signal);
 }

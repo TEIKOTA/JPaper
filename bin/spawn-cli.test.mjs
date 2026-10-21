@@ -2,7 +2,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { killChild, killTree, resolveCommand, ShimError, spawnOptions } from "./spawn-cli.mjs";
 
-// npm の cmd-shim が node_modules/.bin や prefix に置く .cmd。
+// npm の cmd-shim の旧版の書式（PATHEXT の設定が ELSE の中）。
 const NPM_SHIM = `@ECHO off
 GOTO start
 :find_dp0
@@ -26,20 +26,9 @@ endLocal & goto #_undefined_# 2>NUL || title %COMSPEC% & "%_prog%"  "%dp0%\\node
 const NPM_CODEX =
   '@ECHO off\r\nGOTO start\r\n:find_dp0\r\nSET dp0=%~dp0\r\nEXIT /b\r\n:start\r\nSETLOCAL\r\nCALL :find_dp0\r\n\r\nIF EXIST "%dp0%\\node.exe" (\r\n  SET "_prog=%dp0%\\node.exe"\r\n) ELSE (\r\n  SET "_prog=node"\r\n)\r\n\r\nendLocal & goto #_undefined_# 2>NUL || title %COMSPEC% & set PATHEXT=%PATHEXT:;.JS;=;% & "%_prog%"  "%dp0%\\node_modules\\@openai\\codex\\bin\\codex.js" %*\r\n';
 
-// pnpm（@zkochan/cmd-shim）の .cmd。
-const PNPM_SHIM = `@SETLOCAL
-@IF NOT DEFINED NODE_PATH (
-  @SET "NODE_PATH=C:\\Users\\u\\AppData\\Local\\pnpm\\global\\5\\node_modules"
-) ELSE (
-  @SET "NODE_PATH=%NODE_PATH%;C:\\Users\\u\\AppData\\Local\\pnpm\\global\\5\\node_modules"
-)
-@IF EXIST "%~dp0\\node.exe" (
-  "%~dp0\\node.exe"  "%~dp0\\global\\5\\node_modules\\@openai\\codex\\bin\\codex.js" %*
-) ELSE (
-  @SET PATHEXT=%PATHEXT:;.JS;=;%
-  node  "%~dp0\\global\\5\\node_modules\\@openai\\codex\\bin\\codex.js" %*
-)
-`;
+// pnpm（@zkochan/cmd-shim 9）が生成した実物（行末は CRLF）。
+const PNPM_SHIM =
+  "@SETLOCAL\n@IF NOT DEFINED NODE_PATH (\n  @SET \"NODE_PATH=C:\\x\\node_modules\"\n) ELSE (\n  @SET \"NODE_PATH=C:\\x\\node_modules;%NODE_PATH%\"\n)\n@IF EXIST \"%~dp0\\node.exe\" (\n  \"%~dp0\\node.exe\"  \"%~dp0\\global\\5\\node_modules\\@openai\\codex\\bin\\codex.js\" %*\n) ELSE (\n  @SET PATHEXT=%PATHEXT:;.JS;=;%\n  node  \"%~dp0\\global\\5\\node_modules\\@openai\\codex\\bin\\codex.js\" %*\n)\n";
 
 const win = (files, env = { Path: "C:\\bin;C:\\npm", PATHEXT: ".COM;.EXE;.BAT;.CMD" }) => ({
   platform: "win32",
@@ -89,8 +78,23 @@ describe("resolveCommand", () => {
     expect(resolveCommand("latexmk", [], deps).command).toBe("C:\\x\\latexmk.exe");
   });
 
-  it("見つからなければ名前のまま返し、spawn の ENOENT に任せる", () => {
-    expect(resolveCommand("claude", ["-p"], win({}))).toEqual({ command: "claude", args: ["-p"] });
+  it("Windows で見つからなければ code が ENOENT の Error を投げる（cwd から探させない）", () => {
+    expect(() => resolveCommand("latexmk", [], win({ "latexmk.exe": "", ".\\latexmk.exe": "" }))).toThrow(
+      expect.objectContaining({ code: "ENOENT" }),
+    );
+  });
+
+  it("PATH の相対の要素は探さない", () => {
+    const deps = win({ ".\\claude.exe": "", "C:\\npm\\claude.exe": "" }, { Path: ".;C:\\npm" });
+    expect(resolveCommand("claude", [], deps).command).toBe("C:\\npm\\claude.exe");
+  });
+
+  it("node で起動する shim の拡張子の無い対象は node で起動する", () => {
+    const shim = NPM_CODEX.replace("@openai\\codex\\bin\\codex.js", "pkg\\bin\\pkg");
+    expect(resolveCommand("pkg", [], win({ "C:\\npm\\pkg.cmd": shim }))).toEqual({
+      command: "C:\\node\\node.exe",
+      args: ["C:\\npm\\node_modules\\pkg\\bin\\pkg"],
+    });
   });
 
   it("npm・pnpm の shim でない .cmd は理由つきで失敗する", () => {
@@ -98,9 +102,11 @@ describe("resolveCommand", () => {
     expect(() => resolveCommand("claude", [], deps)).toThrow(ShimError);
   });
 
-  it("shim の対象が JS でも exe でもなければ理由つきで失敗する", () => {
-    const shim = NPM_SHIM.replace("cli.js", "cli.sh").replace(/_prog=node/g, "_prog=sh").replace("node.exe", "sh.exe");
-    expect(() => resolveCommand("claude", [], win({ "C:\\npm\\claude.cmd": shim }))).toThrow(ShimError);
+  it("node で起動する shim の対象が JS でなければ理由つきで失敗する", () => {
+    const shim = NPM_CODEX.replace("codex.js", "codex.sh");
+    expect(() => resolveCommand("codex", [], win({ "C:\\npm\\codex.cmd": shim }))).toThrow(
+      new ShimError("C:\\npm\\codex.cmd を直接起動できません（対象 C:\\npm\\node_modules\\@openai\\codex\\bin\\codex.sh が JS でない）"),
+    );
   });
 
   it("npm の claude（対象が exe の shim）は exe を直接起動する", () => {
@@ -158,28 +164,50 @@ describe("killTree / killChild", () => {
     ]);
   });
 
-  it("Windows では taskkill でツリーごと止める", () => {
-    const run = vi.fn();
-    killTree(42, "SIGTERM", { platform: "win32", run });
-    expect(run).toHaveBeenCalledWith("taskkill", ["/pid", "42", "/T", "/F"], { stdio: "ignore", windowsHide: true });
+  const TASKKILL = ["C:\\Windows\\System32\\taskkill.exe", ["/pid", "42", "/T", "/F"], { stdio: "ignore", windowsHide: true, timeout: 10_000 }];
+  const ok = () => ({ status: 0 });
+
+  it("Windows では System32 の taskkill でツリーごと止める", () => {
+    const run = vi.fn(ok);
+    killTree(42, "SIGTERM", { platform: "win32", run, env: { SystemRoot: "C:\\Windows" } });
+    expect(run.mock.calls).toEqual([TASKKILL]);
   });
 
   it("pid が無ければ何もしない", () => {
-    const run = vi.fn();
+    const run = vi.fn(ok);
     const kill = vi.fn();
     killTree(undefined, "SIGKILL", { platform: "win32", run });
     killTree(undefined, "SIGKILL", { platform: "linux", kill });
-    killChild({ pid: undefined, kill }, "SIGKILL", { platform: "win32", run });
     expect(run).not.toHaveBeenCalled();
     expect(kill).not.toHaveBeenCalled();
   });
 
   it("killChild は POSIX では子だけに送り、Windows ではツリーを止める", () => {
-    const child = { pid: 7, kill: vi.fn() };
+    const child = { pid: 42, exitCode: null, signalCode: null, kill: vi.fn() };
     killChild(child, "SIGTERM", { platform: "darwin" });
     expect(child.kill).toHaveBeenCalledWith("SIGTERM");
-    const run = vi.fn();
-    killChild(child, "SIGTERM", { platform: "win32", run });
-    expect(run).toHaveBeenCalledWith("taskkill", ["/pid", "7", "/T", "/F"], { stdio: "ignore", windowsHide: true });
+    const run = vi.fn(ok);
+    killChild(child, "SIGTERM", { platform: "win32", run, env: { SYSTEMROOT: "C:\\Windows" } });
+    expect(run.mock.calls).toEqual([TASKKILL]);
+    expect(child.kill).toHaveBeenCalledTimes(1);
+  });
+
+  it("killChild は終わった子には何もしない（再利用された pid を止めない）", () => {
+    const run = vi.fn(ok);
+    for (const done of [{ exitCode: 0, signalCode: null }, { exitCode: null, signalCode: "SIGKILL" }]) {
+      const child = { pid: 42, ...done, kill: vi.fn() };
+      killChild(child, "SIGKILL", { platform: "win32", run });
+      killChild(child, "SIGKILL", { platform: "linux" });
+      expect(child.kill).not.toHaveBeenCalled();
+    }
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it("Windows で taskkill が失敗したら子を直接止める", () => {
+    for (const r of [{ status: 128 }, { error: new Error("ENOENT") }]) {
+      const child = { pid: 42, exitCode: null, signalCode: null, kill: vi.fn() };
+      killChild(child, "SIGKILL", { platform: "win32", run: () => r, env: {} });
+      expect(child.kill).toHaveBeenCalledWith("SIGKILL");
+    }
   });
 });

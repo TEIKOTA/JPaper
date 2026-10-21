@@ -276,14 +276,20 @@ export const BUILD_TIMEOUT_MS = 300_000;
 // execFileSync の timeout は直接の子にしか届かず、孫が孤児として生き残るため。
 export const defaultRunner: LatexRunner = (buildDir, signal) =>
   new Promise<RunResult>((resolve) => {
-    const cmd = resolveCommand("latexmk", [
-      "-lualatex",
-      "-no-shell-escape",
-      "-interaction=nonstopmode",
-      "-halt-on-error",
-      "-file-line-error",
-      "main.tex",
-    ]);
+    let cmd: { command: string; args: string[] };
+    try {
+      cmd = resolveCommand("latexmk", [
+        "-lualatex",
+        "-no-shell-escape",
+        "-interaction=nonstopmode",
+        "-halt-on-error",
+        "-file-line-error",
+        "main.tex",
+      ]);
+    } catch {
+      resolve({ code: 1, log: "" });
+      return;
+    }
     const child = spawn(
       cmd.command,
       cmd.args,
