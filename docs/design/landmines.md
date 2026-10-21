@@ -345,3 +345,9 @@
 - **おかしく見える点**: 成果物 PDF に書く更新日時を、ms 単位の `Date` のままでなく、わざわざ秒単位に切り上げてから `utimesSync` で書いている。丸めを外しても意味は変わらないように見える。
 - **なぜ意図的か**: Node は `Date` を秒の小数（double）に直して書く。Linux では `...52.018` が `...52.017999999` として保存され、`mtimeMs` から作った ISO 文字列が 1ms 小さくなる。`node:22-slim` で連続する 1000 個の ms の時刻を試すと 496 個がずれ、秒単位では 0 個だった。macOS では再現しないので、手元で通っても CI（ubuntu）で約半分の確率で落ちる（main の run 38976241376）。
 - **正本ポインタ**: 契約付録 §9（論文の一覧）・issue #435。
+
+## `bin/spawn-cli.mjs` — Windows で npm・pnpm の `.cmd` を読み、中の JS を node で直接起動する
+
+- **おかしく見える点**: Windows で `.cmd` を起動するなら `spawn(..., { shell: true })` で足りるのに、`.cmd` の中身を正規表現で読んで対象の JS のパスを取り出し、`process.execPath` で起動している。
+- **なぜ意図的か**: shell を介すと cmd.exe が引数を解釈し直す。claude には複数行の system prompt を `--append-system-prompt` の引数で渡しており、cmd.exe の引数は改行を運べず、`%`・`^`・`"` も別の意味になる。shell なしで `.cmd` を spawn すると Node は EINVAL で拒む（CVE-2024-27980 の対策）。exe は libuv が引数を正しくクォートする。
+- **正本ポインタ**: 契約付録 §5（Windows での外部コマンドの起動と停止）・issue #462。

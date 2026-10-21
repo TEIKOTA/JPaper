@@ -2,6 +2,7 @@
 import { spawn } from "node:child_process";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { killChild, resolveCommand } from "../../../bin/spawn-cli.mjs";
 
 const root = process.cwd();
 const env = {
@@ -17,15 +18,16 @@ const pidFile = path.join(root, ".jpaper-web", String(process.pid));
 mkdirSync(path.dirname(pidFile), { recursive: true });
 writeFileSync(pidFile, "");
 process.on("exit", () => rmSync(pidFile, { force: true }));
-const children = [
-  spawn("pnpm", ["--filter", "@jpaper/web", "run", "server"], { stdio: "inherit", env }),
-  spawn("pnpm", ["--filter", "@jpaper/web", "run", "dev"], { stdio: "inherit", env }),
-];
+const pnpm = (args) => {
+  const cmd = resolveCommand("pnpm", args, { env });
+  return spawn(cmd.command, cmd.args, { stdio: "inherit", env });
+};
+const children = [pnpm(["--filter", "@jpaper/web", "run", "server"]), pnpm(["--filter", "@jpaper/web", "run", "dev"])];
 let stopping = false;
 const stop = (code) => {
   if (stopping) return;
   stopping = true;
-  for (const c of children) if (c.exitCode === null) c.kill("SIGTERM");
+  for (const c of children) if (c.exitCode === null) killChild(c, "SIGTERM");
   process.exitCode = code;
 };
 for (const c of children) c.on("exit", (code) => stop(code ?? 0));
