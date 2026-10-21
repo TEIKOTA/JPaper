@@ -29,7 +29,7 @@ import {
   commentOutCommentEnvs,
 } from "./bilingual-latex.js";
 import { findUnsafeTexCommands } from "./tex-safety.js";
-import { fastestMs } from "../testing/timing.js";
+import { budgetMs, fastestMs } from "../testing/timing.js";
 
 describe("段落分割", () => {
   it("空行（空白だけの行を含む）で割り、空の段落は捨てる", () => {
@@ -606,7 +606,7 @@ describe("ICML のタイトルブロック（契約付録 §7・§8）", () => {
     ["閉じない \\twocolumn[", "\\twocolumn[\\icmltitle{T}" + "x".repeat(1 << 20)],
     ["閉じないコメントの \\twocolumn[ を各行に", "% \\twocolumn[\n".repeat(70_000)],
   ])("走査は入力長に対して線形（%s・1MiB）", (_label, tex) => {
-    expect(fastestMs(2, () => void unwrapTitleBlock(tex, icml))).toBeLessThan(2000);
+    expect(fastestMs(2, () => void unwrapTitleBlock(tex, icml))).toBeLessThan(budgetMs(2000));
   });
 });
 

@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from "vitest";
-import { fastestMs } from "../testing/timing.js";
+import { budgetMs, fastestMs } from "../testing/timing.js";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, symlinkSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -220,7 +220,7 @@ describe("展開の予算", () => {
       fastestMs(3, () =>
         expect(() => expandInputs(d, "main.tex", { maxBytes: 8 * 1024 * 1024 })).toThrowError(/上限/),
       ),
-    ).toBeLessThan(process.platform === "win32" ? 10_000 : 2000);
+    ).toBeLessThan(budgetMs(2000));
   });
 
   it("解決だけで終わる \\input の羅列も上限で止まる", () => {
@@ -233,7 +233,7 @@ describe("展開の予算", () => {
       fastestMs(2, () =>
         expect(() => expandInputs(d, "main.tex", { maxBytes: 8 * 1024 * 1024 })).toThrowError(/上限/),
       ),
-    ).toBeLessThan(process.platform === "win32" ? 10_000 : 3000);
+    ).toBeLessThan(budgetMs(3000));
   });
 
   it("入れ子の深さにも上限がある", () => {

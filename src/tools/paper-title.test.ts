@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { fastestMs } from "../testing/timing.js";
+import { budgetMs, fastestMs } from "../testing/timing.js";
 import {
   extractTitle,
   findBodyTitle,
@@ -137,7 +137,7 @@ describe("extractTitle", () => {
           extractTitle("\\newif\\ifa".repeat(50_000) + "\\iffalse" + "\\ifa".repeat(50_000)),
         ).toBeUndefined();
       }),
-    ).toBeLessThan(1000);
+    ).toBeLessThan(budgetMs(1000));
   });
 
   it("\\thanks・\\footnote は翻訳対象から外し原文の綴りのまま保持する。\\\\ は本文に残す", () => {
@@ -154,10 +154,10 @@ describe("extractTitle", () => {
     // \title[ は出現ごとに MAX_OPTIONAL_ARG 文字まで読む（tex-spans の \author[ と同じ上限）。
     // 実測（#377）: \title[ 471〜679ms、\title{ 7〜11ms。
     expect(fastestMs(2, () => expect(extractTitle("\\title[".repeat(150_000))).toBeUndefined())).toBeLessThan(
-      2000,
+      budgetMs(2000),
     );
     expect(fastestMs(2, () => expect(extractTitle("\\title{".repeat(150_000))).toBeUndefined())).toBeLessThan(
-      1000,
+      budgetMs(1000),
     );
   });
 });

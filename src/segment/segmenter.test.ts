@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { fastestMs } from "../testing/timing.js";
+import { budgetMs, fastestMs } from "../testing/timing.js";
 import {
   sizeClassFor,
   maxRevisionsFor,
@@ -89,7 +89,7 @@ describe("段落分割のコスト", () => {
         const segs = segment(`\\begin{document}\\section{S}${body}\\end{document}`, 60_000);
         expect(segs.length).toBeGreaterThan(1);
       }),
-    ).toBeLessThan(3000);
+    ).toBeLessThan(budgetMs(3000));
   });
 
   it("足し込みの丸めが連結して数えた値と一致する", () => {

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { fastestMs } from "../testing/timing.js";
+import { budgetMs, fastestMs } from "../testing/timing.js";
 import {
   findUnsafeTexCommands,
   findUnsafeSupportCommands,
@@ -303,14 +303,14 @@ describe("走査コストの上限", () => {
         expect(() => findUnsafeSupportCommands(tex)).toThrowError(/上限/);
         expect(() => findUnsafeTexCommands(tex)).toThrowError(/上限/);
       }),
-    ).toBeLessThan(3000);
+    ).toBeLessThan(budgetMs(3000));
   });
 
   it("閉じない \\csname の羅列で二次にならない", () => {
     // \endcsname を正規表現で探していた頃はマッチ位置ごとに末尾まで走査して O(n²) になり、
     // 1MiB で 144,204ms（上限の 8MiB なら数時間）同期でイベントループを止めた。
     const tex = "\\csname ".repeat(Math.floor((8 * 1024 * 1024) / 8));
-    expect(fastestMs(2, () => expect(() => findUnsafeTexCommands(tex)).toThrowError(/上限/))).toBeLessThan(3000);
+    expect(fastestMs(2, () => expect(() => findUnsafeTexCommands(tex)).toThrowError(/上限/))).toBeLessThan(budgetMs(3000));
   });
 
   it("\\csname 直後の空白詰めで名前照合を外せない", () => {

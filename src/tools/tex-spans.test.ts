@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { fastestMs } from "../testing/timing.js";
+import { budgetMs, fastestMs } from "../testing/timing.js";
 import { commandSpans, dollarSpans, maskChars, MAX_OPTIONAL_ARG, mathSpans, removeSpans, spansOf, verbatimSpans } from "./tex-spans.js";
 
 const slice = (tex: string) => (s: [number, number]) => tex.slice(s[0], s[1]);
@@ -149,8 +149,8 @@ describe("走査コストは入力長に対して線形", () => {
     ["未閉じ \\begin{verbatim}", "\\begin{verbatim}"],
   ])("%s の羅列 1MiB を秒未満で走る", (_label, unit) => {
     const body = rep(unit, 1024 * 1024);
-    expect(fastestMs(2, () => void mathSpans(body, ["equation"]))).toBeLessThan(1_000);
-    expect(fastestMs(2, () => void verbatimSpans(body))).toBeLessThan(1_000);
+    expect(fastestMs(2, () => void mathSpans(body, ["equation"]))).toBeLessThan(budgetMs(1_000));
+    expect(fastestMs(2, () => void verbatimSpans(body))).toBeLessThan(budgetMs(1_000));
   });
 
   it.each([
@@ -159,7 +159,7 @@ describe("走査コストは入力長に対して線形", () => {
     ["閉じた \\author[x] と未閉じの {", "\\author[x]{"],
   ])("commandSpans: %s の羅列 1MiB を 2 秒未満で走る", (_label, unit) => {
     const body = rep(unit, 1024 * 1024);
-    expect(fastestMs(2, () => void commandSpans(body, "author"))).toBeLessThan(2_000);
+    expect(fastestMs(2, () => void commandSpans(body, "author"))).toBeLessThan(budgetMs(2_000));
   });
 
   it.each([
@@ -172,7 +172,7 @@ describe("走査コストは入力長に対して線形", () => {
     ["遠くで閉じる \\mintinline{ と長い空白", "\\mintinline{", "}" + " ".repeat(512 * 1024)],
   ])("%s の羅列 1MiB を伏せるまで 2 秒未満で走る", (_label, unit, tail) => {
     const body = rep(unit, 1024 * 1024) + tail;
-    expect(fastestMs(2, () => void maskChars(body, verbatimSpans(body)))).toBeLessThan(2_000);
+    expect(fastestMs(2, () => void maskChars(body, verbatimSpans(body)))).toBeLessThan(budgetMs(2_000));
   });
 
   it("verbatim 環境が多くても呼び出し引数の上限で落ちない", () => {

@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach, vi } from "vitest";
-import { fastestMs } from "../testing/timing.js";
+import { budgetMs, fastestMs } from "../testing/timing.js";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -124,7 +124,7 @@ describe("図の解決コストの上限", () => {
       { length: 2000 },
       (_, i) => `\\includegraphics{nope${String(i)}}`,
     ).join("");
-    expect(fastestMs(3, () => expect(collectFigures(latex, d)).toEqual([]))).toBeLessThan(500);
+    expect(fastestMs(3, () => expect(collectFigures(latex, d)).toEqual([]))).toBeLessThan(budgetMs(500));
   });
 
   it("\\graphicspath の綴りが長くても memo キーの生成でコストが膨らまない", () => {
@@ -136,7 +136,7 @@ describe("図の解決コストの上限", () => {
     const latex = `\\graphicspath{${inner}}${"\\includegraphics{a}".repeat(20_000)}`;
     expect(
       fastestMs(2, () => expect(collectFigures(latex, d)).toEqual([path.join(d, "a.pdf")])),
-    ).toBeLessThan(3000);
+    ).toBeLessThan(budgetMs(3000));
   });
 
   it("\\graphicspath のディレクトリ数でコストが膨らまない", () => {
@@ -145,7 +145,7 @@ describe("図の解決コストの上限", () => {
     const d = tmp(["fig.png"]);
     const gp = `\\graphicspath{${"{nowhere/}".repeat(4000)}}`;
     const body = Array.from({ length: 1000 }, (_, i) => `\\includegraphics{nope${String(i)}}`).join("");
-    expect(fastestMs(3, () => expect(collectFigures(gp + body, d)).toEqual([]))).toBeLessThan(1000);
+    expect(fastestMs(3, () => expect(collectFigures(gp + body, d)).toEqual([]))).toBeLessThan(budgetMs(1000));
   });
 
   const gdirDecl = `\\graphicspath{${Array.from({ length: 63 }, (_, i) => `{gdir${String(i)}/}`).join("")}}`;
@@ -160,15 +160,14 @@ describe("図の解決コストの上限", () => {
     expect(probes.exists).toBeLessThanOrEqual(200_000);
   });
 
-  // Windows の existsSync は 1 回あたりの CPU 時間が桁違いに長い（windows-latest で予算いっぱいの 200,000 回が 3,110ms）。
-  it.skipIf(process.platform === "win32")("\\graphicspath の宣言数で予算いっぱい走っても 2 秒に収まる", () => {
+  it("\\graphicspath の宣言数で予算いっぱい走っても 2 秒に収まる", () => {
     const d = tmp(["fig.png"]);
     // 単体実行 230ms・全スイート併走 974ms（修正前 1,081ms）。閾値が捕まえるのは
     // 桁違いの回帰だけなので、負荷で伸びた測定を最小値で落とす。
     const input = gdirDecl.repeat(5000);
     expect(
       fastestMs(3, () => expect(() => collectFigures(input, d)).toThrowError(/上限/)),
-    ).toBeLessThan(2000);
+    ).toBeLessThan(budgetMs(2000));
   });
 
   it("実在するディレクトリが多すぎたら too-large", () => {
