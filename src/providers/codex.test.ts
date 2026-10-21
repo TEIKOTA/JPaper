@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
-import { existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { CODEX_DISABLED_FEATURES, codexEnv, makeCodexClient } from "./codex.js";
@@ -138,9 +138,16 @@ describe("makeCodexClient（既定の run: PATH 上の codex を起動）", () =
   // -o の次の引数（最終メッセージの書き出し先）へ書く。
   const WRITE_LAST = 'const writeLast = (s) => fs.writeFileSync(argAfter("-o"), s);';
   const leftovers = (): string[] => readdirSync(os.tmpdir()).filter((f) => f.startsWith("jpaper-codex-"));
+  // os.tmpdir() は POSIX では TMPDIR、Windows では TEMP・TMP を読む。並行する他のテストファイルの
+  // jpaper-codex-* を leftovers に数えないよう、この describe の間だけ専用の dir に向ける（issue #464）。
+  const TMP_KEYS = ["TMPDIR", "TEMP", "TMP"] as const;
+  const origTmp = Object.fromEntries(TMP_KEYS.map((k) => [k, process.env[k]]));
 
   beforeAll(() => {
     root = mkdtempSync(path.join(os.tmpdir(), "jpaper-fakecodex-"));
+    const tmp = path.join(root, "tmp");
+    mkdirSync(tmp);
+    for (const k of TMP_KEYS) process.env[k] = tmp;
   });
   afterEach(() => {
     process.env.PATH = origPath;
@@ -148,7 +155,15 @@ describe("makeCodexClient（既定の run: PATH 上の codex を起動）", () =
     else process.env.CMUX_SURFACE_ID = origSurface;
   });
   afterAll(() => {
+    for (const k of TMP_KEYS) {
+      if (origTmp[k] === undefined) delete process.env[k];
+      else process.env[k] = origTmp[k];
+    }
     rmSync(root, { recursive: true, force: true });
+  });
+
+  it("一時ディレクトリはこの describe 専用の dir に向いている", () => {
+    expect(os.tmpdir()).toBe(path.join(root, "tmp"));
   });
 
   it("一時ディレクトリで起動して -o のファイルから最終メッセージを読み、終わったら一時ディレクトリを消す", async () => {
