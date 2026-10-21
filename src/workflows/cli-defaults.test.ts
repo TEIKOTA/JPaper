@@ -5,6 +5,7 @@ import path from "node:path";
 import { translatePaper } from "./translate-paper.js";
 import { GlossaryDb } from "../terminology/db.js";
 import { makeTar } from "../ingest/archive.fixtures.js";
+import { writeFakeCli } from "../testing/fake-cli.js";
 
 const dirs: string[] = [];
 const saved = { PATH: process.env.PATH, CODEX_HOME: process.env.CODEX_HOME };
@@ -42,16 +43,12 @@ describe("translatePaper: claude・codex の既定（契約付録 §5）", () =>
   // PATH に偽の CLI を置き、渡された引数を 1 行 1 引数でファイルへ書かせる。応答は失敗にし、run は期限（timeoutMs）で早く終わらせる。
   function fakeCli(d: string, name: "claude" | "codex"): string {
     const bin = path.join(d, "bin");
-    mkdirSync(bin, { recursive: true });
     const log = path.join(d, `${name}-args.txt`);
-    const reply =
-      name === "claude"
-        ? `printf '{"foo":1}'`
-        : `out=""; prev=""; for a in "$@"; do [ "$prev" = "-o" ] && out="$a"; prev="$a"; done; printf 'not json' > "$out"`;
-    writeFileSync(
-      path.join(bin, name),
-      `#!/bin/sh\ncat >/dev/null\n: > ${JSON.stringify(log)}\nfor a in "$@"; do printf '%s\\n' "$a" >> ${JSON.stringify(log)}; done\n${reply}\n`,
-      { mode: 0o755 },
+    const reply = name === "claude" ? `process.stdout.write('{"foo":1}');` : `fs.writeFileSync(argAfter("-o"), "not json");`;
+    writeFakeCli(
+      bin,
+      name,
+      `await readStdin();\nfs.writeFileSync(${JSON.stringify(log)}, args.map((a) => a + "\\n").join(""));\n${reply}`,
     );
     process.env.PATH = `${bin}${path.delimiter}${saved.PATH ?? ""}`;
     return log;
