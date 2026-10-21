@@ -153,6 +153,8 @@ describe("makeCodexClient（既定の run: PATH 上の codex を起動）", () =
     process.env.PATH = origPath;
     if (origSurface === undefined) delete process.env.CMUX_SURFACE_ID;
     else process.env.CMUX_SURFACE_ID = origSurface;
+    // どの経路（成功・失敗・中断・起動失敗）でも jpaper-codex-* を残さない（issue #466）
+    expect(leftovers()).toEqual([]);
   });
   afterAll(() => {
     for (const k of TMP_KEYS) {
@@ -173,19 +175,15 @@ describe("makeCodexClient（既定の run: PATH 上の codex を起動）", () =
         `writeLast(\`stdin=\${n} cwd=\${path.basename(process.cwd()).slice(0, 13)} cmux=\${process.env.CMUX_SURFACE_ID ?? "none"}\`);`,
     );
     process.env.CMUX_SURFACE_ID = "surface-1";
-    const before = leftovers();
     const out = await makeCodexClient().complete({ system: "S", user: "x".repeat(200_000) });
     expect(out).toMatch(/^stdin=2\d{5} cwd=jpaper-codex- cmux=none$/);
-    expect(leftovers()).toEqual(before);
   });
 
   it("stdin を読まずに終了しても親プロセスを落とさず provider 失敗にし、一時ディレクトリを消す", async () => {
     useFakeCodex("early-exit", 'process.stderr.write("error: unexpected argument\\n");\nprocess.exit(2);');
-    const before = leftovers();
     await expect(makeCodexClient().complete({ system: "S", user: "x".repeat(1_000_000) })).rejects.toMatchObject({
       kind: "provider",
     });
-    expect(leftovers()).toEqual(before);
   });
 
   it("-o に書かずに終われば provider 失敗（transient）", async () => {
@@ -204,14 +202,12 @@ describe("makeCodexClient（既定の run: PATH 上の codex を起動）", () =
       `${WRITE_LAST}\nawait readStdin();\nconst img = args.find((a) => a.startsWith("--image=")).slice("--image=".length);\n` +
         `writeLast("image=" + fs.readFileSync(img, "utf8"));`,
     );
-    const before = leftovers();
     const out = await makeCodexClient().complete({
       system: "S",
       user: "U",
       images: [{ mediaType: "image/png", data: Buffer.from("PNGDATA") }],
     });
     expect(out).toBe("image=PNGDATA");
-    expect(leftovers()).toEqual(before);
   });
 
   it("stderr が多くても成功した呼び出しは落とさない", async () => {
