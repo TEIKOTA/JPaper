@@ -2,6 +2,7 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
+import { resolveCommand } from "./spawn-cli.mjs";
 
 export const FETCH_TIMEOUT_MS = 5000;
 export const WEB_PID_DIR = ".jpaper-web";
@@ -14,7 +15,13 @@ export function gitEnv(env) {
 }
 
 const defaultRun = (root, env) => (cmd, args, opts = {}) => {
-  const r = spawnSync(cmd, args, {
+  let resolved;
+  try {
+    resolved = resolveCommand(cmd, args, { env });
+  } catch {
+    return { ok: false, stdout: "" };
+  }
+  const r = spawnSync(resolved.command, resolved.args, {
     cwd: root,
     env: cmd === "git" ? gitEnv(env) : env,
     encoding: "utf8",

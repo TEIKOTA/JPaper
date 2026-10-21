@@ -3,6 +3,7 @@ import { spawn } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { killChild, resolveCommand, ShimError, spawnOptions } from "../../bin/spawn-cli.mjs";
 import type { CodexConfig } from "../config.js";
 import type { LlmClient, LlmCallEvent, LlmImage, TraceSink } from "../types/contract.js";
 import { JpaperError } from "../types/errors.js";
@@ -92,16 +93,21 @@ async function defaultRun(
       return `--image=${file}`;
     });
     await new Promise<void>((resolve, reject) => {
-      const child = spawn("codex", [...args, ...imageArgs, "-C", dir, "-o", last, "-"], {
-        cwd: dir,
-        env: codexEnv(process.env),
-        stdio: ["pipe", "ignore", "pipe"],
-      });
+      const cmd = resolveCommand("codex", [...args, ...imageArgs, "-C", dir, "-o", last, "-"]);
+      const child = spawn(
+        cmd.command,
+        cmd.args,
+        spawnOptions({
+          cwd: dir,
+          env: codexEnv(process.env),
+          stdio: ["pipe", "ignore", "pipe"],
+        }),
+      );
       let err = "";
       let canceled = false;
       const onAbort = (): void => {
         canceled = true;
-        child.kill("SIGKILL");
+        killChild(child);
       };
       signal?.addEventListener("abort", onAbort, { once: true });
       const done = (): void => signal?.removeEventListener("abort", onAbort);
@@ -146,6 +152,7 @@ export function makeCodexClient(cfg: CodexConfig = {}, deps: CodexDeps = {}): Ll
         result = await run(codexArgs(cfg, req.webSearch === true), promptFor(req.system, req.user), req.signal, req.images);
       } catch (e) {
         if (e instanceof JpaperError && e.kind === "canceled") throw e;
+        if (e instanceof ShimError) throw new JpaperError(2, "provider", e.message);
         if ((e as { code?: unknown }).code === "ENOENT") {
           throw new JpaperError(2, "provider", "codex が見つかりません（未インストール/PATH 外）");
         }

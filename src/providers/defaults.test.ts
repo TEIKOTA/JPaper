@@ -80,7 +80,13 @@ describe("readCodexModelCache", () => {
     mkdirSync(path.join(home, "rel"));
     writeFileSync(path.join(home, "rel", "models_cache.json"), NOW);
     // 実在する相対パスでも読まない（codex は別の作業ディレクトリで起動するので指す場所がずれる）。
-    expect(readCodexModelCache({ CODEX_HOME: path.relative(process.cwd(), path.join(home, "rel")) }, () => home)).toBeUndefined();
+    const cwd = process.cwd();
+    process.chdir(home);
+    try {
+      expect(readCodexModelCache({ CODEX_HOME: "rel" }, () => home)).toBeUndefined();
+    } finally {
+      process.chdir(cwd);
+    }
     expect(readCodexModelCache({ CODEX_HOME: "  " }, () => home)).toBeUndefined();
     mkdirSync(path.join(home, "dir", "models_cache.json"), { recursive: true });
     expect(readCodexModelCache({ CODEX_HOME: path.join(home, "dir") }, () => home)).toBeUndefined();

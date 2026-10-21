@@ -250,7 +250,8 @@ describe("子プロセスの起動（spawnRunner）", () => {
     expect(grandchild).toBeGreaterThan(0);
     proc.kill();
     const exit = await proc.done;
-    expect(exit.signal).toBe("SIGTERM");
+    // Windows は taskkill /T /F で止め、シグナルは無く終了コードが 1 になる。
+    expect(exit).toEqual(process.platform === "win32" ? { code: 1, signal: null } : { code: null, signal: "SIGTERM" });
     let alive = true;
     for (let i = 0; i < 40 && alive; i++) {
       try {

@@ -84,7 +84,11 @@ describe("loadDotEnv の値の扱い", () => {
   it("パスのキーの先頭の ~/ はホームに展開する", () => {
     const env: NodeJS.ProcessEnv = {};
     loadDotEnv("/r/dotenv", env, () => "JPAPER_HOME=~/jp\nCODEX_HOME=~\nJPAPER_DUMP_RAW=~x/raw\n", () => "/home/u");
-    expect(env).toEqual({ JPAPER_HOME: "/home/u/jp", CODEX_HOME: "/home/u", JPAPER_DUMP_RAW: "/r/~x/raw" });
+    expect(env).toEqual({
+      JPAPER_HOME: path.join("/home/u", "jp"),
+      CODEX_HOME: path.join("/home/u"),
+      JPAPER_DUMP_RAW: path.resolve("/r", "~x", "raw"),
+    });
   });
 
   it("先頭の BOM を外して読む", () => {

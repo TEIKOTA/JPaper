@@ -1,10 +1,12 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { CODEX_DISABLED_FEATURES, codexEnv, makeCodexClient } from "./codex.js";
 import { isTransient } from "../types/errors.js";
 import type { LlmCallEvent } from "../types/contract.js";
+import { writeFakeCli } from "../testing/fake-cli.js";
+import { ShimError } from "../../bin/spawn-cli.mjs";
 
 const ISOLATED = [
   "exec",
@@ -68,6 +70,17 @@ describe("makeCodexClient（契約付録 §5）", () => {
     expect(isTransient(err)).toBe(false);
   });
 
+  it("shim を解けない（ShimError）ときは理由つきの非 transient の code 2", async () => {
+    const c = makeCodexClient({}, {
+      run: async () => {
+        throw new ShimError("C:\\npm\\codex.cmd を直接起動できません（node に追加の引数を渡す shim）");
+      },
+    });
+    const err = await c.complete({ system: "s", user: "u" }).catch((e: unknown) => e);
+    expect(err).toMatchObject({ code: 2, kind: "provider", message: expect.stringContaining("node に追加の引数を渡す shim") });
+    expect(isTransient(err)).toBe(false);
+  });
+
   it("非ゼロ終了は transient な provider 失敗", async () => {
     const c = makeCodexClient({}, {
       run: async () => {
@@ -119,12 +132,11 @@ describe("makeCodexClient（既定の run: PATH 上の codex を起動）", () =
   let root = "";
   const useFakeCodex = (name: string, body: string): void => {
     const dir = path.join(root, name);
-    mkdirSync(dir, { recursive: true });
-    writeFileSync(path.join(dir, "codex"), `#!/bin/sh\n${body}\n`, { mode: 0o755 });
+    writeFakeCli(dir, "codex", body);
     process.env.PATH = `${dir}${path.delimiter}${origPath ?? ""}`;
   };
   // -o の次の引数（最終メッセージの書き出し先）へ書く。
-  const WRITE_LAST = 'out=""; prev=""; for a in "$@"; do [ "$prev" = "-o" ] && out="$a"; prev="$a"; done';
+  const WRITE_LAST = 'const writeLast = (s) => fs.writeFileSync(argAfter("-o"), s);';
   const leftovers = (): string[] => readdirSync(os.tmpdir()).filter((f) => f.startsWith("jpaper-codex-"));
 
   beforeAll(() => {
@@ -142,7 +154,8 @@ describe("makeCodexClient（既定の run: PATH 上の codex を起動）", () =
   it("一時ディレクトリで起動して -o のファイルから最終メッセージを読み、終わったら一時ディレクトリを消す", async () => {
     useFakeCodex(
       "ok",
-      `${WRITE_LAST}\nn=$(wc -c | tr -d ' ')\nprintf 'stdin=%s cwd=%s cmux=%s' "$n" "$(basename "$(pwd -P)" | cut -c1-13)" "\${CMUX_SURFACE_ID:-none}" > "$out"`,
+      `${WRITE_LAST}\nconst n = (await readStdin()).length;\n` +
+        `writeLast(\`stdin=\${n} cwd=\${path.basename(process.cwd()).slice(0, 13)} cmux=\${process.env.CMUX_SURFACE_ID ?? "none"}\`);`,
     );
     process.env.CMUX_SURFACE_ID = "surface-1";
     const before = leftovers();
@@ -152,7 +165,7 @@ describe("makeCodexClient（既定の run: PATH 上の codex を起動）", () =
   });
 
   it("stdin を読まずに終了しても親プロセスを落とさず provider 失敗にし、一時ディレクトリを消す", async () => {
-    useFakeCodex("early-exit", "echo 'error: unexpected argument' >&2\nexit 2");
+    useFakeCodex("early-exit", 'process.stderr.write("error: unexpected argument\\n");\nprocess.exit(2);');
     const before = leftovers();
     await expect(makeCodexClient().complete({ system: "S", user: "x".repeat(1_000_000) })).rejects.toMatchObject({
       kind: "provider",
@@ -161,7 +174,7 @@ describe("makeCodexClient（既定の run: PATH 上の codex を起動）", () =
   });
 
   it("-o に書かずに終われば provider 失敗（transient）", async () => {
-    useFakeCodex("no-output", "cat >/dev/null");
+    useFakeCodex("no-output", "await readStdin();");
     const e = await makeCodexClient()
       .complete({ system: "S", user: "U" })
       .catch((x: unknown) => x);
@@ -173,7 +186,8 @@ describe("makeCodexClient（既定の run: PATH 上の codex を起動）", () =
   it("画像は一時ディレクトリに書いて --image で渡す（契約付録 §8 PDF 入力）", async () => {
     useFakeCodex(
       "image",
-      `${WRITE_LAST}\ncat >/dev/null\nimg=""; for a in "$@"; do case "$a" in --image=*) img="\${a#--image=}";; esac; done\nprintf 'image=%s' "$(cat "$img")" > "$out"`,
+      `${WRITE_LAST}\nawait readStdin();\nconst img = args.find((a) => a.startsWith("--image=")).slice("--image=".length);\n` +
+        `writeLast("image=" + fs.readFileSync(img, "utf8"));`,
     );
     const before = leftovers();
     const out = await makeCodexClient().complete({
@@ -186,12 +200,12 @@ describe("makeCodexClient（既定の run: PATH 上の codex を起動）", () =
   });
 
   it("stderr が多くても成功した呼び出しは落とさない", async () => {
-    useFakeCodex("noisy", `${WRITE_LAST}\ncat >/dev/null\nhead -c 3000000 /dev/zero | tr '\\0' 'e' >&2\nprintf '訳文' > "$out"`);
+    useFakeCodex("noisy", `${WRITE_LAST}\nawait readStdin();\nprocess.stderr.write("e".repeat(3_000_000));\nwriteLast("訳文");`);
     expect(await makeCodexClient().complete({ system: "S", user: "U" })).toBe("訳文");
   });
 
   it("中断で子プロセスを止め、canceled で返す", async () => {
-    useFakeCodex("slow", "cat >/dev/null\nexec sleep 30");
+    useFakeCodex("slow", "await readStdin();\nawait new Promise((r) => setTimeout(r, 30_000));");
     const ac = new AbortController();
     const p = makeCodexClient().complete({ system: "S", user: "U", signal: ac.signal });
     setTimeout(() => ac.abort(), 200);

@@ -19,7 +19,7 @@ function deps(installed: boolean, installCode: { code: number | undefined } = { 
       stderr: (s: string) => err.push(s),
       web: {
         root: ROOT,
-        cwd: "/work",
+        cwd: path.resolve("/work"),
         env: { JPAPER_HOME: "home", PATH: "/bin" },
         files: {
           exists: (p: string) => installed || !p.endsWith(path.join("apps", "web", "node_modules")),
@@ -44,7 +44,11 @@ describe("jpaper web（契約付録 §5・issue #410）", () => {
     const d = deps(true);
     expect(await runCli(["node", "jpaper", "web"], d.cli)).toBe(0);
     expect(d.calls).toEqual([`serve ${ROOT}`]);
-    expect(d.served()).toMatchObject({ JPAPER_ARTICLE_DIR: "/work/article", JPAPER_HOME: "/work/home", PATH: "/bin" });
+    expect(d.served()).toMatchObject({
+      JPAPER_ARTICLE_DIR: path.resolve("/work", "article"),
+      JPAPER_HOME: path.resolve("/work", "home"),
+      PATH: "/bin",
+    });
   });
 
   it("Web アプリの依存が無ければ、先に repo で pnpm install を実行する", async () => {
@@ -86,25 +90,36 @@ describe("jpaper web（契約付録 §5・issue #410）", () => {
     expect(needsInstall("/r", f("v2", false))).toBe(true);
   });
 
-  it("Web アプリの起動用のファイルは repo にあり、終了コード・シグナルでの終わりを伝える", async () => {
+  it("Web アプリの起動用のファイルは repo にあり、終了コードでの終わりを伝える", async () => {
     expect(existsSync(path.join(REPO_ROOT, DEV_SCRIPT))).toBe(true);
     const dir = mkdtempSync(path.join(os.tmpdir(), "jpaper-web-"));
     try {
       mkdirSync(path.join(dir, "s"));
       writeFileSync(path.join(dir, "s", "exit.mjs"), "process.exit(Number(process.env.CODE));\n");
-      writeFileSync(path.join(dir, "s", "kill.mjs"), "process.kill(process.pid, 'SIGTERM');\nsetTimeout(() => {}, 5000);\n");
       expect(await serve(dir, { ...process.env, CODE: "7" }, path.join("s", "exit.mjs"))).toBe(7);
-      expect(await serve(dir, process.env, path.join("s", "kill.mjs"))).toBe(143);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
     expect(exitCodeOf(null, null)).toBe(1);
+    expect(exitCodeOf(null, "SIGTERM")).toBe(143);
+  });
+
+  // Windows の process.kill(pid, "SIGTERM") は終了コード 1 での強制終了で、親にシグナルとして届かない。
+  it.skipIf(process.platform === "win32")("シグナルで終わった子は 128 + シグナルの番号を伝える", async () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), "jpaper-web-"));
+    try {
+      writeFileSync(path.join(dir, "kill.mjs"), "process.kill(process.pid, 'SIGTERM');\nsetTimeout(() => {}, 5000);\n");
+      expect(await serve(dir, process.env, "kill.mjs")).toBe(143);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("環境変数の相対パスは実行した場所から、絶対パスはそのまま", () => {
-    expect(webEnv("/w", { JPAPER_ARTICLE_DIR: "papers", JPAPER_GLOSSARY_DB: "/abs/g.db" })).toMatchObject({
-      JPAPER_ARTICLE_DIR: "/w/papers",
-      JPAPER_GLOSSARY_DB: "/abs/g.db",
+    const abs = path.resolve("/abs/g.db");
+    expect(webEnv(path.resolve("/w"), { JPAPER_ARTICLE_DIR: "papers", JPAPER_GLOSSARY_DB: abs })).toMatchObject({
+      JPAPER_ARTICLE_DIR: path.resolve("/w", "papers"),
+      JPAPER_GLOSSARY_DB: abs,
     });
   });
 });

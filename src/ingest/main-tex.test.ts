@@ -214,26 +214,26 @@ describe("展開の予算", () => {
         i === 25 ? "終端" : `\\input{l${String(i + 1)}}\\input{l${String(i + 1)}}`;
     }
     const d = tmp(files);
-    // 単体実行 80ms・全スイート併走 758ms（修正前 1,096ms）。閾値が捕まえるのは
+    // 単体実行 80ms・全スイート併走 758ms（修正前 1,096ms）、windows-latest の併走 2,235ms。閾値が捕まえるのは
     // 桁違いの回帰だけなので、負荷で伸びた測定を最小値で落とす。
     expect(
       fastestMs(3, () =>
         expect(() => expandInputs(d, "main.tex", { maxBytes: 8 * 1024 * 1024 })).toThrowError(/上限/),
       ),
-    ).toBeLessThan(2000);
+    ).toBeLessThan(process.platform === "win32" ? 10_000 : 2000);
   });
 
   it("解決だけで終わる \\input の羅列も上限で止まる", () => {
     // 不在先への \input は展開もバイトも増やさないのに existsSync と realpathSync を叩く。
     // 実測 3.8MB（gzip すれば数 KB）の羅列が 1,096ms 同期でイベントループを止め、
-    // しかも 47 バイトを返して「成功」していた。
+    // しかも 47 バイトを返して「成功」していた。Windows の existsSync は 1 回あたりが重い（resolve.test.ts）。
     const body = "\\input{zz}".repeat(400_000);
     const d = tmp({ "main.tex": `\\documentclass{a}\\begin{document}${body}\\end{document}` });
     expect(
       fastestMs(2, () =>
         expect(() => expandInputs(d, "main.tex", { maxBytes: 8 * 1024 * 1024 })).toThrowError(/上限/),
       ),
-    ).toBeLessThan(3000);
+    ).toBeLessThan(process.platform === "win32" ? 10_000 : 3000);
   });
 
   it("入れ子の深さにも上限がある", () => {

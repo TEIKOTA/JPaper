@@ -5,6 +5,7 @@ import { randomBytes } from "node:crypto";
 import { copyFileSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
+import { killTree, spawnOptions } from "../../../bin/spawn-cli.mjs";
 import { derivePaperId } from "../../../src/ingest/index.js";
 import { JpaperError } from "../../../src/types/errors.js";
 import { cliArgs, type TranslateOptions } from "./translate-options.js";
@@ -152,12 +153,16 @@ export function cliCommand(repoRoot: string, args: string[]): { command: string;
 }
 
 export const spawnRunner: JobRunner = (spec, onLine) => {
-  const child = spawn(spec.command, spec.args, {
-    cwd: spec.cwd,
-    env: spec.env,
-    detached: true,
-    stdio: ["ignore", "pipe", "pipe"],
-  });
+  const child = spawn(
+    spec.command,
+    spec.args,
+    spawnOptions({
+      cwd: spec.cwd,
+      env: spec.env,
+      detached: true,
+      stdio: ["ignore", "pipe", "pipe"],
+    }),
+  );
   for (const [name, stream] of [
     ["stdout", child.stdout],
     ["stderr", child.stderr],
@@ -188,14 +193,7 @@ export const spawnRunner: JobRunner = (spec, onLine) => {
       setTimeout(() => resolve({ code, signal }), CLOSE_GRACE_MS).unref();
     });
   });
-  const signalGroup = (sig: NodeJS.Signals): void => {
-    if (child.pid === undefined) return;
-    try {
-      process.kill(-child.pid, sig);
-    } catch {
-      // 既に終わっている。
-    }
-  };
+  const signalGroup = (sig: NodeJS.Signals): void => killTree(child.pid, sig);
   let exited = false;
   void done.then(() => {
     exited = true;
@@ -203,6 +201,7 @@ export const spawnRunner: JobRunner = (spec, onLine) => {
   return {
     done,
     kill: () => {
+      if (exited) return;
       signalGroup("SIGTERM");
       setTimeout(() => {
         if (!exited) signalGroup("SIGKILL");

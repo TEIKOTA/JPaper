@@ -139,8 +139,10 @@ describe("設定 API（契約付録 §9）", () => {
   });
 
   it("設定ファイルの場所は JPAPER_HOME/web-settings.json", () => {
-    expect(configFromEnv({ JPAPER_HOME: "/h" }, "/w").settingsPath).toBe("/h/web-settings.json");
-    expect(configFromEnv({ JPAPER_HOME: "rel" }, "/w").settingsPath).toBe("/w/rel/web-settings.json");
+    const h = path.resolve("/h");
+    const w = path.resolve("/w");
+    expect(configFromEnv({ JPAPER_HOME: h }, w).settingsPath).toBe(path.join(h, "web-settings.json"));
+    expect(configFromEnv({ JPAPER_HOME: "rel" }, w).settingsPath).toBe(path.join(w, "rel", "web-settings.json"));
     expect(configFromEnv({ HOME: "/x" }, "/w").settingsPath).toMatch(/[\\/]\.jpaper[\\/]web-settings\.json$/);
   });
 });

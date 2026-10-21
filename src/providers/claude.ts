@@ -1,6 +1,7 @@
 // 契約付録 §5・§8。claude プロバイダ（純変換器化した公式 CLI subprocess）。
 import { spawn } from "node:child_process";
 import os from "node:os";
+import { killChild, resolveCommand, ShimError, spawnOptions } from "../../bin/spawn-cli.mjs";
 import type { ClaudeConfig } from "../config.js";
 import type { LlmClient, LlmCallEvent, LlmCallMeta, LlmImage, TraceSink } from "../types/contract.js";
 import { JpaperError } from "../types/errors.js";
@@ -65,14 +66,15 @@ async function defaultRun(args: string[], input: string, signal?: AbortSignal): 
   if (signal?.aborted === true) throw canceledError("claude 起動前");
   return new Promise((resolve, reject) => {
     // ⚠ landmines.md
-    const child = spawn("claude", args, { cwd: os.tmpdir(), stdio: ["pipe", "pipe", "pipe"] });
+    const cmd = resolveCommand("claude", args);
+    const child = spawn(cmd.command, cmd.args, spawnOptions({ cwd: os.tmpdir(), stdio: ["pipe", "pipe", "pipe"] }));
     let out = "";
     let err = "";
     let canceled = false;
     // 中断されたら子プロセスを落とす。放置すると web でクライアント切断後も課金が続く。
     const onAbort = (): void => {
       canceled = true;
-      child.kill("SIGKILL");
+      killChild(child);
     };
     signal?.addEventListener("abort", onAbort, { once: true });
     const done = (): void => signal?.removeEventListener("abort", onAbort);
@@ -81,7 +83,7 @@ async function defaultRun(args: string[], input: string, signal?: AbortSignal): 
     let overflowed = false;
     const overflow = (): void => {
       overflowed = true;
-      child.kill("SIGKILL");
+      killChild(child);
     };
     child.stdout.on("data", (d) => {
       if (overflowed) return;
@@ -177,6 +179,7 @@ export function makeClaudeClient(cfg: ClaudeConfig = {}, deps: ClaudeDeps = {}):
         if (images.length > 0) stdout = resultLine(stdout);
       } catch (e) {
         if (e instanceof JpaperError && e.kind === "canceled") throw e;
+        if (e instanceof ShimError) throw new JpaperError(2, "provider", e.message);
         if ((e as { code?: unknown }).code === "ENOENT") {
           throw new JpaperError(2, "provider", "claude が見つかりません（未インストール/PATH 外）");
         }

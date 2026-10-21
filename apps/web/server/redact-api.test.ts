@@ -174,10 +174,11 @@ describe("伏せ字つきの翻訳ジョブ（契約付録 §9）", () => {
     expect(r.status).toBe(201);
     expect(t.seen).toHaveLength(1);
     expect(t.seen[0]!.text).toBe("Hanako Yamada\nYamada\n");
-    expect(t.seen[0]!.mode).toBe(0o600);
+    // Windows の mode は読み取り専用の属性だけを表し、読める主体はフォルダから継いだ ACL が決める。
+    if (process.platform !== "win32") expect(t.seen[0]!.mode).toBe(0o600);
     expect(path.dirname(t.seen[0]!.file)).toBe(t.redactDir);
     // 入力は作業フォルダの PDF そのもの（source/ へコピーしない）。
-    expect(t.specs[0]![2]).toMatch(new RegExp(`web-uploads/${id}\\.pdf$`));
+    expect(t.specs[0]![2]).toMatch(new RegExp(`web-uploads[\\\\/]${id}\\.pdf$`));
     expect(existsSync(path.join(t.articleDir, `${id}-ja`, "source"))).toBe(false);
     // ジョブの一覧には語の数だけを載せる。
     expect(JSON.stringify(t.jobs.list())).not.toContain("Yamada");

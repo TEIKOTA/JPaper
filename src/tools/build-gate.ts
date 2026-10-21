@@ -2,6 +2,7 @@
 import { existsSync, mkdirSync, rmSync, writeFileSync, cpSync, readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { execFileSync, spawn } from "node:child_process";
+import { killTree, resolveCommand, spawnOptions } from "../../bin/spawn-cli.mjs";
 import { segmentAtLine, type SourceSpan } from "./assemble-latex.js";
 import { throwIfAborted } from "../runtime/cancellation.js";
 import { findUnsafeTexCommands, findUnsafeSupportCommands } from "./tex-safety.js";
@@ -116,7 +117,7 @@ export function checkFigures(mainTex: string, mainDir: string, figures: string[]
   const dropped: string[] = [];
   for (const fig of figures) {
     const abs = path.isAbsolute(fig) ? fig : path.join(mainDir, fig);
-    const rel = path.relative(mainDir, abs);
+    const rel = path.relative(mainDir, abs).split(path.sep).join("/");
     const stem = rel.replace(/\.[^./]+$/, "");
     if (!hay.includes(stem) && !hay.includes(path.basename(stem))) dropped.push(rel);
   }
@@ -254,9 +255,9 @@ export function sandboxEnv(base: NodeJS.ProcessEnv, buildDir: string): NodeJS.Pr
   return {
     ...base,
     // 先頭の空要素で既定パスを前に置く＝同名なら配布パッケージが勝つ。
-    TEXINPUTS: `:${pkg}`,
-    BIBINPUTS: `:${pkg}`,
-    BSTINPUTS: `:${pkg}`,
+    TEXINPUTS: `${path.delimiter}${pkg}`,
+    BIBINPUTS: `${path.delimiter}${pkg}`,
+    BSTINPUTS: `${path.delimiter}${pkg}`,
     openout_any: "p",
     shell_escape: "f",
   };
@@ -275,22 +276,29 @@ export const BUILD_TIMEOUT_MS = 300_000;
 // execFileSync の timeout は直接の子にしか届かず、孫が孤児として生き残るため。
 export const defaultRunner: LatexRunner = (buildDir, signal) =>
   new Promise<RunResult>((resolve) => {
-    const child = spawn(
-      "latexmk",
-      [
+    let cmd: { command: string; args: string[] };
+    try {
+      cmd = resolveCommand("latexmk", [
         "-lualatex",
         "-no-shell-escape",
         "-interaction=nonstopmode",
         "-halt-on-error",
         "-file-line-error",
         "main.tex",
-      ],
-      {
+      ]);
+    } catch (e) {
+      resolve({ code: 1, log: `latexmk を起動できません: ${(e as Error).message}` });
+      return;
+    }
+    const child = spawn(
+      cmd.command,
+      cmd.args,
+      spawnOptions({
         cwd: buildDir,
         stdio: ["ignore", "ignore", "ignore"],
         env: sandboxEnv(process.env, buildDir),
         detached: true,
-      },
+      }),
     );
     let settled = false;
     const finish = (code: number): void => {
@@ -301,12 +309,12 @@ export const defaultRunner: LatexRunner = (buildDir, signal) =>
       resolve({ code, log: readLog(buildDir) });
     };
     const timer = setTimeout(() => {
-      killGroup(child.pid);
+      killTree(child.pid);
       finish(1);
     }, BUILD_TIMEOUT_MS);
     // 中断もタイムアウトと同じ扱い。孫（lualatex）ごと落とす。
     const onAbort = (): void => {
-      killGroup(child.pid);
+      killTree(child.pid);
       finish(1);
     };
     if (signal?.aborted === true) onAbort();
@@ -315,18 +323,6 @@ export const defaultRunner: LatexRunner = (buildDir, signal) =>
     child.on("close", (code) => finish(code ?? 1));
   });
 
-export function killGroup(pid: number | undefined): void {
-  if (pid === undefined) return;
-  try {
-    process.kill(-pid, "SIGKILL"); // 負の pid＝プロセスグループ全体
-  } catch {
-    try {
-      process.kill(pid, "SIGKILL");
-    } catch {
-      // 既に終了している
-    }
-  }
-}
 
 export async function runBuildGate(
   input: {

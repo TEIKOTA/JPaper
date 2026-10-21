@@ -101,7 +101,8 @@ describe("用語集の一覧（契約付録 §9）", () => {
 
 describe("論文の一覧の作成日と更新日（契約付録 §9）", () => {
   it("更新日は glossary.md などと成果物 PDF の最も新しい更新日時、作成日より古ければ作成日", () => {
-    const { articleDir, paperDirs } = setup();
+    const { articleDir, paperDirs, db } = setup();
+    db.close();
     const [first, second] = paperDirs as [string, string];
     const created = fs.statSync(first).birthtimeMs;
     // ⚠ landmines.md

@@ -217,10 +217,12 @@ describe("用語集 Web API（契約付録 §9）", () => {
   });
 
   it("データの場所は CLI と同じ既定（CWD の article/）で、環境変数で変えられる", () => {
-    expect(configFromEnv({}, "/w").articleDir).toBe("/w/article");
-    expect(configFromEnv({ JPAPER_ARTICLE_DIR: "x/y", JPAPER_GLOSSARY_DB: "/t/g.db" }, "/w")).toMatchObject({
-      articleDir: "/w/x/y",
-      dbPath: "/t/g.db",
+    const w = path.resolve("/w");
+    const db = path.resolve("/t/g.db");
+    expect(configFromEnv({}, w).articleDir).toBe(path.join(w, "article"));
+    expect(configFromEnv({ JPAPER_ARTICLE_DIR: "x/y", JPAPER_GLOSSARY_DB: db }, w)).toMatchObject({
+      articleDir: path.join(w, "x", "y"),
+      dbPath: db,
     });
     expect(configFromEnv({ JPAPER_WEB_PORT: "6000", JPAPER_WEB_API_PORT: "6001" }, "/w").origins).toEqual([
       "http://127.0.0.1:6000",

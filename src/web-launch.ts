@@ -4,6 +4,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { constants } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { killChild, resolveCommand } from "../bin/spawn-cli.mjs";
 
 export const REPO_ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 
@@ -57,7 +58,13 @@ export interface WebDeps {
 }
 
 const install = (root: string): number | undefined => {
-  const r = spawnSync("pnpm", ["install", "--frozen-lockfile"], { cwd: root, stdio: "inherit" });
+  let cmd: { command: string; args: string[] };
+  try {
+    cmd = resolveCommand("pnpm", ["install", "--frozen-lockfile"]);
+  } catch {
+    return undefined;
+  }
+  const r = spawnSync(cmd.command, cmd.args, { cwd: root, stdio: "inherit" });
   return r.error === undefined ? (r.status ?? 1) : undefined;
 };
 
@@ -72,7 +79,10 @@ export function serve(root: string, env: NodeJS.ProcessEnv, script = DEV_SCRIPT)
     const child = spawn(process.execPath, [path.join(root, script)], { cwd: root, env, stdio: "inherit" });
     // SIGINT・SIGTERM・SIGHUP は子（dev.mjs）へ渡し、子の終わりを待つ。
     const forward = (signal: NodeJS.Signals): void => {
-      if (child.exitCode === null && child.signalCode === null) child.kill(signal);
+      if (child.exitCode !== null || child.signalCode !== null) return;
+      // 契約付録 §5「Windows での外部コマンドの起動と停止」
+      if (process.platform === "win32" && signal === "SIGINT") return;
+      killChild(child, signal);
     };
     const signals = ["SIGINT", "SIGTERM", "SIGHUP"] as const;
     for (const s of signals) process.on(s, forward);

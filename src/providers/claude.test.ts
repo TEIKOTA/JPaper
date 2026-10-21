@@ -1,10 +1,12 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { usedModel, makeClaudeClient, MAX_TURNS, WEB_SEARCH_MAX_TURNS } from "./claude.js";
 import { isTransient } from "../types/errors.js";
 import type { LlmCallEvent } from "../types/contract.js";
+import { writeFakeCli } from "../testing/fake-cli.js";
+import { ShimError } from "../../bin/spawn-cli.mjs";
 
 describe("makeClaudeClient", () => {
   it("result を抽出し・必須フラグを渡し・未指定なら model / effort は渡さない", async () => {
@@ -145,6 +147,17 @@ describe("makeClaudeClient", () => {
     }
   });
 
+  it("shim を解けない（ShimError）ときは理由つきの非 transient の code 2", async () => {
+    const c = makeClaudeClient({}, {
+      run: async () => {
+        throw new ShimError("C:\\npm\\claude.cmd を直接起動できません（環境変数を設定する shim）");
+      },
+    });
+    const err = await c.complete({ system: "s", user: "u" }).catch((e: unknown) => e);
+    expect(err).toMatchObject({ code: 2, kind: "provider", message: expect.stringContaining("環境変数を設定する shim") });
+    expect(isTransient(err)).toBe(false);
+  });
+
   it("成功呼び出しで usage/コスト/latency/meta をトレースに emit する", async () => {
     const events: LlmCallEvent[] = [];
     let t = 1000;
@@ -257,8 +270,7 @@ describe("makeClaudeClient（既定の run: PATH 上の claude を起動）", ()
   let root = "";
   const useFakeClaude = (name: string, body: string): void => {
     const dir = path.join(root, name);
-    mkdirSync(dir, { recursive: true });
-    writeFileSync(path.join(dir, "claude"), `#!/bin/sh\n${body}\n`, { mode: 0o755 });
+    writeFakeCli(dir, "claude", body);
     process.env.PATH = `${dir}${path.delimiter}${origPath ?? ""}`;
   };
 
@@ -273,7 +285,10 @@ describe("makeClaudeClient（既定の run: PATH 上の claude を起動）", ()
   });
 
   it("大きなプロンプト本文を stdin で子プロセスへ渡し、引数には載せない", async () => {
-    useFakeClaude("echo", `n=$(wc -c | tr -d ' ')\nprintf '{"result":"stdin=%s argc=%s"}' "$n" "$#"`);
+    useFakeClaude(
+      "echo",
+      `const n = (await readStdin()).length;\nprocess.stdout.write(JSON.stringify({ result: \`stdin=\${n} argc=\${args.length}\` }));`,
+    );
     const user = "x".repeat(200_000);
     const c = makeClaudeClient();
     expect(await c.complete({ system: "SYS", user })).toBe("stdin=200000 argc=10");
@@ -282,19 +297,20 @@ describe("makeClaudeClient（既定の run: PATH 上の claude を起動）", ()
   it("repo の外（os.tmpdir()）で --safe-mode 付きで起動し、利用者・プロジェクトの設定や hook を読ませない", async () => {
     useFakeClaude(
       "where",
-      `cat >/dev/null\nsafe=no\nfor a in "$@"; do [ "$a" = "--safe-mode" ] && safe=yes; done\nprintf '{"result":"cwd=%s safe=%s"}' "$(pwd -P)" "$safe"`,
+      `await readStdin();\nconst safe = args.includes("--safe-mode") ? "yes" : "no";\n` +
+        `process.stdout.write(JSON.stringify({ result: \`cwd=\${fs.realpathSync.native(process.cwd())} safe=\${safe}\` }));`,
     );
     const c = makeClaudeClient();
-    const tmp = realpathSync(os.tmpdir());
+    const tmp = realpathSync.native(os.tmpdir());
     expect(await c.complete({ system: "SYS", user: "USR" })).toBe(`cwd=${tmp} safe=yes`);
   });
 
   it("画像は stream-json の入力で渡し、出力の result 行を読む（契約付録 §8 PDF 入力）", async () => {
     useFakeClaude(
       "image",
-      `in=$(cat)\nfmt=""; prev=""; for a in "$@"; do [ "$prev" = "--input-format" ] && fmt="$a"; prev="$a"; done\n` +
-        `case "$in" in *'"type":"image"'*UE5HREFUQQ==*) img=yes;; *) img=no;; esac\n` +
-        `printf '{"type":"system"}\\n{"type":"result","result":"fmt=%s img=%s","total_cost_usd":0.03}\\n' "$fmt" "$img"`,
+      `const input = String(await readStdin());\nconst fmt = argAfter("--input-format") ?? "";\n` +
+        `const img = /"type":"image".*UE5HREFUQQ==/s.test(input) ? "yes" : "no";\n` +
+        `process.stdout.write('{"type":"system"}\\n' + JSON.stringify({ type: "result", result: \`fmt=\${fmt} img=\${img}\`, total_cost_usd: 0.03 }) + "\\n");`,
     );
     const c = makeClaudeClient();
     const out = await c.complete({
@@ -306,7 +322,7 @@ describe("makeClaudeClient（既定の run: PATH 上の claude を起動）", ()
   });
 
   it("stdin を読まずに終了しても親プロセスを落とさず provider 失敗にする", async () => {
-    useFakeClaude("early-exit", "exit 3");
+    useFakeClaude("early-exit", "process.exit(3);");
     const c = makeClaudeClient();
     await expect(c.complete({ system: "SYS", user: "x".repeat(1_000_000) })).rejects.toMatchObject({
       code: 2,
