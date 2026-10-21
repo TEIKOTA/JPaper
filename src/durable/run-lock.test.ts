@@ -92,7 +92,8 @@ describe("保持者の生存判定", () => {
   it("EPERM（他ユーザ所有の生存プロセス）は生存として扱う", () => {
     // pid 1 は必ず存在し、非 root からは kill(1,0) が EPERM になる。
     // catch 一括で false にすると、コンテナで pid 1 がアプリ本体のとき生きたロックを奪う。
-    expect(pidAlive(1)).toBe(true);
+    // Windows に pid 1 は無く、pid 4（System）が必ず存在し、kill(4,0) が EPERM になる。
+    expect(pidAlive(process.platform === "win32" ? 4 : 1)).toBe(true);
   });
 
   it("存在しない pid だけを死亡と判定する", () => {

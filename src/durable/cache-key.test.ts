@@ -23,7 +23,8 @@ describe("loadCacheKey", () => {
     expect(loadCacheKey(home).equals(first)).toBe(true);
   });
 
-  it("鍵ファイルは所有者のみ読める（.run に書ける主体へ渡さない）", () => {
+  // Windows の mode は読み取り専用の属性だけを表し、読める主体はフォルダから継いだ ACL が決める。
+  it.skipIf(process.platform === "win32")("鍵ファイルは所有者のみ読める（.run に書ける主体へ渡さない）", () => {
     const home = tmp();
     loadCacheKey(home);
     const file = path.join(home, "cache.key");

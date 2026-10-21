@@ -20,6 +20,13 @@ function linkedCwd(): { dir: string; link: string } {
   return { dir, link };
 }
 
+// Windows は shebang で起動できず、pnpm link --global が置く jpaper.cmd が node で bin/jpaper.mjs を起動する。
+function runLinked(link: string, dir: string) {
+  const args = ["2601.20627", "--provider", "bogus"];
+  const [command, argv] = process.platform === "win32" ? [process.execPath, [link, ...args]] : [link, args];
+  return spawnSync(command, argv, { cwd: dir, encoding: "utf8", timeout: 30_000, env: { ...process.env, JPAPER_NO_UPDATE: "1" } });
+}
+
 describe("jpaper コマンド（bin/jpaper.mjs）", () => {
   it("package.json の bin が起動用のファイルを指す", () => {
     const pkg = JSON.parse(readFileSync(join(repo, "package.json"), "utf8")) as { bin: Record<string, string> };
@@ -28,7 +35,7 @@ describe("jpaper コマンド（bin/jpaper.mjs）", () => {
 
   it("repo の外の symlink から、repo の外のディレクトリで起動しても CLI が動く", () => {
     const { dir, link } = linkedCwd();
-    const r = spawnSync(link, ["2601.20627", "--provider", "bogus"], { cwd: dir, encoding: "utf8", timeout: 30_000, env: { ...process.env, JPAPER_NO_UPDATE: "1" } });
+    const r = runLinked(link, dir);
     expect(r.error).toBeUndefined();
     expect(r.stderr).toContain("--provider は ollama|claude|codex|openrouter のいずれか");
     expect(r.status).toBe(2);
@@ -39,7 +46,7 @@ describe("jpaper コマンド（bin/jpaper.mjs）", () => {
     const marker = join(dir, "evil-loaded");
     writeFileSync(join(dir, "tsconfig.json"), JSON.stringify({ compilerOptions: { baseUrl: ".", paths: { zod: ["./evil.ts"] } } }));
     writeFileSync(join(dir, "evil.ts"), `import { writeFileSync } from "node:fs";\nwriteFileSync(${JSON.stringify(marker)}, "x");\nexport const z = {};\n`);
-    const r = spawnSync(link, ["2601.20627", "--provider", "bogus"], { cwd: dir, encoding: "utf8", timeout: 30_000, env: { ...process.env, JPAPER_NO_UPDATE: "1" } });
+    const r = runLinked(link, dir);
     expect(existsSync(marker)).toBe(false);
     expect(r.stderr).toContain("--provider は ollama|claude|codex|openrouter のいずれか");
     expect(r.status).toBe(2);

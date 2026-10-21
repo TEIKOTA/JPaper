@@ -1,9 +1,21 @@
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
 import { fastestMs } from "../testing/timing.js";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { collectFigures } from "./resolve.js";
+
+const probes = vi.hoisted(() => ({ exists: 0 }));
+vi.mock("node:fs", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs")>();
+  return {
+    ...actual,
+    existsSync: (p: Parameters<typeof actual.existsSync>[0]) => {
+      probes.exists++;
+      return actual.existsSync(p);
+    },
+  };
+});
 
 const dirs: string[] = [];
 function tmp(files: string[]): string {
@@ -136,14 +148,24 @@ describe("図の解決コストの上限", () => {
     expect(fastestMs(3, () => expect(collectFigures(gp + body, d)).toEqual([]))).toBeLessThan(1000);
   });
 
+  const gdirDecl = `\\graphicspath{${Array.from({ length: 63 }, (_, i) => `{gdir${String(i)}/}`).join("")}}`;
+
   it("\\graphicspath の宣言数も予算に計上する", () => {
     // ディレクトリ数は 64 で抑えたが、宣言そのものは maxLatexBytes まで並べられる。
     // 計上していなかった頃は 8MiB の入力で existsSync が 92 万回走り 1,081ms 止まった。
     const d = tmp(["fig.png"]);
-    const decl = `\\graphicspath{${Array.from({ length: 63 }, (_, i) => `{gdir${String(i)}/}`).join("")}}`;
+    // 5,000 宣言 × 63 ディレクトリ = 315,000 回の手前、予算の 200,000 回で止まる。
+    probes.exists = 0;
+    expect(() => collectFigures(gdirDecl.repeat(5000), d)).toThrowError(/上限/);
+    expect(probes.exists).toBeLessThanOrEqual(200_000);
+  });
+
+  // Windows の existsSync は 1 回あたりの CPU 時間が桁違いに長い（windows-latest で予算いっぱいの 200,000 回が 3,110ms）。
+  it.skipIf(process.platform === "win32")("\\graphicspath の宣言数で予算いっぱい走っても 2 秒に収まる", () => {
+    const d = tmp(["fig.png"]);
     // 単体実行 230ms・全スイート併走 974ms（修正前 1,081ms）。閾値が捕まえるのは
     // 桁違いの回帰だけなので、負荷で伸びた測定を最小値で落とす。
-    const input = decl.repeat(5000);
+    const input = gdirDecl.repeat(5000);
     expect(
       fastestMs(3, () => expect(() => collectFigures(input, d)).toThrowError(/上限/)),
     ).toBeLessThan(2000);
