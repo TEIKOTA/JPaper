@@ -28,7 +28,7 @@ const NPM_CODEX =
 
 // pnpm（@zkochan/cmd-shim 9）が生成した実物（行末は CRLF）。
 const PNPM_SHIM =
-  "@SETLOCAL\n@IF NOT DEFINED NODE_PATH (\n  @SET \"NODE_PATH=C:\\x\\node_modules\"\n) ELSE (\n  @SET \"NODE_PATH=C:\\x\\node_modules;%NODE_PATH%\"\n)\n@IF EXIST \"%~dp0\\node.exe\" (\n  \"%~dp0\\node.exe\"  \"%~dp0\\global\\5\\node_modules\\@openai\\codex\\bin\\codex.js\" %*\n) ELSE (\n  @SET PATHEXT=%PATHEXT:;.JS;=;%\n  node  \"%~dp0\\global\\5\\node_modules\\@openai\\codex\\bin\\codex.js\" %*\n)\n";
+  "@SETLOCAL\r\n@IF NOT DEFINED NODE_PATH (\r\n  @SET \"NODE_PATH=C:\\x\\node_modules\"\r\n) ELSE (\r\n  @SET \"NODE_PATH=C:\\x\\node_modules;%NODE_PATH%\"\r\n)\r\n@IF EXIST \"%~dp0\\node.exe\" (\r\n  \"%~dp0\\node.exe\"  \"%~dp0\\global\\5\\node_modules\\@openai\\codex\\bin\\codex.js\" %*\r\n) ELSE (\r\n  @SET PATHEXT=%PATHEXT:;.JS;=;%\r\n  node  \"%~dp0\\global\\5\\node_modules\\@openai\\codex\\bin\\codex.js\" %*\r\n)\r\n";
 
 const win = (files, env = { Path: "C:\\bin;C:\\npm", PATHEXT: ".COM;.EXE;.BAT;.CMD" }) => ({
   platform: "win32",

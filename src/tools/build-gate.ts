@@ -286,8 +286,8 @@ export const defaultRunner: LatexRunner = (buildDir, signal) =>
         "-file-line-error",
         "main.tex",
       ]);
-    } catch {
-      resolve({ code: 1, log: "" });
+    } catch (e) {
+      resolve({ code: 1, log: `latexmk を起動できません: ${(e as Error).message}` });
       return;
     }
     const child = spawn(
