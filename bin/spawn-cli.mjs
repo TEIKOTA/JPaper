@@ -18,9 +18,13 @@ const envValue = (env, name) => {
   return key === undefined ? undefined : env[key];
 };
 
-// npm（cmd-shim）・pnpm（@zkochan/cmd-shim）の .cmd が %* の直前に置く対象のパス。
-const SHIM_TARGET = /"%~?dp0%?\\([^"%]+)"\s+%\*/g;
+// npm（cmd-shim）・pnpm（@zkochan/cmd-shim）の .cmd の起動行（%* で終わる行）の、最後の引用された対象。
+const LAUNCH_TARGET = /"((?:%~dp0\\|%dp0%\\|[A-Za-z]:\\)[^"%\r\n]+)"\s*%\*\s*$/;
+const NODE_PROG = /^(?:"%_prog%"|"%~?dp0%?\\node\.exe"|node)$/i;
+const ALLOWED_SET = /^@?SET\s+"?(?:NODE_PATH|dp0|PATHEXT|_prog)=/i;
+const NODE_SET = /_prog=(?:node|%dp0%\\node\.exe)"?$/i;
 const JS_EXT = new Set([".js", ".cjs", ".mjs"]);
+const EXE_EXT = new Set([".exe", ".com"]);
 
 export class ShimError extends Error {}
 
@@ -51,14 +55,34 @@ export function resolveCommand(cmd, args, deps = {}) {
   if (found === undefined) return { command: cmd, args };
   const ext = path.win32.extname(found).toLowerCase();
   if (ext !== ".cmd" && ext !== ".bat") return { command: found, args };
-  const targets = [...read(found).matchAll(SHIM_TARGET)].map((m) => m[1]);
-  const rel = targets.at(-1);
-  if (rel === undefined) throw new ShimError(`${found} の中から起動する対象を読めません（npm・pnpm の shim ではない）`);
-  const target = path.win32.join(path.win32.dirname(found), rel);
-  const targetExt = path.win32.extname(target).toLowerCase();
-  if (targetExt === ".exe") return { command: target, args };
-  if (JS_EXT.has(targetExt) || (targetExt === "" && /node(\.exe)?"?\s*$|_prog=node/im.test(read(found)))) return { command: execPath, args: [target, ...args] };
-  throw new ShimError(`${found} の起動する対象 ${target} を直接起動できません`);
+  const shim = parseShim(read(found), found);
+  return shim.node ? { command: execPath, args: [shim.target, ...args] } : { command: shim.target, args };
+}
+
+function parseShim(text, file) {
+  const fail = (why) => {
+    throw new ShimError(`${file} を直接起動できません（${why}）`);
+  };
+  const lines = text.split(/\r?\n/).map((l) => l.trim()).filter((l) => l !== "");
+  for (const l of lines) if (/^@?SET\s/i.test(l) && !ALLOWED_SET.test(l)) fail("環境変数を設定する shim");
+  for (const l of lines) if (/_prog=/i.test(l) && !NODE_SET.test(l)) fail("node 以外で起動する shim");
+  const launches = lines.filter((l) => /%\*\s*$/.test(l));
+  if (launches.length === 0) fail("npm・pnpm の shim ではない");
+  const parsed = launches.map((l) => {
+    const m = LAUNCH_TARGET.exec(l);
+    if (m === null) return fail("起動する対象を読めない");
+    const rel = m[1].replace(/^%~?dp0%?\\/, "");
+    const target = /^[A-Za-z]:\\/.test(rel) ? rel : path.win32.join(path.win32.dirname(file), rel);
+    const prog = l.slice(0, m.index).replace(/^.*&\s*/, "").replace(/^@/, "").trim();
+    const targetExt = path.win32.extname(target).toLowerCase();
+    if (prog === "") return EXE_EXT.has(targetExt) ? { node: false, target } : fail(`対象 ${target} が exe でない`);
+    if (/^(?:"[^"]*"|\S+)/.exec(prog)?.[0] !== prog) return fail("node に追加の引数を渡す shim");
+    if (!NODE_PROG.test(prog)) return fail("node 以外で起動する shim");
+    return JS_EXT.has(targetExt) ? { node: true, target } : fail(`対象 ${target} が JS でない`);
+  });
+  const [first] = parsed;
+  if (parsed.some((p) => p.node !== first.node || p.target !== first.target)) fail("起動行ごとに対象が違う");
+  return first;
 }
 
 export function spawnOptions(opts = {}, platform = process.platform) {

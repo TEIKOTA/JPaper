@@ -22,6 +22,10 @@ IF EXIST "%dp0%\\node.exe" (
 endLocal & goto #_undefined_# 2>NUL || title %COMSPEC% & "%_prog%"  "%dp0%\\node_modules\\@anthropic-ai\\claude-code\\cli.js" %*
 `;
 
+// npm の cmd-shim 9 が生成した実物（行末は CRLF）。
+const NPM_CODEX =
+  '@ECHO off\r\nGOTO start\r\n:find_dp0\r\nSET dp0=%~dp0\r\nEXIT /b\r\n:start\r\nSETLOCAL\r\nCALL :find_dp0\r\n\r\nIF EXIST "%dp0%\\node.exe" (\r\n  SET "_prog=%dp0%\\node.exe"\r\n) ELSE (\r\n  SET "_prog=node"\r\n)\r\n\r\nendLocal & goto #_undefined_# 2>NUL || title %COMSPEC% & set PATHEXT=%PATHEXT:;.JS;=;% & "%_prog%"  "%dp0%\\node_modules\\@openai\\codex\\bin\\codex.js" %*\r\n';
+
 // pnpm（@zkochan/cmd-shim）の .cmd。
 const PNPM_SHIM = `@SETLOCAL
 @IF NOT DEFINED NODE_PATH (
@@ -99,9 +103,35 @@ describe("resolveCommand", () => {
     expect(() => resolveCommand("claude", [], win({ "C:\\npm\\claude.cmd": shim }))).toThrow(ShimError);
   });
 
-  it("shim の対象が exe ならそれを直接起動する", () => {
-    const deps = win({ "C:\\npm\\claude.cmd": NPM_SHIM.replace("@anthropic-ai\\claude-code\\cli.js", "x\\claude.exe") });
-    expect(resolveCommand("claude", ["-p"], deps)).toEqual({ command: "C:\\npm\\node_modules\\x\\claude.exe", args: ["-p"] });
+  it("npm の claude（対象が exe の shim）は exe を直接起動する", () => {
+    const shim = NPM_CODEX.replace(/\r\n\r\nIF EXIST[\s\S]*$/, '\r\n\r\n"%dp0%\\node_modules\\@anthropic-ai\\claude-code\\bin\\claude.exe"   %*\r\n');
+    expect(resolveCommand("claude", ["-p"], win({ "C:\\npm\\claude.cmd": shim }))).toEqual({
+      command: "C:\\npm\\node_modules\\@anthropic-ai\\claude-code\\bin\\claude.exe",
+      args: ["-p"],
+    });
+  });
+
+  it("npm の実物の shim（CRLF、起動行に PATHEXT の設定）を node で起動する", () => {
+    expect(resolveCommand("codex", ["exec"], win({ "C:\\npm\\codex.cmd": NPM_CODEX }))).toEqual({
+      command: "C:\\node\\node.exe",
+      args: ["C:\\npm\\node_modules\\@openai\\codex\\bin\\codex.js", "exec"],
+    });
+  });
+
+  it("pnpm が別ドライブに置いた絶対パスの対象も読む", () => {
+    const shim = PNPM_SHIM.replaceAll("%~dp0\\global", "D:\\pnpm\\global").replaceAll('"%~dp0\\node.exe"', '"%~dp0\\node.exe"');
+    expect(resolveCommand("codex", [], win({ "C:\\npm\\codex.cmd": shim })).args[0]).toBe(
+      "D:\\pnpm\\global\\5\\node_modules\\@openai\\codex\\bin\\codex.js",
+    );
+  });
+
+  it.each([
+    ["環境変数を設定する shim", NPM_SHIM.replace("SETLOCAL\n", "SETLOCAL\n@SET FOO=1\n")],
+    ["node に追加の引数を渡す shim", NPM_SHIM.replace('"%_prog%"  "', '"%_prog%" --no-warnings "')],
+    ["node 以外で起動する shim", NPM_SHIM.replace(/_prog=node"/, '_prog=sh"').replace(/_prog=%dp0%\\node\.exe"/, '_prog=%dp0%\\sh.exe"')],
+    ["対象 C:\\npm\\node_modules\\pnpm\\bin\\pnpm が exe でない", NPM_SHIM.replace(/"%_prog%"\s+"%dp0%\\[^"]+"/, '"%dp0%\\node_modules\\pnpm\\bin\\pnpm"')],
+  ])("%s は理由つきで失敗する", (why, shim) => {
+    expect(() => resolveCommand("x", [], win({ "C:\\npm\\x.cmd": shim }))).toThrow(new ShimError(`C:\\npm\\x.cmd を直接起動できません（${why}）`));
   });
 });
 

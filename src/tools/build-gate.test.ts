@@ -236,8 +236,8 @@ describe("sandboxEnv", () => {
   it("探索パスは既定を先頭に置き、同梱 srcpkg を後ろへ回す", () => {
     const env = sandboxEnv({}, "/b");
     for (const key of ["TEXINPUTS", "BIBINPUTS", "BSTINPUTS"] as const) {
-      expect(env[key]).toBe(`:${path.join("/b", SRC_PKG_DIR)}//`);
-      expect(env[key]!.startsWith(":")).toBe(true); // 先頭の空要素＝既定パス
+      expect(env[key]).toBe(`${path.delimiter}${path.join("/b", SRC_PKG_DIR)}//`);
+      expect(env[key]!.startsWith(path.delimiter)).toBe(true); // 先頭の空要素＝既定パス
     }
   });
   it("shell escape と build ツリー外への書き出しを禁止する", () => {
