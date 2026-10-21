@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   applyVerification,
+  keepEscapedAfterVerify,
   carriedUnverified,
   usableForm,
   verifyTargets,
@@ -383,5 +384,27 @@ describe("carriedUnverified", () => {
         { src: "A term", status: "confirmed", form: "語A", sources: ["https://a.jp"] },
       ]).map((c) => c.src),
     ).toEqual(["A term"]);
+  });
+});
+
+describe("検証の後の \\& の後処理（issue #469・契約付録 §8）", () => {
+  const src = "Math \\& reasoning";
+  const sites = [at("https://a.jp/1", "数学と推論とは"), at("https://b.jp/2", "この数学と推論は")];
+
+  it("\\& を残した訳語が \\& の無い表記に差し替わったら keep-original（form=原語）に直し、check の form も合わせる", () => {
+    const r = applyVerification(
+      { resolved: [row(src, "数学\\&推論")], brief: "b", style: "s" },
+      [{ src, form: "数学\\&推論" }],
+      out([{ src, candidates: [{ form: "数学と推論", sources: sites }] }]),
+    );
+    expect(r.resolved).toEqual([row(src, src, "established", "keep-original")]);
+    expect(r.checks).toEqual([expect.objectContaining({ src, status: "replaced", form: src, original: "数学\\&推論" })]);
+  });
+
+  it("差し替えた先が \\& を残していれば直さない。べき等", () => {
+    const v = { resolved: [row(src, "数学\\&推論")], checks: [] };
+    expect(keepEscapedAfterVerify(v)).toBe(v);
+    const dropped = keepEscapedAfterVerify({ resolved: [row(src, "数学と推論")], checks: [] });
+    expect(keepEscapedAfterVerify(dropped)).toEqual(dropped);
   });
 });

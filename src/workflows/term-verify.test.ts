@@ -153,6 +153,68 @@ describe("用語の検証（契約付録 §4・issue #309）", () => {
     expect(db.confirmedFor("Widget set")).toEqual([]);
   });
 
+  it("\\& を残した訳語が検証で \\& の無い表記に差し替わっても、glossary.md・節・checkpoint の読み戻しで keep-original になる（issue #469）", async () => {
+    const glossary = JSON.stringify({
+      ...JSON.parse(GLOSSARY),
+      resolved: [{ src: "Widget \\& set", form: "ウィジェット\\&集合", class: "established", rendering: "translate" }],
+    });
+    const found = JSON.stringify({
+      terms: [
+        {
+          src: "Widget \\& set",
+          candidates: [
+            {
+              form: "部品と集合",
+              sources: [
+                { url: "https://example.jp/widget", quote: "部品と集合とは何か" },
+                { url: "https://another.org/w", quote: "この部品と集合は" },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+    const outDir = path.join(tmp(), "out");
+    const first = await fake(() => found, glossary);
+    const { r } = await run(outDir, first.client);
+    expect(r.exitCode).toBe(0);
+    const keep = "| Widget \\& set | Widget \\& set | established | keep-original |";
+    expect(readFileSync(path.join(outDir, "glossary.md"), "utf8")).toContain(keep);
+    expect(first.translatorUsers.some((u) => u.includes("部品と集合"))).toBe(false);
+
+    // glossary.md を消すと checkpoint の値から作り直す。検証は呼ばず、同じ keep-original になる。
+    rmSync(path.join(outDir, "glossary.md"));
+    const second = await fake(() => found, glossary);
+    await run(outDir, second.client);
+    expect(verifierCalls(second.client)).toHaveLength(0);
+    expect(readFileSync(path.join(outDir, "glossary.md"), "utf8")).toContain(keep);
+  });
+
+  it("後処理の前の版が書いた checkpoint（\\& を落とした差し替えのまま）を読み戻しても keep-original に直す（issue #469）", async () => {
+    const glossary = JSON.stringify({
+      ...JSON.parse(GLOSSARY),
+      resolved: [{ src: "Widget \\& set", form: "ウィジェット\\&集合", class: "established", rendering: "translate" }],
+    });
+    const outDir = path.join(tmp(), "out");
+    const first = await fake(() => '{"terms":[]}', glossary);
+    await run(outDir, first.client);
+    const { readStep, writeStep } = await import("../durable/checkpoint.js");
+    const { VERIFY_STEP } = await import("./translate-paper.js");
+    const runDir = path.join(outDir, ".run");
+    const stored = readStep(runDir, VERIFY_STEP);
+    expect(stored).toBeDefined();
+    const value = stored!.value as { resolved: { form: string }[] };
+    value.resolved[0]!.form = "部品と集合";
+    writeStep(runDir, VERIFY_STEP, value, { invalidation: stored!.invalidation });
+
+    rmSync(path.join(outDir, "glossary.md"));
+    const second = await fake(() => '{"terms":[]}', glossary);
+    await run(outDir, second.client);
+    expect(readFileSync(path.join(outDir, "glossary.md"), "utf8")).toContain(
+      "| Widget \\& set | Widget \\& set | established | keep-original |",
+    );
+  });
+
   it("既存の glossary.md を使う run は検証しない。用語集を作り直すときは検証の checkpoint を使う", async () => {
     const outDir = path.join(tmp(), "out");
     const first = await fake();

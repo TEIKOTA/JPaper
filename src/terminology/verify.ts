@@ -3,7 +3,7 @@ import { MAX_TERM_CHARS } from "../runtime/untrusted.js";
 import { MAX_VERIFY_TERMS, type TermCheck, type TermVerifyOut } from "../types/contract.js";
 import type { ResolvedRow } from "./glossary-io.js";
 import { canonicalBilingualForm } from "./bilingual-form.js";
-import { isAcceptableTerm } from "./glossary.js";
+import { isAcceptableTerm, keepEscapedSpecials } from "./glossary.js";
 import { rewriteStrings, termJa, type TermRewrite } from "./replace.js";
 
 // 用例の表記として受け付ける長さと文字（かな・漢字・々・長音・中黒・英数字・空白・ハイフン）。
@@ -223,14 +223,25 @@ export function applyVerification<T extends ResolvedRow, B, S>(
     brief = rewriteStrings(brief, rule);
     style = rewriteStrings(style, rule);
   }
-  return {
+  return keepEscapedAfterVerify({
     resolved: resolved.map((row) =>
       row.note === undefined ? row : { ...row, note: order.reduce((n, { rule }) => rewriteStrings(n, rule), row.note) },
     ),
     brief,
     style,
     checks,
-  };
+  });
+}
+
+// 差し替えた訳語が原語のエスケープした特殊文字を落としていたら keep-original へ直し、check の form も合わせる。契約付録 §8
+export function keepEscapedAfterVerify<T extends ResolvedRow, V extends { resolved: T[]; checks: TermCheck[] }>(v: V): V {
+  const resolved = keepEscapedSpecials(v.resolved);
+  const changed = new Map<string, string>();
+  resolved.forEach((r, i) => {
+    if (r !== v.resolved[i]) changed.set(r.src, r.form);
+  });
+  if (changed.size === 0) return v;
+  return { ...v, resolved, checks: v.checks.map((c) => (changed.has(c.src) ? { ...c, form: changed.get(c.src)! } : c)) };
 }
 
 // 対象語の検証の結果か（ほかの語の差し替えに揃えただけの語でないか）。
