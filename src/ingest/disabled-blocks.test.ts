@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { dropDisabledBlocks } from "./disabled-blocks.js";
-import { fastestMs } from "../testing/timing.js";
+import { budgetMs, fastestMs } from "../testing/timing.js";
 
 const doc = (body: string, preamble = "") => `\\documentclass{article}\n${preamble}\\begin{document}\n${body}\n\\end{document}`;
 
@@ -64,7 +64,7 @@ describe("dropDisabledBlocks（契約付録 §4）", () => {
   ])("外側が検査で落ちる入れ子でも走査は入力長に対して線形（%s）", (_label, open, close, middle = "") => {
     const k = Math.ceil((1 << 20) / (open.length + close.length));
     const body = open.repeat(k) + middle + close.repeat(k);
-    expect(fastestMs(2, () => dropDisabledBlocks(doc(body)))).toBeLessThan(2000);
+    expect(fastestMs(2, () => dropDisabledBlocks(doc(body)))).toBeLessThan(budgetMs(2000));
   });
 
   it.each([
@@ -74,6 +74,6 @@ describe("dropDisabledBlocks（契約付録 §4）", () => {
     ["波括弧が釣り合わない", "\\iffalse { \\fi "],
   ])("走査は入力長に対して線形（%s の羅列）", (_label, unit) => {
     const body = unit.repeat(Math.ceil((1 << 20) / unit.length));
-    expect(fastestMs(2, () => dropDisabledBlocks(doc(body)))).toBeLessThan(2000);
+    expect(fastestMs(2, () => dropDisabledBlocks(doc(body)))).toBeLessThan(budgetMs(2000));
   });
 });

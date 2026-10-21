@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { fastestMs } from "../testing/timing.js";
+import { budgetMs, fastestMs } from "../testing/timing.js";
 import { z } from "zod";
 import { extractJson, repairJsonEscapes, runAgent, MAX_RESPONSE_CHARS } from "./llm-client.js";
 import { FakeLlmClient } from "../testing/fake-llm.js";
@@ -122,7 +122,7 @@ describe("応答の仕事量の上限", () => {
     const text = "\\textbf{x ".repeat(50_000);
     expect(
       fastestMs(2, () => expect(() => extractJson(text)).toThrowError(/JSON が見つかりません/)),
-    ).toBeLessThan(2000);
+    ).toBeLessThan(budgetMs(2000));
   });
 
   it("上限を超える長さの応答は読まずに落とす", () => {

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { fastestMs } from "../testing/timing.js";
+import { budgetMs, fastestMs } from "../testing/timing.js";
 import { leadSentences, MAX_EXCERPT_CHARS, paperExcerpt } from "./paper-excerpt.js";
 
 const PAPER = [
@@ -123,6 +123,6 @@ describe("paperExcerpt（契約付録 §4・issue #258）", () => {
     ["見出しの中の \\ の長い連なり", "\\section{" + "\\".repeat(1_000_000) + "}"],
     ["\\abstract の中の \\ の長い連なり", "\\abstract{" + "\\".repeat(1_000_000) + "}"],
   ])("線形時間で終わる（%s、1MiB 前後）", (_name, body) => {
-    expect(fastestMs(2, () => void paperExcerpt(`\\begin{document}${body}\\end{document}`))).toBeLessThan(2000);
+    expect(fastestMs(2, () => void paperExcerpt(`\\begin{document}${body}\\end{document}`))).toBeLessThan(budgetMs(2000));
   });
 });

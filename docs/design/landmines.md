@@ -314,7 +314,8 @@
 - **おかしく見える点**: 計算量を確かめるテストの「時間」を、`Date.now()` / `performance.now()` の実時間ではなく `process.cpuUsage()`（user + system）で測り、さらに複数回の最小値を採っている。測る量が回りくどく見え、素直に実時間に戻したくなる。
 - **なぜ意図的か**: テストが守りたいのは計算量（二次でないこと）で、この機械での実時間ではない。実時間は並列実行や他のジョブで CPU が混むと全試行が伸び、最小値でも閾値を超える（#377 の実測: `\graphicspath` の宣言数のテストは、関係する 16 ファイルの並列実行で実時間 2,469〜2,868ms・CPU 時間 997〜1,094ms、単独実行では両方とも 540〜562ms）。最小値を採るのは #245 の方式で、上限を断言するテストに対して安全側に働く（雑音は時間を伸ばす方向にしか効かない）。
 - **前提**: `process.cpuUsage()` はプロセス内のすべてのスレッドの CPU 時間を数える。vitest の pool が forks（既定。1 プロセスで 1 ファイルずつ走る）なので、他のテストファイルの処理は入らない。pool を threads に替えると他のファイルの CPU 時間まで数え、実時間より悪くなる（#383 のレビューの実測: `--pool=threads` で関係 16 ファイルのうち 8 ファイル・13 件が red）。pool を変えるときはこの関数も見直す。
-- **正本ポインタ**: issue #245・#377。self-test は `src/testing/timing.test.ts`。
+- **閾値は `budgetMs` を通す**: 時間の閾値は POSIX 基準のミリ秒を `budgetMs(<ms>)` に渡して書く。Windows では `WINDOWS_BUDGET_FACTOR`（3）倍に広がる（windows-latest の併走は Linux の 2.9〜3.2 倍。#472）。`toBeLessThan(2000)` と生の数を書くと windows-latest で揺れ、`process.platform` で閾値を分けたり `skipIf` で飛ばしたりすると検査が個別に散る。倍率を上げるときは、各検査のコメントにある修正前の値を下回るかも見直す。
+- **正本ポインタ**: issue #245・#377・#472。self-test は `src/testing/timing.test.ts`。
 
 ## `src/tools/bilingual-latex.ts` — `pairBlock` の `\switchcolumn` の後の `\relax`
 

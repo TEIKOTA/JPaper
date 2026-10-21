@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from "vitest";
-import { fastestMs } from "../testing/timing.js";
+import { budgetMs, fastestMs } from "../testing/timing.js";
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync, existsSync, readdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -116,7 +116,7 @@ describe("checkFigures", () => {
     const figures = Array.from({ length: 5000 }, (_, i) => `/src/f${String(i)}.pdf`);
     expect(
       fastestMs(3, () => expect(checkFigures(mainTex, mainDir, figures)).toHaveLength(5000)),
-    ).toBeLessThan(300);
+    ).toBeLessThan(budgetMs(300));
   });
 
   it("\\includegraphics の引数以外に同じ綴りがあっても残存とは見なさない", () => {

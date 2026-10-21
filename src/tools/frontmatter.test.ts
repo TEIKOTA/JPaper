@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { DEFAULT_PROFILE, detectProfile, frozenSpansOf, keptSpans } from "./frontmatter.js";
 import { extractTitle, findBodyTitle, placeBodyTitle, replaceTitle } from "./paper-title.js";
-import { fastestMs } from "../testing/timing.js";
+import { budgetMs, fastestMs } from "../testing/timing.js";
 
 const doc = (preamble: string, body: string): string =>
   `${preamble}\n\\begin{document}\n${body}\n\\end{document}\n`;
@@ -30,7 +30,7 @@ describe("detectProfile（前付けの型。契約付録 §8）", () => {
     ["% の連なり", "%"],
   ])("走査は入力長に対して線形（%s の羅列 1MiB）", (_label, unit) => {
     const body = unit.repeat(Math.ceil((1 << 20) / unit.length));
-    expect(fastestMs(2, () => void detectProfile(body))).toBeLessThan(2000);
+    expect(fastestMs(2, () => void detectProfile(body))).toBeLessThan(budgetMs(2000));
   });
 
   it.each([
@@ -38,7 +38,7 @@ describe("detectProfile（前付けの型。契約付録 §8）", () => {
     ["改行と本文", "\n".repeat(64) + "x".repeat(300)],
   ])("\\documentclass{ の後の長い%sでも線形", (_label, unit) => {
     const body = "\\documentclass{" + unit.repeat(Math.ceil((1 << 20) / unit.length));
-    expect(fastestMs(2, () => void detectProfile(body))).toBeLessThan(2000);
+    expect(fastestMs(2, () => void detectProfile(body))).toBeLessThan(budgetMs(2000));
   });
 
   it("クラス名の前後の空白は落として比べる", () => {

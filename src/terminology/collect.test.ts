@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { fastestMs } from "../testing/timing.js";
+import { budgetMs, fastestMs } from "../testing/timing.js";
 import { collectCandidates } from "./collect.js";
 
 describe("collectCandidates", () => {
@@ -43,7 +43,7 @@ describe("候補収集のコスト", () => {
     // 終端の無い [^}]+ / .+? は開始位置ごとに末尾まで走査し、二次になっていた
     // （実測 512KiB で 35,510ms、上限 8MiB へ外挿で約 2.5 時間。gzip 14KB の入力で成立）。
     const tex = unit.repeat(Math.floor((4 * 1024 * 1024) / unit.length));
-    expect(fastestMs(2, () => void collectCandidates(tex))).toBeLessThan(3000);
+    expect(fastestMs(2, () => void collectCandidates(tex))).toBeLessThan(budgetMs(3000));
   });
 });
 
@@ -53,7 +53,7 @@ describe("定義句パターンのコスト", () => {
     const ms = fastestMs(2, () => void collectCandidates(body, []));
     // 修正前は 1MiB で 2,539ms（8MiB で 20,354ms）。中間を同一文に限り、
     // as の前の \s の曖昧さを畳んで 13 倍以上速くした。
-    expect(ms).toBeLessThan(1_500);
+    expect(ms).toBeLessThan(budgetMs(1_500));
   });
 
   it("正規の言い回しは引き続き拾う", () => {

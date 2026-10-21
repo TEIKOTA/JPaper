@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { fastestMs } from "../testing/timing.js";
+import { budgetMs, fastestMs } from "../testing/timing.js";
 import { latexEscape, injectFootnotes, renderBackmatter } from "./render-notes.js";
 import type { TranslatorNote } from "../types/contract.js";
 
@@ -90,7 +90,7 @@ describe("保護領域の走査コスト", () => {
     const notes = [
       { segmentId: "s", src: "x", text: "t", trigger: "evaluator-warn", firstOccurrence: true },
     ] as never;
-    expect(fastestMs(2, () => void injectFootnotes(tex, "s", notes, new Map([["x", "x"]])))).toBeLessThan(3000);
+    expect(fastestMs(2, () => void injectFootnotes(tex, "s", notes, new Map([["x", "x"]])))).toBeLessThan(budgetMs(3000));
   });
 });
 
@@ -156,7 +156,7 @@ describe("壊れた訳文の走査コスト", () => {
     "未閉じ %s の羅列 1MiB でも秒未満",
     (unit: string) => {
       const body = unit.repeat(Math.ceil((1024 * 1024) / unit.length));
-      expect(fastestMs(2, () => void injectFootnotes(body, "seg-0000", [], new Map()))).toBeLessThan(1_500);
+      expect(fastestMs(2, () => void injectFootnotes(body, "seg-0000", [], new Map()))).toBeLessThan(budgetMs(1_500));
     },
   );
 });
