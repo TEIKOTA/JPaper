@@ -93,6 +93,41 @@ describe("classifyLog", () => {
     expect(c.failedSegments).toEqual([]);
     expect(c.structuralErrors).toHaveLength(2);
   });
+  describe("class・package のエラー（issue #476）", () => {
+    const err = (ctx: string): string =>
+      [
+        "./main.tex:15: Class acmart Error: No country present for an affiliation.",
+        "",
+        "See the acmart class documentation for explanation.",
+        `l.15 ${ctx}`,
+        "",
+        "./main.tex:15: ==> Fatal error occurred, no output PDF file produced!",
+      ].join("\n");
+    const original = "\\affiliation{\\institution{X}}\n\\maketitle\n";
+    it("文脈行が原文にそのまま在る Class Error と、続く Fatal error は構造起因にする", () => {
+      const c = classifyLog(err("\\maketitle"), MAP, original);
+      expect(c.failedSegments).toEqual([]);
+      expect(c.structuralErrors).toHaveLength(2);
+    });
+    it("Package Error も同じ規則で構造起因にする", () => {
+      const log = "./main.tex:15: Package hyperref Error: Wrong driver.\nl.15 \\maketitle\n";
+      expect(classifyLog(log, MAP, original).failedSegments).toEqual([]);
+    });
+    it("文脈行に訳文が混ざる（原文に無い）Class Error は翻訳起因に残す", () => {
+      const c = classifyLog(err("\\affiliation{\\institution{壊れた訳}"), MAP, original);
+      expect(c.structuralErrors).toEqual([]);
+      expect(c.failedSegments.map((f) => f.id)).toEqual(["seg-0000", "seg-0000"]);
+    });
+    it("文脈行が読めない・原文が空のときは翻訳起因に残す", () => {
+      const log = "./main.tex:15: Class acmart Error: No country present for an affiliation.\n";
+      expect(classifyLog(log, MAP, original).failedSegments).toHaveLength(1);
+      expect(classifyLog(err("\\maketitle"), MAP).failedSegments).toHaveLength(2);
+    });
+    it("Class/Package 以外のエラーは文脈行が原文に在っても翻訳起因のまま", () => {
+      const log = "./main.tex:15: Missing $ inserted.\nl.15 \\maketitle\n";
+      expect(classifyLog(log, MAP, original).failedSegments).toHaveLength(1);
+    });
+  });
   it("欠図と未解決参照/引用を抽出する", () => {
     const log = [
       "LaTeX Warning: File `Figures/x.png' not found.",

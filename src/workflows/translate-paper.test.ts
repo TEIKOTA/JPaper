@@ -139,6 +139,51 @@ describe("translatePaper（検収①）", () => {
     db.close();
   });
 
+  describe("class の Error の分類（issue #476）", () => {
+    // 訳文の行番号を指す Class Error を、文脈行 ctx つきで出す擬似 latexmk。template では組めたことにする。
+    const run = async (ctx: string) => {
+      const outDir = path.join(tmp(), "out");
+      const db = new GlossaryDb();
+      const errs: string[] = [];
+      const built: string[] = [];
+      const runner: LatexRunner = (dir) => {
+        const tex = readFileSync(path.join(dir, "main.tex"), "utf8");
+        const template = tex.includes("a4paper");
+        built.push(template ? "template" : "original");
+        if (template) return okRunner(dir);
+        const n = tex.split("\n").findIndex((l) => l.includes("訳文")) + 1;
+        return {
+          code: 1,
+          log: [
+            `./main.tex:${n}: Class acmart Error: No country present for an affiliation.`,
+            `l.${n} ${ctx}`,
+            `./main.tex:${n}: ==> Fatal error occurred, no output PDF file produced!`,
+          ].join("\n"),
+        };
+      };
+      const r = await tp({ kind: "path", path: makePaperTar() }, { provider: "claude", outDir }, {
+        client: docClient(),
+        db,
+        latexRunner: runner,
+        onError: (m) => errs.push(m),
+      });
+      db.close();
+      return { r, errs, built };
+    };
+    it("原文のままの文脈で出た Class Error は構造起因として template を試す", async () => {
+      const { r, built } = await run("\\documentclass{a}");
+      expect(r.exitCode).toBe(0);
+      expect(r.summary.layout).toBe("template");
+      expect(built.slice(0, 2)).toEqual(["original", "template"]);
+    });
+    it("訳文が混ざる文脈の Class Error は翻訳起因で exit 5、template を試さない", async () => {
+      const { r, errs, built } = await run("\\section{訳文");
+      expect(r.exitCode).toBe(5);
+      expect(built).toEqual(["original"]);
+      expect(errs.some((e) => e.includes("翻訳起因・要再訳"))).toBe(true);
+    });
+  });
+
   it("組版失敗の message は論文由来のログを検疫してから外へ出す", async () => {
     const outDir = path.join(tmp(), "out");
     const db = new GlossaryDb();
@@ -685,6 +730,12 @@ describe("summarizeGateFailure（契約付録 §6）", () => {
       "未解決参照",
     );
     expect(summarizeGateFailure(gate({}))).toBe("未解決参照: a2020, b2021");
+  });
+
+  it("無効化した同梱パッケージは原因の候補だと書く（issue #476）", () => {
+    expect(summarizeGateFailure(gate({ unresolvedRefs: [], shadowedPackages: ["acmart.cls"] }))).toBe(
+      "同梱パッケージを無効化したことが原因の候補: acmart.cls",
+    );
   });
 });
 

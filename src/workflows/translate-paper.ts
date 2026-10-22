@@ -806,7 +806,7 @@ export function summarizeGateFailure(g: BuildGateResult): string {
   if (g.unresolvedRefs.length && !halted)
     parts.push(`未解決参照: ${g.unresolvedRefs.slice(0, 5).map((r) => clip(r, 60)).join(", ")}`);
   if (g.shadowedPackages.length)
-    parts.push(`同梱パッケージを無効化: ${g.shadowedPackages.join(", ")}`);
+    parts.push(`同梱パッケージを無効化したことが原因の候補: ${g.shadowedPackages.join(", ")}`);
   return g.envError ?? (parts.join(" | ") || "不明なビルド失敗");
 }
 
