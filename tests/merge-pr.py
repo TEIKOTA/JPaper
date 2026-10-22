@@ -55,6 +55,9 @@ MUTATIONS = {
     "cired": [('docs/process/failure-patterns.md）" >&2; exit 1;;', 'docs/process/failure-patterns.md）" >&2;;')],
     "cipending": [('if [[ "$ci_verdict" != "pending" ]] || [[ "$SECONDS" -ge "$ci_deadline" ]]; then break; fi', 'if true; then break; fi')],
     "cicommit": [('--commit "$merge_sha"', '--commit "$LIVE_HEAD"')],
+    "cibase": [('elif [[ -n "$ci_base" ]]; then', 'elif false; then')],
+    "cibasefailopen": [('if [[ -n "$ci_base" && "$ci_base" == "$CUR_BASE" ]]; then', 'if [[ "$ci_base" == "$CUR_BASE" || -z "$ci_base" ]]; then')],
+    "cibasehead": [('Merge $HEAD_SHA into ([0-9a-f]{40})', 'Merge [0-9a-f]{40} into ([0-9a-f]{40})')],
     "comment": [('gh pr comment "$PR_NUM" ${REPO_ARGS[@]+"${REPO_ARGS[@]}"} --body-file "$body_file"', "true")],
 }
 CASES = {
@@ -87,6 +90,9 @@ CASES = {
     "approvalhint": "test_approval_fail_shows_expected_format",
     "failstop": "test_no_approval_is_not_merged",
     "matchhead": "test_approved_pr_is_merged_once_after_comment",
+    "cibase": "test_ci_on_stale_base_is_not_merged",
+    "cibasefailopen": "test_ci_base_is_matched_and_unobtainable_fails_closed",
+    "cibasehead": "test_ci_base_is_matched_and_unobtainable_fails_closed",
     "comment": "test_approved_pr_is_merged_once_after_comment",
     "waitci": "test_no_wait_skips_ci",
     "cired": "test_red_main_ci_fails_after_merge",
@@ -133,6 +139,15 @@ if args[:2] == ["pr", "view"]:
         print(value)
     else:
         print(json.dumps({field: pr[field] for field in fields}))
+elif args[:2] == ["run", "list"] and "pull_request" in args:
+    if os.path.exists(state + "/no-pr-run"):
+        print("")
+    else:
+        print(1234)
+elif args[:2] == ["run", "view"]:
+    if os.path.exists(state + "/no-pr-log"):
+        sys.exit(1)
+    print("node\tRun actions/checkout\t2026-10-22T00:00:00Z HEAD is now at 41b1f5c " + open(state + "/ci-merge-line").read())
 elif args[:2] == ["run", "list"]:
     commit = args[args.index("--commit") + 1]
     runs = load("runs.json")
@@ -211,6 +226,8 @@ class Fixture:
         }
         self.issue = "## Problem\nx\n\n## merge の事前承認\n\n- 2026-10-16 ユーザーが「事前承認」を選んだ\n- 条件: 別 context の独立レビュー / 退行注入\n- 条件から外れたら merge しない\n\n## Risks\nx\n"
         self.threads = {"data": {"repository": {"pullRequest": {"reviewThreads": {"pageInfo": {"hasNextPage": False}, "nodes": [{"isResolved": True}]}}}}}
+        self.ci_base = self.base
+        self.ci_head = None
         self.runs = [{"workflowName": name, "status": "completed", "conclusion": "success", "url": f"https://example/{name}"} for name in ("node-checks", "self-test")]
         self.judges = ["scope=範囲内", "injection=対象外（docs のみ）", "no-perceptual-external=なし"]
 
@@ -223,6 +240,7 @@ class Fixture:
         (self.state / "issue-5.json").write_text(json.dumps({"body": self.issue}))
         (self.state / "threads.json").write_text(json.dumps(self.threads))
         (self.state / "runs.json").write_text(json.dumps(self.runs))
+        (self.state / "ci-merge-line").write_text(f"Merge {self.ci_head or self.head} into {self.ci_base}\n")
         command = ["bash", str(WORK / "scripts/merge-pr.sh"), pr_number, "--head", head or self.head, *extra]
         for judge in (self.judges if judges is None else judges):
             command += ["--judge", judge]
@@ -271,7 +289,7 @@ class MergePr(unittest.TestCase):
         done = fixture.run(extra=["--no-wait"])
         self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
         self.assertEqual(len(fixture.merges()), 1)
-        self.assertEqual([line for line in fixture.log if line.startswith("run list")], [])
+        self.assertEqual([line for line in fixture.log if line.startswith("run list") and "--event push" in line], [])
         self.assertIn("--no-wait", done.stdout)
 
     def test_red_main_ci_fails_after_merge(self):
@@ -298,7 +316,7 @@ class MergePr(unittest.TestCase):
         done = fixture.run()
         self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
         self.assertIn("main の CI は成功", done.stdout)
-        self.assertEqual(len([line for line in fixture.log if line.startswith("run list")]), 3)
+        self.assertEqual(len([line for line in fixture.log if line.startswith("run list") and "--event push" in line]), 3)
         # 上限（0 秒）で終わらなければ、未確認と表示して exit 0
         fixture = Fixture()
         (fixture.state / "ci-pending-count").write_text("99")
@@ -317,6 +335,34 @@ class MergePr(unittest.TestCase):
         fixture.run(extra=["--repo", "o/r"])
         self.assertEqual(fixture.done.returncode, 0, fixture.done.stdout + fixture.done.stderr)
         self.assertEqual(fixture.merges(), [f"pr merge 7 --repo o/r --squash --match-head-commit {fixture.head}"])
+
+    def test_ci_on_stale_base_is_not_merged(self):
+        # PR の CI が検査した base と今の origin/main が違えば、再検査の方法つきで FAIL
+        fixture = Fixture()
+        fixture.ci_base = "e" * 40
+        fixture.run()
+        self.assert_not_merged(fixture)
+        self.assertIn("PR の CI が今の base を検査している", fixture.done.stdout)
+        self.assertIn("e" * 40, fixture.done.stdout)
+        self.assertIn("--allow-empty", fixture.done.stdout)
+
+    def test_ci_base_is_matched_and_unobtainable_fails_closed(self):
+        fixture = Fixture()
+        fixture.run(extra=["--dry-run"])
+        self.assertEqual(fixture.done.returncode, 0, fixture.done.stdout + fixture.done.stderr)
+        self.assertIn("検査した base", fixture.done.stdout)
+        for marker in ("no-pr-run", "no-pr-log"):
+            fixture = Fixture()
+            (fixture.state / marker).write_text("")
+            fixture.run()
+            self.assert_not_merged(fixture)
+            self.assertIn("取得できない", fixture.done.stdout)
+        # ログの head が提示した head と違う（別の head の run）なら読み取れず FAIL
+        fixture = Fixture()
+        fixture.ci_head = "f" * 40
+        fixture.run()
+        self.assert_not_merged(fixture)
+        self.assertIn("取得できない", fixture.done.stdout)
 
     def test_no_approval_is_not_merged(self):
         fixture = Fixture()

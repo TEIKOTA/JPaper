@@ -160,6 +160,24 @@ else
   row script FAIL "git diff --check" "空白の誤りがある、または head を取得できていない"
 fi
 
+# 2c. PR の CI が検査した main の commit が今の base と同じか（#486）。pull_request の CI は refs/pull/N/merge（head と当時の base の merge）を検査し、
+#     その checkout のログに `Merge <head> into <base>` が出る。base が進んでいれば、続けて merge する組み合わせは検査されていない（strict: false の運用の絞り込み）
+ci_base=""
+if [[ "$mt_ok" -eq 1 ]]; then
+  ci_run_id="$(gh run list ${REPO_ARGS[@]+"${REPO_ARGS[@]}"} --commit "$HEAD_SHA" --event pull_request --workflow node-checks --limit 1 --json databaseId --jq '.[0].databaseId' 2>/dev/null || true)"
+  if printf '%s\n' "$ci_run_id" | grep -qE '^[0-9]+$'; then
+    ci_base="$(gh run view "$ci_run_id" ${REPO_ARGS[@]+"${REPO_ARGS[@]}"} --log 2>/dev/null | sed -nE "s/.*HEAD is now at [0-9a-f]+ Merge $HEAD_SHA into ([0-9a-f]{40}).*/\1/p" | head -n 1 || true)"
+  fi
+fi
+CUR_BASE="$(git rev-parse "refs/merge-pr/$PR_NUM/base" 2>/dev/null || true)"
+if [[ -n "$ci_base" && "$ci_base" == "$CUR_BASE" ]]; then
+  row script PASS "PR の CI が今の base を検査している" "node-checks run $ci_run_id が検査した base \`$ci_base\`"
+elif [[ -n "$ci_base" ]]; then
+  row script FAIL "PR の CI が今の base を検査している" "CI が検査した base=\`$ci_base\` 今の origin/$BASE=\`$CUR_BASE\`（検査されていない組み合わせ）。PR の branch に空 commit を push して CI を取り直す（owner が実行: \`git commit --allow-empty -m 'ci: base 更新後の再検査' && git push\`）。head が変わるので review・self-test・承認の記録も新しい head で取り直す"
+else
+  row script FAIL "PR の CI が今の base を検査している" "node-checks（pull_request）の run かログの \`Merge $HEAD_SHA into <base>\` を取得できない（fail-closed。CI が終わっているか確かめる）"
+fi
+
 # 3. scripts/check-pr.sh
 if cp_out="$(bash "$ROOT/check-pr.sh" "$PR_NUM" ${REPO_ARGS[@]+"${REPO_ARGS[@]}"} 2>&1)"; then
   row script PASS "scripts/check-pr.sh" "タイトル・body・issue 連結"
