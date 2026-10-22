@@ -3,8 +3,14 @@ import os from "node:os";
 import path from "node:path";
 
 // vitest の globalSetup（実の環境で動く）。全テストの前後で実の ~/.jpaper を比べ、テストが実の HOME を書いたら落とす（#484）。
-function snapshot(dir: string): string[] {
-  const out: string[] = [];
+export function snapshot(dir: string): string[] {
+  let root = "none";
+  try {
+    root = statSync(dir).isDirectory() ? "dir" : "file";
+  } catch {
+    // 無い
+  }
+  const out: string[] = [`${dir}\t${root}`];
   const walk = (d: string): void => {
     let names: string[];
     try {
