@@ -58,6 +58,9 @@ MUTATIONS = {
     "cibase": [('elif [[ -n "$ci_base" ]]; then', 'elif false; then')],
     "cibasefailopen": [('if [[ -n "$ci_base" && "$ci_base" == "$CUR_BASE" ]]; then', 'if [[ "$ci_base" == "$CUR_BASE" || -z "$ci_base" ]]; then')],
     "cibasehead": [('Merge $HEAD_SHA into ([0-9a-f]{40})', 'Merge [0-9a-f]{40} into ([0-9a-f]{40})')],
+    "rerunfail": [('row script FAIL "head の CI に再実行で通した run が無い、または揺れとして理由がある" "再実行で通した', 'row script PASS "head の CI に再実行で通した run が無い、または揺れとして理由がある" "再実行で通した')],
+    "rerunattempt": [('r["attempt"] >= 2', 'r["attempt"] >= 3')],
+    "rerunfailclosed": [('row script FAIL "head の CI に再実行で通した run が無い、または揺れとして理由がある" "head の CI の run を取得できない"', 'row script PASS "head の CI に再実行で通した run が無い、または揺れとして理由がある" "head の CI の run を取得できない"')],
     "comment": [('gh pr comment "$PR_NUM" ${REPO_ARGS[@]+"${REPO_ARGS[@]}"} --body-file "$body_file"', "true")],
 }
 CASES = {
@@ -98,6 +101,9 @@ CASES = {
     "cired": "test_red_main_ci_fails_after_merge",
     "cipending": "test_pending_ci_is_waited_for_then_reported",
     "cicommit": "test_ci_is_looked_up_by_merge_commit",
+    "rerunfail": "test_rerun_success_is_not_merged_without_reason",
+    "rerunattempt": "test_rerun_success_is_not_merged_without_reason",
+    "rerunfailclosed": "test_unobtainable_head_runs_are_not_merged",
 }
 parser = argparse.ArgumentParser()
 parser.add_argument("--mutation", choices=sorted(MUTATIONS))
@@ -150,6 +156,11 @@ elif args[:2] == ["run", "view"]:
     print("node\tRun actions/checkout\t2026-10-22T00:00:00Z HEAD is now at 41b1f5c " + open(state + "/ci-merge-line").read())
 elif args[:2] == ["run", "list"]:
     commit = args[args.index("--commit") + 1]
+    if commit == load("pr.json")["headRefOid"]:
+        if os.path.exists(state + "/head-runs-fail"):
+            sys.exit(1)
+        print(json.dumps(load("head-runs.json")))
+        sys.exit(0)
     runs = load("runs.json")
     pending = os.path.exists(state + "/ci-pending-count")
     if pending:
@@ -229,6 +240,7 @@ class Fixture:
         self.ci_base = self.base
         self.ci_head = None
         self.runs = [{"workflowName": name, "status": "completed", "conclusion": "success", "url": f"https://example/{name}"} for name in ("node-checks", "self-test")]
+        self.head_runs = [{"workflowName": name, "attempt": 1, "conclusion": "success", "databaseId": 100 + index} for index, name in enumerate(("node-checks", "self-test"))]
         self.judges = ["scope=範囲内", "injection=対象外（docs のみ）", "no-perceptual-external=なし"]
 
     @staticmethod
@@ -241,6 +253,7 @@ class Fixture:
         (self.state / "threads.json").write_text(json.dumps(self.threads))
         (self.state / "runs.json").write_text(json.dumps(self.runs))
         (self.state / "ci-merge-line").write_text(f"Merge {self.ci_head or self.head} into {self.ci_base}\n")
+        (self.state / "head-runs.json").write_text(json.dumps(self.head_runs))
         command = ["bash", str(WORK / "scripts/merge-pr.sh"), pr_number, "--head", head or self.head, *extra]
         for judge in (self.judges if judges is None else judges):
             command += ["--judge", judge]
@@ -634,6 +647,37 @@ class MergePr(unittest.TestCase):
             fixture = Fixture()
             fixture.run(judges=judges)
             self.assert_not_merged(fixture)
+
+    def test_rerun_success_is_not_merged_without_reason(self):
+        for attempt in (2, 3):
+            fixture = Fixture()
+            fixture.head_runs[0]["attempt"] = attempt
+            fixture.run()
+            self.assert_not_merged(fixture)
+            self.assertIn("node-checks(run 100, attempt %d)" % attempt, fixture.done.stdout)
+        # 再実行でも失敗のままの run は CI の赤であってここでは数えない（attempt 1 の成功だけなら通る）
+        fixture = Fixture()
+        fixture.head_runs[0].update(attempt=2, conclusion="failure")
+        fixture.run()
+        self.assertEqual(fixture.done.returncode, 0, fixture.done.stdout + fixture.done.stderr)
+        # 理由があれば通り、理由が判定表に写る。空の理由は無いのと同じ
+        fixture = Fixture()
+        fixture.head_runs[0]["attempt"] = 2
+        fixture.run(judges=fixture.judges + ["rerun=#395 の揺れ"])
+        self.assertEqual(fixture.done.returncode, 0, fixture.done.stdout + fixture.done.stderr)
+        self.assertIn("#395 の揺れ", (fixture.state / "comment.md").read_text())
+        self.assertEqual(len(fixture.merges()), 1)
+        fixture = Fixture()
+        fixture.head_runs[0]["attempt"] = 2
+        fixture.run(judges=fixture.judges + ["rerun="])
+        self.assert_not_merged(fixture)
+
+    def test_unobtainable_head_runs_are_not_merged(self):
+        fixture = Fixture()
+        (fixture.state / "head-runs-fail").write_text("")
+        fixture.run()
+        self.assert_not_merged(fixture)
+        self.assertIn("取得できない", fixture.done.stdout)
 
     def test_dry_run_changes_nothing(self):
         fixture = Fixture()

@@ -2,10 +2,11 @@
 # PR を squash merge する唯一の経路（#159。正本: docs/adr/20261016-gate-merge-behind-script-and-recorded-approval.md）。
 # 承認の写しと merge 条件を確かめ、判定表を PR にコメントで残してから squash merge する（1 つでも欠ければ merge しない）。
 # 使い方: scripts/merge-pr.sh <PR番号> --head <SHA> --judge scope=<判断> --judge injection=<判断>
-#           [--judge no-perceptual-external=なし…] [--repo <owner>/<name>] [--dry-run] [--no-wait] [--ci-timeout <秒>]
+#           [--judge no-perceptual-external=なし…] [--judge rerun=<理由>] [--repo <owner>/<name>] [--dry-run] [--no-wait] [--ci-timeout <秒>]
 #   --head   merge する head の SHA（40 桁）。live の head と違えば止まり、gh pr merge の --match-head-commit にも渡す
 #   --judge  root の判断（script は中身を確かめず、判定表に「root の申告」として写す）。scope と injection は必須。
-#            事前承認で merge するなら no-perceptual-external=なし（知覚の成果物・外部影響を含まない）も必須
+#            事前承認で merge するなら no-perceptual-external=なし（知覚の成果物・外部影響を含まない）も必須。
+#            head の CI に再実行（attempt が 2 以上）で通した run があるときは rerun=<理由>（揺れの issue 番号など）も必須（#485）
 #   --dry-run  判定表を出すだけで、コメントも merge もしない
 #   --no-wait  merge の後に main の CI を待たない（既定は merge commit の push の CI（node-checks・self-test）が終わるまで待ち、結果を出す）
 #   --ci-timeout  CI を待つ上限の秒数（既定 1800、環境変数 MERGE_PR_CI_TIMEOUT でも指定）。待ちが尽きても exit 0（未確認と表示）。CI が failure なら exit 1
@@ -33,7 +34,7 @@ while [[ $# -gt 0 ]]; do
     --dry-run) DRY_RUN=1; shift;;
     --no-wait) WAIT_CI=0; shift;;
     --ci-timeout) CI_TIMEOUT="${2:?--ci-timeout には秒数が必要です}"; shift 2;;
-    -h|--help) sed -n '2,19p' "$0" | sed -nE 's/^# ?//p'; exit 0;;
+    -h|--help) sed -n '2,20p' "$0" | sed -nE 's/^# ?//p'; exit 0;;
     -*) echo "不明な引数: $1" >&2; exit 2;;
     *)
       if [[ -n "$PR_NUM" ]]; then echo "PR番号は 1 つだけ指定してください" >&2; exit 2; fi
@@ -201,6 +202,23 @@ if [[ "$unresolved" == "0" ]]; then row script PASS "未解決のレビュース
 # 5. 記録（コメントの行）。head に結んであり、head が変われば無効になる
 if comment_has "review: head $HEAD_SHA blocking=なし"; then row script PASS "別 context の独立レビューが head に対して blocking なし" "コメントの記録"; else row script FAIL "別 context の独立レビューが head に対して blocking なし" "\`review: head <SHA> blocking=なし\` の記録が無い"; fi
 if comment_has "self-test: head $HEAD_SHA bash=PASS /bin/bash=PASS"; then row script PASS "両方の Bash の self-test が通る" "コメントの記録"; else row script FAIL "両方の Bash の self-test が通る" "\`self-test: head <SHA> bash=PASS /bin/bash=PASS\` の記録が無い"; fi
+
+# 5b. head の CI を再実行で緑にしていないか（#485）。attempt が 2 以上で success の run があれば、揺れを隠したまま merge しないよう FAIL。
+# --judge rerun=<理由>（揺れの issue 番号など）があれば理由を写して通す。run を取得できなければ FAIL（fail-closed）
+if rerun_runs="$(gh run list ${REPO_ARGS[@]+"${REPO_ARGS[@]}"} --commit "$HEAD_SHA" --limit 100 --json workflowName,attempt,conclusion,databaseId 2>/dev/null | python3 -c '
+import json, sys
+print(", ".join("%s(run %s, attempt %s)" % (r["workflowName"], r["databaseId"], r["attempt"])
+                for r in json.load(sys.stdin) if r["conclusion"] == "success" and r["attempt"] >= 2))' 2>/dev/null)"; then
+  if [[ -z "$rerun_runs" ]]; then
+    row script PASS "head の CI に再実行で通した run が無い" "attempt 2 以上の成功なし"
+  elif [[ -n "$(judge_value rerun)" ]]; then
+    row root 申告 "head の CI に再実行で通した run が無い、または揺れとして理由がある" "$rerun_runs: $(judge_value rerun)"
+  else
+    row script FAIL "head の CI に再実行で通した run が無い、または揺れとして理由がある" "再実行で通した run がある: ${rerun_runs}。揺れの issue 番号などを --judge rerun=<理由> で書く"
+  fi
+else
+  row script FAIL "head の CI に再実行で通した run が無い、または揺れとして理由がある" "head の CI の run を取得できない"
+fi
 
 # 6. root の判断（script は中身を確かめない）
 for key in scope injection; do

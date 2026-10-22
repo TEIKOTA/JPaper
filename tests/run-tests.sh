@@ -1065,7 +1065,7 @@ for mutation in prmerge apimerge apiget graphql graphqlpos graphqlpath apiquery 
 done
 # scripts/merge-pr.sh: 承認の写し・head・条件が欠ければ merge せず、揃えば判定表のコメントの後に 1 回だけ merge する（gh は fake）
 expect 0 "issue #159: merge-pr.sh の承認・条件の判定" env PYTHONDONTWRITEBYTECODE=1 python3 "$ROOT/tests/merge-pr.py"
-for mutation in owner ownerempty fullmatch preblocked preunconditional state headmatch base basefailopen mergeable retryunknown mergetree fetchhead diffcheck checkpr threads review selftest judge approval preapproval perceptual heading quote cphead dryrun failstop matchhead comment waitci cired cipending cicommit cibase cibasefailopen cibasehead; do
+for mutation in owner ownerempty fullmatch preblocked preunconditional state headmatch base basefailopen mergeable retryunknown mergetree fetchhead diffcheck checkpr threads review selftest judge approval preapproval perceptual heading quote cphead dryrun failstop matchhead comment waitci cired cipending cicommit cibase cibasefailopen cibasehead rerunfail rerunattempt rerunfailclosed; do
   expect_code 1 "issue #159: merge-pr.sh の ${mutation} の保護を外すと判定が崩れる（red）" \
     env PYTHONDONTWRITEBYTECODE=1 python3 "$ROOT/tests/merge-pr.py" --case "$mutation" --mutation "$mutation"
 done
@@ -2497,7 +2497,7 @@ rc=0; grep -q 'actions/permissions' "$log" && rc=1
 report 0 "$rc" "public repo: Actions を無効化しない"
 rc=0; grep -q 'public repo なので' "$out" || rc=1
 report 0 "$rc" "public repo: 維持することを表示"
-PROTECTION='api --silent --method PUT repos/{owner}/{repo}/branches/main/protection -F required_status_checks[strict]=false -f required_status_checks[contexts][]=node -f required_status_checks[contexts][]=pr-check -f required_status_checks[contexts][]=test (ubuntu-latest) -f required_status_checks[contexts][]=test (macos-latest) -F enforce_admins=true -F required_pull_request_reviews=null -F restrictions=null'
+PROTECTION='api --silent --method PUT repos/{owner}/{repo}/branches/main/protection -F required_status_checks[strict]=false -f required_status_checks[contexts][]=node -f required_status_checks[contexts][]=node-windows -f required_status_checks[contexts][]=pr-check -f required_status_checks[contexts][]=test (ubuntu-latest) -f required_status_checks[contexts][]=test (macos-latest) -F enforce_admins=true -F required_pull_request_reviews=null -F restrictions=null'
 rc=0; grep -Fxq "$PROTECTION" "$log" || rc=1
 report 0 "$rc" "public repo: main の merge に CI の全ジョブの成功を要する"
 protection_bad_log="$(mktemp)" || { echo "FATAL: protection fixture を作成できません" >&2; exit 1; }
