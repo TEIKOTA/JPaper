@@ -186,7 +186,9 @@ describe("走査コストは入力長に対して線形", () => {
     // 二次なら 4 倍。線形なら 2 倍。閾値は測定ノイズを見込んで 3 倍に置く。
     // 1 回きりの測定だと、基準側が 1ms 未満に丸まったところへ負荷が乗った測定側だけが
     // 伸びて落ちる（実測 152ms vs 基準 146ms）。両側とも最小値を採って比べる。
+    // budget-exempt: 測定どうしの比で、時間の閾値ではない
     const t1 = Math.max(1, fastestMs(3, () => void mathSpans(small)));
+    // budget-exempt: 測定どうしの比で、時間の閾値ではない
     const t2 = fastestMs(3, () => void mathSpans(large));
     expect(t2).toBeLessThan(t1 * 3 + 50);
   });

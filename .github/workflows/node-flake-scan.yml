@@ -1,0 +1,46 @@
+# 定期実行で pnpm test を ubuntu・windows の両方で複数回まわし、テストの揺れを main の push より先に見つける（#484）。
+# 1 回でも落ちたら job が failure になる（どの回かは step のログに出す）。失敗の扱い（issue 化）は #483 の workflow_run と揃える。
+# #483 側は workflow 名 node-flake-scan の failure を拾う。
+name: node-flake-scan
+
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: "22"
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - name: pnpm test を 3 回まわす
+        shell: bash
+        run: |
+          failed=0
+          for i in 1 2 3; do
+            echo "::group::pnpm test 第 ${i} 回"
+            if pnpm test; then
+              echo "第 ${i} 回: 成功"
+            else
+              echo "::error::pnpm test 第 ${i} 回が失敗した（${{ matrix.os }}）"
+              failed=$((failed + 1))
+            fi
+            echo "::endgroup::"
+          done
+          echo "失敗した回数: ${failed} / 3"
+          [ "$failed" -eq 0 ]
