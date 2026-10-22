@@ -123,6 +123,12 @@ describe("classifyLog", () => {
       expect(classifyLog(log, MAP, original).failedSegments).toHaveLength(1);
       expect(classifyLog(err("\\maketitle"), MAP).failedSegments).toHaveLength(2);
     });
+    it("文脈が記号だけ・短い（どの原文にも在る）なら翻訳起因に残す", () => {
+      for (const ctx of ["}", "$", "}}", "\\fi"]) {
+        const log = `./main.tex:15: Package xcolor Error: Undefined color \`nosuchcolor'.\nl.15 ${ctx}\n`;
+        expect(classifyLog(log, MAP, "\\color{red}\n}}$\\fi\n").failedSegments, ctx).toHaveLength(1);
+      }
+    });
     it("Class/Package 以外のエラーは文脈行が原文に在っても翻訳起因のまま", () => {
       const log = "./main.tex:15: Missing $ inserted.\nl.15 \\maketitle\n";
       expect(classifyLog(log, MAP, original).failedSegments).toHaveLength(1);

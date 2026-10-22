@@ -66,6 +66,9 @@ const CLASS_PACKAGE_ERROR = /^(?:Class|Package) [A-Za-z0-9@_.-]+ Error:/;
 // エラー直後の `l.<行> <文脈>` 行の、TeX が読み終えた位置までの文面。
 const CONTEXT_TEXT = /^l\.\d+ (.*)$/m;
 
+// 文脈が短い記号だけ（`}`・`$`）だとどの原文にも在るので、英字の並びと長さを要る。契約付録 §6
+const CONTEXT_MIN = /^(?=.{6,})(?=.*[A-Za-z]{3})/;
+
 const squash = (s: string): string => s.replace(/\s+/g, " ").trim();
 
 // class・package のエラーの文脈行が原文にそのまま在るか。訳文が引数を壊したなら文脈行に訳文が混ざり、原文には無い。
@@ -74,7 +77,7 @@ function contextFromSource(message: string, rest: string, squashedOriginal: () =
   const ctx = CONTEXT_TEXT.exec(rest.slice(0, 400))?.[1];
   if (ctx === undefined) return false;
   const text = squash(ctx);
-  return text !== "" && squashedOriginal().includes(text);
+  return CONTEXT_MIN.test(text) && squashedOriginal().includes(text);
 }
 
 // 原文にも同名があるなら translator は関与していない＝構造・テンプレ起因（2層化 ADR 決定4）。
