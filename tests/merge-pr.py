@@ -55,6 +55,9 @@ MUTATIONS = {
     "cired": [('docs/process/failure-patterns.md）" >&2; exit 1;;', 'docs/process/failure-patterns.md）" >&2;;')],
     "cipending": [('if [[ "$ci_verdict" != "pending" ]] || [[ "$SECONDS" -ge "$ci_deadline" ]]; then break; fi', 'if true; then break; fi')],
     "cicommit": [('--commit "$merge_sha"', '--commit "$LIVE_HEAD"')],
+    "rerunfail": [('row script FAIL "head の CI に再実行で通した run が無い、または揺れとして理由がある" "再実行で通した', 'row script PASS "head の CI に再実行で通した run が無い、または揺れとして理由がある" "再実行で通した')],
+    "rerunattempt": [('r["attempt"] >= 2', 'r["attempt"] >= 3')],
+    "rerunfailclosed": [('row script FAIL "head の CI に再実行で通した run が無い、または揺れとして理由がある" "head の CI の run を取得できない"', 'row script PASS "head の CI に再実行で通した run が無い、または揺れとして理由がある" "head の CI の run を取得できない"')],
     "comment": [('gh pr comment "$PR_NUM" ${REPO_ARGS[@]+"${REPO_ARGS[@]}"} --body-file "$body_file"', "true")],
 }
 CASES = {
@@ -92,6 +95,9 @@ CASES = {
     "cired": "test_red_main_ci_fails_after_merge",
     "cipending": "test_pending_ci_is_waited_for_then_reported",
     "cicommit": "test_ci_is_looked_up_by_merge_commit",
+    "rerunfail": "test_rerun_success_is_not_merged_without_reason",
+    "rerunattempt": "test_rerun_success_is_not_merged_without_reason",
+    "rerunfailclosed": "test_unobtainable_head_runs_are_not_merged",
 }
 parser = argparse.ArgumentParser()
 parser.add_argument("--mutation", choices=sorted(MUTATIONS))
@@ -135,6 +141,11 @@ if args[:2] == ["pr", "view"]:
         print(json.dumps({field: pr[field] for field in fields}))
 elif args[:2] == ["run", "list"]:
     commit = args[args.index("--commit") + 1]
+    if commit == load("pr.json")["headRefOid"]:
+        if os.path.exists(state + "/head-runs-fail"):
+            sys.exit(1)
+        print(json.dumps(load("head-runs.json")))
+        sys.exit(0)
     runs = load("runs.json")
     pending = os.path.exists(state + "/ci-pending-count")
     if pending:
@@ -212,6 +223,7 @@ class Fixture:
         self.issue = "## Problem\nx\n\n## merge の事前承認\n\n- 2026-10-16 ユーザーが「事前承認」を選んだ\n- 条件: 別 context の独立レビュー / 退行注入\n- 条件から外れたら merge しない\n\n## Risks\nx\n"
         self.threads = {"data": {"repository": {"pullRequest": {"reviewThreads": {"pageInfo": {"hasNextPage": False}, "nodes": [{"isResolved": True}]}}}}}
         self.runs = [{"workflowName": name, "status": "completed", "conclusion": "success", "url": f"https://example/{name}"} for name in ("node-checks", "self-test")]
+        self.head_runs = [{"workflowName": name, "attempt": 1, "conclusion": "success", "databaseId": 100 + index} for index, name in enumerate(("node-checks", "self-test"))]
         self.judges = ["scope=範囲内", "injection=対象外（docs のみ）", "no-perceptual-external=なし"]
 
     @staticmethod
@@ -223,6 +235,7 @@ class Fixture:
         (self.state / "issue-5.json").write_text(json.dumps({"body": self.issue}))
         (self.state / "threads.json").write_text(json.dumps(self.threads))
         (self.state / "runs.json").write_text(json.dumps(self.runs))
+        (self.state / "head-runs.json").write_text(json.dumps(self.head_runs))
         command = ["bash", str(WORK / "scripts/merge-pr.sh"), pr_number, "--head", head or self.head, *extra]
         for judge in (self.judges if judges is None else judges):
             command += ["--judge", judge]
@@ -271,7 +284,7 @@ class MergePr(unittest.TestCase):
         done = fixture.run(extra=["--no-wait"])
         self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
         self.assertEqual(len(fixture.merges()), 1)
-        self.assertEqual([line for line in fixture.log if line.startswith("run list")], [])
+        self.assertEqual([line for line in fixture.log if line.startswith("run list") and "--event push" in line], [])
         self.assertIn("--no-wait", done.stdout)
 
     def test_red_main_ci_fails_after_merge(self):
@@ -298,7 +311,7 @@ class MergePr(unittest.TestCase):
         done = fixture.run()
         self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
         self.assertIn("main の CI は成功", done.stdout)
-        self.assertEqual(len([line for line in fixture.log if line.startswith("run list")]), 3)
+        self.assertEqual(len([line for line in fixture.log if line.startswith("run list") and "--event push" in line]), 3)
         # 上限（0 秒）で終わらなければ、未確認と表示して exit 0
         fixture = Fixture()
         (fixture.state / "ci-pending-count").write_text("99")
@@ -588,6 +601,37 @@ class MergePr(unittest.TestCase):
             fixture = Fixture()
             fixture.run(judges=judges)
             self.assert_not_merged(fixture)
+
+    def test_rerun_success_is_not_merged_without_reason(self):
+        for attempt in (2, 3):
+            fixture = Fixture()
+            fixture.head_runs[0]["attempt"] = attempt
+            fixture.run()
+            self.assert_not_merged(fixture)
+            self.assertIn("node-checks(run 100, attempt %d)" % attempt, fixture.done.stdout)
+        # 再実行でも失敗のままの run は CI の赤であってここでは数えない（attempt 1 の成功だけなら通る）
+        fixture = Fixture()
+        fixture.head_runs[0].update(attempt=2, conclusion="failure")
+        fixture.run()
+        self.assertEqual(fixture.done.returncode, 0, fixture.done.stdout + fixture.done.stderr)
+        # 理由があれば通り、理由が判定表に写る。空の理由は無いのと同じ
+        fixture = Fixture()
+        fixture.head_runs[0]["attempt"] = 2
+        fixture.run(judges=fixture.judges + ["rerun=#395 の揺れ"])
+        self.assertEqual(fixture.done.returncode, 0, fixture.done.stdout + fixture.done.stderr)
+        self.assertIn("#395 の揺れ", (fixture.state / "comment.md").read_text())
+        self.assertEqual(len(fixture.merges()), 1)
+        fixture = Fixture()
+        fixture.head_runs[0]["attempt"] = 2
+        fixture.run(judges=fixture.judges + ["rerun="])
+        self.assert_not_merged(fixture)
+
+    def test_unobtainable_head_runs_are_not_merged(self):
+        fixture = Fixture()
+        (fixture.state / "head-runs-fail").write_text("")
+        fixture.run()
+        self.assert_not_merged(fixture)
+        self.assertIn("取得できない", fixture.done.stdout)
 
     def test_dry_run_changes_nothing(self):
         fixture = Fixture()
