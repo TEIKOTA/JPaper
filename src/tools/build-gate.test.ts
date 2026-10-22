@@ -12,6 +12,10 @@ import {
   SRC_PKG_DIR,
   parseResolved,
   unsafeSupportFiles,
+  defaultRunner,
+  probeLatexmk,
+  describeLaunchError,
+  LATEXMK_MISSING,
 } from "./build-gate.js";
 import type { SourceSpan } from "./assemble-latex.js";
 import type { LatexRunner } from "./build-gate.js";
@@ -429,5 +433,48 @@ describe("配布パッケージの解決", () => {
       names.includes("vendor.sty") ? new Set(["vendor.sty"]) : new Set(),
     );
     expect(bad.map((b) => b.file)).toEqual(["mine.sty"]);
+  });
+});
+
+describe("組版の道具を起動できない環境の障害（契約付録 §6）", () => {
+  const withEmptyPath = async <T>(f: (dir: string) => Promise<T> | T): Promise<T> => {
+    const saved = process.env.PATH;
+    const empty = mkTemp();
+    process.env.PATH = empty;
+    try {
+      return await f(empty);
+    } finally {
+      process.env.PATH = saved;
+    }
+  };
+
+  it("PATH に latexmk が無いと defaultRunner は原因を名指しした envError を返す（ログは空）", async () => {
+    const r = await withEmptyPath((d) => defaultRunner(d));
+    expect(r.envError).toBe(LATEXMK_MISSING);
+    expect(r.log).toBe("");
+    expect(r.code).toBe(1);
+  });
+
+  it("probeLatexmk も同じ説明を返す", async () => {
+    expect(await withEmptyPath(() => probeLatexmk())).toBe(LATEXMK_MISSING);
+  });
+
+  it("ENOENT 以外の起動失敗はコードと理由を出す", () => {
+    const m = describeLaunchError(Object.assign(new Error("spawn latexmk EACCES"), { code: "EACCES" }));
+    expect(m).toContain("EACCES");
+    expect(m).not.toBe(LATEXMK_MISSING);
+  });
+
+  it("runner の envError は runBuildGate の結果へ伝わり、ログの分類は空のまま buildOk=false になる", async () => {
+    const dir = mkTemp();
+    const src = mkTemp();
+    const g = await runBuildGate(
+      { buildDir: path.join(dir, "b"), mainTex: "\\documentclass{article}", sourceDir: src, mainDir: src, figures: [], sourceMap: MAP },
+      () => ({ code: 1, log: "", envError: LATEXMK_MISSING }),
+    );
+    expect(g.buildOk).toBe(false);
+    expect(g.envError).toBe(LATEXMK_MISSING);
+    expect(g.failedSegments).toEqual([]);
+    expect(g.structuralErrors).toEqual([]);
   });
 });

@@ -221,6 +221,9 @@ export interface TranslateDeps {
   // 進捗。web の UI が「12/35 節完了」を出せるようにする副作用チャネル。
   onProgress?: (e: RunProgress) => void;
   latexRunner?: LatexRunner;
+  // 実行の頭に組版の道具の有無を確かめる検査。説明を返すと LLM を呼ばず exit 1 で止まる。
+  // 既定は検査しない（Web のジョブ・テストの差し替えを変えない）。CLI が probeLatexmk を渡す。契約付録 §6
+  latexProbe?: () => string | undefined;
   // false なら用語集の結果を全体 DB へ書き戻さない（用語集の編集の組み直し。契約付録 §9）。既定 true。
   writeBackGlossary?: boolean;
   // 注入した client が LlmRequest.webSearch を扱えるか。既定 false（内部で作る claude・codex の client は扱える）。契約付録 §4
@@ -733,6 +736,9 @@ function gateError(
       message: `品質基準に達しないセグメントがあります: ${ids}${alsoFormal}${WHERE_ISSUES}`,
     };
   }
+  if (exitCode === 1) {
+    return { kind: "infra", code: 1, message: outwardMessage(typesetMessage ?? "実行環境の障害です"), detail: typesetMessage };
+  }
   if (exitCode === 5) {
     // 中身は latexmk ログの切り出し＝論文が内容を操作できる。外向きの出口で必ず検疫する。
     return {
@@ -801,7 +807,7 @@ export function summarizeGateFailure(g: BuildGateResult): string {
     parts.push(`未解決参照: ${g.unresolvedRefs.slice(0, 5).map((r) => clip(r, 60)).join(", ")}`);
   if (g.shadowedPackages.length)
     parts.push(`同梱パッケージを無効化: ${g.shadowedPackages.join(", ")}`);
-  return parts.join(" | ") || "不明なビルド失敗";
+  return g.envError ?? (parts.join(" | ") || "不明なビルド失敗");
 }
 
 // 全文組版ゲート: 原プリアンブル温存を試し、構造起因失敗のみ共通テンプレへ明示的にフォールバック（surface）。
@@ -867,6 +873,13 @@ async function typeset(
     if (g.shadowedPackages.length)
       surface(`配布版を優先し同梱パッケージを無効化: ${g.shadowedPackages.join(", ")}`);
   };
+  // 環境の障害はテンプレに替えても直らない。フォールバックせず exit 1 で返す。契約付録 §6
+  const envFailure = (why: string): TypesetOutcome => {
+    const m = `組版できません（実行環境の障害）: ${why}`;
+    surface(m);
+    discard();
+    return { layout: null, buildOk: false, exitCode: 1, message: m, titleApplied: titleApplied() };
+  };
   // pdfPath は buildOk のときだけ返す（ゲート棄却済みの成果物を成功として渡さない）。
   const orig = await run("original");
   noteShadowed(orig);
@@ -879,6 +892,7 @@ async function typeset(
       titleApplied: titleApplied(),
     };
   }
+  if (orig.envError !== undefined) return envFailure(orig.envError);
   if (orig.failedSegments.length > 0) {
     // 翻訳起因のビルド失敗。再訳ループ(WP10)未実装のため明示的失敗として surface する。
     const m = `組版失敗(翻訳起因・要再訳): ${summarizeGateFailure(orig)}`;
@@ -897,6 +911,7 @@ async function typeset(
       titleApplied: titleApplied(),
     };
   }
+  if (tmpl.envError !== undefined) return envFailure(tmpl.envError);
   const m = `組版失敗(テンプレでも不可): ${summarizeGateFailure(tmpl)}`;
   surface(m);
   discard();
@@ -970,7 +985,7 @@ async function typesetBilingual(
       );
     }
     let g = await gate(b.mainTex);
-    if (!g.buildOk && layout === "original") {
+    if (!g.buildOk && layout === "original" && g.envError === undefined) {
       surface(`対訳: 原プリアンブルで組めず共通テンプレで組み直します: ${summarizeGateFailure(g)}`);
       g = await gate(assemble("template").mainTex);
     }
@@ -1321,6 +1336,11 @@ export async function translatePaper(
         "too-large",
         `翻訳対象セグメント数 ${segments.length} が上限 ${work.maxSegments} を超えています`,
       );
+    }
+    // 組版の道具が無いのは LLM を呼んでから分かると遅い。入力の検査より後・最初の LLM 呼び出しより前に確かめる。契約付録 §6
+    const latexMissing = deps.latexProbe?.();
+    if (latexMissing !== undefined) {
+      throw new JpaperError(1, "infra", `組版できません（実行環境の障害）: ${latexMissing}`);
     }
     // 用語バリア: 並列翻訳の前に resolved/brief/style を確定する。
     progress({ phase: "context", done: 0, total: 1 });
