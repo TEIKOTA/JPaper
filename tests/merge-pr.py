@@ -61,6 +61,8 @@ MUTATIONS = {
     "rerunfail": [('row script FAIL "head の CI に再実行で通した run が無い、または揺れとして理由がある" "再実行で通した', 'row script PASS "head の CI に再実行で通した run が無い、または揺れとして理由がある" "再実行で通した')],
     "rerunattempt": [('r["attempt"] >= 2', 'r["attempt"] >= 3')],
     "rerunfailclosed": [('row script FAIL "head の CI に再実行で通した run が無い、または揺れとして理由がある" "head の CI の run を取得できない"', 'row script PASS "head の CI に再実行で通した run が無い、または揺れとして理由がある" "head の CI の run を取得できない"')],
+    "branchsha": [('[[ "$local_tip" != "$HEAD_SHA" ]]', "false")],
+    "branchexit": [('echo "（手元の branch ${HEAD_REF} は消せなかった。', 'exit 1; echo "（手元の branch $HEAD_REF は消せなかった。')],
     "comment": [('gh pr comment "$PR_NUM" ${REPO_ARGS[@]+"${REPO_ARGS[@]}"} --body-file "$body_file"', "true")],
 }
 CASES = {
@@ -98,6 +100,8 @@ CASES = {
     "cibasehead": "test_ci_base_is_matched_and_unobtainable_fails_closed",
     "comment": "test_approved_pr_is_merged_once_after_comment",
     "waitci": "test_no_wait_skips_ci",
+    "branchsha": "test_local_branch_is_deleted_only_when_tip_matches_head",
+    "branchexit": "test_checked_out_branch_is_kept_and_merge_continues",
     "cired": "test_red_main_ci_fails_after_merge",
     "cipending": "test_pending_ci_is_waited_for_then_reported",
     "cicommit": "test_ci_is_looked_up_by_merge_commit",
@@ -188,6 +192,8 @@ elif args[:2] == ["api", "graphql"]:
     print(json.dumps(load("threads.json")))
 elif args[:1] == ["api"]:
     print("issue")
+elif args[:2] == ["pr", "merge"] and os.path.exists(state + "/merge-fail"):
+    sys.exit(1)
 elif args[:2] == ["pr", "comment"]:
     with open(state + "/comment.md", "w") as out:
         out.write(open(args[args.index("--body-file") + 1]).read())
@@ -232,7 +238,7 @@ class Fixture:
         self.pr = {
             "number": 7, "state": "OPEN", "isDraft": False, "title": "feat(x): テスト", "body": "Closes #5\n",
             "headRefOid": self.head, "baseRefName": "main", "baseRefOid": self.base, "mergeable": "MERGEABLE",
-            "mergeStateStatus": "CLEAN", "mergeCommit": {"oid": "d" * 40},
+            "mergeStateStatus": "CLEAN", "mergeCommit": {"oid": "d" * 40}, "headRefName": "feat",
             "comments": [self.comment(f"review: head {self.head} blocking=なし"), self.comment(f"self-test: head {self.head} bash=PASS /bin/bash=PASS")],
         }
         self.issue = "## Problem\nx\n\n## merge の事前承認\n\n- 2026-10-16 ユーザーが「事前承認」を選んだ\n- 条件: 別 context の独立レビュー / 退行注入\n- 条件から外れたら merge しない\n\n## Risks\nx\n"
@@ -685,6 +691,64 @@ class MergePr(unittest.TestCase):
         self.assertEqual(fixture.done.returncode, 0)
         self.assertEqual((fixture.merges(), fixture.comments()), ([], []))
         self.assertIn("merge する", fixture.done.stdout)
+        self.assertEqual(rev(fixture.clone, "refs/heads/feat"), fixture.head, "dry-run は手元の branch を消さない")
+
+    def branch_exists(self, fixture, name="feat"):
+        return subprocess.run(["git", "rev-parse", "--verify", "-q", f"refs/heads/{name}"], cwd=fixture.clone, capture_output=True).returncode == 0
+
+    def test_local_branch_is_deleted_only_when_tip_matches_head(self):
+        # 一致すれば消え、merge の結果（exit 0）と CI の待ちは変わらない
+        fixture = Fixture()
+        done = fixture.run()
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertFalse(self.branch_exists(fixture), "一致する branch は消える")
+        self.assertIn("手元の branch feat を消した", done.stdout)
+        self.assertIn("main の CI は成功", done.stdout)
+        # --no-wait でも消える
+        fixture = Fixture()
+        fixture.run(extra=["--no-wait"])
+        self.assertFalse(self.branch_exists(fixture))
+        # push していない commit がある（先端が違う）なら残す
+        fixture = Fixture()
+        git(fixture.clone, "checkout", "-q", "feat")
+        (fixture.clone / "c.txt").write_text("local\n")
+        git(fixture.clone, "add", "."); git(fixture.clone, "commit", "-q", "-m", "local")
+        git(fixture.clone, "checkout", "-q", "main")
+        tip = rev(fixture.clone, "feat")
+        fixture.run()
+        self.assertEqual(fixture.done.returncode, 0, fixture.done.stdout + fixture.done.stderr)
+        self.assertEqual(rev(fixture.clone, "refs/heads/feat"), tip)
+        self.assertIn("先端が merge した head と違うので残す", fixture.done.stdout)
+        # 手元に同名の branch が無ければ何もせず exit 0
+        fixture = Fixture()
+        git(fixture.clone, "branch", "-q", "-D", "feat")
+        fixture.run()
+        self.assertEqual(fixture.done.returncode, 0, fixture.done.stdout + fixture.done.stderr)
+        self.assertNotIn("手元の branch", fixture.done.stdout)
+
+    def test_checked_out_branch_is_kept_and_merge_continues(self):
+        fixture = Fixture()
+        git(fixture.clone, "checkout", "-q", "feat")
+        fixture.run()
+        self.assertEqual(fixture.done.returncode, 0, fixture.done.stdout + fixture.done.stderr)
+        self.assertTrue(self.branch_exists(fixture), "checkout 中の branch は残る")
+        self.assertIn("消せなかった", fixture.done.stdout)
+        self.assertIn("main の CI は成功", fixture.done.stdout, "後続の CI の待ちは続く")
+        # 別の worktree で checkout 中でも残る
+        fixture = Fixture()
+        worktree = fixture.dir / "wt"
+        git(fixture.clone, "worktree", "add", "-q", str(worktree), "feat")
+        fixture.run()
+        self.assertEqual(fixture.done.returncode, 0, fixture.done.stdout + fixture.done.stderr)
+        self.assertTrue(self.branch_exists(fixture))
+        self.assertIn("消せなかった", fixture.done.stdout)
+
+    def test_failed_merge_keeps_local_branch(self):
+        fixture = Fixture()
+        (fixture.state / "merge-fail").write_text("")
+        fixture.run()
+        self.assertNotEqual(fixture.done.returncode, 0)
+        self.assertTrue(self.branch_exists(fixture), "merge に失敗したら消さない")
 
     def test_arguments_are_validated(self):
         fixture = Fixture()
