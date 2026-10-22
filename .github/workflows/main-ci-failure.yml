@@ -1,0 +1,33 @@
+# main への push の CI（node-checks・self-test）が failure になったら、失敗の要約つきで issue を作る（#483）。
+# workflow_run は default branch の定義で動くので、PR が書き換えた版では動かない。fork の PR の実行は event が
+# pull_request なので対象外で、念のため head_repository も自 repo に限る。
+name: main-ci-failure
+
+on:
+  workflow_run:
+    workflows: [node-checks, self-test]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: read
+  actions: read
+  issues: write
+
+jobs:
+  report:
+    if: >-
+      github.event.workflow_run.conclusion == 'failure' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: 失敗した実行を issue に報告
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+        run: bash scripts/report-main-ci-failure.sh "$RUN_ID" --repo "$GITHUB_REPOSITORY"

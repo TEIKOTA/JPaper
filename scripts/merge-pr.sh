@@ -2,11 +2,14 @@
 # PR を squash merge する唯一の経路（#159。正本: docs/adr/20261016-gate-merge-behind-script-and-recorded-approval.md）。
 # 承認の写しと merge 条件を確かめ、判定表を PR にコメントで残してから squash merge する（1 つでも欠ければ merge しない）。
 # 使い方: scripts/merge-pr.sh <PR番号> --head <SHA> --judge scope=<判断> --judge injection=<判断>
-#           [--judge no-perceptual-external=なし…] [--repo <owner>/<name>] [--dry-run]
+#           [--judge no-perceptual-external=なし…] [--repo <owner>/<name>] [--dry-run] [--no-wait] [--ci-timeout <秒>]
 #   --head   merge する head の SHA（40 桁）。live の head と違えば止まり、gh pr merge の --match-head-commit にも渡す
 #   --judge  root の判断（script は中身を確かめず、判定表に「root の申告」として写す）。scope と injection は必須。
 #            事前承認で merge するなら no-perceptual-external=なし（知覚の成果物・外部影響を含まない）も必須
 #   --dry-run  判定表を出すだけで、コメントも merge もしない
+#   --no-wait  merge の後に main の CI を待たない（既定は merge commit の push の CI（node-checks・self-test）が終わるまで待ち、結果を出す）
+#   --ci-timeout  CI を待つ上限の秒数（既定 1200、環境変数 MERGE_PR_CI_TIMEOUT でも指定）。待ちが尽きても exit 0（未確認と表示）。CI が failure なら exit 1
+#            Bash tool から呼ぶなら tool の timeout を上限より長くする
 #   PR のコメントに残す記録（owner のコメントの 1 行ぜんたいが一致する形。行の後ろに文字を足すと一致しない。書式は ADR 参照）:
 #     review: head <40 桁の SHA> blocking=なし
 #     self-test: head <40 桁の SHA> bash=PASS /bin/bash=PASS
@@ -19,6 +22,8 @@ PR_NUM=""
 HEAD_SHA=""
 REPO=""
 DRY_RUN=0
+WAIT_CI=1
+CI_TIMEOUT="${MERGE_PR_CI_TIMEOUT:-1200}"
 JUDGES=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -26,7 +31,9 @@ while [[ $# -gt 0 ]]; do
     --judge) JUDGES+=("${2:?--judge には <key>=<判断> が必要です}"); shift 2;;
     --repo) REPO="${2:?--repo には <owner>/<name> が必要です}"; shift 2;;
     --dry-run) DRY_RUN=1; shift;;
-    -h|--help) sed -n '2,16p' "$0" | sed -nE 's/^# ?//p'; exit 0;;
+    --no-wait) WAIT_CI=0; shift;;
+    --ci-timeout) CI_TIMEOUT="${2:?--ci-timeout には秒数が必要です}"; shift 2;;
+    -h|--help) sed -n '2,19p' "$0" | sed -nE 's/^# ?//p'; exit 0;;
     -*) echo "不明な引数: $1" >&2; exit 2;;
     *)
       if [[ -n "$PR_NUM" ]]; then echo "PR番号は 1 つだけ指定してください" >&2; exit 2; fi
@@ -35,6 +42,9 @@ while [[ $# -gt 0 ]]; do
 done
 if ! printf '%s\n' "$PR_NUM" | grep -qE '^[0-9]+$'; then
   echo "✖ PR番号を数字で指定してください" >&2; exit 2
+fi
+if ! printf '%s\n' "$CI_TIMEOUT" | grep -qE '^[0-9]+$'; then
+  echo "✖ --ci-timeout は秒数（整数）で指定してください" >&2; exit 2
 fi
 if ! printf '%s\n' "$HEAD_SHA" | grep -qE '^[0-9a-f]{40}$'; then
   echo "✖ --head に 40 桁の SHA が必要です" >&2; exit 2
@@ -237,3 +247,45 @@ trap 'rm -f "$body_file"' EXIT
 printf '%s\n' "$TABLE" > "$body_file"
 gh pr comment "$PR_NUM" ${REPO_ARGS[@]+"${REPO_ARGS[@]}"} --body-file "$body_file"
 gh pr merge "$PR_NUM" ${REPO_ARGS[@]+"${REPO_ARGS[@]}"} --squash --match-head-commit "$HEAD_SHA"
+
+# ---- merge 後の main の CI（#483）------------------------------------------
+# 署名鍵の競合のような「PR は緑・main は赤」は PR の CI では見えない。merge commit の push の CI が終わるまで待ち、結果を出す。
+# 待ちの上限は --ci-timeout。待ちが尽きても merge は済んでいるので exit 0（未確認と表示）、failure なら exit 1
+# （main の失敗は .github/workflows/main-ci-failure.yml も issue にする）
+if [[ "$WAIT_CI" -eq 0 ]]; then echo "（--no-wait: main の CI は待たない。確かめるには gh run list --branch main）"; exit 0; fi
+CI_INTERVAL="${MERGE_PR_CI_INTERVAL:-20}"
+merge_sha="$(gh pr view "$PR_NUM" ${REPO_ARGS[@]+"${REPO_ARGS[@]}"} --json mergeCommit --jq .mergeCommit.oid 2>/dev/null || true)"
+if ! printf '%s\n' "$merge_sha" | grep -qE '^[0-9a-f]{40}$'; then
+  echo "⚠ merge commit を取得できず、main の CI は未確認（gh run list --branch main で確かめる）"; exit 0
+fi
+echo "merge commit \`$merge_sha\` の main の CI（node-checks・self-test）を待つ（上限 ${CI_TIMEOUT} 秒）"
+ci_deadline=$((SECONDS + CI_TIMEOUT))
+while :; do
+  ci_state="$(gh run list ${REPO_ARGS[@]+"${REPO_ARGS[@]}"} --commit "$merge_sha" --event push --limit 50 --json workflowName,status,conclusion,url 2>/dev/null | python3 -c '
+import json, sys
+runs = {}
+for run in json.load(sys.stdin):
+    if run["workflowName"] in ("node-checks", "self-test") and run["workflowName"] not in runs:
+        runs[run["workflowName"]] = run
+lines, pending, red = [], False, False
+for name in ("node-checks", "self-test"):
+    run = runs.get(name)
+    if run is None or run["status"] != "completed":
+        pending = True
+        lines.append("%s: %s" % (name, "実行待ち" if run is None else run["status"]))
+    else:
+        red = red or run["conclusion"] != "success"
+        lines.append("%s: %s %s" % (name, run["conclusion"], run["url"]))
+print("red" if red else ("pending" if pending else "green"))
+print("\n".join(lines))' 2>/dev/null)" || ci_state=$'pending\n（CI の状態を取得できない）'
+  ci_verdict="${ci_state%%$'\n'*}"
+  # failure が 1 つでも見えたら、残りの実行を待たずに知らせる
+  if [[ "$ci_verdict" != "pending" ]] || [[ "$SECONDS" -ge "$ci_deadline" ]]; then break; fi
+  sleep "$CI_INTERVAL"
+done
+printf '%s\n' "${ci_state#*$'\n'}"
+case "$ci_verdict" in
+  green) echo "✔ main の CI は成功";;
+  red) echo "✖ main の CI が failure（merge は済んでいる）。原因を調べる。同じ失敗が 2 回出たら揺れとして扱わない（docs/process/failure-patterns.md）" >&2; exit 1;;
+  *) echo "⚠ main の CI が ${CI_TIMEOUT} 秒以内に終わらなかった。未確認（gh run list --branch main で確かめる）";;
+esac
