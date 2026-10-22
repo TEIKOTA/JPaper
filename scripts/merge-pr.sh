@@ -8,6 +8,7 @@
 #            事前承認で merge するなら no-perceptual-external=なし（知覚の成果物・外部影響を含まない）も必須。
 #            head の CI に再実行（attempt が 2 以上）で通した run があるときは rerun=<理由>（揺れの issue 番号など）も必須（#485）
 #   --dry-run  判定表を出すだけで、コメントも merge もしない
+#   merge の後、先端が merge した head と一致する手元の同名 branch は git branch -D で消す（#493。不一致・checkout 中は残して理由を出す）
 #   --no-wait  merge の後に main の CI を待たない（既定は merge commit の push の CI（node-checks・self-test）が終わるまで待ち、結果を出す）
 #   --ci-timeout  CI を待つ上限の秒数（既定 1800、環境変数 MERGE_PR_CI_TIMEOUT でも指定）。待ちが尽きても exit 0（未確認と表示）。CI が failure なら exit 1
 #            Bash tool から呼ぶなら tool の timeout を上限より長くする
@@ -59,7 +60,7 @@ if [[ -n "$REPO" ]]; then REPO_ARGS=(--repo "$REPO"); fi
 # ---- 取得 ---------------------------------------------------------------
 
 fetch_pr() {
-  gh pr view "$PR_NUM" ${REPO_ARGS[@]+"${REPO_ARGS[@]}"} --json number,state,isDraft,title,body,headRefOid,baseRefName,baseRefOid,mergeable,mergeStateStatus,comments
+  gh pr view "$PR_NUM" ${REPO_ARGS[@]+"${REPO_ARGS[@]}"} --json number,state,isDraft,title,body,headRefOid,baseRefName,baseRefOid,headRefName,mergeable,mergeStateStatus,comments
 }
 pr_json="$(fetch_pr)" || { echo "✖ PR #$PR_NUM を取得できません" >&2; exit 1; }
 
@@ -283,6 +284,20 @@ trap 'rm -f "$body_file"' EXIT
 printf '%s\n' "$TABLE" > "$body_file"
 gh pr comment "$PR_NUM" ${REPO_ARGS[@]+"${REPO_ARGS[@]}"} --body-file "$body_file"
 gh pr merge "$PR_NUM" ${REPO_ARGS[@]+"${REPO_ARGS[@]}"} --squash --match-head-commit "$HEAD_SHA"
+
+# ---- merge 後の手元の topic branch（#493）----------------------------------
+# squash merge では main の commit が branch の子孫にならず git branch -d は使えない。先端が merge した head と一致するときだけ -D で消す。
+# 結果は merge の exit code にも後続の処理にも影響させない（checkout 中は git branch -D が拒否する）
+HEAD_REF="$(jfield headRefName 2>/dev/null || true)"
+if [[ -n "$HEAD_REF" ]] && local_tip="$(git rev-parse --verify -q "refs/heads/$HEAD_REF" 2>/dev/null)"; then
+  if [[ "$local_tip" != "$HEAD_SHA" ]]; then
+    echo "（手元の branch ${HEAD_REF} は先端が merge した head と違うので残す: push していない commit が無いか確かめ、不要なら git branch -D ${HEAD_REF}）"
+  elif git branch -D "$HEAD_REF" >/dev/null 2>&1; then
+    echo "手元の branch ${HEAD_REF} を消した（先端が merge した head と一致）"
+  else
+    echo "（手元の branch ${HEAD_REF} は消せなかった。どこかの worktree で checkout 中なら切り替えてから git branch -D ${HEAD_REF}）"
+  fi
+fi
 
 # ---- merge 後の main の CI（#483）------------------------------------------
 # 署名鍵の競合のような「PR は緑・main は赤」は PR の CI では見えない。merge commit の push の CI が終わるまで待ち、結果を出す。
