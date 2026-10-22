@@ -144,6 +144,25 @@ describe("runCli", () => {
     expect(err).toContain("エラー: checkpoint を読めません\n");
   });
 
+  it("実行の頭の組版の道具の検査（既定は probeLatexmk）を translate へ渡す（契約付録 §6）", async () => {
+    const { probeLatexmk } = await import("./tools/build-gate.js");
+    const seen: unknown[] = [];
+    const run = (extra: Parameters<typeof runCli>[1]) =>
+      runCli(["node", "jpaper", "1706.03762", "--provider", "claude"], {
+        stdout: () => {},
+        stderr: () => {},
+        translate: async (_i, _o, deps) => {
+          seen.push(deps?.latexProbe);
+          return okResult;
+        },
+        ...extra,
+      });
+    await run({});
+    const probe = () => "x";
+    await run({ latexProbe: probe });
+    expect(seen).toEqual([probeLatexmk, probe]);
+  });
+
   it("--provider 未指定は exit 2", async () => {
     const code = await runCli(["node", "jpaper", "1706.03762"], {
       stderr: () => {},

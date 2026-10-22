@@ -181,6 +181,7 @@ CREATE INDEX idx_term_src ON term(src);
 | 6 | 呼び出し側の中断（`AbortSignal`＝`canceled`。web の切断）／run 全体の期限超過（`timeout`） |
 
 - stdout: 最終成果パスとサマリ JSON。stderr: 進捗・エラー。
+- **組版の道具を起動できない環境の障害**（issue #475）: `defaultRunner`（`src/tools/build-gate.ts`）は latexmk の起動の失敗（spawn の `error`、Windows の `resolveCommand` の失敗）を `RunResult.envError` に載せる。`ENOENT` は「latexmk が見つかりません（TeX Live を入れて PATH を通してください）」、それ以外は `（コード）` と理由を添える。`runBuildGate` は `BuildGateResult.envError` に写し、ログの分類は行わない。`typeset` は `envError` を、論文側の失敗ではなく環境の障害として扱う: 共通テンプレへのフォールバックを試さず、終了コード **1**（`kind=infra`、5 にしない）で、原因を名指しした message を返す。対訳 PDF も同じ（テンプレで組み直さず、対訳の失敗として理由を出す）。`jpaper` の CLI は、取り込みと件数上限の検査の後・最初の LLM 呼び出しの前に `TranslateDeps.latexProbe`（既定は `probeLatexmk`＝`latexmk -v` を起動できるか）で確かめ、起動できなければ LLM を呼ばずに同じ終了コード 1 で止まる。`translatePaper` 自体は `latexProbe` が無ければ検査しない（Web のジョブ・`latexRunner` を差し替えるテストを変えない）。kpsewhich が無いときの縮退（空集合）は変えない。
 - 組版失敗の理由の要約は、翻訳起因（`failedSegments`）か構造の誤り（`structuralErrors`）で組版が途中で止まったときは未解決参照を並べない（止まった位置より後の引用がすべて未定義になるだけで、原因ではない）。
 
 ## 7. 見積りスコープ（2段構成・2026-07-09 確定）

@@ -140,6 +140,55 @@ describe("Result.error（失敗の理由を戻り値から判別できる）", (
     expect(r.error?.message).toContain("組版失敗");
   });
 
+  it("組版の道具が無い環境の障害は exit 1・kind=infra で、テンプレへのフォールバックを試さない", async () => {
+    const { translatePaper, tar, client, GlossaryDb } = await harness();
+    const { LATEXMK_MISSING } = await import("../tools/build-gate.js");
+    let runs = 0;
+    const notes: string[] = [];
+    const r = await translatePaper(
+      { kind: "path", path: tar },
+      { provider: "ollama", outDir: path.join(tmp(), "out") },
+      {
+        client: client("これは訳文である。"),
+        db: new GlossaryDb(),
+        latexRunner: () => {
+          runs += 1;
+          return { code: 1, log: "", envError: LATEXMK_MISSING };
+        },
+        onError: (m) => notes.push(m),
+      },
+    );
+    expect(r.exitCode).toBe(1);
+    expect(r.error?.kind).toBe("infra");
+    expect(r.error?.message).toContain("latexmk が見つかりません");
+    expect(runs).toBe(1);
+    expect(notes.join("\n")).not.toContain("フォールバック");
+    expect(notes.join("\n")).not.toContain("不明なビルド失敗");
+    expect(r.summary.buildOk).toBe(false);
+  });
+
+  it("実行の頭の検査（latexProbe）が説明を返すと、LLM を 1 回も呼ばず exit 1・kind=infra で止まる", async () => {
+    const { translatePaper, tar, GlossaryDb } = await harness();
+    const { FakeLlmClient } = await import("../testing/fake-llm.js");
+    let llmCalls = 0;
+    const r = await translatePaper(
+      { kind: "path", path: tar },
+      { provider: "ollama", outDir: path.join(tmp(), "out") },
+      {
+        client: new FakeLlmClient(() => {
+          llmCalls += 1;
+          return "x";
+        }),
+        db: new GlossaryDb(),
+        latexProbe: () => "latexmk が見つかりません（TeX Live を入れて PATH を通してください）",
+      },
+    );
+    expect(llmCalls).toBe(0);
+    expect(r.exitCode).toBe(1);
+    expect(r.error?.kind).toBe("infra");
+    expect(r.error?.message).toContain("latexmk が見つかりません");
+  });
+
   it("成功時は error を持たない（zod 契約にも適合する）", async () => {
     const { translatePaper, tar, client, GlossaryDb } = await harness();
     const r = await translatePaper(

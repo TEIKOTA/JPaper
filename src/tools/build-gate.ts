@@ -1,7 +1,7 @@
 // 契約付録 §6(exit5)・§7／2層化 ADR(20260709) 決定1・4。全文組版ゲート（ビルド＋エラー分類＋逆引き）。
 import { existsSync, mkdirSync, rmSync, writeFileSync, cpSync, readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
-import { execFileSync, spawn } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { killTree, resolveCommand, spawnOptions } from "../../bin/spawn-cli.mjs";
 import { segmentAtLine, type SourceSpan } from "./assemble-latex.js";
 import { throwIfAborted } from "../runtime/cancellation.js";
@@ -24,11 +24,15 @@ export interface BuildGateResult extends Classification {
   droppedFigures: string[];
   // 配布パッケージと同名の同梱ファイル。探索順で無効化済みだが、体裁が変わり得るので surface する。
   shadowedPackages: string[];
+  // 組版の道具を起動できなかった環境の障害の説明。立つと論文側の失敗ではない。契約付録 §6
+  envError?: string;
 }
 
 export interface RunResult {
   code: number;
   log: string;
+  // latexmk を起動できなかったときの説明（log は空）。契約付録 §6
+  envError?: string;
 }
 export type LatexRunner = (buildDir: string, signal?: AbortSignal) => RunResult | Promise<RunResult>;
 
@@ -270,6 +274,26 @@ function readLog(buildDir: string): string {
   return "";
 }
 
+export const LATEXMK_MISSING = "latexmk が見つかりません（TeX Live を入れて PATH を通してください）";
+
+// 起動の失敗（ENOENT・EACCES など）を、原因を名指しした説明にする。契約付録 §6
+export function describeLaunchError(e: unknown): string {
+  const code = (e as NodeJS.ErrnoException | undefined)?.code;
+  if (code === "ENOENT") return LATEXMK_MISSING;
+  return `latexmk を起動できません${typeof code === "string" ? `（${code}）` : ""}: ${(e as Error | undefined)?.message ?? String(e)}`;
+}
+
+// 実行の頭の検査。latexmk を起動できなければ説明を返す。LLM を呼ぶ前に止めるために使う。
+export function probeLatexmk(): string | undefined {
+  try {
+    const cmd = resolveCommand("latexmk", ["-v"]);
+    const r = spawnSync(cmd.command, cmd.args, spawnOptions({ stdio: "ignore", timeout: 15_000 }));
+    return r.error === undefined ? undefined : describeLaunchError(r.error);
+  } catch (e) {
+    return describeLaunchError(e);
+  }
+}
+
 export const BUILD_TIMEOUT_MS = 300_000;
 
 // latexmk は子（lualatex）を起こす。detached でプロセスグループを作り、超過時はグループごと止める。
@@ -287,7 +311,7 @@ export const defaultRunner: LatexRunner = (buildDir, signal) =>
         "main.tex",
       ]);
     } catch (e) {
-      resolve({ code: 1, log: `latexmk を起動できません: ${(e as Error).message}` });
+      resolve({ code: 1, log: "", envError: describeLaunchError(e) });
       return;
     }
     const child = spawn(
@@ -301,12 +325,12 @@ export const defaultRunner: LatexRunner = (buildDir, signal) =>
       }),
     );
     let settled = false;
-    const finish = (code: number): void => {
+    const finish = (code: number, envError?: string): void => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
       signal?.removeEventListener("abort", onAbort);
-      resolve({ code, log: readLog(buildDir) });
+      resolve(envError === undefined ? { code, log: readLog(buildDir) } : { code, log: "", envError });
     };
     const timer = setTimeout(() => {
       killTree(child.pid);
@@ -319,7 +343,7 @@ export const defaultRunner: LatexRunner = (buildDir, signal) =>
     };
     if (signal?.aborted === true) onAbort();
     else signal?.addEventListener("abort", onAbort, { once: true });
-    child.on("error", () => finish(1));
+    child.on("error", (e) => finish(1, describeLaunchError(e)));
     child.on("close", (code) => finish(code ?? 1));
   });
 
@@ -365,8 +389,20 @@ export async function runBuildGate(
     mainDir: input.mainDir,
     figures: input.figures,
   });
-  const { code, log } = await runner(input.buildDir, input.signal);
+  const { code, log, envError } = await runner(input.buildDir, input.signal);
   throwIfAborted(input.signal, "組版中");
+  if (envError !== undefined) {
+    return {
+      buildOk: false,
+      droppedFigures: [],
+      shadowedPackages,
+      failedSegments: [],
+      structuralErrors: [],
+      missingFigures: [],
+      unresolvedRefs: [],
+      envError,
+    };
+  }
   const cls = classifyLog(log, input.sourceMap, input.originalTex);
   const droppedFigures = checkFigures(input.mainTex, input.mainDir, input.figures);
   const pdf = path.join(input.buildDir, "main.pdf");
