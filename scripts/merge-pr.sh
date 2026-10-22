@@ -8,7 +8,7 @@
 #            事前承認で merge するなら no-perceptual-external=なし（知覚の成果物・外部影響を含まない）も必須
 #   --dry-run  判定表を出すだけで、コメントも merge もしない
 #   --no-wait  merge の後に main の CI を待たない（既定は merge commit の push の CI（node-checks・self-test）が終わるまで待ち、結果を出す）
-#   --ci-timeout  CI を待つ上限の秒数（既定 1200、環境変数 MERGE_PR_CI_TIMEOUT でも指定）。待ちが尽きても exit 0（未確認と表示）。CI が failure なら exit 1
+#   --ci-timeout  CI を待つ上限の秒数（既定 1800、環境変数 MERGE_PR_CI_TIMEOUT でも指定）。待ちが尽きても exit 0（未確認と表示）。CI が failure なら exit 1
 #            Bash tool から呼ぶなら tool の timeout を上限より長くする
 #   PR のコメントに残す記録（owner のコメントの 1 行ぜんたいが一致する形。行の後ろに文字を足すと一致しない。書式は ADR 参照）:
 #     review: head <40 桁の SHA> blocking=なし
@@ -23,7 +23,7 @@ HEAD_SHA=""
 REPO=""
 DRY_RUN=0
 WAIT_CI=1
-CI_TIMEOUT="${MERGE_PR_CI_TIMEOUT:-1200}"
+CI_TIMEOUT="${MERGE_PR_CI_TIMEOUT:-1800}"
 JUDGES=()
 while [[ $# -gt 0 ]]; do
   case "$1" in

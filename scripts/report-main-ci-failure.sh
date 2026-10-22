@@ -69,7 +69,7 @@ URL="$(printf '%s' "$run_json" | python3 -c 'import json, sys; print(json.load(s
     [[ -n "$job_id" ]] || continue
     echo "- **${job_name}**（失敗した step: ${steps:-不明}）${job_url:+ ${job_url}}"
     log_lines="$(gh run view "$RUN_ID" ${REPO_ARGS[@]+"${REPO_ARGS[@]}"} --job "$job_id" --log-failed 2>/dev/null \
-      | sed -E 's/^[^[:space:]]*[[:space:]]+[^[:space:]]*[[:space:]]+[0-9T:.Z-]+[[:space:]]+//' \
+      | cut -f3- | sed -E 's/^[0-9T:.Z-]+[[:space:]]+//' | tr -d '`' \
       | grep -E 'FAIL|✗|×|AssertionError|Error:' | head -n 15 || true)"
     if [[ -n "$log_lines" ]]; then
       echo

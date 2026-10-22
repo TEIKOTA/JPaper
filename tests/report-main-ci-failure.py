@@ -82,6 +82,7 @@ LOG_FAILED = (
     "node\tpnpm test\t2026-10-22T01:02:03.4567890Z  FAIL  src/sign.test.ts > 署名鍵を並行に作る\n"
     "node\tpnpm test\t2026-10-22T01:02:03.4567890Z AssertionError: expected 1 to be +0\n"
     "node\tpnpm test\t2026-10-22T01:02:03.4567890Z  ✓ ほかのテスト\n"
+    "test (ubuntu-latest)\tRun bash tests/run-tests.sh\t2026-10-22T01:02:04.0000000Z FAIL ```spaced job```\n"
 )
 
 
@@ -133,6 +134,10 @@ class ReportMainCiFailure(unittest.TestCase):
         body = fixture.body()
         for needle in ("https://example/runs/9", "a" * 40, "node-windows", "pnpm test", "FAIL  src/sign.test.ts > 署名鍵を並行に作る", "AssertionError: expected 1 to be +0"):
             self.assertIn(needle, body)
+        # 空白を含む job・step 名の接頭辞を落とし、ログの ``` で fence を閉じない
+        self.assertIn("  FAIL spaced job\n", body)
+        self.assertNotIn("Run bash tests/run-tests.sh\t", body)
+        self.assertEqual(body.count("```"), 2, body)
         self.assertNotIn("ほかのテスト", body)
         self.assertNotIn("**node**", body, "成功した job は載せない")
 
