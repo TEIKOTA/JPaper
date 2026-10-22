@@ -223,7 +223,8 @@
 
 - **おかしく見える点**: 訳文の `\oursの` を `\ours{}の` に書き換えている。
 - **なぜ意図的か**: luatexja の下では和文字も英字と同じ扱いなので、`\oursの能力を評価する` 全体が 1 つの命令名として読まれ `Undefined control sequence` で落ちる（実測: UNI 2308.15474 seg-0001）。translator は英文の `\ours's` を自然に `\oursの` と訳す。
-- **正本ポインタ**: 契約付録 §7、issue #322。回帰テストは `src/tools/assemble-latex.test.ts`。
+- **バックスラッシュ 1 つの直後**: 原文の制御空白 `\system\ ` の空白を訳者が落とした `\system\（実質的には…`（2004.00584 seg-0014）も、`\（実質的には` が 1 つの命令名になって落ちる。直前のバックスラッシュが奇数個のときは末尾の 1 つを `{}` に替える（`\system{}（`）。偶数個（`\\` の改行）は変えない。
+- **正本ポインタ**: 契約付録 §7、issue #322・#477。回帰テストは `src/tools/assemble-latex.test.ts`・`src/tools/bilingual-latex.test.ts`。
 
 ## `src/tools/bilingual-latex.ts` — 対訳のタイトルブロックで `\and` / `\And` / `\AND` を区切りの空白にする
 

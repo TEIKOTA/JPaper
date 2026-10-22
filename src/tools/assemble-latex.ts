@@ -68,9 +68,11 @@ function injectJapaneseFont(preamble: string): string {
   return `${preamble.slice(0, at)}${sep}${JP_FONT}\n${preamble.slice(at)}`;
 }
 
-// 命令語の直後に続く和文字の前に {} を挟む（LuaTeX では和文字も命令名の一部として読まれる）。⚠ landmines.md
+// 命令語の直後に続く和文字の前に {} を挟む。直前のバックスラッシュが奇数個なら末尾の 1 つ（\system\（ の制御記号）を {} に替える（LuaTeX では和文字も命令名の一部として読まれる）。⚠ landmines.md
 export function separateCjkAfterControlWords(tex: string): string {
-  return tex.replace(/(?<!\\)(\\[A-Za-z@]+)(?=[\u3000-\u30ff\u3400-\u9fff\uf900-\ufaff\uff00-\uffef])/g, "$1{}");
+  return tex
+    .replace(/(?<!\\)(\\[A-Za-z@]+)(?=[\u3000-\u30ff\u3400-\u9fff\uf900-\ufaff\uff00-\uffef])/g, "$1{}")
+    .replace(/(?<!\\)((?:\\\\)*)\\(?=[\u3000-\u30ff\u3400-\u9fff\uf900-\ufaff\uff00-\uffef])/g, "$1{}");
 }
 
 // luatexja が定義済みの命令名（和文書体の切り替え）。
