@@ -305,6 +305,21 @@ describe("separateCjkAfterControlWords", () => {
   it("命令語の直後の和文字の前に {} を挟む", () => {
     expect(separateCjkAfterControlWords("\\oursの能力、\\LaTeX（注）")).toBe("\\ours{}の能力、\\LaTeX{}（注）");
   });
+  it("バックスラッシュ 1 つ（奇数個の末尾）の直後の和文字は、そのバックスラッシュを {} に替える", () => {
+    expect(separateCjkAfterControlWords("\\system\\（実質的には）")).toBe("\\system{}（実質的には）");
+    expect(separateCjkAfterControlWords("a\\\\\\（b）")).toBe("a\\\\{}（b）");
+  });
+  it("\\\\（改行）など偶数個のバックスラッシュの直後の和文字は変えない", () => {
+    const s = "行末\\\\改行\\\\\\\\（注）";
+    expect(separateCjkAfterControlWords(s)).toBe(s);
+  });
+  it("和訳の組み立てでも \\foo\\（あ） が命令名として読まれない", () => {
+    for (const mode of ["original", "template"] as const) {
+      const { mainTex } = assembleWithMap({ cleanLatex: "\\documentclass{article}\n\\begin{document}\nx\n\\end{document}\n", segments: [{ id: "s", tex: "\\foo\\（あ）" } as never], mode });
+      expect(mainTex).toContain("\\foo{}（あ）");
+      expect(mainTex).not.toContain("\\（");
+    }
+  });
   it("英字・空白・波括弧が続く命令と \\\\ は変えない", () => {
     const s = "\\ours は\\textbf{太字}\\\\改行";
     expect(separateCjkAfterControlWords(s)).toBe(s);

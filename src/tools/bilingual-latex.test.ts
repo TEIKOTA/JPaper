@@ -76,6 +76,10 @@ describe("段落分割", () => {
     ]);
     expect(paragraphsOf("{\\color{blue} a\n\nb}\n\nc")).toEqual(["{\\color{blue} a\n\nb}", "c"]);
   });
+  it("バックスラッシュ 1 つの直後の和文字は {} に替わる（対訳の経路）", () => {
+    expect(paragraphsOf("\\foo\\（あ）")).toEqual(["\\foo{}（あ）"]);
+    expect(paragraphsOf("行末\\\\（注）")).toEqual(["行末\\\\（注）"]);
+  });
 
   it("エスケープした波括弧とコメント内の波括弧は数えない", () => {
     expect(balanceParagraphs(["a \\{", "b % {", "c \\\\{", "d}", "e"])).toEqual([
