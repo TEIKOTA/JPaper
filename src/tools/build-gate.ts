@@ -61,6 +61,25 @@ function offendingName(message: string, rest: string): string | undefined {
   return CONTEXT_LINE.exec(rest.slice(0, 400))?.[1];
 }
 
+// class・package 自身が検査して出すエラー（`Class acmart Error: …`・`Package hyperref Error: …`）。
+const CLASS_PACKAGE_ERROR = /^(?:Class|Package) [A-Za-z0-9@_.-]+ Error:/;
+// エラー直後の `l.<行> <文脈>` 行の、TeX が読み終えた位置までの文面。
+const CONTEXT_TEXT = /^l\.\d+ (.*)$/m;
+
+// 文脈が短い記号だけ（`}`・`$`）だとどの原文にも在るので、英字の並びと長さを要る。契約付録 §6
+const CONTEXT_MIN = /^(?=.{6,})(?=.*[A-Za-z]{3})/;
+
+const squash = (s: string): string => s.replace(/\s+/g, " ").trim();
+
+// class・package のエラーの文脈行が原文にそのまま在るか。訳文が引数を壊したなら文脈行に訳文が混ざり、原文には無い。
+function contextFromSource(message: string, rest: string, squashedOriginal: () => string): boolean {
+  if (!CLASS_PACKAGE_ERROR.test(message)) return false;
+  const ctx = CONTEXT_TEXT.exec(rest.slice(0, 400))?.[1];
+  if (ctx === undefined) return false;
+  const text = squash(ctx);
+  return CONTEXT_MIN.test(text) && squashedOriginal().includes(text);
+}
+
 // 原文にも同名があるなら translator は関与していない＝構造・テンプレ起因（2層化 ADR 決定4）。
 function comesFromSource(name: string, originalTex: string): boolean {
   return (
@@ -79,17 +98,21 @@ export function classifyLog(
   const missingFigures = new Set<string>();
   const unresolvedRefs = new Set<string>();
   let lastWasStructural = false;
+  let squashed: string | undefined;
+  const squashedOriginal = (): string => (squashed ??= squash(originalTex));
 
   for (let m = ERROR_LINE.exec(log); m; m = ERROR_LINE.exec(log)) {
     const file = m[1]!;
     const line = Number(m[2]);
     const message = m[3]!.trim();
     const inSegment = path.basename(file) === "main.tex" ? segmentAtLine(sourceMap, line) : undefined;
-    const name = offendingName(message, log.slice(m.index + m[0].length));
+    const rest = log.slice(m.index + m[0].length);
+    const name = offendingName(message, rest);
     // 直前の診断の追随行。独立したエラーではないので分類を引き継ぐ。
     const structural: boolean = FATAL_TRAILER.test(message)
       ? lastWasStructural
-      : name !== undefined && comesFromSource(name, originalTex);
+      : (name !== undefined && comesFromSource(name, originalTex)) ||
+        contextFromSource(message, rest, squashedOriginal);
     lastWasStructural = structural || inSegment === undefined;
     const id = structural ? undefined : inSegment;
     if (id) failedSegments.push({ id, line, message });
