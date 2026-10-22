@@ -2497,7 +2497,7 @@ rc=0; grep -q 'actions/permissions' "$log" && rc=1
 report 0 "$rc" "public repo: Actions を無効化しない"
 rc=0; grep -q 'public repo なので' "$out" || rc=1
 report 0 "$rc" "public repo: 維持することを表示"
-PROTECTION='api --silent --method PUT repos/{owner}/{repo}/branches/main/protection -F required_status_checks[strict]=false -f required_status_checks[contexts][]=node -f required_status_checks[contexts][]=pr-check -f required_status_checks[contexts][]=test (ubuntu-latest) -f required_status_checks[contexts][]=test (macos-latest) -F enforce_admins=true -F required_pull_request_reviews=null -F restrictions=null'
+PROTECTION='api --silent --method PUT repos/{owner}/{repo}/branches/main/protection -F required_status_checks[strict]=false -f required_status_checks[contexts][]=node -f required_status_checks[contexts][]=node-windows -f required_status_checks[contexts][]=pr-check -f required_status_checks[contexts][]=test (ubuntu-latest) -f required_status_checks[contexts][]=test (macos-latest) -F enforce_admins=true -F required_pull_request_reviews=null -F restrictions=null'
 rc=0; grep -Fxq "$PROTECTION" "$log" || rc=1
 report 0 "$rc" "public repo: main の merge に CI の全ジョブの成功を要する"
 protection_bad_log="$(mktemp)" || { echo "FATAL: protection fixture を作成できません" >&2; exit 1; }

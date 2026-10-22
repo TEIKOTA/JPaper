@@ -163,11 +163,12 @@ else
   if [[ "$VISIBILITY" == "public" ]]; then
     echo "▶ public repo なので GitHub Actions は有効のまま維持する"
     # main への merge・push には CI の全ジョブの成功を要する（ADR: docs/adr/20261015-require-ci-checks-on-public-repo.md）。
-    # ジョブ名の正本は .github/workflows/ の node-checks（node）・pr-checks（pr-check）・self-test（test の matrix）。
+    # ジョブ名の正本は .github/workflows/ の node-checks（node・node-windows）・pr-checks（pr-check）・self-test（test の matrix）。
     echo "▶ main への merge に CI の全ジョブの成功を要する（branch protection の required status checks）"
     run gh api --silent --method PUT "$REPO_API/branches/main/protection" \
       -F 'required_status_checks[strict]=false' \
       -f 'required_status_checks[contexts][]=node' \
+      -f 'required_status_checks[contexts][]=node-windows' \
       -f 'required_status_checks[contexts][]=pr-check' \
       -f 'required_status_checks[contexts][]=test (ubuntu-latest)' \
       -f 'required_status_checks[contexts][]=test (macos-latest)' \
