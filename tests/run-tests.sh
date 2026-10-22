@@ -1065,9 +1065,15 @@ for mutation in prmerge apimerge apiget graphql graphqlpos graphqlpath apiquery 
 done
 # scripts/merge-pr.sh: 承認の写し・head・条件が欠ければ merge せず、揃えば判定表のコメントの後に 1 回だけ merge する（gh は fake）
 expect 0 "issue #159: merge-pr.sh の承認・条件の判定" env PYTHONDONTWRITEBYTECODE=1 python3 "$ROOT/tests/merge-pr.py"
-for mutation in owner ownerempty fullmatch preblocked preunconditional state headmatch base basefailopen mergeable retryunknown mergetree fetchhead diffcheck checkpr threads review selftest judge approval preapproval perceptual heading quote cphead dryrun failstop matchhead comment; do
+for mutation in owner ownerempty fullmatch preblocked preunconditional state headmatch base basefailopen mergeable retryunknown mergetree fetchhead diffcheck checkpr threads review selftest judge approval preapproval perceptual heading quote cphead dryrun failstop matchhead comment waitci cired cipending cicommit; do
   expect_code 1 "issue #159: merge-pr.sh の ${mutation} の保護を外すと判定が崩れる（red）" \
     env PYTHONDONTWRITEBYTECODE=1 python3 "$ROOT/tests/merge-pr.py" --case "$mutation" --mutation "$mutation"
+done
+# scripts/report-main-ci-failure.sh と main-ci-failure.yml: main の push の failure だけを、job・テスト名つきで issue にする（#483。gh は fake）
+expect 0 "issue #483: main の CI の failure の報告と workflow の制限" env PYTHONDONTWRITEBYTECODE=1 python3 "$ROOT/tests/report-main-ci-failure.py"
+for mutation in branch event conclusion dedupe dryrun wfevent wfrepo wfperm; do
+  expect_code 1 "issue #483: main の CI の報告の ${mutation} の保護を外すと検査が崩れる（red）" \
+    env PYTHONDONTWRITEBYTECODE=1 python3 "$ROOT/tests/report-main-ci-failure.py" --case "$mutation" --mutation "$mutation"
 done
 expect 0 "hooks.json: 正しい JSON" python3 -m json.tool "$ROOT/.codex/hooks.json"
 expect 0 "Claude settings: 全 hook command に project root fallback" python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); needle="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel)}"; sys.exit(0 if all(needle in h["command"] for gs in d["hooks"].values() for g in gs for h in g["hooks"]) else 1)' "$ROOT/.claude/settings.json"

@@ -109,7 +109,7 @@
 - `scripts/check-codex-hooks.sh [--repo <dir>]` — Codex hook の trust 状態を検査する（未 trust の hook は Codex で実行されない。SessionStart も警告する）
 - `scripts/setup-github-repo.sh [--prune] [--dry-run] [--enable-actions]` — ラベル同期・squash merge / commit title 固定・private repo での Actions 無効化（repo 作成直後に `--prune` 付きで 1 回。定義外ラベルの削除は `--prune` 時のみ）
 - `scripts/check-pr.sh [<PR番号>]` — PR タイトル・body・issue 連結のローカル検査（PR 作成・編集後に実行する）
-- `scripts/merge-pr.sh <PR番号> --head <SHA> --judge scope=… --judge injection=…` — PR を squash merge する唯一の経路（承認の写し・head・条件を確かめ、判定表を PR にコメントしてから merge。`--dry-run` で判定表だけ出す）
+- `scripts/merge-pr.sh <PR番号> --head <SHA> --judge scope=… --judge injection=…` — PR を squash merge する唯一の経路（承認の写し・head・条件を確かめ、判定表を PR にコメントしてから merge。`--dry-run` で判定表だけ出す。merge 後は main の CI を待って結果を出し、`--no-wait` で省く）
 - `scripts/check-pr.sh --backlog` — 自分の open PR を作成日順・base・draft 状態で一覧する（棚卸しは上限超過時も止めない）
 - `pnpm exec tsx scripts/check-skill-frontmatter.ts [<skills-dir>]` — 全 `SKILL.md` の frontmatter を Agent Skills 共通契約と repo の起動条件規約で検査する
 - `scripts/check-agent-instruction-links.sh [<root>]` — root / ネストの `AGENTS.md` に対応する sibling `CLAUDE.md` symlink を検査する
