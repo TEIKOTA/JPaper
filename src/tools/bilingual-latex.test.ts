@@ -466,6 +466,22 @@ describe("前文", () => {
     }
   });
 
+  it("図表ブロックの 4 環境は開始で負の \\vspace を無効にする定義を入れ、正の量と \\vspace* は元の \\vspace へ渡す（#478）", () => {
+    const pre = bilingualPreamble("\\documentclass{article}\n");
+    for (const env of ["figure", "figure*", "table", "table*"]) {
+      const m = pre.match(new RegExp(`\\\\renewenvironment\\{${env.replace("*", "\\*")}\\}\\[1\\]\\[\\]\\{([^\\n]*)`));
+      expect(m?.[1], env).toContain("\\begin{center}\\jp@clampvspace\\def\\@captype{");
+    }
+    expect(pre).toContain("\\def\\jp@vspace@wrap{\\@ifstar{\\jp@vspace@s}{\\jp@vspace@n}}");
+    // 図表が入れ子でも退避し直さない（2 回目で \jp@vspace が自分を指して無限再帰になる。PR #481 のレビュー）
+    expect(pre).toContain("\\def\\jp@clampvspace{\\ifx\\vspace\\jp@vspace@wrap\\else\\let\\jp@vspace\\vspace\\let\\vspace\\jp@vspace@wrap\\fi}");
+    expect(pre).toContain("\\def\\jp@vspace@n#1{\\jp@vspace@c{#1}{\\jp@vspace{#1}}}");
+    expect(pre).toContain("\\def\\jp@vspace@s#1{\\jp@vspace@c{#1}{\\jp@vspace*{#1}}}");
+    expect(pre).toContain("\\def\\jp@vspace@c#1#2{\\skip@#1\\relax\\ifdim\\skip@<\\z@\\else#2\\fi}");
+    // 差し替えは環境の中だけ。ブロックの外の \\vspace（前後の 1mm）は元のまま
+    expect(pre).not.toMatch(/\n\\let\\vspace|\n\\renewcommand\{\\vspace\}/);
+  });
+
   it("組み立てた main.tex は和訳の前文を使い、本文先頭で紙面と左右のページ番号を設定する", () => {
     const out = assembleBilingual({
       cleanLatex: "\\documentclass{article}\\begin{document}A\\end{document}",
