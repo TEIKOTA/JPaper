@@ -458,7 +458,7 @@ const ACMART_SETUP = [
   "\\@ifundefined{Collect@Body}{}{%",
   "  \\renewcommand\\author[2][]{\\jp@acm@au{\\par\\smallskip{\\large#2}\\par}}%",
   "  \\renewcommand\\affiliation[2][]{\\jp@acm@au{\\jp@acm@affil{#2}}}%",
-  "  \\renewcommand\\email[2][]{\\jp@acm@au{{\\small\\ttfamily#2}\\par}}%",
+  "  \\renewcommand\\email[2][]{\\jp@acm@au{{\\small\\nolinkurl{#2}}\\par}}%",
   "  \\renewcommand\\keywords[1]{\\jp@acm@fm{\\par\\medskip\\noindent\\textit{\\jp@acm@side{Keywords}{キーワード}:}\\ #1\\par}}%",
   "  \\renewenvironment{abstract}{\\Collect@Body\\jp@acm@abs}{}%",
   "  \\renewcommand{\\jpTitleBlock}[1]{\\jp@acm@side" +

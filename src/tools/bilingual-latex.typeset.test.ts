@@ -376,7 +376,7 @@ const ACM_FRONT = (title: string, inst: string, abs: string, kw: string): string
   [
     `\\title{${title}}`,
     "",
-    "\\author{Ann Lee}\n\\affiliation{\\institution{" + inst + "}\\city{Newark}\\state{NJ}\\country{USA}}\n\\email{ann@example.org}",
+    "\\author{Ann Lee}\n\\affiliation{\\institution{" + inst + "}\\city{Newark}\\state{NJ}\\country{USA}}\n\\email{ann_lee@example.org}",
     "",
     "\\author{Bob Kay}\n\\affiliation{\\institution{" + inst + " B}\\city{Austin}\\country{USA}}\n\\email{bob@example.org}",
     "",
@@ -389,40 +389,63 @@ const ACM_FRONT = (title: string, inst: string, abs: string, kw: string): string
     "\\section{Intro}",
   ].join("\n");
 
+// 要旨・キーワードを \maketitle の後に書く形。
+const ACM_LATE = (title: string, abs: string, kw: string): string =>
+  [`\\title{${title}}`, "", "\\author{Ann Lee}", "", "\\maketitle", "", `\\begin{abstract}\n${abs}\n\\end{abstract}`, "", `\\keywords{${kw}}`, "", "\\section{Intro}"].join("\n");
+
+// 左右の前付けで acmart の対訳を組み、1 ページ目の左右の半分のテキストを返す。
+function buildAcm(source: string, translated: string): { left: string; right: string } {
+  const dir = mkdtempSync(path.join(tmpdir(), "jpaper-acmbi-"));
+  try {
+    const pre = "\\documentclass[sigconf]{acmart}\n\\settopmatter{printacmref=false}\n";
+    const { mainTex } = assembleBilingual({
+      cleanLatex: `${pre}\\begin{document}\n\\end{document}\n`,
+      translatedMainTex: `${pre}\\usepackage{luatexja}\n\\begin{document}\n\\end{document}\n`,
+      source: [{ id: "seg-0000", tex: source }],
+      translated: [{ id: "seg-0000", tex: translated }],
+    });
+    writeFileSync(path.join(dir, "main.tex"), mainTex);
+    const r = spawnSync("lualatex", ["-interaction=nonstopmode", "-halt-on-error", "main.tex"], { cwd: dir, encoding: "utf8", timeout: 240_000 });
+    expect(r.status, r.stdout.slice(-3000)).toBe(0);
+    const text = (x: string): string =>
+      spawnSync("pdftotext", ["-f", "1", "-l", "1", "-x", x, "-y", "0", "-W", "595", "-H", "842", "-raw", "main.pdf", "-"], {
+        cwd: dir,
+        encoding: "utf8",
+      }).stdout.replace(/\s+/g, " ");
+    return { left: text("0"), right: text("595") };
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 describe.skipIf(!hasAcmart)("acmart の論文の対訳を lualatex で組む（issue #499）", () => {
-  it("左右の段それぞれの表題ブロックの後に、その段の著者・所属・メールアドレス・要旨・キーワードが出る", () => {
-    const dir = mkdtempSync(path.join(tmpdir(), "jpaper-acmbi-"));
-    try {
-      const pre = "\\documentclass[sigconf]{acmart}\n\\settopmatter{printacmref=false}\n";
-      const { mainTex } = assembleBilingual({
-        cleanLatex: `${pre}\\begin{document}\n\\end{document}\n`,
-        translatedMainTex: `${pre}\\usepackage{luatexja}\n\\begin{document}\n\\end{document}\n`,
-        source: [{ id: "seg-0000", tex: ACM_FRONT("Left Title", "Left Uni", "Leftabstract text.", "leftkw") }],
-        translated: [{ id: "seg-0000", tex: ACM_FRONT("右の表題", "Right Uni", "右の要旨の本文。", "右の語") }],
-      });
-      writeFileSync(path.join(dir, "main.tex"), mainTex);
-      const r = spawnSync("lualatex", ["-interaction=nonstopmode", "-halt-on-error", "main.tex"], { cwd: dir, encoding: "utf8", timeout: 240_000 });
-      expect(r.status, r.stdout.slice(-3000)).toBe(0);
-      const text = (x: string): string =>
-        spawnSync("pdftotext", ["-f", "1", "-l", "1", "-x", x, "-y", "0", "-W", "595", "-H", "842", "-raw", "main.pdf", "-"], {
-          cwd: dir,
-          encoding: "utf8",
-        }).stdout.replace(/\s+/g, " ");
-      const left = text("0");
-      const right = text("595");
-      for (const [side, title, inst, abs, kw, head] of [
-        [left, "Left Title", "Left Uni", "Leftabstract text.", "leftkw", "Abstract"],
-        [right, "右の表題", "Right Uni", "右の要旨の本文。", "右の語", "概要"],
-      ] as const) {
-        const order = [title, "Ann Lee", inst, "ann@example.org", "Bob Kay", `${inst} B`, "bob@example.org", head, abs, kw, "Intro"];
-        const at = order.map((s) => side.replace(/ /g, "").indexOf(s.replace(/ /g, "")));
-        expect(at.every((i) => i >= 0), `${side}\n${order.filter((_, k) => at[k]! < 0).join(", ")}`).toBe(true);
-        expect([...at].sort((a, b) => a - b), side).toEqual(at);
-      }
-      expect(left).not.toMatch(/Right Uni|右の要旨|概要/);
-      expect(right).not.toMatch(/Left Uni|Leftabstract|Abstract/);
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
+  it("\\maketitle の後に書いた要旨・キーワードは、その段の表題ブロックの後にその場で出る", () => {
+    const { left, right } = buildAcm(ACM_LATE("Left Title", "Lateabstract text.", "leftkw"), ACM_LATE("右の表題", "右の遅い要旨。", "右の語"));
+    for (const [side, title, head, abs, kw] of [
+      [left, "Left Title", "Abstract", "Lateabstract text.", "leftkw"],
+      [right, "右の表題", "概要", "右の遅い要旨。", "右の語"],
+    ] as const) {
+      const at = [title, "Ann Lee", head, abs, kw, "Intro"].map((s) => side.replace(/ /g, "").indexOf(s.replace(/ /g, "")));
+      expect(at.every((i) => i >= 0), side).toBe(true);
+      expect([...at].sort((a, b) => a - b), side).toEqual(at);
     }
+  }, 240_000);
+
+  it("左右の段それぞれの表題ブロックの後に、その段の著者・所属・メールアドレス・要旨・キーワードが出る", () => {
+    const { left, right } = buildAcm(
+      ACM_FRONT("Left Title", "Left Uni", "Leftabstract text.", "leftkw"),
+      ACM_FRONT("右の表題", "Right Uni", "右の要旨の本文。", "右の語"),
+    );
+    for (const [side, title, inst, abs, kw, head] of [
+      [left, "Left Title", "Left Uni", "Leftabstract text.", "leftkw", "Abstract"],
+      [right, "右の表題", "Right Uni", "右の要旨の本文。", "右の語", "概要"],
+    ] as const) {
+      const order = [title, "Ann Lee", inst, "ann_lee@example.org", "Bob Kay", `${inst} B`, "bob@example.org", head, abs, kw, "Intro"];
+      const at = order.map((s) => side.replace(/ /g, "").indexOf(s.replace(/ /g, "")));
+      expect(at.every((i) => i >= 0), `${side}\n${order.filter((_, k) => at[k]! < 0).join(", ")}`).toBe(true);
+      expect([...at].sort((a, b) => a - b), side).toEqual(at);
+    }
+    expect(left).not.toMatch(/Right Uni|右の要旨|概要/);
+    expect(right).not.toMatch(/Left Uni|Leftabstract|Abstract/);
   }, 240_000);
 });
