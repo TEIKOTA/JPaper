@@ -40,21 +40,39 @@ const BODY = [
   "\\end{acks}",
 ].join("\n");
 
+function build(cleanLatex: string, body: string): string[] {
+  const dir = mkdtempSync(path.join(tmpdir(), "jpaper-acm-"));
+  try {
+    const { mainTex } = assembleWithMap({ cleanLatex, segments: [{ id: "seg-0000", tex: body }], mode: "template" });
+    writeFileSync(path.join(dir, "main.tex"), mainTex);
+    const r = spawnSync("lualatex", ["-interaction=nonstopmode", "-halt-on-error", "main.tex"], {
+      cwd: dir,
+      encoding: "utf8",
+      timeout: 240_000,
+    });
+    const errors = r.stdout.split("\n").filter((l) => l.startsWith("!"));
+    return existsSync(path.join(dir, "main.pdf")) ? errors : [...errors, "main.pdf が無い"];
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+// acmart 以外の論文が acmart の shim と同じ名前を自分で定義する形（強化学習の \state など）。
+const ARTICLE_OWN = [
+  "\\documentclass{article}",
+  "\\newcommand{\\state}{s}",
+  "\\newcommand{\\orcid}[1]{}",
+  "\\newenvironment{acks}{\\section*{Acknowledgments}}{}",
+  "\\begin{document}",
+  "\\end{document}",
+].join("\n");
+
 describe.skipIf(!hasLuaTex)("acmart の論文を共通テンプレートで組む（issue #495）", () => {
-  it("前文の書誌メタデータ・著者欄の \\state・acks 環境があっても PDF が出る", () => {
-    const dir = mkdtempSync(path.join(tmpdir(), "jpaper-acm-"));
-    try {
-      const { mainTex } = assembleWithMap({ cleanLatex: ACMART, segments: [{ id: "seg-0000", tex: BODY }], mode: "template" });
-      writeFileSync(path.join(dir, "main.tex"), mainTex);
-      const r = spawnSync("lualatex", ["-interaction=nonstopmode", "-halt-on-error", "main.tex"], {
-        cwd: dir,
-        encoding: "utf8",
-        timeout: 240_000,
-      });
-      expect(r.stdout.split("\n").filter((l) => l.startsWith("!"))).toEqual([]);
-      expect(existsSync(path.join(dir, "main.pdf"))).toBe(true);
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
+  it("acmart 以外の論文が同じ名前の命令・環境を定義していても PDF が出る", () => {
+    expect(build(ARTICLE_OWN, "$\\state$\n\\begin{acks}x\\end{acks}")).toEqual([]);
+  }, 300_000);
+
+  it("前文の書誌メタデータ・\\shortauthors・acks 環境があっても PDF が出る", () => {
+    expect(build(ACMART, BODY)).toEqual([]);
   }, 300_000);
 });

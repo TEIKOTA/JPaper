@@ -155,6 +155,25 @@ const CLASS_SHIM = [
   "\\providecommand{\\country}[1]{#1}",
   "\\providecommand{\\affiliation}[2][]{}",
   "\\providecommand{\\email}[1]{#1}",
+  // revtex
+  "\\providecommand{\\altaffiliation}[2][]{}",
+  "\\providecommand{\\homepage}[2][]{}",
+  "\\providecommand{\\collaboration}[1]{}",
+  "\\providecommand{\\preprint}[1]{}",
+  "\\providecommand{\\pacs}[1]{}",
+  // llncs / springer
+  "\\providecommand{\\institute}[1]{}",
+  "\\providecommand{\\inst}[1]{}",
+  "\\providecommand{\\orcidID}[1]{}",
+  "\\providecommand{\\titlerunning}[1]{}",
+  "\\providecommand{\\authorrunning}[1]{}",
+  "\\providecommand{\\subtitle}[1]{}",
+  "\\makeatother",
+  "% --- JPaper 注入ここまで ---",
+];
+
+// acmart の前文・著者欄・謝辞の命令。acmart の論文だけに入れる（名前がありふれていて、他の論文の定義とぶつかる）。⚠ landmines.md
+const ACMART_SHIM = [
   "\\providecommand{\\state}[1]{#1}",
   "\\providecommand{\\streetaddress}[1]{#1}",
   "\\providecommand{\\postcode}[1]{#1}",
@@ -182,21 +201,6 @@ const CLASS_SHIM = [
   "\\providecommand{\\settopmatter}[1]{}",
   "\\providecommand{\\received}[2][]{}",
   "\\jpaper@env{acks}{\\section*{謝辞}}{}",
-  // revtex
-  "\\providecommand{\\altaffiliation}[2][]{}",
-  "\\providecommand{\\homepage}[2][]{}",
-  "\\providecommand{\\collaboration}[1]{}",
-  "\\providecommand{\\preprint}[1]{}",
-  "\\providecommand{\\pacs}[1]{}",
-  // llncs / springer
-  "\\providecommand{\\institute}[1]{}",
-  "\\providecommand{\\inst}[1]{}",
-  "\\providecommand{\\orcidID}[1]{}",
-  "\\providecommand{\\titlerunning}[1]{}",
-  "\\providecommand{\\authorrunning}[1]{}",
-  "\\providecommand{\\subtitle}[1]{}",
-  "\\makeatother",
-  "% --- JPaper 注入ここまで ---",
 ];
 
 const DOCUMENTCLASS = /\\documentclass(?:\[[^\]]*\])?\{[^}]*\}[ \t]*\r?\n?/;
@@ -223,7 +227,12 @@ function classShim(cleanLatex: string): string {
   const keywords = /\\begin\s*\{keywords\}/.test(cleanLatex)
     ? "\\AtBeginDocument{\\jpaper@env{keywords}{\\par\\noindent\\textbf{キーワード: }}{\\par}}"
     : "\\providecommand{\\keywords}[1]{\\par\\noindent\\textbf{キーワード: }#1\\par}";
-  return CLASS_SHIM.map((l) => (l === KEYWORDS_SHIM ? keywords : l)).join("\n");
+  const acmart = /\\documentclass\s*(?:\[[^\]]*\])?\s*\{\s*acmart\s*\}/.test(cleanLatex);
+  return CLASS_SHIM.flatMap((l) => {
+    if (l === KEYWORDS_SHIM) return [keywords];
+    if (l === "\\makeatother" && acmart) return [...ACMART_SHIM, l];
+    return [l];
+  }).join("\n");
 }
 
 function templatePreamble(originalPreamble: string, cleanLatex: string): string {

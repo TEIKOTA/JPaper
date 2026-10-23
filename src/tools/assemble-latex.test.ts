@@ -245,18 +245,21 @@ describe("assembleLatex: template は原前文を吸収する", () => {
     expect(cmd).not.toContain("\\jpaper@env{keywords}");
   });
 
-  it("acmart の前文の書誌メタデータ・著者欄の命令・acks 環境の shim を持つ（issue #495）", () => {
-    const r = assembleLatex({ cleanLatex: ELS, chapters: ["X"], mode: "template" });
-    for (const shim of [
+  it("acmart の論文にだけ、前文の書誌メタデータ・著者欄の命令・acks 環境の shim を入れる（issue #495）", () => {
+    const acm = "\\documentclass[sigconf]{acmart}\n\\setcopyright{none}\n\\begin{document}\n\\end{document}";
+    const shims = [
       "\\providecommand{\\setcopyright}[1]{}",
       "\\providecommand{\\acmConference}[4][]{}",
       "\\providecommand{\\acmDOI}[1]{}",
       "\\providecommand{\\state}[1]{#1}",
       "\\providecommand{\\shortauthors}{}",
       "\\jpaper@env{acks}{",
-    ]) {
-      expect(r.mainTex).toContain(shim);
-    }
+    ];
+    const a = assembleLatex({ cleanLatex: acm, chapters: ["X"], mode: "template" }).mainTex;
+    for (const shim of shims) expect(a).toContain(shim);
+    expect(a.indexOf("\\jpaper@env{acks}")).toBeLessThan(a.indexOf("\\makeatother"));
+    const els = assembleLatex({ cleanLatex: ELS, chapters: ["X"], mode: "template" }).mainTex;
+    for (const shim of shims) expect(els).not.toContain(shim);
   });
 
   it("shim は原前文より前に置き、原前文中の class 固有コマンド呼び出しを成立させる", () => {
