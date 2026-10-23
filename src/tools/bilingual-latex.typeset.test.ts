@@ -4,7 +4,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { detectProfile } from "./frontmatter.js";
-import { renderPairs } from "./bilingual-latex.js";
+import { assembleBilingual, renderPairs } from "./bilingual-latex.js";
 
 // 段落の境目の条件分岐（issue #378・契約付録 §8）を、renderPairs の出力と修正前の組み立て（段落ごと左右に置く）の
 // 両方で pdflatex と paracol の最小文書に組み、組めたか・どの行がどの段で実行されたかを比べる。
@@ -364,4 +364,65 @@ describe.skipIf(!hasAcronym)("略語を左右の段で分けて pdflatex で組�
       if (process.env.JP_ACRO_DIR === undefined) rmSync(dir, { recursive: true, force: true });
     }
   }, 120_000);
+});
+
+// acmart の前付け（issue #499）: acmart の対訳を lualatex で組み、左右の半分（420mm 幅の紙の 595pt ずつ）のテキストを比べる。
+const hasAcmart =
+  spawnSync("lualatex", ["--version"], { stdio: "ignore" }).status === 0 &&
+  spawnSync("kpsewhich", ["luatexja-preset.sty"], { encoding: "utf8" }).stdout.trim() !== "" &&
+  spawnSync("kpsewhich", ["acmart.cls"], { encoding: "utf8" }).stdout.trim() !== "";
+
+const ACM_FRONT = (title: string, inst: string, abs: string, kw: string): string =>
+  [
+    `\\title{${title}}`,
+    "",
+    "\\author{Ann Lee}\n\\affiliation{\\institution{" + inst + "}\\city{Newark}\\state{NJ}\\country{USA}}\n\\email{ann@example.org}",
+    "",
+    "\\author{Bob Kay}\n\\affiliation{\\institution{" + inst + " B}\\city{Austin}\\country{USA}}\n\\email{bob@example.org}",
+    "",
+    `\\begin{abstract}\n${abs}\n\\end{abstract}`,
+    "",
+    `\\keywords{${kw}}`,
+    "",
+    "\\maketitle",
+    "",
+    "\\section{Intro}",
+  ].join("\n");
+
+describe.skipIf(!hasAcmart)("acmart の論文の対訳を lualatex で組む（issue #499）", () => {
+  it("左右の段それぞれの表題ブロックの後に、その段の著者・所属・メールアドレス・要旨・キーワードが出る", () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "jpaper-acmbi-"));
+    try {
+      const pre = "\\documentclass[sigconf]{acmart}\n\\settopmatter{printacmref=false}\n";
+      const { mainTex } = assembleBilingual({
+        cleanLatex: `${pre}\\begin{document}\n\\end{document}\n`,
+        translatedMainTex: `${pre}\\usepackage{luatexja}\n\\begin{document}\n\\end{document}\n`,
+        source: [{ id: "seg-0000", tex: ACM_FRONT("Left Title", "Left Uni", "Leftabstract text.", "leftkw") }],
+        translated: [{ id: "seg-0000", tex: ACM_FRONT("右の表題", "Right Uni", "右の要旨の本文。", "右の語") }],
+      });
+      writeFileSync(path.join(dir, "main.tex"), mainTex);
+      const r = spawnSync("lualatex", ["-interaction=nonstopmode", "-halt-on-error", "main.tex"], { cwd: dir, encoding: "utf8", timeout: 240_000 });
+      expect(r.status, r.stdout.slice(-3000)).toBe(0);
+      const text = (x: string): string =>
+        spawnSync("pdftotext", ["-f", "1", "-l", "1", "-x", x, "-y", "0", "-W", "595", "-H", "842", "-raw", "main.pdf", "-"], {
+          cwd: dir,
+          encoding: "utf8",
+        }).stdout.replace(/\s+/g, " ");
+      const left = text("0");
+      const right = text("595");
+      for (const [side, title, inst, abs, kw, head] of [
+        [left, "Left Title", "Left Uni", "Leftabstract text.", "leftkw", "Abstract"],
+        [right, "右の表題", "Right Uni", "右の要旨の本文。", "右の語", "概要"],
+      ] as const) {
+        const order = [title, "Ann Lee", inst, "ann@example.org", "Bob Kay", `${inst} B`, "bob@example.org", head, abs, kw, "Intro"];
+        const at = order.map((s) => side.replace(/ /g, "").indexOf(s.replace(/ /g, "")));
+        expect(at.every((i) => i >= 0), `${side}\n${order.filter((_, k) => at[k]! < 0).join(", ")}`).toBe(true);
+        expect([...at].sort((a, b) => a - b), side).toEqual(at);
+      }
+      expect(left).not.toMatch(/Right Uni|右の要旨|概要/);
+      expect(right).not.toMatch(/Left Uni|Leftabstract|Abstract/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 240_000);
 });
