@@ -264,11 +264,11 @@
 - **なぜ意図的か**: shim は原文の前文より前に置くので、`\state`・`\orcid`・`acks` のようなありふれた名前を全論文に入れると、論文自身の `\newcommand{\state}`（強化学習の論文に多い）や、後から読む `chemmacros`（`\state`）・`algxpar`（`\Description`）の定義が `already defined` で落ちる（PR #496 のレビューで lualatex の実測）。acmart の論文なら、これらの名前は class 自身が使っているので、論文側で定義し直すことはない。
 - **正本ポインタ**: 契約付録 §7、組版 shim ADR(20260809) 決定 3、issue #495。回帰テストは `src/tools/assemble-latex.test.ts`・`src/tools/assemble-latex.typeset.test.ts`。
 
-## `src/tools/assemble-latex.ts` — 原文の前文で、acmart の内部マクロ `\@ACM@resetaffil` を定義し直す
+## `src/tools/assemble-latex.ts` — 原文の前文で、acmart の内部マクロ `\@ACM@resetaffil` の後ろに国名の印を上げ直す処理を足す
 
-- **おかしく見える点**: 原文の前文への注入（`JP_INJECTION`）が、`\@ACM@resetaffil` があるときだけ、それを「機関と市の印だけを下ろす」形に定義し直している。国名の印は下ろさない。
-- **なぜ意図的か**: 同梱の古い acmart は配布版に替える（#48）が、配布版の acmart（v2 系）は `\affiliation` に `\country` が無いと `Class acmart Error: No country present for an affiliation.` で止まる。古い acmart で書かれた論文はたいてい `\country` を書いていないので、原文の前文で組めずに共通テンプレートへ移り、表題まわりの体裁が崩れていた（実測: 1912.02400）。原文に無い国名を書き足すと PDF に原文に無い文字が出るので、検査のほうを外す。機関・市が無いときの警告はそのまま残る。`\@ACM@resetaffil` が無い版や acmart 以外の class では何もしない。将来の版で名前が変われば何もしなくなり、共通テンプレートへのフォールバックに戻るだけで、組版は壊さない。
-- **正本ポインタ**: 契約付録 §7、issue #497（#476 の Out of Scope の続き）。回帰テストは `src/tools/assemble-latex.test.ts`・`src/tools/assemble-latex.typeset.test.ts`。
+- **おかしく見える点**: 原文の前文への注入（`JP_INJECTION`）が、`\@ACM@resetaffil` と `\@ACM@countrypresenttrue` があるときだけ、`\g@addto@macro` で `\@ACM@resetaffil` の後ろに `\global\@ACM@countrypresenttrue` を足している。`@` の catcode は `\makeatletter` / `\makeatother` ではなく、元の値を保存して戻している。
+- **なぜ意図的か**: 同梱の古い acmart は配布版に替える（#48）が、配布版の acmart（v2 系）は `\affiliation` に `\country` が無いと `Class acmart Error: No country present for an affiliation.` で止まる。古い acmart で書かれた論文はたいてい `\country` を書いていないので、原文の前文で組めずに共通テンプレートへ移り、表題まわりの体裁が崩れていた（実測: 1912.02400）。原文に無い国名を書き足すと PDF に原文に無い文字が出るので、検査のほうを外す。元の処理を残したまま国名の印だけを上げ直すので、機関・市が無いときの警告や、将来の版で増える印の処理は残る。どちらかの名前が無い版や acmart 以外の class では何もしない。`\makeatother` を使わないのは、前文で `\makeatletter` を開いたまま本文で `@` 入りの命令を使う論文の catcode を戻してしまい、原文の前文で組めなくなるため（PR #498 のレビューで lualatex の実測）。
+- **正本ポインタ**: 契約付録 §7（共有部品の注入）、issue #497（#476 の Out of Scope の続き）。回帰テストは `src/tools/assemble-latex.test.ts`・`src/tools/assemble-latex.typeset.test.ts`。
 
 ## `src/tools/bilingual-latex.ts` — 対訳 PDF ではリンクを作らない（hyperref の draft）
 

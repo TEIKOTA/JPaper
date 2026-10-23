@@ -29,9 +29,9 @@ const JP_INJECTION = [
   "\\providecommand{\\citep}{\\cite}",
   "\\providecommand{\\citet}{\\cite}",
   // acmart v2 の所属の国名の検査を外す。⚠ landmines.md
-  "\\makeatletter",
-  "\\@ifundefined{@ACM@resetaffil}{}{\\def\\@ACM@resetaffil{\\global\\@ACM@instpresentfalse\\global\\@ACM@citypresentfalse}}",
-  "\\makeatother",
+  "\\edef\\jpaperAtCatcode{\\the\\catcode`\\@}\\catcode`\\@=11",
+  "\\@ifundefined{@ACM@resetaffil}{}{\\@ifundefined{@ACM@countrypresenttrue}{}{\\g@addto@macro\\@ACM@resetaffil{\\global\\@ACM@countrypresenttrue}}}",
+  "\\catcode`\\@=\\jpaperAtCatcode\\relax",
   "% --- JPaper 注入ここまで ---",
 ].join("\n");
 

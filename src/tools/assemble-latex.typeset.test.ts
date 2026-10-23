@@ -101,4 +101,9 @@ describe.skipIf(!hasAcmartCountryCheck)("国名の無い acmart の所属を原�
   it("\\country の無い所属があっても acmart の検査で止まらず PDF が出る", () => {
     expect(build(ACMART_NO_COUNTRY, NO_COUNTRY_BODY, "original")).toEqual([]);
   }, 300_000);
+
+  it("前文で \\makeatletter を開いたまま本文で @ 入りの命令を使う論文も、原文の前文で組める", () => {
+    const own = ["\\documentclass{article}", "\\makeatletter", "\\newcommand{\\foo@bar}{X}", "\\begin{document}", "\\end{document}"].join("\n");
+    expect(build(own, "\\foo@bar\n\\makeatother", "original")).toEqual([]);
+  }, 300_000);
 });
