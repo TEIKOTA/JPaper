@@ -448,7 +448,7 @@ const ACMART_SETUP = [
   "\\long\\def\\jp@acm@au#1{\\jp@acm@side{\\jp@acm@put\\jp@acm@doneL\\jp@acm@auL{#1}}{\\jp@acm@put\\jp@acm@doneR\\jp@acm@auR{#1}}}",
   "\\long\\def\\jp@acm@fm#1{\\jp@acm@side{\\jp@acm@put\\jp@acm@doneL\\jp@acm@fmL{#1}}{\\jp@acm@put\\jp@acm@doneR\\jp@acm@fmR{#1}}}",
   "\\let\\jp@acm@doneL\\relax\\let\\jp@acm@doneR\\relax\\def\\jp@acm@auL{}\\def\\jp@acm@auR{}\\def\\jp@acm@fmL{}\\def\\jp@acm@fmR{}",
-  "\\long\\def\\jp@acm@affil#1#2{{\\small\\setkeys{@ACM@affiliation@}{obeypunctuation=false}\\setkeys{@ACM@affiliation@}{#1}#2\\par}}",
+  "\\long\\def\\jp@acm@affil#1#2{{\\small\\def~{\\ifvmode\\leavevmode\\else\\nobreakspace\\fi}\\setkeys{@ACM@affiliation@}{obeypunctuation=false}\\setkeys{@ACM@affiliation@}{#1}#2\\par}}",
   "\\long\\def\\jp@acm@abs#1{\\jp@acm@fm{\\par\\medskip\\noindent\\textbf{\\jp@acm@side{Abstract}{概要}}\\par" +
     "\\noindent\\ignorespaces#1\\par}}",
   "\\@ifundefined{Collect@Body}{}{%",
