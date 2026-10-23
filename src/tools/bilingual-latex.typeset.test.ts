@@ -376,9 +376,9 @@ const ACM_FRONT = (title: string, inst: string, abs: string, kw: string): string
   [
     `\\title{${title}}`,
     "",
-    "\\author{Ann Lee}\n\\affiliation{\\institution{" + inst + "}\\city{Newark}\\state{NJ}\\country{USA}}\n\\email{ann_lee@example.org}",
+    "\\author{Ann Lee}\n\\authornote{Both authors contributed equally.}\n\\affiliation{\\institution{" + inst + "}\\city{Newark}\\state{NJ}\\country{USA}}\n\\email{ann_lee@example.org}",
     "",
-    "\\author{Bob Kay}\n\\affiliation{\\institution{" + inst + " B}\\city{Austin}\\country{USA}}\n\\email{bob@example.org}",
+    "\\author{Bob Kay}\n\\authornotemark[1]\n\\additionalaffiliation{\\institution{Extra Lab}}\n\\affiliation{\\institution{" + inst + " B}\\city{Austin}\\country{USA}}\n\\email{bob@example.org}",
     "",
     `\\begin{abstract}\n${abs}\n\\end{abstract}`,
     "",
@@ -445,6 +445,8 @@ describe.skipIf(!hasAcmart)("acmart の論文の対訳を lualatex で組む（i
       expect(at.every((i) => i >= 0), `${side}\n${order.filter((_, k) => at[k]! < 0).join(", ")}`).toBe(true);
       expect([...at].sort((a, b) => a - b), side).toEqual(at);
     }
+    // 著者の注は対訳 PDF に出さない（issue #501）。
+    expect(`${left} ${right}`).not.toMatch(/contributed equally|Extra Lab/);
     expect(left).not.toMatch(/Right Uni|右の要旨|概要/);
     expect(right).not.toMatch(/Left Uni|Leftabstract|Abstract/);
   }, 240_000);

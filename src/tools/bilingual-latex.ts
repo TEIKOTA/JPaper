@@ -439,7 +439,7 @@ function icmlSetup(preamble: string, profile: FrontMatterProfile): string {
 }
 
 // acmart の対訳の前文の手当て。著者・所属・メールアドレスは段ごとに溜めて表題ブロックで出し、
-// 要旨・キーワードは表題ブロックの後に出す（表題ブロックの後に書かれたものはその場で出す）。⚠ landmines.md
+// 要旨・キーワードは表題ブロックの後に出す（表題ブロックの後に書かれたものはその場で出す）。著者の注は出さない。⚠ landmines.md
 const ACMART_SETUP = [
   "% --- JPaper 注入: 対訳の acmart 手当て ---",
   "\\makeatletter",
@@ -461,6 +461,7 @@ const ACMART_SETUP = [
   "  \\renewcommand\\email[2][]{\\jp@acm@au{{\\small\\nolinkurl{#2}}\\par}}%",
   "  \\renewcommand\\keywords[1]{\\jp@acm@fm{\\par\\medskip\\noindent\\textit{\\jp@acm@side{Keywords}{キーワード}:}\\ #1\\par}}%",
   "  \\renewenvironment{abstract}{\\Collect@Body\\jp@acm@abs}{}%",
+  "  \\let\\authornote\\@gobble\\renewcommand\\authornotemark[1][]{}%",
   "  \\renewcommand{\\jpTitleBlock}[1]{\\jp@acm@side" +
     "{\\jp@titleblock{#1}{\\jp@acm@auL}\\global\\let\\jp@acm@doneL\\@empty\\jp@acm@fmL}" +
     "{\\jp@titleblock{#1}{\\jp@acm@auR}\\global\\let\\jp@acm@doneR\\@empty\\jp@acm@fmR}}%",
