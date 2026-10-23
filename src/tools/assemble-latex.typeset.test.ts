@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync, existsSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { assembleWithMap } from "./assemble-latex.js";
@@ -40,10 +40,10 @@ const BODY = [
   "\\end{acks}",
 ].join("\n");
 
-function build(cleanLatex: string, body: string): string[] {
+function build(cleanLatex: string, body: string, mode: "original" | "template" = "template"): string[] {
   const dir = mkdtempSync(path.join(tmpdir(), "jpaper-acm-"));
   try {
-    const { mainTex } = assembleWithMap({ cleanLatex, segments: [{ id: "seg-0000", tex: body }], mode: "template" });
+    const { mainTex } = assembleWithMap({ cleanLatex, segments: [{ id: "seg-0000", tex: body }], mode });
     writeFileSync(path.join(dir, "main.tex"), mainTex);
     const r = spawnSync("lualatex", ["-interaction=nonstopmode", "-halt-on-error", "main.tex"], {
       cwd: dir,
@@ -74,5 +74,36 @@ describe.skipIf(!hasLuaTex)("acmart の論文を共通テンプレートで組�
 
   it("前文の書誌メタデータ・\\shortauthors・acks 環境があっても PDF が出る", () => {
     expect(build(ACMART, BODY)).toEqual([]);
+  }, 300_000);
+});
+
+// 古い acmart で書かれ、所属に \\country が無い論文（1912.02400 の著者欄の形）。
+const ACMART_NO_COUNTRY = ["\\documentclass[sigconf]{acmart}", "\\begin{document}", "\\end{document}"].join("\n");
+const NO_COUNTRY_BODY = [
+  "\\title{T}",
+  "\\author{A}",
+  "\\affiliation{\\institution{U}\\city{Los Angeles}\\state{CA}}",
+  "\\author{B}",
+  "\\affiliation{\\institution{V}\\city{New York City}}",
+  "\\begin{abstract}要旨。\\end{abstract}",
+  "\\maketitle",
+  "本文。",
+].join("\n");
+
+const hasAcmartCountryCheck =
+  hasLuaTex &&
+  (() => {
+    const cls = spawnSync("kpsewhich", ["acmart.cls"], { encoding: "utf8" }).stdout.trim();
+    return cls !== "" && readFileSync(cls, "utf8").includes("No country present");
+  })();
+
+describe.skipIf(!hasAcmartCountryCheck)("国名の無い acmart の所属を原文の前文で組む（issue #497）", () => {
+  it("\\country の無い所属があっても acmart の検査で止まらず PDF が出る", () => {
+    expect(build(ACMART_NO_COUNTRY, NO_COUNTRY_BODY, "original")).toEqual([]);
+  }, 300_000);
+
+  it("前文で \\makeatletter を開いたまま本文で @ 入りの命令を使う論文も、原文の前文で組める", () => {
+    const own = ["\\documentclass{article}", "\\makeatletter", "\\newcommand{\\foo@bar}{X}", "\\begin{document}", "\\end{document}"].join("\n");
+    expect(build(own, "\\foo@bar\n\\makeatother", "original")).toEqual([]);
   }, 300_000);
 });
