@@ -394,10 +394,14 @@ const ACM_LATE = (title: string, abs: string, kw: string): string =>
   [`\\title{${title}}`, "", "\\author{Ann Lee}", "", "\\maketitle", "", `\\begin{abstract}\n${abs}\n\\end{abstract}`, "", `\\keywords{${kw}}`, "", "\\section{Intro}"].join("\n");
 
 // 左右の前付けで acmart の対訳を組み、1 ページ目の左右の半分のテキストを返す。
-function buildAcm(source: string, translated: string): { left: string; right: string } {
+function buildAcm(
+  source: string,
+  translated: string,
+  type = "sigconf",
+): { left: string; right: string; leftLines: string; words: { xMin: number; xMax: number; text: string }[] } {
   const dir = mkdtempSync(path.join(tmpdir(), "jpaper-acmbi-"));
   try {
-    const pre = "\\documentclass[sigconf]{acmart}\n\\settopmatter{printacmref=false}\n";
+    const pre = `\\documentclass[${type}]{acmart}\n\\settopmatter{printacmref=false}\n`;
     const { mainTex } = assembleBilingual({
       cleanLatex: `${pre}\\begin{document}\n\\end{document}\n`,
       translatedMainTex: `${pre}\\usepackage{luatexja}\n\\begin{document}\n\\end{document}\n`,
@@ -407,18 +411,51 @@ function buildAcm(source: string, translated: string): { left: string; right: st
     writeFileSync(path.join(dir, "main.tex"), mainTex);
     const r = spawnSync("lualatex", ["-interaction=nonstopmode", "-halt-on-error", "main.tex"], { cwd: dir, encoding: "utf8", timeout: 240_000 });
     expect(r.status, r.stdout.slice(-3000)).toBe(0);
-    const text = (x: string): string =>
+    const raw = (x: string): string =>
       spawnSync("pdftotext", ["-f", "1", "-l", "1", "-x", x, "-y", "0", "-W", "595", "-H", "842", "-raw", "main.pdf", "-"], {
         cwd: dir,
         encoding: "utf8",
-      }).stdout.replace(/\s+/g, " ");
-    return { left: text("0"), right: text("595") };
+      }).stdout;
+    const text = (x: string): string => raw(x).replace(/\s+/g, " ");
+    const words = [
+      ...spawnSync("pdftotext", ["-f", "1", "-l", "1", "-bbox", "main.pdf", "-"], { cwd: dir, encoding: "utf8" }).stdout.matchAll(
+        /<word xMin="([\d.]+)" yMin="[\d.]+" xMax="([\d.]+)" yMax="[\d.]+">([^<]*)<\/word>/g,
+      ),
+    ].map((m) => ({ xMin: Number(m[1]), xMax: Number(m[2]), text: m[3]! }));
+    return { left: text("0"), right: text("595"), leftLines: raw("0"), words };
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
 }
 
 describe.skipIf(!hasAcmart)("acmart の論文の対訳を lualatex で組む（issue #499）", () => {
+  it("所属は acmart と同じ区切りで組む（issue #503）", () => {
+    const front = [
+      "\\title{T}",
+      "",
+      "\\author{Ann Lee}\n\\affiliation{\\department{DeptX}\\position{PosX}\\institution{Uni C}\\country{USA}}",
+      "",
+      "\\author{Bob Kay}\n\\affiliation{\\institution{Uni D}\\city{Newark}\\state{NJ}\n\\postcode{07102}\n\\country{USA}}",
+      "",
+      "\\author{Cat Moe}\n\\affiliation[obeypunctuation=true]{\\institution{Uni B}, \\city{Austin}, \\country{USA}}",
+      "",
+      "\\maketitle",
+      "",
+      "\\section{Intro}",
+    ].join("\n");
+    const lines = (type: string): string[] => buildAcm(front, front, type).leftLines.split("\n").map((l) => l.trim());
+    const conf = lines("sigconf");
+    for (const l of ["DeptX", "PosX", "Uni C", "USA", "Uni D", "Newark, NJ, USA", "Uni B, Austin, USA"]) expect(conf, l).toContain(l);
+    // journal 型（acmsmall）は acmart と同じく \department・\position・\city・\state を出さず、国名を読点でつなぐ。
+    const built = buildAcm(front, front, "acmsmall");
+    const journal = built.leftLines.split("\n").map((l) => l.trim());
+    for (const l of ["Uni C, USA", "Uni D, USA"]) expect(journal, l).toContain(l);
+    // 所属の行も著者名の行と同じく段の中央に来る（journal 型の \institution の行頭の ~ で右へずれない）。
+    const at = (t: string): { xMin: number; xMax: number } => built.words.find((w) => w.text === t)!;
+    const center = (a: string, b: string): number => (at(a).xMin + at(b).xMax) / 2;
+    expect(Math.abs(center("Uni", "USA") - center("Ann", "Lee"))).toBeLessThan(0.5);
+  }, 240_000);
+
   it("\\maketitle の後に書いた要旨・キーワードは、その段の表題ブロックの後にその場で出る", () => {
     const { left, right } = buildAcm(ACM_LATE("Left Title", "Lateabstract text.", "leftkw"), ACM_LATE("右の表題", "右の遅い要旨。", "右の語"));
     for (const [side, title, head, abs, kw] of [
