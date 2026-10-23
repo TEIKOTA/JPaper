@@ -72,6 +72,13 @@ describe("injectShared", () => {
   it("\\documentclass が無ければ末尾に読む", () => {
     expect(injectShared("\\usepackage{x}")).toMatch(/\\usepackage\{x\}\n\\usepackage\[ipaex\]\{luatexja-preset\}/);
   });
+  it("acmart の所属の国名の検査を、\\@ACM@resetaffil があるときだけ外す（issue #497）", () => {
+    const out = injectShared("\\documentclass[sigconf]{acmart}");
+    expect(out).toContain(
+      "\\@ifundefined{@ACM@resetaffil}{}{\\def\\@ACM@resetaffil{\\global\\@ACM@instpresentfalse\\global\\@ACM@citypresentfalse}}",
+    );
+    expect(out).not.toContain("countrypresentfalse");
+  });
 });
 
 describe("fuseCaptionParagraphs", () => {

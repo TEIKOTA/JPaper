@@ -28,6 +28,10 @@ const JP_INJECTION = [
   "% --- JPaper 注入: 共有引用 (契約付録 §7) ---",
   "\\providecommand{\\citep}{\\cite}",
   "\\providecommand{\\citet}{\\cite}",
+  // acmart v2 の所属の国名の検査を外す。⚠ landmines.md
+  "\\makeatletter",
+  "\\@ifundefined{@ACM@resetaffil}{}{\\def\\@ACM@resetaffil{\\global\\@ACM@instpresentfalse\\global\\@ACM@citypresentfalse}}",
+  "\\makeatother",
   "% --- JPaper 注入ここまで ---",
 ].join("\n");
 
