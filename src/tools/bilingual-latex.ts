@@ -448,16 +448,12 @@ const ACMART_SETUP = [
   "\\long\\def\\jp@acm@au#1{\\jp@acm@side{\\jp@acm@put\\jp@acm@doneL\\jp@acm@auL{#1}}{\\jp@acm@put\\jp@acm@doneR\\jp@acm@auR{#1}}}",
   "\\long\\def\\jp@acm@fm#1{\\jp@acm@side{\\jp@acm@put\\jp@acm@doneL\\jp@acm@fmL{#1}}{\\jp@acm@put\\jp@acm@doneR\\jp@acm@fmR{#1}}}",
   "\\let\\jp@acm@doneL\\relax\\let\\jp@acm@doneR\\relax\\def\\jp@acm@auL{}\\def\\jp@acm@auR{}\\def\\jp@acm@fmL{}\\def\\jp@acm@fmR{}",
-  "\\def\\jp@acm@line#1{#1\\par}",
-  "\\def\\jp@acm@after#1{\\unskip, #1}",
-  "\\long\\def\\jp@acm@affil#1{{\\small\\let\\institution\\jp@acm@line\\let\\position\\jp@acm@line" +
-    "\\def\\department{\\@ifnextchar[{\\jp@gobbleopt}{}}\\let\\city\\@firstofone\\let\\state\\jp@acm@after" +
-    "\\let\\country\\jp@acm@after\\let\\streetaddress\\@gobble\\let\\postcode\\@gobble#1\\par}}",
+  "\\long\\def\\jp@acm@affil#1#2{{\\small\\setkeys{@ACM@affiliation@}{obeypunctuation=false}\\setkeys{@ACM@affiliation@}{#1}#2\\par}}",
   "\\long\\def\\jp@acm@abs#1{\\jp@acm@fm{\\par\\medskip\\noindent\\textbf{\\jp@acm@side{Abstract}{概要}}\\par" +
     "\\noindent\\ignorespaces#1\\par}}",
   "\\@ifundefined{Collect@Body}{}{%",
   "  \\renewcommand\\author[2][]{\\jp@acm@au{\\par\\smallskip{\\large#2}\\par}}%",
-  "  \\renewcommand\\affiliation[2][]{\\jp@acm@au{\\jp@acm@affil{#2}}}%",
+  "  \\renewcommand\\affiliation[2][]{\\jp@acm@au{\\jp@acm@affil{#1}{#2}}}%",
   "  \\renewcommand\\email[2][]{\\jp@acm@au{{\\small\\nolinkurl{#2}}\\par}}%",
   "  \\renewcommand\\keywords[1]{\\jp@acm@fm{\\par\\medskip\\noindent\\textit{\\jp@acm@side{Keywords}{キーワード}:}\\ #1\\par}}%",
   "  \\renewenvironment{abstract}{\\Collect@Body\\jp@acm@abs}{}%",
