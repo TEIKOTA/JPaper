@@ -89,7 +89,7 @@
 ## `src/tools/bilingual-latex.ts` — `ACMART_SETUP` が acmart の `\author`・`\affiliation`・`\email`・`\keywords`・`abstract` を対訳の中で置き換える
 
 - **おかしく見える点**: acmart の論文の対訳だけ、class の著者欄・要旨の命令を、段の番号（`\pcol@currcol`）ごとのマクロに溜める命令へ差し替え、`\jpTitleBlock` もそれを出す形に定義し直す。著者欄は acmart 本来の横並びではなく、名前・所属・メールアドレスを縦に並べる。
-- **なぜ意図的か**: acmart の `\author`・`\affiliation`・`\email`・`\keywords`・`abstract` は値を溜めるだけで、組むのは `\maketitle` の中である。対訳は `\maketitle` をタイトルブロックに置き換えるので、そのままでは表題しか出ない（実測: 1912.02400 の対訳 PDF）。左右の段は同じ命令を順に実行するので、1 つのマクロに溜めると後勝ちで左の段に和訳の要旨が出る。段ごとに分けて溜め、タイトルブロックで自分の段の分だけを出す。タイトルブロックの後に書かれた要旨はその場で出す（溜めると出す機会が無い）。`\Collect@Body`（acmart が読む environ）が無ければ何もしない。
+- **なぜ意図的か**: acmart の `\author`・`\affiliation`・`\email`・`\keywords`・`abstract` は値を溜めるだけで、組むのは `\maketitle` の中である。対訳は `\maketitle` をタイトルブロックに置き換えるので、そのままでは表題しか出ない（実測: 1912.02400 の対訳 PDF）。左右の段は同じ命令を順に実行するので、1 つのマクロに溜めると後勝ちで左の段に和訳の要旨が出る。段ごとに分けて溜め、タイトルブロックで自分の段の分だけを出す。タイトルブロックの後に書かれた要旨はその場で出す（溜めると出す機会が無い）。`\Collect@Body`（acmart が読む environ）が無ければ何もしない。 `\authornote`・`\authornotemark`（`\additionalaffiliation` は中で `\authornote` を呼ぶ）は何もしない命令にする。acmart はこれらを `\addresses`・`\@authornotes` に溜めて `\maketitle` の中で組むので、`\maketitle` を使わない対訳では文書の終わりで `\@currentauthors` が未定義になって落ちる（実測: issue #501）。
 
 ## `src/tools/bilingual-latex.ts` — `pairAcrossConditionals` / `splitAtConditionals` / `conditionalsSplittable` / `isConditionalLine` が条件分岐の行を段の切り替えの外へ出す
 
