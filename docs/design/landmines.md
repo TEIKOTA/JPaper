@@ -258,6 +258,12 @@
 - **なぜ意図的か**: shim は原文の前文より前に置くので、後から読む jmlr2e の `\newenvironment{keywords}` が `Command \keywords already defined` で落ちる（実測: 2011.03395 の対訳を共通テンプレートで組み直したとき）。
 - **正本ポインタ**: 契約付録 §7、issue #440。回帰テストは `src/tools/assemble-latex.test.ts`。
 
+## `src/tools/assemble-latex.ts` — acmart の前文・著者欄・謝辞の shim（`ACMART_SHIM`）は acmart の論文にだけ入れる
+
+- **おかしく見える点**: 共通テンプレートの class shim は class に関係なく入るのに、`\setcopyright`・`\acmConference`・`\state`・`\orcid`・`\Description`・`\received`・`acks` などは、原文が `\documentclass{acmart}` のときだけ足す。
+- **なぜ意図的か**: shim は原文の前文より前に置くので、`\state`・`\orcid`・`acks` のようなありふれた名前を全論文に入れると、論文自身の `\newcommand{\state}`（強化学習の論文に多い）や、後から読む `chemmacros`（`\state`）・`algxpar`（`\Description`）の定義が `already defined` で落ちる（PR #496 のレビューで lualatex の実測）。acmart の論文なら、これらの名前は class 自身が使っているので、論文側で定義し直すことはない。
+- **正本ポインタ**: 契約付録 §7、組版 shim ADR(20260809) 決定 3、issue #495。回帰テストは `src/tools/assemble-latex.test.ts`・`src/tools/assemble-latex.typeset.test.ts`。
+
 ## `src/tools/bilingual-latex.ts` — 対訳 PDF ではリンクを作らない（hyperref の draft）
 
 - **おかしく見える点**: 対訳の main.tex の先頭で `\PassOptionsToPackage{draft}{hyperref}` を渡し、引用・参照・URL をクリックできないようにしている。和訳 PDF はリンクがある。

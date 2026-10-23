@@ -172,6 +172,37 @@ const CLASS_SHIM = [
   "% --- JPaper 注入ここまで ---",
 ];
 
+// acmart の前文・著者欄・謝辞の命令。acmart の論文だけに入れる（名前がありふれていて、他の論文の定義とぶつかる）。⚠ landmines.md
+const ACMART_SHIM = [
+  "\\providecommand{\\state}[1]{#1}",
+  "\\providecommand{\\streetaddress}[1]{#1}",
+  "\\providecommand{\\postcode}[1]{#1}",
+  "\\providecommand{\\orcid}[1]{}",
+  "\\providecommand{\\authornote}[1]{}",
+  "\\providecommand{\\authornotemark}[1][]{}",
+  "\\providecommand{\\additionalaffiliation}[1]{}",
+  "\\providecommand{\\titlenote}[1]{}",
+  "\\providecommand{\\shortauthors}{}",
+  "\\providecommand{\\Description}[2][]{}",
+  "\\providecommand{\\setcopyright}[1]{}",
+  "\\providecommand{\\copyrightyear}[1]{}",
+  "\\providecommand{\\acmYear}[1]{}",
+  "\\providecommand{\\acmConference}[4][]{}",
+  "\\providecommand{\\acmBooktitle}[1]{}",
+  "\\providecommand{\\acmPrice}[1]{}",
+  "\\providecommand{\\acmDOI}[1]{}",
+  "\\providecommand{\\acmISBN}[1]{}",
+  "\\providecommand{\\acmJournal}[1]{}",
+  "\\providecommand{\\acmVolume}[1]{}",
+  "\\providecommand{\\acmNumber}[1]{}",
+  "\\providecommand{\\acmArticle}[1]{}",
+  "\\providecommand{\\acmMonth}[1]{}",
+  "\\providecommand{\\acmSubmissionID}[1]{}",
+  "\\providecommand{\\settopmatter}[1]{}",
+  "\\providecommand{\\received}[2][]{}",
+  "\\jpaper@env{acks}{\\section*{謝辞}}{}",
+];
+
 const DOCUMENTCLASS = /\\documentclass(?:\[[^\]]*\])?\{[^}]*\}[ \t]*\r?\n?/;
 
 // 原 \documentclass を落として残り（パッケージ・ユーザー定義マクロ）は丸ごと引き継ぐ。
@@ -196,7 +227,12 @@ function classShim(cleanLatex: string): string {
   const keywords = /\\begin\s*\{keywords\}/.test(cleanLatex)
     ? "\\AtBeginDocument{\\jpaper@env{keywords}{\\par\\noindent\\textbf{キーワード: }}{\\par}}"
     : "\\providecommand{\\keywords}[1]{\\par\\noindent\\textbf{キーワード: }#1\\par}";
-  return CLASS_SHIM.map((l) => (l === KEYWORDS_SHIM ? keywords : l)).join("\n");
+  const acmart = /\\documentclass\s*(?:\[[^\]]*\])?\s*\{\s*acmart\s*\}/.test(cleanLatex);
+  return CLASS_SHIM.flatMap((l) => {
+    if (l === KEYWORDS_SHIM) return [keywords];
+    if (l === "\\makeatother" && acmart) return [...ACMART_SHIM, l];
+    return [l];
+  }).join("\n");
 }
 
 function templatePreamble(originalPreamble: string, cleanLatex: string): string {
