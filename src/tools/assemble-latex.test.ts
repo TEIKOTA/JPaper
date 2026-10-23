@@ -245,6 +245,20 @@ describe("assembleLatex: template は原前文を吸収する", () => {
     expect(cmd).not.toContain("\\jpaper@env{keywords}");
   });
 
+  it("acmart の前文の書誌メタデータ・著者欄の命令・acks 環境の shim を持つ（issue #495）", () => {
+    const r = assembleLatex({ cleanLatex: ELS, chapters: ["X"], mode: "template" });
+    for (const shim of [
+      "\\providecommand{\\setcopyright}[1]{}",
+      "\\providecommand{\\acmConference}[4][]{}",
+      "\\providecommand{\\acmDOI}[1]{}",
+      "\\providecommand{\\state}[1]{#1}",
+      "\\providecommand{\\shortauthors}{}",
+      "\\jpaper@env{acks}{",
+    ]) {
+      expect(r.mainTex).toContain(shim);
+    }
+  });
+
   it("shim は原前文より前に置き、原前文中の class 固有コマンド呼び出しを成立させる", () => {
     const r = assembleLatex({ cleanLatex: ELS, chapters: ["X"], mode: "template" });
     expect(r.mainTex.indexOf("jpaper@env")).toBeLessThan(r.mainTex.indexOf("threeparttable"));
