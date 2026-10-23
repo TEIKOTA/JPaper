@@ -86,6 +86,11 @@
 - **なぜ意図的か**: 学会クラス（neurips 等）の `\maketitle` は全幅で、脚注（`\thanks`・学会表記）の挿入物が後続の paracol と衝突して空白ページが出る（PoC で実測）。タイトルと著者を左右の半分にそれぞれ置く仕様なので、`\thanks` を無効にした著者とタイトルだけのブロックを各列に置く。タイトルは paracol の中に入れるので、本文先頭がタイトルでも空の paracol は作らない。本文に `\title` を書く論文（article・llncs・revtex で一般的）で前文だけを見ると左右とも空のタイトルになり、`\maketitle` が段落の先頭に単独で無いと左の列で `\maketitle` が実行される。article の `\maketitle` は実行後に `\title` / `\author` を `\relax` にするので、右の列ではタイトルが素の文字列で出る（いずれも実測）。前の部分を残すのは、`\author` が `\@author` を大域に定義してタイトルブロックがそれを使うため（`\title` / `\author` は何も出力しない）。環境の中の `\maketitle` は置き換えず、`titleUnplaced` で警告する。frontmatter 環境（elsarticle）のペアは `\maketitle` を探さずにタイトルとして扱う（下の `replaceFrontmatter`）。
 - **正本ポインタ**: [対訳 PDF ADR](../adr/20261006-bilingual-side-by-side-pdf.md)（Decision「タイトルと著者」）。
 
+## `src/tools/bilingual-latex.ts` — `ACMART_SETUP` が acmart の `\author`・`\affiliation`・`\email`・`\keywords`・`abstract` を対訳の中で置き換える
+
+- **おかしく見える点**: acmart の論文の対訳だけ、class の著者欄・要旨の命令を、段の番号（`\pcol@currcol`）ごとのマクロに溜める命令へ差し替え、`\jpTitleBlock` もそれを出す形に定義し直す。著者欄は acmart 本来の横並びではなく、名前・所属・メールアドレスを縦に並べる。
+- **なぜ意図的か**: acmart の `\author`・`\affiliation`・`\email`・`\keywords`・`abstract` は値を溜めるだけで、組むのは `\maketitle` の中である。対訳は `\maketitle` をタイトルブロックに置き換えるので、そのままでは表題しか出ない（実測: 1912.02400 の対訳 PDF）。左右の段は同じ命令を順に実行するので、1 つのマクロに溜めると後勝ちで左の段に和訳の要旨が出る。段ごとに分けて溜め、タイトルブロックで自分の段の分だけを出す。タイトルブロックの後に書かれた要旨はその場で出す（溜めると出す機会が無い）。`\Collect@Body`（acmart が読む environ）が無ければ何もしない。
+
 ## `src/tools/bilingual-latex.ts` — `pairAcrossConditionals` / `splitAtConditionals` / `conditionalsSplittable` / `isConditionalLine` が条件分岐の行を段の切り替えの外へ出す
 
 - **おかしく見える点**: 原文と訳文の段落をそのまま左右に並べる組み立てなのに、条件分岐が段落の中で閉じない段落だけは、`\if…` / `\else` / `\fi` の行を左右に複製せず、`\switchcolumn` の外に 1 回だけ置いている。外に置く `\if…` の行は、比較の対象を取らない条件分岐（`\ifpeerreview` など）だけの行で、前の行が命令や `%` で終わらず、名前が文書の中で `\newif` で宣言され宣言とそれだけの行の外に現れないものに限り、`\ifnum` / `\ifx` / `\ifcase` など比較の対象を取る条件分岐（`OPERAND_CONDITIONALS`）の行は外に置かない。閉じる段落は割らない。割る段落でも、表・マクロ定義のように段落の中で閉じる環境・波括弧の内側の行では割らず、節をまたぐ環境の内側の行では割る。`{` が続く `\if…` は、数えても数えなくても閉じるときだけ閉じるとみなす。しかも、文書のどこか 1 つでも割れない段落があるか、割った条件分岐の行を文書の順に並べて入れ子として閉じなければ、文書のどの段落も割らない。

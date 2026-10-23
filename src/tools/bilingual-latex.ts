@@ -438,8 +438,42 @@ function icmlSetup(preamble: string, profile: FrontMatterProfile): string {
   ].join("\n");
 }
 
+// acmart の対訳の前文の手当て。著者・所属・メールアドレスは段ごとに溜めて表題ブロックで出し、
+// 要旨・キーワードは表題ブロックの後に出す（表題ブロックの後に書かれたものはその場で出す）。⚠ landmines.md
+const ACMART_SETUP = [
+  "% --- JPaper 注入: 対訳の acmart 手当て ---",
+  "\\makeatletter",
+  "\\long\\def\\jp@acm@side#1#2{\\ifnum\\pcol@currcol=\\z@#1\\else#2\\fi}",
+  "\\long\\def\\jp@acm@put#1#2#3{\\ifx#1\\relax\\g@addto@macro#2{#3}\\else#3\\fi}",
+  "\\long\\def\\jp@acm@au#1{\\jp@acm@side{\\jp@acm@put\\jp@acm@doneL\\jp@acm@auL{#1}}{\\jp@acm@put\\jp@acm@doneR\\jp@acm@auR{#1}}}",
+  "\\long\\def\\jp@acm@fm#1{\\jp@acm@side{\\jp@acm@put\\jp@acm@doneL\\jp@acm@fmL{#1}}{\\jp@acm@put\\jp@acm@doneR\\jp@acm@fmR{#1}}}",
+  "\\let\\jp@acm@doneL\\relax\\let\\jp@acm@doneR\\relax\\def\\jp@acm@auL{}\\def\\jp@acm@auR{}\\def\\jp@acm@fmL{}\\def\\jp@acm@fmR{}",
+  "\\def\\jp@acm@line#1{#1\\par}",
+  "\\def\\jp@acm@after#1{\\unskip, #1}",
+  "\\long\\def\\jp@acm@affil#1{{\\small\\let\\institution\\jp@acm@line\\let\\position\\jp@acm@line" +
+    "\\def\\department{\\@ifnextchar[{\\jp@gobbleopt}{}}\\let\\city\\@firstofone\\let\\state\\jp@acm@after" +
+    "\\let\\country\\jp@acm@after\\let\\streetaddress\\@gobble\\let\\postcode\\@gobble#1\\par}}",
+  "\\long\\def\\jp@acm@abs#1{\\jp@acm@fm{\\par\\medskip\\noindent\\textbf{\\jp@acm@side{Abstract}{概要}}\\par" +
+    "\\noindent\\ignorespaces#1\\par}}",
+  "\\@ifundefined{Collect@Body}{}{%",
+  "  \\renewcommand\\author[2][]{\\jp@acm@au{\\par\\smallskip{\\large#2}\\par}}%",
+  "  \\renewcommand\\affiliation[2][]{\\jp@acm@au{\\jp@acm@affil{#2}}}%",
+  "  \\renewcommand\\email[2][]{\\jp@acm@au{{\\small\\nolinkurl{#2}}\\par}}%",
+  "  \\renewcommand\\keywords[1]{\\jp@acm@fm{\\par\\medskip\\noindent\\textit{\\jp@acm@side{Keywords}{キーワード}:}\\ #1\\par}}%",
+  "  \\renewenvironment{abstract}{\\Collect@Body\\jp@acm@abs}{}%",
+  "  \\renewcommand{\\jpTitleBlock}[1]{\\jp@acm@side" +
+    "{\\jp@titleblock{#1}{\\jp@acm@auL}\\global\\let\\jp@acm@doneL\\@empty\\jp@acm@fmL}" +
+    "{\\jp@titleblock{#1}{\\jp@acm@auR}\\global\\let\\jp@acm@doneR\\@empty\\jp@acm@fmR}}%",
+  "}",
+  "\\makeatother",
+  "",
+].join("\n");
+
+const ACMART = /\\documentclass\s*(?:\[[^\]]*\])?\s*\{\s*acmart\s*\}/;
+
 export function bilingualPreamble(preamble: string, profile: FrontMatterProfile = DEFAULT_PROFILE): string {
-  return `${NO_LINKS}\n${preamble.replace(/\s*$/, "")}\n${SETUP}\n${icmlSetup(preamble, profile)}`;
+  const acmart = ACMART.test(stripComments(preamble)) ? ACMART_SETUP : "";
+  return `${NO_LINKS}\n${preamble.replace(/\s*$/, "")}\n${SETUP}\n${icmlSetup(preamble, profile)}${acmart}`;
 }
 
 const BEGIN = [
