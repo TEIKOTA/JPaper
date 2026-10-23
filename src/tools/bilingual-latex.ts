@@ -443,25 +443,27 @@ function icmlSetup(preamble: string, profile: FrontMatterProfile): string {
 const ACMART_SETUP = [
   "% --- JPaper 注入: 対訳の acmart 手当て ---",
   "\\makeatletter",
-  "\\long\\def\\jp@acm@add#1#2{\\@ifundefined{jp@acm@done\\the\\pcol@currcol}" +
-    "{\\expandafter\\g@addto@macro\\csname jp@acm@#1\\the\\pcol@currcol\\endcsname{#2}}{#2}}",
-  "\\@namedef{jp@acm@au0}{}\\@namedef{jp@acm@au1}{}\\@namedef{jp@acm@fm0}{}\\@namedef{jp@acm@fm1}{}",
+  "\\long\\def\\jp@acm@side#1#2{\\ifnum\\pcol@currcol=\\z@#1\\else#2\\fi}",
+  "\\long\\def\\jp@acm@put#1#2#3{\\ifx#1\\relax\\g@addto@macro#2{#3}\\else#3\\fi}",
+  "\\long\\def\\jp@acm@au#1{\\jp@acm@side{\\jp@acm@put\\jp@acm@doneL\\jp@acm@auL{#1}}{\\jp@acm@put\\jp@acm@doneR\\jp@acm@auR{#1}}}",
+  "\\long\\def\\jp@acm@fm#1{\\jp@acm@side{\\jp@acm@put\\jp@acm@doneL\\jp@acm@fmL{#1}}{\\jp@acm@put\\jp@acm@doneR\\jp@acm@fmR{#1}}}",
+  "\\let\\jp@acm@doneL\\relax\\let\\jp@acm@doneR\\relax\\def\\jp@acm@auL{}\\def\\jp@acm@auR{}\\def\\jp@acm@fmL{}\\def\\jp@acm@fmR{}",
   "\\def\\jp@acm@line#1{#1\\par}",
   "\\def\\jp@acm@after#1{\\unskip, #1}",
   "\\long\\def\\jp@acm@affil#1{{\\small\\let\\institution\\jp@acm@line\\let\\position\\jp@acm@line" +
     "\\def\\department{\\@ifnextchar[{\\jp@gobbleopt}{}}\\let\\city\\@firstofone\\let\\state\\jp@acm@after" +
     "\\let\\country\\jp@acm@after\\let\\streetaddress\\@gobble\\let\\postcode\\@gobble#1\\par}}",
-  "\\def\\jp@acm@side#1#2{\\ifnum\\pcol@currcol=\\z@#1\\else#2\\fi}",
-  "\\long\\def\\jp@acm@abs#1{\\jp@acm@add{fm}{\\par\\medskip\\noindent\\textbf{\\jp@acm@side{Abstract}{概要}}\\par" +
+  "\\long\\def\\jp@acm@abs#1{\\jp@acm@fm{\\par\\medskip\\noindent\\textbf{\\jp@acm@side{Abstract}{概要}}\\par" +
     "\\noindent\\ignorespaces#1\\par}}",
   "\\@ifundefined{Collect@Body}{}{%",
-  "  \\renewcommand\\author[2][]{\\jp@acm@add{au}{\\par\\smallskip{\\large#2}\\par}}%",
-  "  \\renewcommand\\affiliation[2][]{\\jp@acm@add{au}{\\jp@acm@affil{#2}}}%",
-  "  \\renewcommand\\email[2][]{\\jp@acm@add{au}{{\\small\\ttfamily#2}\\par}}%",
-  "  \\renewcommand\\keywords[1]{\\jp@acm@add{fm}{\\par\\medskip\\noindent\\textit{\\jp@acm@side{Keywords}{キーワード}:}\\ #1\\par}}%",
+  "  \\renewcommand\\author[2][]{\\jp@acm@au{\\par\\smallskip{\\large#2}\\par}}%",
+  "  \\renewcommand\\affiliation[2][]{\\jp@acm@au{\\jp@acm@affil{#2}}}%",
+  "  \\renewcommand\\email[2][]{\\jp@acm@au{{\\small\\ttfamily#2}\\par}}%",
+  "  \\renewcommand\\keywords[1]{\\jp@acm@fm{\\par\\medskip\\noindent\\textit{\\jp@acm@side{Keywords}{キーワード}:}\\ #1\\par}}%",
   "  \\renewenvironment{abstract}{\\Collect@Body\\jp@acm@abs}{}%",
-  "  \\renewcommand{\\jpTitleBlock}[1]{\\jp@titleblock{#1}{\\csname jp@acm@au\\the\\pcol@currcol\\endcsname}" +
-    "\\global\\@namedef{jp@acm@done\\the\\pcol@currcol}{}\\csname jp@acm@fm\\the\\pcol@currcol\\endcsname}%",
+  "  \\renewcommand{\\jpTitleBlock}[1]{\\jp@acm@side" +
+    "{\\jp@titleblock{#1}{\\jp@acm@auL}\\global\\let\\jp@acm@doneL\\@empty\\jp@acm@fmL}" +
+    "{\\jp@titleblock{#1}{\\jp@acm@auR}\\global\\let\\jp@acm@doneR\\@empty\\jp@acm@fmR}}%",
   "}",
   "\\makeatother",
   "",

@@ -320,6 +320,8 @@ describe("タイトル", () => {
   it("acmart の前文にだけ、著者欄・要旨を段ごとに溜めて表題ブロックで出す手当てを入れる（issue #499）", () => {
     expect(bilingualPreamble("\\documentclass[sigconf]{acmart}")).toContain("\\renewenvironment{abstract}{\\Collect@Body\\jp@acm@abs}{}");
     expect(bilingualPreamble("\\documentclass[sigconf]{acmart}")).toContain("\\renewcommand{\\jpTitleBlock}[1]");
+    // 組版の安全検査（main.tex の \csname の禁止など）で止まらない。
+    expect(findUnsafeTexCommands(bilingualPreamble("\\documentclass[sigconf]{acmart}"))).toEqual([]);
     for (const pre of ["\\documentclass{article}", "% \\documentclass{acmart}\n\\documentclass{article}"]) {
       expect(bilingualPreamble(pre)).not.toContain("jp@acm@");
     }
