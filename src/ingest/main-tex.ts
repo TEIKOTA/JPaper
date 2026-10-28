@@ -34,6 +34,37 @@ function readHead(file: string, bytes: number): string {
   }
 }
 
+// 原稿ではない付属文書の名前の語（basename を英数字以外で区切った語に一致したときだけ）。
+const DEMOTED_WORDS = new Set(["rebuttal", "response", "reply", "supp", "supplement", "supplementary"]);
+
+function isDemoted(rel: string): boolean {
+  const stem = path.posix.basename(rel).replace(/\.tex$/i, "").toLowerCase();
+  return stem.split(/[^a-z0-9]+/).some((w) => DEMOTED_WORDS.has(w));
+}
+
+function depthOf(rel: string): number {
+  return rel.split("/").length - 1;
+}
+
+// 手掛かりごとに候補を絞る。絞った結果が空になる手掛かりは使わない（強いものだけ・決められなければ呼び出し側が落とす）。
+function narrowCandidates(pool: string[], dir: string): string[] {
+  const clues: ((c: string[]) => string[])[] = [
+    (c) => c.filter((f) => !isDemoted(f)),
+    (c) => {
+      const min = Math.min(...c.map(depthOf));
+      return c.filter((f) => depthOf(f) === min);
+    },
+    (c) => c.filter((f) => existsSync(path.join(dir, f.replace(/\.tex$/i, ".bbl")))),
+  ];
+  let cur = pool;
+  for (const clue of clues) {
+    if (cur.length === 1) break;
+    const next = clue(cur);
+    if (next.length > 0) cur = next;
+  }
+  return cur;
+}
+
 export function detectMainTex(dir: string, maxFiles = 10_000): string {
   const all = listTexFiles(dir).filter((f) => isInsideDirReal(dir, path.join(dir, f)));
   // 件数にも上限を掛ける（ディレクトリ入力は展開経路の Budget を通らない）。
@@ -60,6 +91,8 @@ export function detectMainTex(dir: string, maxFiles = 10_000): string {
     const hit = pool.find((f) => path.basename(f).toLowerCase() === name);
     if (hit) return hit;
   }
+  const narrowed = narrowCandidates(pool, dir);
+  if (narrowed.length === 1) return narrowed[0]!;
   throw new JpaperError(2, "input", `main.tex を一意に決定できません: ${pool.join(", ")}`);
 }
 

@@ -52,6 +52,42 @@ describe("detectMainTex", () => {
     const d = tmp({ "a.tex": DOC, "b.tex": DOC });
     expect(() => detectMainTex(d)).toThrow(/一意に決定できません/);
   });
+
+  it("直下の原稿を、サブディレクトリの複製より優先する（2201.04234）", () => {
+    const d = tmp({
+      "iclr2022_conference.tex": DOC,
+      "ICLR 2022_ Prediction Accuracy on OOD Data/iclr2022_conference.tex": DOC,
+    });
+    expect(detectMainTex(d)).toBe("iclr2022_conference.tex");
+  });
+
+  it("rebuttal より、同名の .bbl がある原稿を選ぶ（2107.04649）", () => {
+    const d = tmp({
+      "linearfits_arxiv.tex": DOC,
+      "linearfits_arxiv.bbl": "\\begin{thebibliography}{}\\end{thebibliography}",
+      "rebuttal.tex": DOC,
+    });
+    expect(detectMainTex(d)).toBe("linearfits_arxiv.tex");
+  });
+
+  it("rebuttal・response・supp は名前だけで優先度を下げる", () => {
+    for (const name of ["rebuttal.tex", "Response_to_reviewers.tex", "paper-supp.tex"]) {
+      const d = tmp({ "z_paper.tex": DOC, [name]: DOC });
+      expect(detectMainTex(d)).toBe("z_paper.tex");
+    }
+    // 語の一部に過ぎない名前（suppression）は下げない。
+    expect(() => detectMainTex(tmp({ "a.tex": DOC, "suppression.tex": DOC }))).toThrow(/一意に決定できません/);
+  });
+
+  it("同じ階層で .bbl も名前の手掛かりも無い 2 本は失敗のまま", () => {
+    const d = tmp({ "a.tex": DOC, "sub/b.tex": DOC, "c.tex": DOC });
+    expect(() => detectMainTex(d)).toThrow(/一意に決定できません: .*a\.tex.*c\.tex/);
+  });
+
+  it("手掛かりが全候補に当たる（全部 rebuttal）ときは決めずに失敗", () => {
+    const d = tmp({ "rebuttal1.tex": DOC, "rebuttal2.tex": DOC });
+    expect(() => detectMainTex(d)).toThrow(/一意に決定できません/);
+  });
 });
 
 describe("expandInputs", () => {
