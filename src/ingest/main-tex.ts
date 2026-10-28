@@ -34,7 +34,7 @@ function readHead(file: string, bytes: number): string {
   }
 }
 
-// 原稿ではない付属文書の名前の語（basename を英数字以外で区切った語に一致したときだけ）。
+// 契約付録「main.tex の決め方」
 const DEMOTED_WORDS = new Set(["rebuttal", "response", "reply", "supp", "supplement", "supplementary"]);
 
 function isDemoted(rel: string): boolean {
@@ -46,21 +46,30 @@ function depthOf(rel: string): number {
   return rel.split("/").length - 1;
 }
 
-// 手掛かりごとに候補を絞る。絞った結果が空になる手掛かりは使わない（強いものだけ・決められなければ呼び出し側が落とす）。
+function minDepth(c: string[]): number {
+  return Math.min(...c.map(depthOf));
+}
+
+// 契約付録「main.tex の決め方」。食い違い（絞る前に、残らない側のほうが浅い）は null。
+function narrowBy(cur: string[], keep: (f: string) => boolean): string[] | null {
+  const next = cur.filter(keep);
+  if (next.length === 0 || next.length === cur.length) return cur;
+  return minDepth(cur) < minDepth(next) ? null : next;
+}
+
 function narrowCandidates(pool: string[], dir: string): string[] {
-  const clues: ((c: string[]) => string[])[] = [
-    (c) => c.filter((f) => !isDemoted(f)),
-    (c) => {
-      const min = Math.min(...c.map(depthOf));
-      return c.filter((f) => depthOf(f) === min);
-    },
-    (c) => c.filter((f) => existsSync(path.join(dir, f.replace(/\.tex$/i, ".bbl")))),
+  const hasBbl = (f: string): boolean => existsSync(path.join(dir, f.replace(/\.tex$/i, ".bbl")));
+  const steps: ((c: string[]) => string[] | null)[] = [
+    (c) => narrowBy(c, hasBbl),
+    (c) => narrowBy(c, (f) => !isDemoted(f) || hasBbl(f)),
+    (c) => c.filter((f) => depthOf(f) === minDepth(c)),
   ];
   let cur = pool;
-  for (const clue of clues) {
+  for (const step of steps) {
     if (cur.length === 1) break;
-    const next = clue(cur);
-    if (next.length > 0) cur = next;
+    const next = step(cur);
+    if (next === null) return pool;
+    cur = next;
   }
   return cur;
 }

@@ -79,6 +79,52 @@ describe("detectMainTex", () => {
     expect(() => detectMainTex(tmp({ "a.tex": DOC, "suppression.tex": DOC }))).toThrow(/一意に決定できません/);
   });
 
+  it("降格も深さも効かないとき、同名の .bbl だけで決める", () => {
+    const d = tmp({ "a.tex": DOC, "a.bbl": "x", "b.tex": DOC });
+    expect(detectMainTex(d)).toBe("a.tex");
+  });
+
+  it("2201.04234: 複製に .bbl があってもなくても直下の原稿に決まる", () => {
+    const dup = "ICLR 2022_ Prediction Accuracy on OOD Data";
+    for (const dupBbl of [false, true]) {
+      const files: Record<string, string> = {
+        "iclr2022_conference.tex": DOC,
+        "iclr2022_conference.bbl": "x",
+        [`${dup}/iclr2022_conference.tex`]: DOC,
+      };
+      if (dupBbl) files[`${dup}/iclr2022_conference.bbl`] = "x";
+      expect(detectMainTex(tmp(files))).toBe("iclr2022_conference.tex");
+    }
+  });
+
+  it("同名の .bbl を持つ候補は、論文名の一部の response では降格しない", () => {
+    const d = tmp({ "frequency_response.tex": DOC, "frequency_response.bbl": "x", "appendix.tex": DOC });
+    expect(detectMainTex(d)).toBe("frequency_response.tex");
+  });
+
+  it("両方に .bbl があるときは名前で降格せず、決めずに失敗する", () => {
+    const d = tmp({
+      "frequency_response.tex": DOC,
+      "frequency_response.bbl": "x",
+      "appendix.tex": DOC,
+      "appendix.bbl": "x",
+    });
+    expect(() => detectMainTex(d)).toThrow(/一意に決定できません/);
+  });
+
+  it("浅い方に .bbl が無く深い方にあるときは決めずに失敗する", () => {
+    const cases: Record<string, string>[] = [
+      { "slides.tex": DOC, "paper/paper_full.tex": DOC, "paper/paper_full.bbl": "x" },
+      { "cover_letter.tex": DOC, "src/ms_final.tex": DOC, "src/ms_final.bbl": "x" },
+    ];
+    for (const files of cases) expect(() => detectMainTex(tmp(files))).toThrow(/一意に決定できません/);
+  });
+
+  it("浅い候補が名前で降格されて深い方だけが残るときは決めずに失敗する", () => {
+    const d = tmp({ "rebuttal.tex": DOC, "sub/final.tex": DOC });
+    expect(() => detectMainTex(d)).toThrow(/一意に決定できません/);
+  });
+
   it("同じ階層で .bbl も名前の手掛かりも無い 2 本は失敗のまま", () => {
     const d = tmp({ "a.tex": DOC, "sub/b.tex": DOC, "c.tex": DOC });
     expect(() => detectMainTex(d)).toThrow(/一意に決定できません: .*a\.tex.*c\.tex/);
