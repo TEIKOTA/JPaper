@@ -14,10 +14,12 @@ function okResponse(body: string): Response {
 function streamResponse(
   status: number,
   bytes: Uint8Array,
-  opts: { cut?: boolean; contentRange?: string } = {},
+  opts: { cut?: boolean; contentRange?: string; contentLength?: number; encoding?: string } = {},
 ): Response {
   const headers = new Headers();
   let sent = false;
+  if (opts.contentLength !== undefined) headers.set("content-length", String(opts.contentLength));
+  if (opts.encoding) headers.set("content-encoding", opts.encoding);
   if (opts.contentRange) headers.set("content-range", opts.contentRange);
   return {
     ok: true,
@@ -361,6 +363,77 @@ describe("fetchArxivSource", () => {
       expect(fetchImpl.mock.calls.length).toBeLessThanOrEqual(24);
     });
 
+    it("最初の 200 の Content-Length を総サイズとして覚え、続きの 206 の総サイズと比べる", async () => {
+      const ranges: (string | undefined)[] = [];
+      const fetchImpl = vi.fn(async (_url: string, init?: RequestInit) => {
+        ranges.push(rangeOf(init));
+        if (ranges.length === 1) {
+          return streamResponse(200, FULL.slice(0, 4), { cut: true, contentLength: 10 });
+        }
+        if (ranges.length === 2) {
+          return streamResponse(206, FULL.slice(4, 8), { contentRange: "bytes 4-7/8" });
+        }
+        return streamResponse(200, FULL, { contentLength: 10 });
+      });
+      const buf = await fetchArxivSource("2206.13089", {
+        ...common,
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+      });
+      expect([...buf]).toEqual([...FULL]);
+      expect(ranges).toEqual([undefined, "bytes=4-", undefined]);
+    });
+
+    it("Content-Encoding があれば 200 の Content-Length は総サイズとして覚えない", async () => {
+      let n = 0;
+      const fetchImpl = vi.fn(async () =>
+        ++n === 1
+          ? streamResponse(200, FULL.slice(0, 4), { cut: true, contentLength: 10, encoding: "gzip" })
+          : streamResponse(206, FULL.slice(4, 8), { contentRange: "bytes 4-7/8" }),
+      );
+      const buf = await fetchArxivSource("2206.13089", {
+        ...common,
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+      });
+      expect([...buf]).toEqual([...FULL.slice(0, 8)]);
+    });
+
+    it("進まない失敗の数は連続で数える（進んだら 0 に戻す）", async () => {
+      const script: (() => Response)[] = [
+        () => streamResponse(200, FULL.slice(0, 4), { cut: true }),
+        () => ({ ok: false, status: 503 }) as Response,
+        () => ({ ok: false, status: 503 }) as Response,
+        () => streamResponse(206, FULL.slice(4, 7), { cut: true, contentRange: "bytes 4-9/10" }),
+        () => ({ ok: false, status: 503 }) as Response,
+        () => ({ ok: false, status: 503 }) as Response,
+        () => streamResponse(206, FULL.slice(7), { contentRange: "bytes 7-9/10" }),
+      ];
+      const fetchImpl = vi.fn(async () => script.shift()!());
+      const buf = await fetchArxivSource("2206.13089", {
+        ...common,
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+        retries: 3,
+      });
+      expect([...buf]).toEqual([...FULL]);
+    });
+
+    it("総サイズを超えて受け取ったら捨てて初めから取る（次の Range を送らない）", async () => {
+      const ranges: (string | undefined)[] = [];
+      const fetchImpl = vi.fn(async (_url: string, init?: RequestInit) => {
+        ranges.push(rangeOf(init));
+        if (ranges.length === 1) return streamResponse(200, FULL.slice(0, 4), { cut: true });
+        if (ranges.length === 2) {
+          return streamResponse(206, FULL.slice(4), { contentRange: "bytes 4-9/8" });
+        }
+        return streamResponse(200, FULL);
+      });
+      const buf = await fetchArxivSource("2206.13089", {
+        ...common,
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+      });
+      expect([...buf]).toEqual([...FULL]);
+      expect(ranges).toEqual([undefined, "bytes=4-", undefined]);
+    });
+
     it("進み続けても続きの回数に上限がある", async () => {
       const fetchImpl = vi.fn(async (_url: string, init?: RequestInit) => {
         const start = Number(/bytes=(\d+)-/.exec(rangeOf(init) ?? "")?.[1] ?? 0);
@@ -374,6 +447,7 @@ describe("fetchArxivSource", () => {
           ...common,
           fetchImpl: fetchImpl as unknown as typeof fetch,
           retries: 0,
+          limits: { ...DEFAULT_LIMITS, maxArchiveBytes: 1000 },
         }),
       ).rejects.toMatchObject({ code: 2, kind: "upstream" });
       expect(fetchImpl.mock.calls.length).toBeLessThanOrEqual(24);

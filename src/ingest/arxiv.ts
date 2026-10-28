@@ -110,7 +110,6 @@ export async function fetchArxivSource(
   };
   let lastErr: unknown;
   let failures = 0;
-  let resumes = 0;
   for (let attempt = 0; failures <= retries && attempt <= retries + MAX_RESUMES; attempt++) {
     throwIfAborted(signal, "arXiv 取得前");
     if (attempt > 0) await waitFor(Math.min(10000, 1000 * 2 ** Math.max(0, failures - 1)));
@@ -143,12 +142,7 @@ export async function fetchArxivSource(
     const before = acc.total;
     const noteFailure = (err: unknown): void => {
       lastErr = err;
-      if (acc.total > before && resumes < MAX_RESUMES) {
-        resumes++;
-        failures = 0;
-      } else {
-        failures++;
-      }
+      failures = acc.total > before ? 0 : failures + 1;
     };
 
     try {
@@ -177,6 +171,12 @@ export async function fetchArxivSource(
           continue;
         }
         if (range?.size != null) acc.size = range.size;
+        if (!partial && !res.headers?.get?.("content-encoding")) {
+          const declared = Number(res.headers?.get?.("content-length"));
+          if (res.headers?.get?.("content-length") != null && Number.isInteger(declared)) {
+            acc.size = declared;
+          }
+        }
         await readCapped(res, limits.maxArchiveBytes, acc);
         if (acc.size !== null && acc.total !== acc.size) {
           if (acc.total > acc.size) discard();
