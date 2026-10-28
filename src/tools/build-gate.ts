@@ -88,6 +88,11 @@ function comesFromSource(name: string, originalTex: string): boolean {
   );
 }
 
+// build の外（TeX Live など）の絶対パスは basename だけにする。契約付録 §6
+function displayFile(file: string): string {
+  return path.isAbsolute(file) ? path.basename(file) : file;
+}
+
 export function classifyLog(
   log: string,
   sourceMap: SourceSpan[],
@@ -116,7 +121,7 @@ export function classifyLog(
     lastWasStructural = structural || inSegment === undefined;
     const id = structural ? undefined : inSegment;
     if (id) failedSegments.push({ id, line, message });
-    else structuralErrors.push(`${file}:${line}: ${message}`);
+    else structuralErrors.push(`${displayFile(file)}:${line}: ${message}`);
   }
   for (let m = MISSING_FIG.exec(log); m; m = MISSING_FIG.exec(log)) {
     missingFigures.add((m[1] ?? m[2])!);
@@ -287,6 +292,8 @@ export function sandboxEnv(base: NodeJS.ProcessEnv, buildDir: string): NodeJS.Pr
     BSTINPUTS: `${path.delimiter}${pkg}`,
     openout_any: "p",
     shell_escape: "f",
+    // 既定の 79 桁で折り返すと、長いパスのエラーが 2 行に割れて ERROR_LINE が読めない。契約付録 §6
+    max_print_line: "10000",
   };
 }
 

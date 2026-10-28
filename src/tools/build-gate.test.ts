@@ -56,6 +56,13 @@ describe("classifyLog", () => {
     expect(c.failedSegments).toEqual([]);
     expect(c.structuralErrors).toEqual(["nips_2017.sty:42: Undefined control sequence."]);
   });
+  it("build の外の絶対パスは basename だけにする（ホストのパスを出さない・理由を押し出さない）", () => {
+    const log =
+      "/usr/local/texlive/2025/texmf-dist/tex/latex/xcolor/xcolor.sty:265: LaTeX Error: Unknown option 'color' for package xcolor.";
+    expect(classifyLog(log, MAP).structuralErrors).toEqual([
+      "xcolor.sty:265: LaTeX Error: Unknown option 'color' for package xcolor.",
+    ]);
+  });
   it("原文にも存在する未定義環境は構造起因にする（本文行でも再訳に回さない）", () => {
     const log = "./main.tex:12: LaTeX Error: Environment frontmatter undefined.";
     const original = "\\documentclass{elsarticle}\n\\begin{document}\n\\begin{frontmatter}\\end{frontmatter}";
@@ -294,6 +301,9 @@ describe("sandboxEnv", () => {
     const env = sandboxEnv({}, "/b");
     expect(env.shell_escape).toBe("f");
     expect(env.openout_any).toBe("p");
+  });
+  it("TeX のログを 79 桁で折り返さない（長いパスのエラーが 2 行に割れる）", () => {
+    expect(Number(sandboxEnv({}, "/b").max_print_line)).toBeGreaterThanOrEqual(1000);
   });
   it("既存の環境変数は保つ", () => {
     expect(sandboxEnv({ PATH: "/usr/bin" }, "/b").PATH).toBe("/usr/bin");
