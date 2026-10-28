@@ -1,4 +1,4 @@
-// 契約付録 §8。arXiv ソース tarball を取得（UA 明示・3秒間隔・429/5xx/瞬断は指数バックオフ再試行）。
+// 契約付録 §8。arXiv ソース tarball を取得（UA 明示・3秒間隔・429/5xx/瞬断は指数バックオフ再試行・再試行は endpoint を交互に替える）。
 import { JpaperError, isTransient } from "../types/errors.js";
 import { DEFAULT_LIMITS, type IngestLimits } from "./limits.js";
 import { isArxivId } from "./detect-input.js";
@@ -11,6 +11,7 @@ export interface ArxivDeps {
   userAgent?: string;
   minIntervalMs?: number;
   endpoint?: string;
+  fallbackEndpoint?: string;
   retries?: number;
   limits?: IngestLimits;
   state?: { lastRequestAt: number };
@@ -24,6 +25,7 @@ const MIN_INTERVAL_MS = 3000;
 // 3秒間隔を守ると同時要求は直列に待つ。無言で数分待たせず、待ち時間が上限を超えるなら即座に断る。
 const MAX_QUEUE_WAIT_MS = 30_000;
 const DEFAULT_ENDPOINT = "https://export.arxiv.org/e-print/";
+const DEFAULT_FALLBACK_ENDPOINT = "https://arxiv.org/e-print/";
 const MAX_RETRIES = 3;
 const globalState = { lastRequestAt: 0 };
 
@@ -65,6 +67,10 @@ export async function fetchArxivSource(
   const ua = deps.userAgent ?? DEFAULT_UA;
   const minInterval = deps.minIntervalMs ?? MIN_INTERVAL_MS;
   const endpoint = deps.endpoint ?? DEFAULT_ENDPOINT;
+  const endpoints = [endpoint];
+  const fallback =
+    deps.fallbackEndpoint ?? (deps.endpoint === undefined ? DEFAULT_FALLBACK_ENDPOINT : undefined);
+  if (fallback !== undefined) endpoints.push(fallback);
   const retries = deps.retries ?? MAX_RETRIES;
   const limits = deps.limits ?? DEFAULT_LIMITS;
   const state = deps.state ?? globalState;
@@ -113,7 +119,7 @@ export async function fetchArxivSource(
     state.lastRequestAt = Math.max(state.lastRequestAt, now()); // 発火遅延時は実時刻へ補正
 
     try {
-      const res = await fetchImpl(`${endpoint}${id}`, {
+      const res = await fetchImpl(`${endpoints[attempt % endpoints.length]}${id}`, {
         headers: { "User-Agent": ua },
         signal,
       });
