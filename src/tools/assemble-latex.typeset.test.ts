@@ -107,3 +107,11 @@ describe.skipIf(!hasAcmartCountryCheck)("国名の無い acmart の所属を原�
     expect(build(own, "\\foo@bar\n\\makeatother", "original")).toEqual([]);
   }, 300_000);
 });
+
+describe.skipIf(!hasLuaTex)("xcolor に color オプションを渡す原文を組む（issue #521）", () => {
+  const own = ["\\documentclass{article}", "\\usepackage[svgnames,dvipsnames,color,table]{xcolor}", "\\begin{document}", "\\end{document}"].join("\n");
+
+  it.each(["original", "template"] as const)("%s: color を外して PDF が出る", (mode) => {
+    expect(build(own, "\\textcolor{red}{x}", mode)).toEqual([]);
+  }, 300_000);
+});

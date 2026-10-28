@@ -9,6 +9,7 @@ import {
   injectShared,
   prependLuatexCompat,
   stripDocumentClass,
+  dropXcolorColorOption,
   sanitizeMath,
   fuseCaptionParagraphs,
   releaseLuatexjaNames,
@@ -365,5 +366,22 @@ describe("classPackages", () => {
     expect(assembleWithMap({ cleanLatex: tex, segments: [{ id: "s", tex: "x" } as never], mode: "template" }).mainTex).toContain(
       "\\usepackage[round,authoryear]{natbib}",
     );
+  });
+});
+
+describe("xcolor の color オプション（issue #521）", () => {
+  const XC = (opts: string) => `\\documentclass{article}\n\\usepackage[${opts}]{xcolor}\n\\begin{document}\nx\n\\end{document}\n`;
+
+  it.each(["original", "template"] as const)("%s: color だけを外し、ほかのオプションは残す", (mode) => {
+    const { mainTex } = assembleWithMap({ cleanLatex: XC("svgnames,dvipsnames,color,table"), segments: [{ id: "s", tex: "x" } as never], mode });
+    expect(mainTex).toContain("\\usepackage[svgnames,dvipsnames,table]{xcolor}");
+    expect(mainTex).not.toMatch(/\[[^\]]*\bcolor\b[^\]]*\]\{xcolor\}/);
+  });
+
+  it("color だけなら角括弧ごと外す。色名の colorlet や他のオプションは触らない", () => {
+    expect(dropXcolorColorOption("\\usepackage[color]{xcolor}")).toBe("\\usepackage{xcolor}");
+    expect(dropXcolorColorOption("\\usepackage[ color , table ]{xcolor}")).toBe("\\usepackage[ table ]{xcolor}");
+    expect(dropXcolorColorOption("\\usepackage[colorlinks]{hyperref}")).toBe("\\usepackage[colorlinks]{hyperref}");
+    expect(dropXcolorColorOption("\\usepackage[usenames]{xcolor}")).toBe("\\usepackage[usenames]{xcolor}");
   });
 });
