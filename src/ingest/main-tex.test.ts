@@ -127,6 +127,29 @@ describe("detectMainTex", () => {
     expect(() => detectMainTex(d)).toThrow(/一意に決定できません/);
   });
 
+  it("全候補が .bbl を持つなら、降格語の名前でも外さず決めずに失敗する", () => {
+    const d = tmp({
+      "a.tex": DOC,
+      "a.bbl": "x",
+      "rebuttal.tex": DOC,
+      "rebuttal.bbl": "x",
+    });
+    expect(() => detectMainTex(d)).toThrow(/一意に決定できません/);
+  });
+
+  it("全候補が .bbl を持つとき、降格語の名前を外したうえで深さで決めない", () => {
+    // 降格が効くと rebuttal.tex が外れ、直下の a.tex が深さで勝ってしまう。
+    const d = tmp({
+      "a.tex": DOC,
+      "a.bbl": "x",
+      "rebuttal.tex": DOC,
+      "rebuttal.bbl": "x",
+      "sub/x.tex": DOC,
+      "sub/x.bbl": "x",
+    });
+    expect(() => detectMainTex(d)).toThrow(/一意に決定できません/);
+  });
+
   it("浅い方に .bbl が無く深い方にあるときは決めずに失敗する", () => {
     const cases: Record<string, string>[] = [
       { "slides.tex": DOC, "paper/paper_full.tex": DOC, "paper/paper_full.bbl": "x" },

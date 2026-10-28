@@ -63,7 +63,7 @@ function narrowCandidates(pool: string[], dir: string): string[] {
     (c) => narrowBy(c, hasBbl),
     (c) => {
       const next = narrowBy(c, (f) => !isDemoted(f) || hasBbl(f));
-      return next !== null && next.length === 1 && next.length < c.length ? null : next;
+      return next !== null && next.length === 1 ? null : next;
     },
     (c) => c.filter((f) => depthOf(f) === minDepth(c)),
   ];
