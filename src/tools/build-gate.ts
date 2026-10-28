@@ -319,7 +319,7 @@ export function probeLatexmk(): string | undefined {
 
 export const BUILD_TIMEOUT_MS = 300_000;
 
-// 契約付録 §8（同梱 .bbl は正）。stageBuild が main.bbl を置いたときだけ bibtex を止める。
+// 契約付録 §8
 export function latexmkArgs(buildDir: string): string[] {
   return [
     "-norc",

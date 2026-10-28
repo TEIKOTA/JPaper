@@ -568,4 +568,20 @@ describe.skipIf(!hasTex)("同梱 .bbl と壊れた .bst（実組版）", () => {
     const r = await defaultRunner(build);
     expect(r.code).not.toBe(0);
   }, 120_000);
+  it("HOME の .latexmkrc が lualatex を壊していても読まれず、組める", async () => {
+    const build = setup(true);
+    const home = mkTemp();
+    writeFileSync(path.join(home, ".latexmkrc"), '$lualatex = "false";\n');
+    const saved = { HOME: process.env.HOME, XDG: process.env.XDG_CONFIG_HOME };
+    process.env.HOME = home;
+    delete process.env.XDG_CONFIG_HOME;
+    try {
+      const r = await defaultRunner(build);
+      expect(r.code).toBe(0);
+      expect(existsSync(path.join(build, "main.pdf"))).toBe(true);
+    } finally {
+      process.env.HOME = saved.HOME;
+      if (saved.XDG !== undefined) process.env.XDG_CONFIG_HOME = saved.XDG;
+    }
+  }, 120_000);
 });
