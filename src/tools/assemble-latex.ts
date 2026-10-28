@@ -240,10 +240,7 @@ function classShim(cleanLatex: string): string {
 }
 
 function templatePreamble(originalPreamble: string, cleanLatex: string): string {
-  const carriedRaw = stripDocumentClass(neutralizePreamble(originalPreamble)).trim();
-  const sentinel = "\\usepackage{hyperref}\n";
-  const hoisted = placeCleverefAfterHyperref(`${carriedRaw}\n${sentinel}`);
-  const carried = (hoisted.endsWith(sentinel) ? hoisted.slice(0, -sentinel.length) : hoisted).trim();
+  const carried = stripDocumentClass(neutralizePreamble(originalPreamble)).trim();
   return [
     LUATEX85,
     "\\documentclass[a4paper]{article}",
@@ -304,18 +301,97 @@ function assembleBody(chapters: string[]): string {
 
 const PKG_LINE = (name: string): RegExp =>
   new RegExp(`^[ \\t]*\\\\(?:usepackage|RequirePackage)(?:\\[[^\\]]*\\])?\\{${name}\\}[^\\n]*(?:\\n|$)`, "m");
-const MOVE_BLOCKERS = /\\(?:usepackage|RequirePackage|PassOptionsToPackage|documentclass|if[A-Za-z@]*|else|or|fi)(?![A-Za-z@])/;
+const COND_TOKENS = /\\(?:if[A-Za-z@]*|else|or|fi)(?![A-Za-z@])/;
+const CREF_STATEMENT_HEAD = /[ \t]*\\[cC]ref[A-Za-z]*(?![A-Za-z@])/y;
+
+// i 以降の空白・改行・行コメントを読み飛ばした位置。
+function skipBlank(s: string, i: number): number {
+  for (;;) {
+    while (i < s.length && /\s/.test(s[i]!)) i++;
+    if (s[i] !== "%") return i;
+    while (i < s.length && s[i] !== "\n") i++;
+  }
+}
+
+// s[i] が開く { または [ の対応する閉じの直後の位置。閉じなければ -1。
+function groupEnd(s: string, i: number): number {
+  const square = s[i] === "[";
+  let depth = 0;
+  for (let j = i; j < s.length; j++) {
+    const c = s[j]!;
+    if (c === "\\") j++;
+    else if (c === "%") while (j < s.length && s[j] !== "\n") j++;
+    else if (c === "{") depth++;
+    else if (c === "}") {
+      depth--;
+      if (depth === 0 && !square) return j + 1;
+    } else if (c === "]" && square && depth === 0) return j + 1;
+  }
+  return -1;
+}
+
+interface Span {
+  start: number;
+  end: number;
+}
+
+// region の深さ 0 の行頭から始まる cleveref の命令の文。閉じない文があれば null。
+function crefStatements(region: string): Span[] | null {
+  const spans: Span[] = [];
+  let depth = 0;
+  let atLineStart = true;
+  for (let i = 0; i < region.length; i++) {
+    if (atLineStart && depth === 0) {
+      CREF_STATEMENT_HEAD.lastIndex = i;
+      const m = CREF_STATEMENT_HEAD.exec(region);
+      if (m !== null) {
+        let end = i + m[0].length;
+        for (;;) {
+          const j = skipBlank(region, end);
+          if (region[j] !== "{" && region[j] !== "[") break;
+          const e = groupEnd(region, j);
+          if (e === -1) return null;
+          end = e;
+        }
+        const rest = /^[ \t]*(?:%[^\n]*)?(?:\n|$)/.exec(region.slice(end));
+        if (rest !== null) end += rest[0].length;
+        spans.push({ start: i, end });
+        i = end - 1;
+        atLineStart = region[end - 1] === "\n";
+        continue;
+      }
+    }
+    atLineStart = region[i] === "\n";
+    const c = region[i]!;
+    if (c === "\\") i++;
+    else if (c === "%") while (i + 1 < region.length && region[i + 1] !== "\n") i++;
+    else if (c === "{") depth++;
+    else if (c === "}") depth--;
+  }
+  return spans;
+}
 
 // 契約付録 §8 / ⚠ landmines.md
 export function placeCleverefAfterHyperref(preamble: string): string {
   const clev = PKG_LINE("cleveref").exec(preamble);
   const hyper = PKG_LINE("hyperref").exec(preamble);
   if (clev === null || hyper === null || clev.index > hyper.index) return preamble;
-  const restStart = clev.index + clev[0].length;
-  const rest = preamble.slice(restStart, hyper.index);
-  if (MOVE_BLOCKERS.test(rest.replace(/(^|[^\\])%.*$/gm, "$1"))) return preamble;
+  const region = preamble.slice(clev.index + clev[0].length, hyper.index);
+  if (COND_TOKENS.test(region.replace(/(^|[^\\])%.*$/gm, "$1"))) return preamble;
+  const spans = crefStatements(region);
+  if (spans === null) return preamble;
+  let kept = "";
+  let moved = "";
+  let pos = 0;
+  for (const { start, end } of spans) {
+    kept += region.slice(pos, start);
+    const text = region.slice(start, end);
+    moved += text.endsWith("\n") ? text : `${text}\n`;
+    pos = end;
+  }
+  kept += region.slice(pos);
   const hyperLine = hyper[0].endsWith("\n") ? hyper[0] : `${hyper[0]}\n`;
-  return `${preamble.slice(0, clev.index)}${hyperLine}${clev[0]}${rest}${preamble.slice(hyper.index + hyper[0].length)}`;
+  return `${preamble.slice(0, clev.index)}${kept}${hyperLine}${clev[0]}${moved}${preamble.slice(hyper.index + hyper[0].length)}`;
 }
 
 // title を渡すと前文の \title の主引数だけを差し替える（契約付録 §8）。

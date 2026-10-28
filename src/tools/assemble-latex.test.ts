@@ -371,26 +371,41 @@ describe("classPackages", () => {
 
 describe("placeCleverefAfterHyperref", () => {
   const order = (s: string, a: string, b: string): boolean => s.indexOf(a) < s.indexOf(b);
-  it("cleveref から hyperref の手前までを、順序を保って hyperref の後へ移す", () => {
-    const pre = "\\usepackage[capitalise]{cleveref}\n\\crefname{figure}{Fig.}{Figs.}\n\\usepackage[colorlinks]{hyperref}\n\\title{T}\n";
+  // 1610.02136 の main.tex の 1〜24 行目（issue #507 の実例）。
+  const ISSUE_507 = "\\documentclass{article}\n\\pdfoutput=1 % force arXiv to use PDFLaTeX\n\n\\usepackage{amsmath, amssymb}           % maths formatting and symbols\n\\usepackage{graphicx}                   % insert graphics\n%\\usepackage{fullpage}                   % fullpage margins\n%\\usepackage{esvect}                     % thicker, width-dynamic \\vec{} alternative\n%\\usepackage{kpfonts}                    % serifed typeface; \"light\" is an option\n%\\DeclareMathOperator{\\dif}{d\\!}         % upright differential \"d\"s; invoke with \\dif\n\\usepackage{pdfpages}\n\\usepackage{xcolor}\n\\usepackage{color}\n\\usepackage[sc]{titlesec}\n\\usepackage{natbib}\n\\usepackage{iclr2017_conference,times}\n\\usepackage{dsfont}\n\\usepackage{float}\n\\usepackage{cleveref}\n\\usepackage{tabularx}\n\\newcolumntype{Y}{>{\\centering\\arraybackslash}X}\n\\newcolumntype{s}{>{\\hsize=.5\\hsize}Y}\n\\newcolumntype{b}{X}\n\\restylefloat{table}\n\\usepackage[breaklinks=true,colorlinks,citecolor=black,bookmarks=false]{hyperref}\n";
+  it("1610.02136 の前文: cleveref だけが hyperref の直後へ移り、ほかの行の順序は変わらない", () => {
+    const CLEVEREF = "\\usepackage{cleveref}\n";
+    expect(placeCleverefAfterHyperref(ISSUE_507)).toBe(`${ISSUE_507.replace(CLEVEREF, "")}${CLEVEREF}`);
+  });
+  it("1610.02136 の前文は original / template のどちらでも cleveref が hyperref の後になる", () => {
+    const tex = `${ISSUE_507}\\begin{document}\nx\n\\end{document}\n`;
+    for (const mode of ["original", "template"] as const) {
+      const out = assembleLatex({ cleanLatex: tex, chapters: ["x"], mode }).mainTex;
+      expect(order(out, "{hyperref}", "{cleveref}")).toBe(true);
+    }
+  });
+  it("cleveref の命令の文だけを順序を保って hyperref の後へ移し、間の他の行は残す", () => {
+    const pre = "\\usepackage[capitalise]{cleveref}\n\\crefname{figure}{Fig.}{Figs.}\n\\usepackage{x}\n\\usepackage[colorlinks]{hyperref}\n\\title{T}\n";
     expect(placeCleverefAfterHyperref(pre)).toBe(
-      "\\usepackage[colorlinks]{hyperref}\n\\usepackage[capitalise]{cleveref}\n\\crefname{figure}{Fig.}{Figs.}\n\\title{T}\n",
+      "\\usepackage{x}\n\\usepackage[colorlinks]{hyperref}\n\\usepackage[capitalise]{cleveref}\n\\crefname{figure}{Fig.}{Figs.}\n\\title{T}\n",
     );
   });
-  it("\\crefalias・\\creflastconjunction・複数行の \\crefname も cleveref の後に残る", () => {
+  it("\\crefalias・\\creflastconjunction・複数行の \\crefname を丸ごと移す", () => {
     const pre =
-      "\\usepackage{cleveref}\n\\crefalias{thm}{theorem}\n\\creflastconjunction{, and~}\n\\crefname{figure}%\n  {Fig.}{Figs.}\n\\usepackage{hyperref}\n";
+      "\\usepackage{cleveref}\n\\crefalias{thm}{theorem}\n\\usepackage{y}\n\\creflastconjunction{, and~}\n\\crefname{figure}%\n  {Fig.}{Figs.}\n\\usepackage{hyperref}\n";
     expect(placeCleverefAfterHyperref(pre)).toBe(
-      "\\usepackage{hyperref}\n\\usepackage{cleveref}\n\\crefalias{thm}{theorem}\n\\creflastconjunction{, and~}\n\\crefname{figure}%\n  {Fig.}{Figs.}\n",
+      "\\usepackage{y}\n\\usepackage{hyperref}\n\\usepackage{cleveref}\n\\crefalias{thm}{theorem}\n\\creflastconjunction{, and~}\n\\crefname{figure}%\n  {Fig.}{Figs.}\n",
     );
   });
-  it("間に別の \\usepackage・\\PassOptionsToPackage・条件分岐があれば原文のまま返す", () => {
-    for (const mid of ["\\usepackage{x}\n", "\\PassOptionsToPackage{a}{hyperref}\n", "\\else\n"]) {
+  it("マクロ本体の中の行頭の \\cref は移さない", () => {
+    const pre = "\\usepackage{cleveref}\n\\newcommand{\\f}{%\n\\cref{x}}\n\\usepackage{hyperref}\n";
+    expect(placeCleverefAfterHyperref(pre)).toBe("\\newcommand{\\f}{%\n\\cref{x}}\n\\usepackage{hyperref}\n\\usepackage{cleveref}\n");
+  });
+  it("閉じない文・間の条件分岐があれば原文のまま返す", () => {
+    for (const mid of ["\\crefname{figure}{Fig.\n", "\\else\n", "\\ifx\\a\\b\n"]) {
       const pre = `\\usepackage{cleveref}\n${mid}\\usepackage{hyperref}\n`;
       expect(placeCleverefAfterHyperref(pre)).toBe(pre);
     }
-    const cm = "\\usepackage{cleveref}\n% \\usepackage{x}\n\\usepackage{hyperref}\n";
-    expect(placeCleverefAfterHyperref(cm)).toBe("\\usepackage{hyperref}\n\\usepackage{cleveref}\n% \\usepackage{x}\n");
   });
   it("すでに hyperref の後・片方だけ・コメント行は変えない", () => {
     const ok = "\\usepackage{hyperref}\n\\usepackage{cleveref}\n";
