@@ -220,6 +220,12 @@
 - **なぜ意図的か**: 今の LaTeX カーネル（TeX Live 2025、形式版 2025-11-01）は `\@definecounter` でカウンタを作るたびに `\theH<名前>` を定義するので、古い hyperref 向けの回避策 `\newcommand{\theHalgorithm}{\arabic{algorithm}}` が `Command \theHalgorithm already defined` で組版を落とす（実測: 1406.2661。hyperref を読まない最小の文書でも同じ）。共通テンプレートも原前文を引き継ぐので同じ行で落ちる。`\theH…` は hyperref のアンカー名にだけ使われ、カーネルの定義も番号を出すだけなので、論文の定義を捨てても PDF の見た目は変わらない。`\DeclareRobustCommand` にすると `\xdef` の中で展開されず、アンカー名が壊れる。
 - **正本ポインタ**: issue #425。回帰テストは `src/tools/assemble-latex.test.ts`・`src/tools/bilingual-latex.test.ts`。
 
+## `src/tools/assemble-latex.ts` — cleveref の読み込み行を hyperref の後へ移す
+
+- **おかしく見える点**: 原文が `\usepackage{cleveref}` を `\usepackage{hyperref}` より前に書いているのに、組版用の前文では順序を入れ替え、間にあった `\crefname` などの設定行も一緒に移している。
+- **なぜ意図的か**: 今の cleveref（0.21.4 以降）は hyperref より前に読むと `cleveref must be loaded after hyperref!` で止まる。古い論文では警告だった順序が多く、原前文でも共通テンプレートでも同じエラーになる（実測: 1610.02136）。共通テンプレートは原前文の後ろで hyperref を読むので、原文に hyperref が無くても移す。`\crefname` 系は cleveref の後でないと未定義なので一緒に動かす。
+- **正本ポインタ**: 契約付録 §7、issue #507。回帰テストは `src/tools/assemble-latex.test.ts`。
+
 ## `src/tools/build-gate.ts` — サブディレクトリの支援ファイルを `srcpkg/` と main からの相対位置の両方に置く
 
 - **おかしく見える点**: 同梱の `.cls` / `.sty` などは `srcpkg/` へ基底名で置くのに、サブディレクトリにあるものだけ組版ディレクトリの同じ相対位置にも複製している。

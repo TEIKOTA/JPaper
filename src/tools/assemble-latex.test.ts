@@ -15,6 +15,7 @@ import {
   releaseCounterAnchorNames,
   separateCjkAfterControlWords,
   classPackages,
+  placeCleverefAfterHyperref,
 } from "./assemble-latex.js";
 
 const CLEAN = [
@@ -365,5 +366,34 @@ describe("classPackages", () => {
     expect(assembleWithMap({ cleanLatex: tex, segments: [{ id: "s", tex: "x" } as never], mode: "template" }).mainTex).toContain(
       "\\usepackage[round,authoryear]{natbib}",
     );
+  });
+});
+
+describe("placeCleverefAfterHyperref", () => {
+  const order = (s: string, a: string, b: string): boolean => s.indexOf(a) < s.indexOf(b);
+  it("cleveref が hyperref より前なら、読み込み行と \\crefname を hyperref の後へ移す", () => {
+    const pre = "\\usepackage[capitalise]{cleveref}\n\\crefname{figure}{Fig.}{Figs.}\n\\usepackage{x}\n\\usepackage[colorlinks]{hyperref}\n\\title{T}\n";
+    expect(placeCleverefAfterHyperref(pre)).toBe(
+      "\\usepackage{x}\n\\usepackage[colorlinks]{hyperref}\n\\usepackage[capitalise]{cleveref}\n\\crefname{figure}{Fig.}{Figs.}\n\\title{T}\n",
+    );
+  });
+  it("すでに hyperref の後・片方だけ・コメント行は変えない", () => {
+    const ok = "\\usepackage{hyperref}\n\\usepackage{cleveref}\n";
+    expect(placeCleverefAfterHyperref(ok)).toBe(ok);
+    expect(placeCleverefAfterHyperref("\\usepackage{cleveref}\n")).toBe("\\usepackage{cleveref}\n");
+    const cm = "% \\usepackage{cleveref}\n\\usepackage{hyperref}\n";
+    expect(placeCleverefAfterHyperref(cm)).toBe(cm);
+  });
+  it("original / template のどちらの前文でも cleveref が hyperref の後になる", () => {
+    const tex = "\\documentclass{article}\n\\usepackage{cleveref}\n\\usepackage{hyperref}\n\\begin{document}\nx\n\\end{document}\n";
+    const o = assembleLatex({ cleanLatex: tex, chapters: ["x"], mode: "original" }).mainTex;
+    expect(order(o, "{hyperref}", "{cleveref}")).toBe(true);
+    const t = assembleLatex({ cleanLatex: tex, chapters: ["x"], mode: "template" }).mainTex;
+    expect(order(t, "{hyperref}", "{cleveref}")).toBe(true);
+  });
+  it("原文に hyperref が無くても、共通テンプレートが後で読む hyperref の後へ移る", () => {
+    const tex = "\\documentclass{article}\n\\usepackage{cleveref}\n\\begin{document}\nx\n\\end{document}\n";
+    const t = assembleLatex({ cleanLatex: tex, chapters: ["x"], mode: "template" }).mainTex;
+    expect(order(t, "{hyperref}", "{cleveref}")).toBe(true);
   });
 });

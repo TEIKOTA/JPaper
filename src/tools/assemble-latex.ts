@@ -299,13 +299,32 @@ function assembleBody(chapters: string[]): string {
     .join("\n\n");
 }
 
+const PKG_LINE = (name: string): RegExp =>
+  new RegExp(`^[ \\t]*\\\\(?:usepackage|RequirePackage)(?:\\[[^\\]]*\\])?\\{${name}\\}[^\\n]*(?:\\n|$)`, "m");
+const CREF_CONFIG_LINE =
+  /^[ \t]*\\(?:[cC]refname|[cC]refformat|creflabelformat|[cC]refrangeformat|[cC]refmultiformat|[cC]refrangelabelformat|[cC]refrangemultiformat|crefdefaultlabelformat)\b[^\n]*(?:\n|$)/gm;
+
+// cleveref が hyperref より前にあると今の cleveref は止まる。cleveref の読み込み行と、その後の \crefname などの設定行を hyperref の読み込み行の直後へ移す。⚠ landmines.md
+export function placeCleverefAfterHyperref(preamble: string): string {
+  const clev = PKG_LINE("cleveref").exec(preamble);
+  const hyper = PKG_LINE("hyperref").exec(preamble);
+  if (clev === null || hyper === null || clev.index > hyper.index) return preamble;
+  const hyperEnd = hyper.index + hyper[0].length;
+  const configs = [...preamble.slice(clev.index + clev[0].length, hyper.index).matchAll(CREF_CONFIG_LINE)];
+  const moved = [clev[0], ...configs.map((m) => m[0])].map((l) => (l.endsWith("\n") ? l : `${l}\n`)).join("");
+  const before = preamble.slice(0, clev.index);
+  const between = preamble.slice(clev.index + clev[0].length, hyper.index).replace(CREF_CONFIG_LINE, "");
+  const hyperLine = hyper[0].endsWith("\n") ? hyper[0] : `${hyper[0]}\n`;
+  return `${before}${between}${hyperLine}${moved}${preamble.slice(hyperEnd)}`;
+}
+
 // title を渡すと前文の \title の主引数だけを差し替える（契約付録 §8）。
 export function buildPreamble(cleanLatex: string, mode: Layout, title?: string): string {
   const preamble = extractPreamble(cleanLatex);
   const original = title === undefined ? preamble : replaceTitle(preamble, title, detectProfile(cleanLatex));
-  return mode === "original"
-    ? injectShared(neutralizePreamble(original))
-    : `${templatePreamble(original, cleanLatex)}\n`;
+  return placeCleverefAfterHyperref(
+    mode === "original" ? injectShared(neutralizePreamble(original)) : `${templatePreamble(original, cleanLatex)}\n`,
+  );
 }
 
 export function assembleLatex(input: AssembleInput): AssembleOutput {
