@@ -25,34 +25,53 @@ const MIN_INTERVAL_MS = 3000;
 const MAX_QUEUE_WAIT_MS = 30_000;
 const DEFAULT_ENDPOINT = "https://export.arxiv.org/e-print/";
 const MAX_RETRIES = 3;
+// 続きが進んだ試行は再試行に数えないが、無限に続けないための上限。
+const MAX_RESUMES = 20;
 const globalState = { lastRequestAt: 0 };
 
 function isTransientStatus(status: number): boolean {
   return status === 429 || (status >= 500 && status <= 599);
 }
 
+interface Received {
+  chunks: Buffer[];
+  total: number;
+}
+
+function tooLarge(maxBytes: number): JpaperError {
+  return new JpaperError(2, "too-large", `arXiv 応答が上限 ${maxBytes} バイトを超えています`);
+}
+
 // Content-Length は自己申告なので、実際に読んだ累積バイト数でも上限を掛ける。
-async function readCapped(res: Response, maxBytes: number): Promise<Buffer> {
+// 受け取った分は途中で切れても acc に残る（続きの要求に使う）。上限は acc との合計で検査する。
+async function readCapped(res: Response, maxBytes: number, acc: Received): Promise<void> {
   const declared = Number(res.headers?.get?.("content-length"));
-  if (Number.isFinite(declared) && declared > maxBytes) {
-    throw new JpaperError(2, "too-large", `arXiv 応答が上限 ${maxBytes} バイトを超えています`);
-  }
+  if (Number.isFinite(declared) && acc.total + declared > maxBytes) throw tooLarge(maxBytes);
   const body = res.body;
-  if (!body) return Buffer.from(await res.arrayBuffer());
-  const chunks: Buffer[] = [];
-  let total = 0;
+  if (!body) {
+    const buf = Buffer.from(await res.arrayBuffer());
+    if (acc.total + buf.byteLength > maxBytes) throw tooLarge(maxBytes);
+    acc.chunks.push(buf);
+    acc.total += buf.byteLength;
+    return;
+  }
   const reader = body.getReader();
   for (;;) {
     const { done, value } = await reader.read();
     if (done) break;
-    total += value.byteLength;
-    if (total > maxBytes) {
+    if (acc.total + value.byteLength > maxBytes) {
       await reader.cancel();
-      throw new JpaperError(2, "too-large", `arXiv 応答が上限 ${maxBytes} バイトを超えています`);
+      throw tooLarge(maxBytes);
     }
-    chunks.push(Buffer.from(value));
+    acc.chunks.push(Buffer.from(value));
+    acc.total += value.byteLength;
   }
-  return Buffer.concat(chunks);
+}
+
+// `Content-Range: bytes <start>-<end>/<size>` の start。読めなければ null。
+function contentRangeStart(res: Response): number | null {
+  const m = /^bytes\s+(\d+)-/i.exec(res.headers?.get?.("content-range") ?? "");
+  return m ? Number(m[1]) : null;
 }
 
 export async function fetchArxivSource(
@@ -82,10 +101,14 @@ export async function fetchArxivSource(
     await Promise.race([sleep(ms), abortPromise(signal, "arXiv 取得の待機中")]);
   };
 
+  const acc: Received = { chunks: [], total: 0 };
   let lastErr: unknown;
-  for (let attempt = 0; attempt <= retries; attempt++) {
+  // failures は進まなかった試行の連続数。続きが進んだ試行は 0 に戻す（resumes が上限）。
+  let failures = 0;
+  let resumes = 0;
+  for (let attempt = 0; failures <= retries; attempt++) {
     throwIfAborted(signal, "arXiv 取得前");
-    if (attempt > 0) await waitFor(Math.min(10000, 1000 * 2 ** (attempt - 1)));
+    if (attempt > 0) await waitFor(Math.min(10000, 1000 * 2 ** Math.max(0, failures - 1)));
     // await 前に次スロットを予約し、並行呼び出しでも 3秒間隔を直列化する。
     const target = Math.max(now(), state.lastRequestAt + minInterval);
     const wait0 = target - now();
@@ -112,14 +135,43 @@ export async function fetchArxivSource(
     }
     state.lastRequestAt = Math.max(state.lastRequestAt, now()); // 発火遅延時は実時刻へ補正
 
+    const before = acc.total;
+    const noteFailure = (err: unknown): void => {
+      lastErr = err;
+      if (acc.total > before && resumes < MAX_RESUMES) {
+        resumes++;
+        failures = 0;
+      } else {
+        failures++;
+      }
+    };
+
     try {
-      const res = await fetchImpl(`${endpoint}${id}`, {
-        headers: { "User-Agent": ua },
-        signal,
-      });
-      if (res.ok) return await readCapped(res, limits.maxArchiveBytes);
+      const headers: Record<string, string> = { "User-Agent": ua };
+      if (acc.total > 0) headers["Range"] = `bytes=${acc.total}-`;
+      const res = await fetchImpl(`${endpoint}${id}`, { headers, signal });
+      if (res.ok) {
+        // 続きを求めたときは、開始位置が受け取った長さと一致する 206 だけを足す。
+        // それ以外（200・不一致）は受け取った分を捨てて初めから取る。
+        const partial = res.status === 206;
+        if (acc.total > 0 && !(partial && contentRangeStart(res) === acc.total)) {
+          acc.chunks = [];
+          acc.total = 0;
+          if (partial) {
+            await res.body?.cancel();
+            noteFailure(new Error("HTTP 206 の Content-Range が不一致"));
+            continue;
+          }
+        } else if (acc.total === 0 && partial) {
+          await res.body?.cancel();
+          noteFailure(new Error("要求していない HTTP 206"));
+          continue;
+        }
+        await readCapped(res, limits.maxArchiveBytes, acc);
+        return Buffer.concat(acc.chunks);
+      }
       if (isTransientStatus(res.status)) {
-        lastErr = new Error(`HTTP ${res.status}`);
+        noteFailure(new Error(`HTTP ${res.status}`));
         continue;
       }
       // 404 等は入力（存在しない ID）、それ以外の 4xx/5xx は上流側の問題。
@@ -129,7 +181,7 @@ export async function fetchArxivSource(
       if (e instanceof JpaperError) throw e;
       throwIfAborted(signal, "arXiv 取得中");
       if (isTransient(e)) {
-        lastErr = e;
+        noteFailure(e);
         continue;
       }
       // ネットワーク到達不能は利用者の入力ミスではない。監視で 5xx として見えるようにする。
