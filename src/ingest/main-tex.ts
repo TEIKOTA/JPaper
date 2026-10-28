@@ -61,7 +61,10 @@ function narrowCandidates(pool: string[], dir: string): string[] {
   const hasBbl = (f: string): boolean => existsSync(path.join(dir, f.replace(/\.tex$/i, ".bbl")));
   const steps: ((c: string[]) => string[] | null)[] = [
     (c) => narrowBy(c, hasBbl),
-    (c) => narrowBy(c, (f) => !isDemoted(f) || hasBbl(f)),
+    (c) => {
+      const next = narrowBy(c, (f) => !isDemoted(f) || hasBbl(f));
+      return next !== null && next.length === 1 && next.length < c.length ? null : next;
+    },
     (c) => c.filter((f) => depthOf(f) === minDepth(c)),
   ];
   let cur = pool;

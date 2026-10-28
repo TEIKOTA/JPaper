@@ -70,13 +70,27 @@ describe("detectMainTex", () => {
     expect(detectMainTex(d)).toBe("linearfits_arxiv.tex");
   });
 
-  it("rebuttal・response・supp は名前だけで優先度を下げる", () => {
-    for (const name of ["rebuttal.tex", "Response_to_reviewers.tex", "paper-supp.tex"]) {
-      const d = tmp({ "z_paper.tex": DOC, [name]: DOC });
-      expect(detectMainTex(d)).toBe("z_paper.tex");
+  // 降格で b.tex 以外の直下の候補が外れ、残った直下の b.tex が深さで勝つ。
+  it.each(["rebuttal", "Response_to_reviewers", "paper-supp", "reply", "supplement", "supplementary"])(
+    "降格語 %s は深さと組んで決め手になる",
+    (name) => {
+      const d = tmp({ "b.tex": DOC, [`${name}.tex`]: DOC, "sub/x.tex": DOC });
+      expect(detectMainTex(d)).toBe("b.tex");
+    },
+  );
+
+  it("語の一部に過ぎない名前（suppression）は降格しない", () => {
+    const d = tmp({ "b.tex": DOC, "suppression.tex": DOC, "sub/x.tex": DOC });
+    expect(() => detectMainTex(d)).toThrow(/一意に決定できません/);
+  });
+
+  it(".bbl がどの候補にも無く、降格だけで 1 本に絞れるときは決めずに失敗する", () => {
+    for (const files of [
+      { "dose_response.tex": DOC, "appendix.tex": DOC },
+      { "z_paper.tex": DOC, "rebuttal.tex": DOC },
+    ]) {
+      expect(() => detectMainTex(tmp(files))).toThrow(/一意に決定できません/);
     }
-    // 語の一部に過ぎない名前（suppression）は下げない。
-    expect(() => detectMainTex(tmp({ "a.tex": DOC, "suppression.tex": DOC }))).toThrow(/一意に決定できません/);
   });
 
   it("降格も深さも効かないとき、同名の .bbl だけで決める", () => {
