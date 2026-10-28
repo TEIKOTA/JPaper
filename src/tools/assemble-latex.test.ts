@@ -371,11 +371,26 @@ describe("classPackages", () => {
 
 describe("placeCleverefAfterHyperref", () => {
   const order = (s: string, a: string, b: string): boolean => s.indexOf(a) < s.indexOf(b);
-  it("cleveref が hyperref より前なら、読み込み行と \\crefname を hyperref の後へ移す", () => {
-    const pre = "\\usepackage[capitalise]{cleveref}\n\\crefname{figure}{Fig.}{Figs.}\n\\usepackage{x}\n\\usepackage[colorlinks]{hyperref}\n\\title{T}\n";
+  it("cleveref から hyperref の手前までを、順序を保って hyperref の後へ移す", () => {
+    const pre = "\\usepackage[capitalise]{cleveref}\n\\crefname{figure}{Fig.}{Figs.}\n\\usepackage[colorlinks]{hyperref}\n\\title{T}\n";
     expect(placeCleverefAfterHyperref(pre)).toBe(
-      "\\usepackage{x}\n\\usepackage[colorlinks]{hyperref}\n\\usepackage[capitalise]{cleveref}\n\\crefname{figure}{Fig.}{Figs.}\n\\title{T}\n",
+      "\\usepackage[colorlinks]{hyperref}\n\\usepackage[capitalise]{cleveref}\n\\crefname{figure}{Fig.}{Figs.}\n\\title{T}\n",
     );
+  });
+  it("\\crefalias・\\creflastconjunction・複数行の \\crefname も cleveref の後に残る", () => {
+    const pre =
+      "\\usepackage{cleveref}\n\\crefalias{thm}{theorem}\n\\creflastconjunction{, and~}\n\\crefname{figure}%\n  {Fig.}{Figs.}\n\\usepackage{hyperref}\n";
+    expect(placeCleverefAfterHyperref(pre)).toBe(
+      "\\usepackage{hyperref}\n\\usepackage{cleveref}\n\\crefalias{thm}{theorem}\n\\creflastconjunction{, and~}\n\\crefname{figure}%\n  {Fig.}{Figs.}\n",
+    );
+  });
+  it("間に別の \\usepackage・\\PassOptionsToPackage・条件分岐があれば原文のまま返す", () => {
+    for (const mid of ["\\usepackage{x}\n", "\\PassOptionsToPackage{a}{hyperref}\n", "\\else\n"]) {
+      const pre = `\\usepackage{cleveref}\n${mid}\\usepackage{hyperref}\n`;
+      expect(placeCleverefAfterHyperref(pre)).toBe(pre);
+    }
+    const cm = "\\usepackage{cleveref}\n% \\usepackage{x}\n\\usepackage{hyperref}\n";
+    expect(placeCleverefAfterHyperref(cm)).toBe("\\usepackage{hyperref}\n\\usepackage{cleveref}\n% \\usepackage{x}\n");
   });
   it("すでに hyperref の後・片方だけ・コメント行は変えない", () => {
     const ok = "\\usepackage{hyperref}\n\\usepackage{cleveref}\n";

@@ -240,7 +240,10 @@ function classShim(cleanLatex: string): string {
 }
 
 function templatePreamble(originalPreamble: string, cleanLatex: string): string {
-  const carried = stripDocumentClass(neutralizePreamble(originalPreamble)).trim();
+  const carriedRaw = stripDocumentClass(neutralizePreamble(originalPreamble)).trim();
+  const sentinel = "\\usepackage{hyperref}\n";
+  const hoisted = placeCleverefAfterHyperref(`${carriedRaw}\n${sentinel}`);
+  const carried = (hoisted.endsWith(sentinel) ? hoisted.slice(0, -sentinel.length) : hoisted).trim();
   return [
     LUATEX85,
     "\\documentclass[a4paper]{article}",
@@ -301,21 +304,18 @@ function assembleBody(chapters: string[]): string {
 
 const PKG_LINE = (name: string): RegExp =>
   new RegExp(`^[ \\t]*\\\\(?:usepackage|RequirePackage)(?:\\[[^\\]]*\\])?\\{${name}\\}[^\\n]*(?:\\n|$)`, "m");
-const CREF_CONFIG_LINE =
-  /^[ \t]*\\(?:[cC]refname|[cC]refformat|creflabelformat|[cC]refrangeformat|[cC]refmultiformat|[cC]refrangelabelformat|[cC]refrangemultiformat|crefdefaultlabelformat)\b[^\n]*(?:\n|$)/gm;
+const MOVE_BLOCKERS = /\\(?:usepackage|RequirePackage|PassOptionsToPackage|documentclass|if[A-Za-z@]*|else|or|fi)(?![A-Za-z@])/;
 
-// cleveref が hyperref より前にあると今の cleveref は止まる。cleveref の読み込み行と、その後の \crefname などの設定行を hyperref の読み込み行の直後へ移す。⚠ landmines.md
+// 契約付録 §8 / ⚠ landmines.md
 export function placeCleverefAfterHyperref(preamble: string): string {
   const clev = PKG_LINE("cleveref").exec(preamble);
   const hyper = PKG_LINE("hyperref").exec(preamble);
   if (clev === null || hyper === null || clev.index > hyper.index) return preamble;
-  const hyperEnd = hyper.index + hyper[0].length;
-  const configs = [...preamble.slice(clev.index + clev[0].length, hyper.index).matchAll(CREF_CONFIG_LINE)];
-  const moved = [clev[0], ...configs.map((m) => m[0])].map((l) => (l.endsWith("\n") ? l : `${l}\n`)).join("");
-  const before = preamble.slice(0, clev.index);
-  const between = preamble.slice(clev.index + clev[0].length, hyper.index).replace(CREF_CONFIG_LINE, "");
+  const restStart = clev.index + clev[0].length;
+  const rest = preamble.slice(restStart, hyper.index);
+  if (MOVE_BLOCKERS.test(rest.replace(/(^|[^\\])%.*$/gm, "$1"))) return preamble;
   const hyperLine = hyper[0].endsWith("\n") ? hyper[0] : `${hyper[0]}\n`;
-  return `${before}${between}${hyperLine}${moved}${preamble.slice(hyperEnd)}`;
+  return `${preamble.slice(0, clev.index)}${hyperLine}${clev[0]}${rest}${preamble.slice(hyper.index + hyper[0].length)}`;
 }
 
 // title を渡すと前文の \title の主引数だけを差し替える（契約付録 §8）。

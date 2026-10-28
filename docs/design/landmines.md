@@ -222,9 +222,9 @@
 
 ## `src/tools/assemble-latex.ts` — cleveref の読み込み行を hyperref の後へ移す
 
-- **おかしく見える点**: 原文が `\usepackage{cleveref}` を `\usepackage{hyperref}` より前に書いているのに、組版用の前文では順序を入れ替え、間にあった `\crefname` などの設定行も一緒に移している。
-- **なぜ意図的か**: 今の cleveref（0.21.4 以降）は hyperref より前に読むと `cleveref must be loaded after hyperref!` で止まる。古い論文では警告だった順序が多く、原前文でも共通テンプレートでも同じエラーになる（実測: 1610.02136）。共通テンプレートは原前文の後ろで hyperref を読むので、原文に hyperref が無くても移す。`\crefname` 系は cleveref の後でないと未定義なので一緒に動かす。
-- **正本ポインタ**: 契約付録 §7、issue #507。回帰テストは `src/tools/assemble-latex.test.ts`。
+- **おかしく見える点**: 原文が `\usepackage{cleveref}` を `\usepackage{hyperref}` より前に書いているのに、組版用の前文では順序を入れ替え、間にあった行（`\crefname`・`\crefalias` や複数行の設定）も丸ごと一緒に移している。
+- **なぜ意図的か**: 今の cleveref（0.21.4 以降）は hyperref より前に読むと `cleveref must be loaded after hyperref!` で止まる。古い論文では警告だった順序が多く、原前文でも共通テンプレートでも同じエラーになる（実測: 1610.02136）。共通テンプレートは原前文の後ろで hyperref を読むので、原文に hyperref が無くても移す。cleveref の設定命令は cleveref の後でないと未定義で、行単位で選ぶと複数行の設定が割れるので、範囲ごと動かす。間に別の `\usepackage`・`\PassOptionsToPackage`・条件分岐があるときは、読み込み順や枝を壊さないよう動かさない。
+- **正本ポインタ**: 契約付録 §8、issue #507。回帰テストは `src/tools/assemble-latex.test.ts`。
 
 ## `src/tools/build-gate.ts` — サブディレクトリの支援ファイルを `srcpkg/` と main からの相対位置の両方に置く
 
