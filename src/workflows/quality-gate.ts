@@ -265,8 +265,7 @@ function normalizeMath(span: string): string {
 
 const PROSE_CMD = /\\(text|mbox|textrm|textnormal|intertext)\s*\{/g;
 
-// \text 系と \intertext の引数（入れ子の波括弧に対応）を地の文として潰す。引数の中の $…$ は
-// 数式なので残し、記号と構造は照合する。閉じていない引数は触らない。
+// 契約付録 §3
 function blankProse(s: string): string {
   let out = "";
   let from = 0;
@@ -276,7 +275,8 @@ function blankProse(s: string): string {
     let depth = 1;
     let i = start;
     for (; i < s.length && depth > 0; i++) {
-      if (s[i] === "{") depth++;
+      if (s[i] === "\\") i++;
+      else if (s[i] === "{") depth++;
       else if (s[i] === "}") depth--;
     }
     if (depth !== 0) break;
@@ -341,8 +341,7 @@ const MAX_LISTED_MATH = 3;
 const MAX_MATH_CHARS = 60;
 const CLIP_LEAD = 20;
 
-// 切り出しは、対になる式との最初の相違の少し手前から取る。先頭で切ると、同じ書き出しの
-// 式（align の各行）では違いが表示に載らない。
+// 契約付録 §3
 function clip(s: string, other: string | undefined): string {
   let at = 0;
   if (other !== undefined) while (at < s.length && at < other.length && s[at] === other[at]) at++;
