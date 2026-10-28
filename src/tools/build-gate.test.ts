@@ -1,6 +1,7 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { budgetMs, fastestMs } from "../testing/timing.js";
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync, existsSync, readdirSync, readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import {
@@ -16,6 +17,7 @@ import {
   probeLatexmk,
   describeLaunchError,
   LATEXMK_MISSING,
+  latexmkArgs,
 } from "./build-gate.js";
 import type { SourceSpan } from "./assemble-latex.js";
 import type { LatexRunner } from "./build-gate.js";
@@ -518,4 +520,52 @@ describe("組版の道具を起動できない環境の障害（契約付録 §6
     expect(g.failedSegments).toEqual([]);
     expect(g.structuralErrors).toEqual([]);
   });
+});
+
+describe("latexmkArgs（契約付録 §8）", () => {
+  it("main.bbl があるときは -bibtex- を渡し、無いときは渡さない", () => {
+    const d = mkTemp();
+    expect(latexmkArgs(d)).not.toContain("-bibtex-");
+    writeFileSync(path.join(d, "main.bbl"), "");
+    expect(latexmkArgs(d)).toContain("-bibtex-");
+  });
+  it("利用者の rc を読まないよう -norc を先頭に渡す", () => {
+    expect(latexmkArgs(mkTemp())[0]).toBe("-norc");
+  });
+});
+
+const hasTex =
+  spawnSync("latexmk", ["-v"], { stdio: "ignore" }).status === 0 &&
+  spawnSync("lualatex", ["--version"], { stdio: "ignore" }).status === 0;
+
+describe.skipIf(!hasTex)("同梱 .bbl と壊れた .bst（実組版）", () => {
+  const MAIN = [
+    "\\documentclass{article}",
+    "\\begin{document}",
+    "See \\cite{a}.",
+    "\\bibliographystyle{broken}",
+    "\\bibliography{refs}",
+    "\\end{document}",
+  ].join("\n");
+  function setup(withBbl: boolean): string {
+    const src = mkTemp();
+    writeFileSync(path.join(src, "refs.bib"), "@misc{a, title={T}, author={X}, year={2020}}\n");
+    writeFileSync(path.join(src, "broken.bst"), "ENTRY {title} {} {}\nFUNCTION {x} { nosuchfunction }\nREAD\nITERATE {x}\n");
+    if (withBbl) writeFileSync(path.join(src, "paper.bbl"), "\\begin{thebibliography}{1}\n\\bibitem{a} X. T. 2020.\n\\end{thebibliography}\n");
+    const build = path.join(mkTemp(), "b");
+    stageBuild(build, MAIN, { sourceDir: src, mainDir: src, figures: [] }, () => new Set<string>());
+    return build;
+  }
+  it(".bbl を同梱すれば bibtex を走らせず、引用が解決して PDF ができる", async () => {
+    const build = setup(true);
+    const r = await defaultRunner(build);
+    expect(r.code).toBe(0);
+    expect(r.log).not.toMatch(/Citation .* undefined/);
+    expect(existsSync(path.join(build, "main.pdf"))).toBe(true);
+  }, 120_000);
+  it(".bbl が無ければ bibtex が走る（壊れた .bst で失敗する）", async () => {
+    const build = setup(false);
+    const r = await defaultRunner(build);
+    expect(r.code).not.toBe(0);
+  }, 120_000);
 });
