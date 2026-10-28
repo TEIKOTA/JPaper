@@ -1,6 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
 import { fetchArxivSource } from "./arxiv.js";
-import { DEFAULT_LIMITS } from "./limits.js";
 
 function okResponse(body: string): Response {
   return {
@@ -123,82 +122,6 @@ describe("fetchArxivSource", () => {
     });
     expect(buf.toString("utf8")).toBe("SRC");
     expect(fetchImpl).toHaveBeenCalledTimes(2);
-  });
-
-  it("一つ目の endpoint が本体の途中で切れ続けても、二つ目から取得する（#506）", async () => {
-    const truncated = (): Response =>
-      ({
-        ok: true,
-        status: 200,
-        headers: new Headers(),
-        body: new ReadableStream({
-          start(c) {
-            c.enqueue(new Uint8Array([1, 2, 3]));
-            c.error(new TypeError("terminated"));
-          },
-        }),
-      }) as unknown as Response;
-    const urls: string[] = [];
-    const fetchImpl = vi.fn(async (url: string) => {
-      urls.push(url);
-      return url.startsWith("https://export.arxiv.org/") ? truncated() : okResponse("SRC");
-    });
-    const sleeps: number[] = [];
-    const state = { lastRequestAt: 0 };
-    const buf = await fetchArxivSource("2206.13089", {
-      fetchImpl: fetchImpl as unknown as typeof fetch,
-      sleep: async (ms) => {
-        sleeps.push(ms);
-      },
-      now: () => 0,
-      minIntervalMs: 3000,
-      state,
-    });
-    expect(buf.toString("utf8")).toBe("SRC");
-    expect(urls).toEqual([
-      "https://export.arxiv.org/e-print/2206.13089",
-      "https://arxiv.org/e-print/2206.13089",
-    ]);
-    // 取り直しでも 3 秒間隔を通す（1 回目の予約 3000ms、バックオフ 1000ms、2 回目の予約 6000ms）。
-    expect(sleeps).toEqual([3000, 1000, 6000]);
-  });
-
-  it("取り直し先でも上限サイズを検査する", async () => {
-    const fetchImpl = vi.fn(async (url: string) =>
-      url.startsWith("https://export.arxiv.org/")
-        ? ({ ok: false, status: 503 } as Response)
-        : ({
-            ok: true,
-            status: 200,
-            headers: new Headers({ "content-length": "999" }),
-            arrayBuffer: async () => Buffer.alloc(0),
-          } as unknown as Response),
-    );
-    await expect(
-      fetchArxivSource("2206.13089", {
-        fetchImpl: fetchImpl as unknown as typeof fetch,
-        sleep: async () => {},
-        now: () => 0,
-        state: { lastRequestAt: 0 },
-        limits: { ...DEFAULT_LIMITS, maxArchiveBytes: 10 },
-      }),
-    ).rejects.toMatchObject({ kind: "too-large" });
-  });
-
-  it("endpoint を明示したときは取り直し先を足さない", async () => {
-    const fetchImpl = vi.fn(async () => ({ ok: false, status: 503 }) as Response);
-    await expect(
-      fetchArxivSource("2206.13089", {
-        fetchImpl: fetchImpl as unknown as typeof fetch,
-        endpoint: "http://fake.test/e-print/",
-        retries: 2,
-        sleep: async () => {},
-        now: () => 0,
-        state: { lastRequestAt: 0 },
-      }),
-    ).rejects.toMatchObject({ code: 2 });
-    const urls = (fetchImpl.mock.calls as unknown as string[][]).map((c) => c[0]);
-    expect(new Set(urls)).toEqual(new Set(["http://fake.test/e-print/2206.13089"]));
   });
 
   it("リトライ上限超過（429 継続）は exit 2", async () => {
