@@ -508,6 +508,46 @@ describe("数式の中身の照合", () => {
   });
 });
 
+describe("formalCheck: align の中の地の文（issue #509）", () => {
+  const mathIssues = (src: string, ja: string) =>
+    formalCheck(src, ja, []).filter((i) => i.kind === "math");
+  const SRC = [
+    "\\begin{align}",
+    "  a &= b \\\\",
+    "\\intertext{We introduce $\\tilde{h}(X)$ as a r.v., so}",
+    "  c &= \\underbrace{d}_{\\text{swap}} && \\text{(by Fubini's theorem)} \\\\",
+    "\\end{align}",
+  ].join("\n");
+  const JA = SRC.replace("We introduce $\\tilde{h}(X)$ as a r.v., so", "確率変数として $\\tilde{h}(X)$ を導入すると、")
+    .replace("swap", "入れ替え")
+    .replace("(by Fubini's theorem)", "（フビニの定理による）");
+
+  it("\\intertext と \\text の地の文を訳しても通す", () => {
+    expect(mathIssues(SRC, JA)).toEqual([]);
+  });
+
+  it("\\intertext の中の $…$ を変えたら落とす", () => {
+    expect(mathIssues(SRC, JA.replace("\\tilde{h}(X)$ を", "\\tilde{g}(X)$ を"))).not.toEqual([]);
+  });
+
+  it("\\text の入れ子の波括弧と $…$ を含む地の文も訳してよく、中の数式は照合する", () => {
+    const src = "$$x \\text{ if } {\\bf a} \\text{ and $y$ holds}$$";
+    expect(mathIssues(src, "$$x \\text{ もし } {\\bf a} \\text{ かつ $y$ が成り立つ}$$")).toEqual([]);
+    expect(mathIssues(src, "$$x \\text{ もし } {\\bf a} \\text{ かつ $z$ が成り立つ}$$")).not.toEqual([]);
+  });
+
+  it("\\intertext の外の数式を変えたら落とす", () => {
+    expect(mathIssues(SRC, JA.replace("a &= b", "a &= c"))).not.toEqual([]);
+  });
+
+  it("同じ書き出しの式の差異は、違う箇所を指摘に載せる", () => {
+    const head = "\\texttt{ETE} & = \\int_{\\vq \\in \\Delta^K} \\sum_{k=0}^{K-1} p(Y=k, \\tilde{h}(X)=\\vq) ";
+    const msg = mathIssues(`\\[${head}(1-q_k)\\]`, `\\[${head}(1+q_k)\\]`)[0]?.message ?? "";
+    expect(msg).toContain("(1-q_k)");
+    expect(msg).toContain("(1+q_k)");
+  });
+});
+
 describe("数式区間の切り出しが正規の論文を落とさない", () => {
   const kinds = (src: string, ja: string) => formalCheck(src, ja, []).map((i) => i.kind);
 
