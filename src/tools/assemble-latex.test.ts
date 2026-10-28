@@ -401,6 +401,10 @@ describe("placeCleverefAfterHyperref", () => {
     const pre = "\\usepackage{cleveref}\n\\newcommand{\\f}{%\n\\cref{x}}\n\\usepackage{hyperref}\n";
     expect(placeCleverefAfterHyperref(pre)).toBe("\\newcommand{\\f}{%\n\\cref{x}}\n\\usepackage{hyperref}\n\\usepackage{cleveref}\n");
   });
+  it("間のコメント行に \\ifx があっても移せる", () => {
+    const pre = "\\usepackage{cleveref}\n%\\ifx\n% \\else \\fi\n\\usepackage{hyperref}\n";
+    expect(placeCleverefAfterHyperref(pre)).toBe("%\\ifx\n% \\else \\fi\n\\usepackage{hyperref}\n\\usepackage{cleveref}\n");
+  });
   it("閉じない文・間の条件分岐があれば原文のまま返す", () => {
     for (const mid of ["\\crefname{figure}{Fig.\n", "\\else\n", "\\ifx\\a\\b\n"]) {
       const pre = `\\usepackage{cleveref}\n${mid}\\usepackage{hyperref}\n`;

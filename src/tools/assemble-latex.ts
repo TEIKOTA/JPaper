@@ -304,7 +304,6 @@ const PKG_LINE = (name: string): RegExp =>
 const COND_TOKENS = /\\(?:if[A-Za-z@]*|else|or|fi)(?![A-Za-z@])/;
 const CREF_STATEMENT_HEAD = /[ \t]*\\[cC]ref[A-Za-z]*(?![A-Za-z@])/y;
 
-// i 以降の空白・改行・行コメントを読み飛ばした位置。
 function skipBlank(s: string, i: number): number {
   for (;;) {
     while (i < s.length && /\s/.test(s[i]!)) i++;
@@ -313,7 +312,6 @@ function skipBlank(s: string, i: number): number {
   }
 }
 
-// s[i] が開く { または [ の対応する閉じの直後の位置。閉じなければ -1。
 function groupEnd(s: string, i: number): number {
   const square = s[i] === "[";
   let depth = 0;
@@ -335,7 +333,6 @@ interface Span {
   end: number;
 }
 
-// region の深さ 0 の行頭から始まる cleveref の命令の文。閉じない文があれば null。
 function crefStatements(region: string): Span[] | null {
   const spans: Span[] = [];
   let depth = 0;
