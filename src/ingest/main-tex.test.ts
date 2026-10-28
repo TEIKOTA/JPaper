@@ -85,10 +85,11 @@ describe("detectMainTex", () => {
   });
 
   it(".bbl がどの候補にも無く、降格だけで 1 本に絞れるときは決めずに失敗する", () => {
-    for (const files of [
+    const cases: Record<string, string>[] = [
       { "dose_response.tex": DOC, "appendix.tex": DOC },
       { "z_paper.tex": DOC, "rebuttal.tex": DOC },
-    ]) {
+    ];
+    for (const files of cases) {
       expect(() => detectMainTex(tmp(files))).toThrow(/一意に決定できません/);
     }
   });
