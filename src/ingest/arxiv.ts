@@ -25,7 +25,7 @@ const MIN_INTERVAL_MS = 3000;
 const MAX_QUEUE_WAIT_MS = 30_000;
 const DEFAULT_ENDPOINT = "https://export.arxiv.org/e-print/";
 const MAX_RETRIES = 3;
-// 続きが進んだ試行は再試行に数えないが、無限に続けないための上限。
+// 契約付録 §8
 const MAX_RESUMES = 20;
 const globalState = { lastRequestAt: 0 };
 
@@ -36,14 +36,14 @@ function isTransientStatus(status: number): boolean {
 interface Received {
   chunks: Buffer[];
   total: number;
+  size: number | null;
 }
 
 function tooLarge(maxBytes: number): JpaperError {
   return new JpaperError(2, "too-large", `arXiv 応答が上限 ${maxBytes} バイトを超えています`);
 }
 
-// Content-Length は自己申告なので、実際に読んだ累積バイト数でも上限を掛ける。
-// 受け取った分は途中で切れても acc に残る（続きの要求に使う）。上限は acc との合計で検査する。
+// 契約付録 §8
 async function readCapped(res: Response, maxBytes: number, acc: Received): Promise<void> {
   const declared = Number(res.headers?.get?.("content-length"));
   if (Number.isFinite(declared) && acc.total + declared > maxBytes) throw tooLarge(maxBytes);
@@ -68,10 +68,11 @@ async function readCapped(res: Response, maxBytes: number, acc: Received): Promi
   }
 }
 
-// `Content-Range: bytes <start>-<end>/<size>` の start。読めなければ null。
-function contentRangeStart(res: Response): number | null {
-  const m = /^bytes\s+(\d+)-/i.exec(res.headers?.get?.("content-range") ?? "");
-  return m ? Number(m[1]) : null;
+// 契約付録 §8
+function parseContentRange(res: Response): { start: number; size: number | null } | null {
+  const m = /^bytes\s+(\d+)-\d*\/(\d+|\*)/i.exec(res.headers?.get?.("content-range") ?? "");
+  if (!m) return null;
+  return { start: Number(m[1]), size: m[2] === "*" ? null : Number(m[2]) };
 }
 
 export async function fetchArxivSource(
@@ -101,12 +102,16 @@ export async function fetchArxivSource(
     await Promise.race([sleep(ms), abortPromise(signal, "arXiv 取得の待機中")]);
   };
 
-  const acc: Received = { chunks: [], total: 0 };
+  const acc: Received = { chunks: [], total: 0, size: null };
+  const discard = (): void => {
+    acc.chunks = [];
+    acc.total = 0;
+    acc.size = null;
+  };
   let lastErr: unknown;
-  // failures は進まなかった試行の連続数。続きが進んだ試行は 0 に戻す（resumes が上限）。
   let failures = 0;
   let resumes = 0;
-  for (let attempt = 0; failures <= retries; attempt++) {
+  for (let attempt = 0; failures <= retries && attempt <= retries + MAX_RESUMES; attempt++) {
     throwIfAborted(signal, "arXiv 取得前");
     if (attempt > 0) await waitFor(Math.min(10000, 1000 * 2 ** Math.max(0, failures - 1)));
     // await 前に次スロットを予約し、並行呼び出しでも 3秒間隔を直列化する。
@@ -151,24 +156,39 @@ export async function fetchArxivSource(
       if (acc.total > 0) headers["Range"] = `bytes=${acc.total}-`;
       const res = await fetchImpl(`${endpoint}${id}`, { headers, signal });
       if (res.ok) {
-        // 続きを求めたときは、開始位置が受け取った長さと一致する 206 だけを足す。
-        // それ以外（200・不一致）は受け取った分を捨てて初めから取る。
         const partial = res.status === 206;
-        if (acc.total > 0 && !(partial && contentRangeStart(res) === acc.total)) {
-          acc.chunks = [];
-          acc.total = 0;
+        const range = partial ? parseContentRange(res) : null;
+        const resumed = acc.total > 0;
+        if (resumed && !(range !== null && range.start === acc.total)) {
+          discard();
           if (partial) {
             await res.body?.cancel();
             noteFailure(new Error("HTTP 206 の Content-Range が不一致"));
             continue;
           }
-        } else if (acc.total === 0 && partial) {
+        } else if (resumed && range!.size !== null && acc.size !== null && range!.size !== acc.size) {
+          discard();
+          await res.body?.cancel();
+          noteFailure(new Error("続きの前後で総サイズが変わった"));
+          continue;
+        } else if (!resumed && partial) {
           await res.body?.cancel();
           noteFailure(new Error("要求していない HTTP 206"));
           continue;
         }
+        if (range?.size != null) acc.size = range.size;
         await readCapped(res, limits.maxArchiveBytes, acc);
+        if (acc.size !== null && acc.total !== acc.size) {
+          if (acc.total > acc.size) discard();
+          noteFailure(new Error("受け取った長さが Content-Range の総サイズと一致しない"));
+          continue;
+        }
         return Buffer.concat(acc.chunks);
+      }
+      if (res.status === 416 && acc.total > 0) {
+        discard();
+        noteFailure(new Error("HTTP 416"));
+        continue;
       }
       if (isTransientStatus(res.status)) {
         noteFailure(new Error(`HTTP ${res.status}`));
