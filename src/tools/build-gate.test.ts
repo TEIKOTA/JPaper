@@ -93,6 +93,18 @@ describe("classifyLog", () => {
     expect(c.failedSegments).toEqual([]);
     expect(c.structuralErrors).toHaveLength(2);
   });
+  describe("引数の途中で段落が終わったエラー（issue #517）", () => {
+    const log = "./main.tex:25: Paragraph ended before \\author was complete.\n";
+    it("命令が原文にもあるなら構造起因にする", () => {
+      const c = classifyLog(log, MAP, "\\author{A\n\nB}");
+      expect(c.failedSegments).toEqual([]);
+      expect(c.structuralErrors).toHaveLength(1);
+    });
+    it("原文に無い命令（訳文が持ち込んだ）や原文が空なら翻訳起因に残す", () => {
+      expect(classifyLog(log, MAP, "\\title{T}").failedSegments).toHaveLength(1);
+      expect(classifyLog(log, MAP).failedSegments).toHaveLength(1);
+    });
+  });
   describe("class・package のエラー（issue #476）", () => {
     const err = (ctx: string): string =>
       [

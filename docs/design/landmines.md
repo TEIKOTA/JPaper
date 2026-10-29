@@ -373,3 +373,9 @@
 - **おかしく見える点**: Windows で `.cmd` を起動するなら `spawn(..., { shell: true })` で足りるのに、`.cmd` の中身を正規表現で読んで対象の JS のパスを取り出し、`process.execPath` で起動している。
 - **なぜ意図的か**: shell を介すと cmd.exe が引数を解釈し直す。claude には複数行の system prompt を `--append-system-prompt` の引数で渡しており、cmd.exe の引数は改行を運べず、`%`・`^`・`"` も別の意味になる。shell なしで `.cmd` を spawn すると Node は EINVAL で拒む（CVE-2024-27980 の対策）。exe は libuv が引数を正しくクォートする。
 - **正本ポインタ**: 契約付録 §5（Windows での外部コマンドの起動と停止）・issue #462。
+
+## `src/tools/assemble-latex.ts` — `joinFrontBlankLines` が前文の `\author`・`\title`・`\date` の引数の空行を詰める
+
+- **おかしく見える点**: 原文をそのまま引き継ぐ前文なのに、この 3 つの命令の引数の中の空行だけを改行 1 つに書き換えている。
+- **なぜ意図的か**: これらは `\long` でないので、引数の中の空行（段落区切り）で `Paragraph ended before \author was complete.` になって組版が止まる（実測: 2107.03315。原文のまま pdflatex で組んでも同じ）。`\long` な命令（class が `\author` を `\long` にしている場合）は空行が意図された段落区切りでありうるので、詰めるのは `\long` でない標準の 3 命令に限る。
+- **正本ポインタ**: 契約付録 §6、issue #517。回帰テストは `src/tools/assemble-latex.test.ts`・`assemble-latex.typeset.test.ts`。

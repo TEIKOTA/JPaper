@@ -107,3 +107,11 @@ describe.skipIf(!hasAcmartCountryCheck)("国名の無い acmart の所属を原�
     expect(build(own, "\\foo@bar\n\\makeatother", "original")).toEqual([]);
   }, 300_000);
 });
+
+// 2107.03315（ICCV 2021）の形: \author の引数の中に空行がある。
+describe.skipIf(!hasLuaTex)("\\author の引数の中の空行（issue #517）", () => {
+  const own = ["\\documentclass{article}", "\\title{T}", "\\author{A\\\\", "", "B}", "\\begin{document}", "\\end{document}"].join("\n");
+  it.each(["original", "template"] as const)("%s: 空行を詰めて PDF が出る", (mode) => {
+    expect(build(own, "\\maketitle\n本文。", mode)).toEqual([]);
+  }, 300_000);
+});

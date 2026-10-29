@@ -1,6 +1,7 @@
 // 契約付録 §7・組版レイアウト ADR(20260710)。訳文→main.tex 生成（原前文温存ハイブリッド）。
 import { detectProfile } from "./frontmatter.js";
 import { replaceTitle } from "./paper-title.js";
+import { commandSpans } from "./tex-spans.js";
 
 export type Layout = "original" | "template";
 
@@ -299,10 +300,29 @@ function assembleBody(chapters: string[]): string {
     .join("\n\n");
 }
 
+// \long でない前付けの命令。引数の中の空行（段落区切り）で Paragraph ended になる。⚠ landmines.md
+const SHORT_FRONT_COMMANDS = ["author", "title", "date"];
+const BLANK_LINES = /\r?\n(?:[ \t]*\r?\n)+/g;
+
+// 前文の \author・\title・\date の引数の中の空行を改行 1 つに詰める。契約付録 §7
+export function joinFrontBlankLines(preamble: string): string {
+  const spans = SHORT_FRONT_COMMANDS.flatMap((n) => commandSpans(preamble, n)).sort((a, b) => a[0] - b[0]);
+  let out = "";
+  let at = 0;
+  for (const [s, e] of spans) {
+    if (s < at) continue;
+    out += preamble.slice(at, s) + preamble.slice(s, e).replace(BLANK_LINES, "\n");
+    at = e;
+  }
+  return out + preamble.slice(at);
+}
+
 // title を渡すと前文の \title の主引数だけを差し替える（契約付録 §8）。
 export function buildPreamble(cleanLatex: string, mode: Layout, title?: string): string {
   const preamble = extractPreamble(cleanLatex);
-  const original = title === undefined ? preamble : replaceTitle(preamble, title, detectProfile(cleanLatex));
+  const original = joinFrontBlankLines(
+    title === undefined ? preamble : replaceTitle(preamble, title, detectProfile(cleanLatex)),
+  );
   return mode === "original"
     ? injectShared(neutralizePreamble(original))
     : `${templatePreamble(original, cleanLatex)}\n`;
