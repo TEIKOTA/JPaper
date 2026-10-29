@@ -302,6 +302,16 @@ function assembleBody(chapters: string[]): string {
     .join("\n\n");
 }
 
+// xcolor v3 が受け付けない color オプションを \usepackage[…]{xcolor} から外す。⚠ landmines.md
+export function dropXcolorColorOption(preamble: string): string {
+  return preamble.replace(/(\\usepackage\s*\[)([^\]%]*)(\]\s*\{\s*xcolor\s*\})/g, (whole, head: string, opts: string, tail: string) => {
+    const kept = opts.split(",").filter((o) => o.trim() !== "color");
+    if (kept.length === opts.split(",").length) return whole;
+    const rest = kept.join(",");
+    return rest.trim() === "" ? `\\usepackage${tail.slice(1)}` : `${head}${rest}${tail}`;
+  });
+}
+
 const PKG_LINE = (name: string): RegExp =>
   new RegExp(`^[ \\t]*\\\\(?:usepackage|RequirePackage)(?:\\[[^\\]]*\\])?\\{${name}\\}[^\\n]*(?:\\n|$)`, "m");
 const COND_TOKENS = /\\(?:if[A-Za-z@]*|else|or|fi)(?![A-Za-z@])/;
@@ -396,6 +406,10 @@ export function placeCleverefAfterHyperref(preamble: string): string {
 
 // title を渡すと前文の \title の主引数だけを差し替える（契約付録 §8）。
 export function buildPreamble(cleanLatex: string, mode: Layout, title?: string): string {
+  return dropXcolorColorOption(buildPreambleBase(cleanLatex, mode, title));
+}
+
+function buildPreambleBase(cleanLatex: string, mode: Layout, title?: string): string {
   const preamble = extractPreamble(cleanLatex);
   const original = title === undefined ? preamble : replaceTitle(preamble, title, detectProfile(cleanLatex));
   return placeCleverefAfterHyperref(

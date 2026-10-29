@@ -317,6 +317,12 @@
 - **なぜ意図的か**: elsarticle は `nonatbib` が無ければ natbib を自分で読み、`\biboptions` は本文末尾に書かれることもある（.spl 経由で効く）。class を article に差し替えると natbib が消え、`.bbl` の著者年ラベルが生のまま出る（実測: 1902.06543 の対訳）。
 - **正本ポインタ**: 契約付録 §7（共通テンプレ）、issue #326。回帰テストは `src/tools/assemble-latex.test.ts`。
 
+## `src/tools/assemble-latex.ts` — `dropXcolorColorOption` が原前文の `\usepackage[…]{xcolor}` から `color` オプションを外す
+
+- **おかしく見える点**: 原文が書いた xcolor のオプションを、組版用の前文で書き換えている。
+- **なぜ意図的か**: 今の xcolor（v3）は古い版にあった `color` を `Unknown option 'color' for package xcolor.` で拒む。原前文・共通テンプレのどちらも原文の前文を引き継ぐので、`buildPreamble` の戻り値の全体に掛けて両経路で外す（`svgnames`・`dvipsnames`・`table` などは残す）。`color` を別の意味で受ける将来の xcolor では外しすぎになる。
+- **正本ポインタ**: 契約付録 §7、issue #521。回帰テストは `src/tools/assemble-latex.test.ts`・`src/tools/assemble-latex.typeset.test.ts`。
+
 ## `src/tools/frontmatter.ts` — 型の判定の正規表現は任意引数・名前の長さに上限を置き、コメントは自前の 1 回の走査で落とす
 
 - **おかしく見える点**: `\documentclass[..]{..}`・`\usepackage[..]{..}` を読む正規表現が `[^\]]{0,1000}` のように長さを区切っている。行コメントの除去も正規表現でなく文字を 1 つずつ見るループで書いている。
