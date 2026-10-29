@@ -1,6 +1,7 @@
 // 契約付録 §7・組版レイアウト ADR(20260710)。訳文→main.tex 生成（原前文温存ハイブリッド）。
 import { detectProfile } from "./frontmatter.js";
 import { replaceTitle } from "./paper-title.js";
+import { commandSpans } from "./tex-spans.js";
 
 export type Layout = "original" | "template";
 
@@ -309,9 +310,28 @@ export function sanitizeMath(tex: string): string {
 
 function assembleBody(chapters: string[]): string {
   return chapters
-    .map((c) => sanitizeMath(c).trim())
+    .map((c) => sanitizeMath(joinFrontBlankLines(c)).trim())
     .filter((c) => c !== "")
     .join("\n\n");
+}
+
+// ⚠ landmines.md
+export const FRONT_COMMANDS: readonly string[] = ["author", "title", "date"];
+const BLANK_LINES = /\r?\n(?:[ \t]*\r?\n)+/g;
+
+// \author・\title・\date の引数の中の空行を改行 1 つに詰める（前文と本文の両方）。契約付録 §6
+export function joinFrontBlankLines(preamble: string): string {
+  // ⚠ landmines.md
+  const masked = preamble.replace(/(^|[^\\])((?:\\\\)*)%[^\n]*/g, (m, a: string, b: string) => a + b + " ".repeat(m.length - a.length - b.length));
+  const spans = FRONT_COMMANDS.flatMap((n) => commandSpans(masked, n)).sort((a, b) => a[0] - b[0]);
+  let out = "";
+  let at = 0;
+  for (const [s, e] of spans) {
+    if (s < at) continue;
+    out += preamble.slice(at, s) + preamble.slice(s, e).replace(BLANK_LINES, "\n");
+    at = e;
+  }
+  return out + preamble.slice(at);
 }
 
 // xcolor v3 が受け付けない color オプションを \usepackage[…]{xcolor} から外す。⚠ landmines.md
@@ -423,7 +443,9 @@ export function buildPreamble(cleanLatex: string, mode: Layout, title?: string):
 
 function buildPreambleBase(cleanLatex: string, mode: Layout, title?: string): string {
   const preamble = extractPreamble(cleanLatex);
-  const original = title === undefined ? preamble : replaceTitle(preamble, title, detectProfile(cleanLatex));
+  const original = joinFrontBlankLines(
+    title === undefined ? preamble : replaceTitle(preamble, title, detectProfile(cleanLatex)),
+  );
   return placeCleverefAfterHyperref(
     mode === "original" ? injectShared(neutralizePreamble(original)) : `${templatePreamble(original, cleanLatex)}\n`,
   );
@@ -462,7 +484,7 @@ export function assembleWithMap(input: {
   const layout: Layout = input.mode ?? "original";
   let out = `${buildPreamble(input.cleanLatex, layout, input.title)}${BEGIN_DOC}\n`;
   const parts = input.segments
-    .map((s) => ({ id: s.id, tex: sanitizeMath(fuseCaptionParagraphs(separateCjkAfterControlWords(s.tex))).trim() }))
+    .map((s) => ({ id: s.id, tex: sanitizeMath(joinFrontBlankLines(fuseCaptionParagraphs(separateCjkAfterControlWords(s.tex)))).trim() }))
     .filter((p) => p.tex !== "");
   const sourceMap: SourceSpan[] = [];
   parts.forEach((p, i) => {

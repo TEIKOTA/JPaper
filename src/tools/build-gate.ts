@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, rmSync, writeFileSync, cpSync, readdirSync, read
 import path from "node:path";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { killTree, resolveCommand, spawnOptions } from "../../bin/spawn-cli.mjs";
-import { releaseLuatexjaNames, releaseSiunitxNames, segmentAtLine, type SourceSpan } from "./assemble-latex.js";
+import { FRONT_COMMANDS, releaseLuatexjaNames, releaseSiunitxNames, segmentAtLine, type SourceSpan } from "./assemble-latex.js";
 import { throwIfAborted } from "../runtime/cancellation.js";
 import { findUnsafeTexCommands, findUnsafeSupportCommands } from "./tex-safety.js";
 
@@ -50,13 +50,17 @@ const SUPPORT_EXT = /\.(sty|cls|bst|bib|bbl)$/i;
 const FATAL_TRAILER = /^==> Fatal error occurred/;
 const UNDEFINED_ENV = /LaTeX Error: Environment ([A-Za-z@*]+) undefined/;
 const UNDEFINED_CS = /^Undefined control sequence/;
+const PARAGRAPH_ENDED = /^Paragraph ended before \\([a-zA-Z@]+)\s+was complete/;
 // エラー直後の `l.<行> <文脈>` 行の末尾に、未定義だった制御綴りが出る。
 const CONTEXT_LINE = /^l\.\d+ .*?\\([a-zA-Z@]+)\s*$/m;
 
-// 未定義エラーの原因となった名前（環境名・制御綴り）。取れなければ undefined。
+// 未定義エラー・引数の途中で段落が終わったエラーの原因となった名前（環境名・制御綴り）。取れなければ undefined。
 function offendingName(message: string, rest: string): string | undefined {
   const env = UNDEFINED_ENV.exec(message);
   if (env) return env[1];
+  const par = PARAGRAPH_ENDED.exec(message);
+  // 前付けの命令に限る。他の命令は訳文が引数の途中に空行を入れた翻訳起因でもありうる。契約付録 §6
+  if (par) return FRONT_COMMANDS.includes(par[1]!) ? par[1] : undefined;
   if (!UNDEFINED_CS.test(message)) return undefined;
   return CONTEXT_LINE.exec(rest.slice(0, 400))?.[1];
 }

@@ -493,7 +493,8 @@ describe("前文", () => {
       const m = pre.match(new RegExp(`\\\\renewenvironment\\{${env.replace("*", "\\*")}\\}\\[1\\]\\[\\]\\{([^\\n]*)`));
       expect(m?.[1], env).toContain("\\begin{center}\\jp@clampvspace\\def\\@captype{");
     }
-    expect(pre).toContain("\\def\\jp@vspace@wrap{\\@ifstar{\\jp@vspace@s}{\\jp@vspace@n}}");
+    // \caption の目次行への書き出しで展開されて壊れないよう protected にする（#530）
+    expect(pre).toContain("\\protected\\def\\jp@vspace@wrap{\\@ifstar{\\jp@vspace@s}{\\jp@vspace@n}}");
     // 図表が入れ子でも退避し直さない（2 回目で \jp@vspace が自分を指して無限再帰になる。PR #481 のレビュー）
     expect(pre).toContain("\\def\\jp@clampvspace{\\ifx\\vspace\\jp@vspace@wrap\\else\\let\\jp@vspace\\vspace\\let\\vspace\\jp@vspace@wrap\\fi}");
     expect(pre).toContain("\\def\\jp@vspace@n#1{\\jp@vspace@c{#1}{\\jp@vspace{#1}}}");
@@ -501,6 +502,14 @@ describe("前文", () => {
     expect(pre).toContain("\\def\\jp@vspace@c#1#2{\\skip@#1\\relax\\ifdim\\skip@<\\z@\\else#2\\fi}");
     // 差し替えは環境の中だけ。ブロックの外の \\vspace（前後の 1mm）は元のまま
     expect(pre).not.toMatch(/\n\\let\\vspace|\n\\renewcommand\{\\vspace\}/);
+  });
+
+  it("図表ブロックの 4 環境は開始で float の \\@float@c@<型> を素の \\@caption に向ける（#519）", () => {
+    const pre = bilingualPreamble("\\documentclass{article}\n");
+    for (const [env, type] of [["figure", "figure"], ["figure*", "figure"], ["table", "table"], ["table*", "table"]]) {
+      const m = pre.match(new RegExp(`\\\\renewenvironment\\{${env!.replace("*", "\\*")}\\}\\[1\\]\\[\\]\\{([^\\n]*)`));
+      expect(m?.[1], env).toContain(`\\def\\@captype{${type}}\\expandafter\\let\\csname @float@c@${type}\\endcsname\\@caption}`);
+    }
   });
 
   it("組み立てた main.tex は和訳の前文を使い、本文先頭で紙面と左右のページ番号を設定する", () => {
@@ -1090,5 +1099,19 @@ describe("comment 環境（issue #440）", () => {
       expect(out.commentMismatch).toEqual(["s2"]);
       expect(out.mainTex.split("\n")).toContain("残る訳文");
     });
+  });
+});
+
+describe("前付けの引数の空行（issue #517）", () => {
+  const doc = (pre: string): string => `\\documentclass{article}\n${pre}\\begin{document}\n\\end{document}\n`;
+  it("原文の前文の \\title の空行を詰めて、左のタイトルブロックに渡す", () => {
+    const { mainTex } = assembleBilingual({
+      cleanLatex: doc("\\title{T\n\nU}\n"),
+      translatedMainTex: doc("\\title{T U}\n"),
+      source: [{ id: "s", tex: "\\maketitle\n\nHello." }],
+      translated: [{ id: "s", tex: "\\maketitle\n\nこんにちは。" }],
+    });
+    expect(mainTex).toContain("\\jpTitleBlock{T\nU}");
+    expect(mainTex).not.toMatch(/\\jpTitleBlock\{[^}]*\n[ \t]*\n/);
   });
 });
