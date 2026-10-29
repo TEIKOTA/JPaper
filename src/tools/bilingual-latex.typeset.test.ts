@@ -478,6 +478,88 @@ describe.skipIf(!hasAcmart)("本文にある \\author の引数の空行を対�
   }, 240_000);
 });
 
+// 著者欄の \and（issue #324・#529）: 対訳のタイトルブロックを lualatex で組み、1 ページ目の左の半分の行を返す。
+function buildAuthors(author: string, pre: string = "\\documentclass{article}\n"): { ok: boolean; log: string; lines: string[]; words: { w: string; x0: number; x1: number }[]; dir: string } {
+  const dir = mkdtempSync(path.join(tmpdir(), "jpaper-and-"));
+  const body = `\\title{Left Title}\n\n${author}\n\n\\maketitle\n\nIntro text.`;
+  const { mainTex } = assembleBilingual({
+    cleanLatex: `${pre}\\begin{document}\n\\end{document}\n`,
+    translatedMainTex: `${pre}\\usepackage{luatexja}\n\\begin{document}\n\\end{document}\n`,
+    source: [{ id: "seg-0000", tex: body }],
+    translated: [{ id: "seg-0000", tex: body.replace("Left Title", "右の表題") }],
+  });
+  writeFileSync(path.join(dir, "main.tex"), mainTex);
+  const r = spawnSync("lualatex", ["-interaction=nonstopmode", "-halt-on-error", "main.tex"], { cwd: dir, encoding: "utf8", timeout: 240_000 });
+  const text = spawnSync("pdftotext", ["-f", "1", "-l", "1", "-x", "0", "-y", "0", "-W", "595", "-H", "842", "-layout", "main.pdf", "-"], { cwd: dir, encoding: "utf8" }).stdout;
+  // 語の左端・右端（左の段の右端と右の段の左端の間の余白に語が掛からないかを見る）。
+  const bbox = spawnSync("pdftotext", ["-f", "1", "-l", "1", "-bbox", "main.pdf", "-"], { cwd: dir, encoding: "utf8" }).stdout;
+  const words = [...bbox.matchAll(/<word xMin="([\d.]+)" yMin="[\d.]+" xMax="([\d.]+)" yMax="[\d.]+">([^<]*)<\/word>/g)].map((m) => ({ w: m[3]!, x0: Number(m[1]), x1: Number(m[2]) }));
+  return { ok: r.status === 0, log: r.stdout.slice(-3000), lines: text.split("\n"), words, dir };
+}
+
+const hasLua = spawnSync("lualatex", ["--version"], { stdio: "ignore" }).status === 0;
+const FRONT = readFileSync(new URL("./fixtures/iccv-2107.03315-front.tex", import.meta.url), "utf8");
+const ICCV_AUTHOR = FRONT.slice(FRONT.indexOf("\\author"), FRONT.indexOf("\\maketitle")).trim().replace(/\n\s*\n/g, "\n");
+// 著者欄の空行は #517 の別の不具合（PR #526）なので、ここでは外して #529 だけを見る。
+
+describe.skipIf(!hasLua)("対訳のタイトルブロックの著者欄の \\and を lualatex で組む（issue #529）", () => {
+  it("複数行の著者が \\and で並ぶ著者欄は、著者ごとのまとまりが保たれる（2107.03315）", () => {
+    const { ok, log, lines, dir } = buildAuthors(ICCV_AUTHOR);
+    try {
+      expect(ok, log).toBe(true);
+      expect(log).not.toContain("Misplaced");
+      // メールの行に次の著者の名前が続かない・名前の行にメールが続かない。
+      for (const l of lines.filter((x) => x.includes("@"))) expect(l, l).not.toMatch(/Guillory|Shankar|Ebrahimi|Darrell|Schmidt/);
+      for (const l of lines.filter((x) => /Guillory|Shankar|Ebrahimi|Darrell|Schmidt/.test(x))) expect(l, l).not.toContain("@");
+      expect(lines.join("\n")).toContain("ludwigschmidt2@gmail.com");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 240_000);
+
+  it("1 行の著者が \\and で並ぶ著者欄（issue #324 の形）と、\\and の無い著者欄も組める", () => {
+    for (const [author, names, pre] of [
+      ["\\author{Ann Lee \\and Bob Kay \\and Cy Poe}", ["Ann Lee", "Bob Kay", "Cy Poe"], undefined],
+      ["\\author{Ann Lee, Bob Kay}", ["Ann Lee, Bob Kay"], undefined],
+      ["\\author{Ann Lee\\inst{1} \\and Bob Kay\\inst{2}}\\institute{Uni A \\and Uni B}", ["Ann Lee", "Bob Kay"], "\\documentclass{llncs}\n"],
+    ] as const) {
+      const { ok, log, lines, dir } = buildAuthors(author, pre);
+      try {
+        expect(ok, log).toBe(true);
+        for (const n of names) expect(lines.join("\n").replace(/ +/g, " "), n).toContain(n);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    }
+  }, 240_000);
+
+  it("1 行が段の幅より長い著者は、箱の中で折り返して反対の段に重ならない", () => {
+    const long = "Department of Computer Science and Engineering, School of Engineering and Applied Sciences, University of Somewhere Far Away, Springfield, Country";
+    const { ok, log, lines, words, dir } = buildAuthors(`\\author{Ann Lee\\\\ ${long} \\and Bob Kay\\\\ Y}`);
+    try {
+      expect(ok, log).toBe(true);
+      // 左の段の右端は約 550pt、右の段の左端は約 640pt。この間（段の間）に語が掛かれば、段からはみ出している。
+      expect(words.filter((x) => x.x1 > 560 && x.x0 < 630).map((x) => x.w)).toEqual([]);
+      expect(words.some((x) => x.w === "Country" && x.x1 < 560)).toBe(true);
+      expect(lines.join("\n")).toContain("Bob Kay");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 240_000);
+
+  it("\\AND は著者欄の段落を改める（\\And は横に並べる）", () => {
+    const { ok, log, lines, dir } = buildAuthors("\\author{Ann Lee\\\\ X \\And Bob Kay\\\\ Y \\AND Cy Poe\\\\ Z}");
+    try {
+      expect(ok, log).toBe(true);
+      const row = (n: string): string => lines.find((l) => l.includes(n)) ?? "";
+      expect(row("Ann Lee")).toContain("Bob Kay");
+      expect(row("Ann Lee")).not.toContain("Cy Poe");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 240_000);
+});
+
 // 古い eso-pic のコードを抱えた class（issue #520）: cvpr.cls の 198-205 行目の形（2007.02915）を写した class で、
 // 対訳の前文が eso-pic を読むと `\ESO@isMEMOIR already defined` で止まる。ページ番号と罫線は eso-pic を読まずに描く。
 const hasLualatex = spawnSync("lualatex", ["--version"], { stdio: "ignore" }).status === 0 &&

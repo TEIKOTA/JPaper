@@ -228,6 +228,16 @@ describe("stageBuild", () => {
     );
   });
 
+  it("同梱 .sty の \\newcommand{\\mc}・\\newcommand{\\gt} は \\DeclareRobustCommand にして置く（luatexja と衝突するため）", () => {
+    const src = mkTemp();
+    writeFileSync(path.join(src, "style.sty"), "\\newcommand{\\mc}{\\mathcal}\n\\newcommand\\gt[1]{#1}\n\\newcommand{\\mcx}{x}\n");
+    const build = path.join(mkTemp(), "b");
+    stageBuild(build, "MAIN", { sourceDir: src, mainDir: src, figures: [] }, () => new Set<string>());
+    expect(readFileSync(path.join(build, SRC_PKG_DIR, "style.sty"), "utf8")).toBe(
+      "\\DeclareRobustCommand{\\mc}{\\mathcal}\n\\DeclareRobustCommand\\gt[1]{#1}\n\\newcommand{\\mcx}{x}\n",
+    );
+  });
+
   it("main.tex・支援ファイル(.sty/.bib は srcpkg/ へ再帰収集)・図(main 相対)を複製する", () => {
     const src = mkTemp();
     writeFileSync(path.join(src, "nips.sty"), "% sty");

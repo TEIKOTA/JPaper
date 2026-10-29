@@ -214,11 +214,11 @@
 - **なぜ意図的か**: `luatexja-core.sty` はグループの外で `\edef\x{…}` をして `\x` を残す。論文の同梱 `.sty` の `\newcommand{\x}{x}` が `Command \x already defined` で落ちる（実測: 2201.04234 の `lifetime.sty`。原前文でも共通テンプレでも同じ）。luatexja の直後に未定義へ戻せば論文の定義が通る。luatexja を読む 2 箇所（`JP_FONT`・`templatePreamble`）の両方に置く。
 - **正本ポインタ**: 契約付録 §7、issue #518。回帰テストは `src/tools/assemble-latex.test.ts`・`src/tools/assemble-latex.typeset.test.ts`。
 
-## `src/tools/assemble-latex.ts` — 論文の `\newcommand{\mc}` / `\newcommand{\gt}` を `\DeclareRobustCommand` に替える
+## `src/tools/assemble-latex.ts`・`src/tools/build-gate.ts` — 論文の `\newcommand{\mc}` / `\newcommand{\gt}` を `\DeclareRobustCommand` に替える（本文と同梱 `.sty`）
 
-- **おかしく見える点**: 原文の `\newcommand` を、名前が `\mc` / `\gt` のときだけ書き換えている。
-- **なぜ意図的か**: luatexja はこの 2 つを和文書体の切り替えとして定義済みなので、論文が同じ名前を `\newcommand` すると `Command \mc already defined` で組版が落ちる（実測: 2011.03395 seg-0059 の `\newcommand{\mc}[1]{\mathcal{#1}}`）。`\DeclareRobustCommand` は定義済みでも上書きでき、論文の意味が勝つ。
-- **正本ポインタ**: 契約付録 §7、issue #320。回帰テストは `src/tools/assemble-latex.test.ts`。
+- **おかしく見える点**: 原文の `\newcommand` を、名前が `\mc` / `\gt` のときだけ書き換えている。本文（`releaseLuatexjaNames`）に加え、同梱の `.sty`/`.cls` を `srcpkg/` へ置くとき（`copySupportFile`）にも同じ関数で書き換え、原文の .sty を加工して置いている。
+- **なぜ意図的か**: luatexja はこの 2 つを和文書体の切り替えとして定義済みなので、論文が同じ名前を `\newcommand` すると `Command \mc already defined` で組版が落ちる（実測: 2011.03395 seg-0059 の `\newcommand{\mc}[1]{\mathcal{#1}}`、同梱 `.sty` では 2206.13089 の `style.sty` 56 行目 `\newcommand{\mc}{\mathcal}`）。`\DeclareRobustCommand` は定義済みでも上書きでき、論文の意味が勝つ。
+- **正本ポインタ**: 契約付録 §7、issue #320・#538。回帰テストは `src/tools/assemble-latex.test.ts`・`src/tools/build-gate.test.ts`・`src/tools/assemble-latex.typeset.test.ts`。
 
 ## `src/tools/assemble-latex.ts` — 論文の `\newcommand{\theH…}` を `\providecommand` に替える
 
@@ -253,9 +253,9 @@
 
 ## `src/tools/bilingual-latex.ts` — 対訳のタイトルブロックで `\and` / `\And` / `\AND` を区切りの空白にする
 
-- **おかしく見える点**: タイトルブロックの著者欄でだけ、クラスが定義した `\and` を `\unskip\quad` に置き換えている。
-- **なぜ意図的か**: `\and` はタイトルの表組み（`\maketitle` の中の tabular）で使う前提の命令で、`\end{tabular}…\begin{tabular}` に展開される。対訳のタイトルブロックは著者を表の外で組むので、そのままだと `Misplaced \crcr` で対訳 PDF が落ちる（実測: llncs の 2606.22649・2605.18329 ほか 4 本）。
-- **正本ポインタ**: 契約付録 §8（対訳 PDF）、issue #324。回帰テストは `src/tools/bilingual-latex.test.ts`。
+- **おかしく見える点**: タイトルブロックの著者欄でだけ、クラスが定義した `\and` / `\And` / `\AND` を作り直している。著者の本文に `\and`・`\And`・`\AND` があるかを、`\toks@` に入れて区切りつき引数（`\jp@scan@and` など）で前もって調べ、あれば著者欄全体を `\begin{varwidth}[t]{\linewidth}`（`\jp@vw`。中は `\centering`・字下げなし）で包んで `\and` を `\end{varwidth}\hskip…\jp@vw` にし、無ければ `\and` を `\unskip\quad` にする。`varwidth` パッケージを前文に足している。
+- **なぜ意図的か**: `\and` はタイトルの表組み（`\maketitle` の中の tabular）で使う前提の命令で、`\end{tabular}…\begin{tabular}` に展開される。対訳のタイトルブロックは著者を表の外で組むので、クラスの定義のままだと `Misplaced \crcr` で対訳 PDF が落ちる（実測: llncs の 2606.22649・2605.18329 ほか 4 本。issue #324）。`\and` を区切りの空白だけにすると、`名前\\ 所属\\ メール` と複数行で書く論文で前の著者の最後の行と次の著者の最初の行が 1 行につながる（実測: 2107.03315 の `dguillory@berkeley.edu Vaishaal Shankar`。issue #529）ので、`\and` があるときは著者ごとの箱で包む。箱は `c` 列の tabular でなく `varwidth` にする。tabular の行は折り返せず、1 行が段（半分の幅）より長い所属があると反対の段に重なる（実測: PR #534 のレビュー。修正前の組み方では折り返していた入力）。`varwidth` は中身の自然な幅（最大 `\linewidth`）の箱になり、長い行だけ箱の中で折り返す。箱は著者の間のグルーでも折り返せる。`\and` が無い著者欄（`A, B, C` と 1 行に並べた形や 1 人の著者）は、包むと各行の組み方が変わるので、包まず従来の組み方にする。`\AND` は箱を閉じて段落を改める。`\and` の有無の判定は区切りつき引数なので、波括弧の中の `\and` は数えない。外側にも `\and` があって内側の波括弧にも `\and` がある形（`\author{A \and {B \and C}}`）は、内側の `\and` が箱を閉じて `Missing } inserted` で落ちる（修正前の組み方では組めた。実際の論文では見ていない。未対応）。`\expandafter\toks@\expandafter{#2}` は引数が `\@author` などマクロ 1 つであることに頼る（呼び出しは `\jpTitleBlock` と `\jp@fmhead` だけ）。`\and` の後ろに `#` がある著者欄は `\def\jp@t{#2}` で `Illegal parameter number` になりうる（見ていない）。
+- **正本ポインタ**: 契約付録 §8（対訳 PDF）、issue #324・#529。回帰テストは `src/tools/bilingual-latex.test.ts`・`src/tools/bilingual-latex.typeset.test.ts`。
 
 ## `src/tools/bilingual-latex.ts` — 対訳のタイトルブロックで未定義の `\name`・`\email`・`\addr` を補う
 

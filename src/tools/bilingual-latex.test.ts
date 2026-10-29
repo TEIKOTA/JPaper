@@ -304,17 +304,16 @@ describe("タイトル", () => {
 
   it("タイトルブロックは題の \\thanks も潰す", () => {
     expect(bilingualPreamble("")).toContain("\\bfseries\\begingroup\\let\\thanks\\@gobble #1\\endgroup");
-    // 著者欄は表の外で組むので、\and 系を区切りの空白にしてから展開する（issue #324）。
-    expect(bilingualPreamble("")).toContain(
-      "\\begingroup\\let\\thanks\\@gobble\\def\\and{\\unskip\\quad}\\let\\And\\and\\def\\AND{\\unskip\\par}",
-    );
+    // 著者欄は表の外で組むので、\and 系が無ければ区切りの空白にし（issue #324）、あれば著者ごとの幅つきの箱（varwidth）にしてから展開する（issue #529）。
+    expect(bilingualPreamble("")).toContain("\\else\\let\\jp@open\\relax\\let\\jp@close\\relax\\def\\and{\\unskip\\quad}\\let\\And\\and\\def\\AND{\\unskip\\par}\\fi");
+    expect(bilingualPreamble("")).toContain("\\def\\and{\\end{varwidth}\\hskip 1em plus 0.5em\\jp@vw}\\let\\And\\and");
   });
 
   it("著者欄では未定義の \\name・\\email・\\addr（jmlr2e の \\maketitle の中だけの命令）を補ってから展開する（issue #440）", () => {
     const pre = bilingualPreamble("");
-    const author = pre.slice(pre.indexOf("\\def\\and{\\unskip\\quad}"), pre.indexOf("#2\\endgroup") + 2);
+    const author = pre.slice(pre.indexOf("\\let\\thanks\\@gobble\\@ifundefined"), pre.indexOf("\\jp@close\\endgroup") + 2);
     for (const name of ["name", "email", "addr"]) expect(author).toContain(`\\@ifundefined{${name}}{\\def\\${name}{`);
-    expect(author.endsWith("{}#2")).toBe(true);
+    expect(author).toContain("\\jp@open #2");
   });
 
   it("acmart の前文にだけ、著者欄・要旨を段ごとに溜めて表題ブロックで出す手当てを入れる（issue #499）", () => {
