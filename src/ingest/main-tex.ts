@@ -34,6 +34,49 @@ function readHead(file: string, bytes: number): string {
   }
 }
 
+// 契約付録「main.tex の決め方」
+const DEMOTED_WORDS = new Set(["rebuttal", "response", "reply", "supp", "supplement", "supplementary"]);
+
+function isDemoted(rel: string): boolean {
+  const stem = path.posix.basename(rel).replace(/\.tex$/i, "").toLowerCase();
+  return stem.split(/[^a-z0-9]+/).some((w) => DEMOTED_WORDS.has(w));
+}
+
+function depthOf(rel: string): number {
+  return rel.split("/").length - 1;
+}
+
+function minDepth(c: string[]): number {
+  return Math.min(...c.map(depthOf));
+}
+
+// 契約付録「main.tex の決め方」。食い違い（絞る前に、残らない側のほうが浅い）は null。
+function narrowBy(cur: string[], keep: (f: string) => boolean): string[] | null {
+  const next = cur.filter(keep);
+  if (next.length === 0 || next.length === cur.length) return cur;
+  return minDepth(cur) < minDepth(next) ? null : next;
+}
+
+function narrowCandidates(pool: string[], dir: string): string[] {
+  const hasBbl = (f: string): boolean => existsSync(path.join(dir, f.replace(/\.tex$/i, ".bbl")));
+  const steps: ((c: string[]) => string[] | null)[] = [
+    (c) => narrowBy(c, hasBbl),
+    (c) => {
+      const next = narrowBy(c, (f) => !isDemoted(f) || hasBbl(f));
+      return next !== null && next.length === 1 ? null : next;
+    },
+    (c) => c.filter((f) => depthOf(f) === minDepth(c)),
+  ];
+  let cur = pool;
+  for (const step of steps) {
+    if (cur.length === 1) break;
+    const next = step(cur);
+    if (next === null) return pool;
+    cur = next;
+  }
+  return cur;
+}
+
 export function detectMainTex(dir: string, maxFiles = 10_000): string {
   const all = listTexFiles(dir).filter((f) => isInsideDirReal(dir, path.join(dir, f)));
   // 件数にも上限を掛ける（ディレクトリ入力は展開経路の Budget を通らない）。
@@ -60,6 +103,8 @@ export function detectMainTex(dir: string, maxFiles = 10_000): string {
     const hit = pool.find((f) => path.basename(f).toLowerCase() === name);
     if (hit) return hit;
   }
+  const narrowed = narrowCandidates(pool, dir);
+  if (narrowed.length === 1) return narrowed[0]!;
   throw new JpaperError(2, "input", `main.tex を一意に決定できません: ${pool.join(", ")}`);
 }
 
