@@ -15,6 +15,7 @@ import {
   fuseCaptionParagraphs,
   releaseLuatexjaNames,
   releaseCounterAnchorNames,
+  releaseSiunitxNames,
   separateCjkAfterControlWords,
   classPackages,
   placeCleverefAfterHyperref,
@@ -402,6 +403,16 @@ describe("joinFrontBlankLines（issue #517）", () => {
   it("コメントの中の波括弧で引数が閉じたと読まず、閉じ括弧までの空行を詰める", () => {
     const pre = "\\author{A\n% omit up to the closing ``}\'\'.\n\nB}\n\n\\x";
     expect(joinFrontBlankLines(pre)).toBe("\\author{A\n% omit up to the closing ``}\'\'.\nB}\n\n\\x");
+  });
+});
+
+describe("releaseSiunitxNames", () => {
+  it("siunitx v3 の命令名の \\newcommand だけ \\DeclareRobustCommand に替える", () => {
+    expect(releaseSiunitxNames("\\newcommand{\\unit}{\\boldsymbol{1}}")).toBe("\\DeclareRobustCommand{\\unit}{\\boldsymbol{1}}");
+    expect(releaseSiunitxNames("\\newcommand\\qty[1]{x}")).toBe("\\DeclareRobustCommand\\qty[1]{x}");
+    expect(releaseSiunitxNames("\\newcommand*{ \\unit }{x}")).toBe("\\DeclareRobustCommand*{ \\unit }{x}");
+    const others = "\\newcommand{\\units}{x}\\newcommand\\unitary{y}\\newcommand{\\num}{z}";
+    expect(releaseSiunitxNames(others)).toBe(others);
   });
 });
 

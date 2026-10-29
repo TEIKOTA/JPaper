@@ -74,11 +74,11 @@
 - **なぜ意図的か**: 原プリアンブルが二段組（`\documentclass[twocolumn]{article}`・IEEEtran conference 等）だと、paracol が `Environment paracol cannot work with ordinary two-column typesetting` で落ちる（実測）。本文先頭で `\onecolumn` を入れても、後の `\newgeometry` が二段組の設定に戻すので効かない（実測）。geometry 自身に一段組を指定すると組める（実測）。revtex の reprint のように出力ルーチンごと差し替えるクラスはこれでも組めないので、原プリアンブルで組めなければ共通テンプレで組み直す（`typesetBilingual`）。
 - **正本ポインタ**: 契約付録 §8（対訳 PDF）。
 
-## `src/tools/bilingual-latex.ts` — `BEGIN` のページ番号は星なしの `\AddToShipoutPictureFG`
+## `src/tools/bilingual-latex.ts` — `BEGIN` のページ番号と罫線は eso-pic でなく `shipout/foreground` フックで描く
 
-- **おかしく見える点**: eso-pic の `\AddToShipoutPictureFG*`（星付き）に直したくなる、あるいは星の有無に意味が無いように見える。
-- **なぜ意図的か**: 星付きは現在のページ（1 ページ目）にしか出ない。全ページに左右別のページ番号（原文 p.N／和訳 p.N）と中央の罫線を出すには星なしでなければならない。`\pagestyle{empty}` で通常のページ番号は消している。
-- **正本ポインタ**: [対訳 PDF ADR](../adr/20261006-bilingual-side-by-side-pdf.md)（Decision「ページ番号」）。
+- **おかしく見える点**: eso-pic の `\AddToShipoutPictureFG` で描けば座標が素直なのに、フックに `picture` 環境を入れ、y を負（`-287mm`・`-297mm`）にしている。eso-pic に戻したくなる。
+- **なぜ意図的か**: cvpr.cls など、class が古い eso-pic のコードを抱える（`\ProvidesPackage{eso-pic}` は無い）と、`\usepackage{eso-pic}` が `Command \ESO@isMEMOIR already defined` で止まり、共通テンプレートへの組み直しでも class のマクロ（`\eg` 等）が無く対訳が出なかった（実測: 2007.02915、issue #520）。`\usepackage{eso-pic}` を条件付きで読む案は、旧版のコードが `\AddToShipoutPictureFG` を定義しないので使えない。フックの原点は紙の左上で y は下向きに負なので、eso-pic の座標（左下原点）の y から紙の高さ 297mm を引いて描き直した。`\AddToHook` は星なしの `\AddToShipoutPictureFG` と同じく全ページに効く（星付きの `\AddToShipoutPictureFG*` は 1 ページ目だけなので使えない）。`\pagestyle{empty}` で通常のページ番号は消している。位置は eso-pic 版と同じ最小文書の 4 ページで PNG が完全一致（`cmp`）。
+- **正本ポインタ**: [対訳 PDF ADR](../adr/20261006-bilingual-side-by-side-pdf.md)（Decision「ページ番号」）、契約付録 §8（対訳 PDF）。
 
 ## `src/tools/bilingual-latex.ts` — `renderPairs` が `\maketitle` を `\jpTitleBlock` の左右ペアに置き換える
 
@@ -225,6 +225,12 @@
 - **おかしく見える点**: 原文の `\newcommand` を、名前が `\theH` で始まるときだけ `\providecommand` に書き換え、論文の定義を捨ててカーネルの定義を残している。
 - **なぜ意図的か**: 今の LaTeX カーネル（TeX Live 2025、形式版 2025-11-01）は `\@definecounter` でカウンタを作るたびに `\theH<名前>` を定義するので、古い hyperref 向けの回避策 `\newcommand{\theHalgorithm}{\arabic{algorithm}}` が `Command \theHalgorithm already defined` で組版を落とす（実測: 1406.2661。hyperref を読まない最小の文書でも同じ）。共通テンプレートも原前文を引き継ぐので同じ行で落ちる。`\theH…` は hyperref のアンカー名にだけ使われ、カーネルの定義も番号を出すだけなので、論文の定義を捨てても PDF の見た目は変わらない。`\DeclareRobustCommand` にすると `\xdef` の中で展開されず、アンカー名が壊れる。
 - **正本ポインタ**: issue #425。回帰テストは `src/tools/assemble-latex.test.ts`・`src/tools/bilingual-latex.test.ts`。
+
+## `src/tools/assemble-latex.ts`・`src/tools/build-gate.ts` — 論文の `\newcommand{\unit}` などを `\DeclareRobustCommand` に替える（本文と同梱 `.sty`）
+
+- **おかしく見える点**: 原文の `\newcommand` を、名前が siunitx v3 の新しい命令（`\unit` `\qty` `\qtylist` `\qtyproduct` `\qtyrange` `\numproduct` `\complexnum` `\complexqty`）のときだけ書き換える。本文（`releaseSiunitxNames`）に加え、同梱の `.sty`/`.cls` を `srcpkg/` へ置くときにも書き換え（`copySupportFile`）、原文の .sty を加工して置いている。
+- **なぜ意図的か**: 古い siunitx（v2）には `\unit` が無かったので、論文の `.sty` が `\usepackage{siunitx}` の後に `\newcommand{\unit}{\boldsymbol{1}}` を置いても組めた。今の TeX Live の siunitx v3 は `\unit` を定義するので `Command \unit already defined` で落ちる（実測: 2201.04234 の `lifetime.sty` 41 行目で siunitx を読み、321 行目で `\unit` を定義。JPaper は siunitx を注入していない）。衝突は論文自身の読み込みと配布パッケージの版の組で、JPaper の注入では起きない。`\DeclareRobustCommand` は定義済みでも上書きでき、論文が本文で使う意味（上の例では単位ベクトル）が勝つ。v2 にもあった `\num` `\si` `\SI` は、v2 の時代から衝突していたので対象にしない。
+- **正本ポインタ**: issue #531。回帰テストは `src/tools/assemble-latex.test.ts`・`src/tools/build-gate.test.ts`・`src/tools/assemble-latex.typeset.test.ts`。
 
 ## `src/tools/assemble-latex.ts` — cleveref の読み込み行と cref の命令の文だけを hyperref の後へ移す
 

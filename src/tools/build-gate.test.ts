@@ -218,6 +218,16 @@ describe("checkFigures", () => {
 });
 
 describe("stageBuild", () => {
+  it("同梱 .sty の \\newcommand{\\unit} は \\DeclareRobustCommand にして置く（siunitx v3 と衝突するため）", () => {
+    const src = mkTemp();
+    writeFileSync(path.join(src, "life.sty"), "\\usepackage{siunitx}\n\\newcommand{\\unit}{\\boldsymbol{1}}\n");
+    const build = path.join(mkTemp(), "b");
+    stageBuild(build, "MAIN", { sourceDir: src, mainDir: src, figures: [] }, () => new Set<string>());
+    expect(readFileSync(path.join(build, SRC_PKG_DIR, "life.sty"), "utf8")).toBe(
+      "\\usepackage{siunitx}\n\\DeclareRobustCommand{\\unit}{\\boldsymbol{1}}\n",
+    );
+  });
+
   it("main.tex・支援ファイル(.sty/.bib は srcpkg/ へ再帰収集)・図(main 相対)を複製する", () => {
     const src = mkTemp();
     writeFileSync(path.join(src, "nips.sty"), "% sty");
