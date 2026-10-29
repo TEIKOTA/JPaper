@@ -371,6 +371,9 @@ const hasAcmart =
   spawnSync("lualatex", ["--version"], { stdio: "ignore" }).status === 0 &&
   spawnSync("kpsewhich", ["luatexja-preset.sty"], { encoding: "utf8" }).stdout.trim() !== "" &&
   spawnSync("kpsewhich", ["acmart.cls"], { encoding: "utf8" }).stdout.trim() !== "";
+const hasLua =
+  spawnSync("lualatex", ["--version"], { stdio: "ignore" }).status === 0 &&
+  spawnSync("kpsewhich", ["luatexja-preset.sty"], { encoding: "utf8" }).stdout.trim() !== "";
 
 const ACM_FRONT = (title: string, inst: string, abs: string, kw: string): string =>
   [
@@ -450,4 +453,30 @@ describe.skipIf(!hasAcmart)("acmart の論文の対訳を lualatex で組む（i
     expect(left).not.toMatch(/Right Uni|右の要旨|概要/);
     expect(right).not.toMatch(/Left Uni|Leftabstract|Abstract/);
   }, 240_000);
+});
+
+// float の \restylefloat（issue #519）: 表のキャプションが \float@caption 経由で \@fs@capt を求める。lualatex で対訳を組み、左右の半分にキャプションが出るかを見る。
+describe.skipIf(!hasLua || spawnSync("kpsewhich", ["float.sty"], { encoding: "utf8" }).stdout.trim() === "")("\\restylefloat の表を含む対訳を lualatex で組む（issue #519）", () => {
+  it("左右の段それぞれに表のキャプションが出る", () => {
+    const dir = process.env.JP_RESTYLE_DIR ?? mkdtempSync(path.join(tmpdir(), "jpaper-restyle-"));
+    try {
+      const pre = "\\documentclass{article}\n\\usepackage{float}\n\\restylefloat{table}\n";
+      const table = (cap: string): string => `\\begin{table}[H]\n\\centering\n\\begin{tabular}{ll}a & b\\end{tabular}\n\\caption{${cap}}\n\\end{table}`;
+      const { mainTex } = assembleBilingual({
+        cleanLatex: `${pre}\\begin{document}\n\\end{document}\n`,
+        translatedMainTex: `${pre}\\usepackage{luatexja}\n\\begin{document}\n\\end{document}\n`,
+        source: [{ id: "seg-0000", tex: `Before.\n\n${table("Leftcaption")}\n\nAfter.` }],
+        translated: [{ id: "seg-0000", tex: `Mae.\n\n${table("Rightcaption")}\n\nAto.` }],
+      });
+      writeFileSync(path.join(dir, "main.tex"), mainTex);
+      const r = spawnSync("lualatex", ["-interaction=nonstopmode", "-halt-on-error", "main.tex"], { cwd: dir, encoding: "utf8", timeout: 240_000 });
+      expect(r.status, r.stdout.slice(-2000)).toBe(0);
+      const text = (x: string): string =>
+        spawnSync("pdftotext", ["-x", x, "-y", "0", "-W", "595", "-H", "842", "-raw", "main.pdf", "-"], { cwd: dir, encoding: "utf8" }).stdout.replace(/\s+/g, " ");
+      expect(text("0")).toMatch(/Table 1: Leftcaption/);
+      expect(text("595")).toMatch(/Table 1: Rightcaption/);
+    } finally {
+      if (process.env.JP_RESTYLE_DIR === undefined) rmSync(dir, { recursive: true, force: true });
+    }
+  }, 300_000);
 });

@@ -407,10 +407,11 @@ const SETUP = [
   "\\def\\jp@vspace@n#1{\\jp@vspace@c{#1}{\\jp@vspace{#1}}}",
   "\\def\\jp@vspace@s#1{\\jp@vspace@c{#1}{\\jp@vspace*{#1}}}",
   "\\def\\jp@vspace@c#1#2{\\skip@#1\\relax\\ifdim\\skip@<\\z@\\else#2\\fi}",
-  "\\renewenvironment{figure}[1][]{\\par\\vspace{1mm}\\begin{center}\\jp@clampvspace\\def\\@captype{figure}}{\\end{center}\\par\\vspace{1mm}}",
-  "\\renewenvironment{figure*}[1][]{\\par\\vspace{1mm}\\begin{center}\\jp@clampvspace\\def\\@captype{figure}}{\\end{center}\\par\\vspace{1mm}}",
-  "\\renewenvironment{table}[1][]{\\par\\vspace{1mm}\\begin{center}\\jp@clampvspace\\def\\@captype{table}}{\\end{center}\\par\\vspace{1mm}}",
-  "\\renewenvironment{table*}[1][]{\\par\\vspace{1mm}\\begin{center}\\jp@clampvspace\\def\\@captype{table}}{\\end{center}\\par\\vspace{1mm}}",
+  // ⚠ landmines.md
+  "\\renewenvironment{figure}[1][]{\\par\\vspace{1mm}\\begin{center}\\jp@clampvspace\\def\\@captype{figure}\\expandafter\\let\\csname @float@c@figure\\endcsname\\@caption}{\\end{center}\\par\\vspace{1mm}}",
+  "\\renewenvironment{figure*}[1][]{\\par\\vspace{1mm}\\begin{center}\\jp@clampvspace\\def\\@captype{figure}\\expandafter\\let\\csname @float@c@figure\\endcsname\\@caption}{\\end{center}\\par\\vspace{1mm}}",
+  "\\renewenvironment{table}[1][]{\\par\\vspace{1mm}\\begin{center}\\jp@clampvspace\\def\\@captype{table}\\expandafter\\let\\csname @float@c@table\\endcsname\\@caption}{\\end{center}\\par\\vspace{1mm}}",
+  "\\renewenvironment{table*}[1][]{\\par\\vspace{1mm}\\begin{center}\\jp@clampvspace\\def\\@captype{table}\\expandafter\\let\\csname @float@c@table\\endcsname\\@caption}{\\end{center}\\par\\vspace{1mm}}",
   "\\makeatother",
   "% --- JPaper 注入ここまで ---",
 ].join("\n");

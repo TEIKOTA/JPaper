@@ -492,6 +492,14 @@ describe("前文", () => {
     expect(pre).not.toMatch(/\n\\let\\vspace|\n\\renewcommand\{\\vspace\}/);
   });
 
+  it("図表ブロックの 4 環境は開始で float の \\@float@c@<型> を素の \\@caption に向ける（#519）", () => {
+    const pre = bilingualPreamble("\\documentclass{article}\n");
+    for (const [env, type] of [["figure", "figure"], ["figure*", "figure"], ["table", "table"], ["table*", "table"]]) {
+      const m = pre.match(new RegExp(`\\\\renewenvironment\\{${env!.replace("*", "\\*")}\\}\\[1\\]\\[\\]\\{([^\\n]*)`));
+      expect(m?.[1], env).toContain(`\\def\\@captype{${type}}\\expandafter\\let\\csname @float@c@${type}\\endcsname\\@caption}`);
+    }
+  });
+
   it("組み立てた main.tex は和訳の前文を使い、本文先頭で紙面と左右のページ番号を設定する", () => {
     const out = assembleBilingual({
       cleanLatex: "\\documentclass{article}\\begin{document}A\\end{document}",
