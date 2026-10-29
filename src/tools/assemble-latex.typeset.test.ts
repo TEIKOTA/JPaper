@@ -139,3 +139,20 @@ describe.skipIf(!hasLuaTex)("同梱 .sty の \\unit が siunitx v3 と衝突す�
     }
   }, 300_000);
 });
+
+describe.skipIf(!hasLuaTex)("xcolor に color オプションを渡す原文を組む（issue #521）", () => {
+  const own = ["\\documentclass{article}", "\\usepackage[svgnames,dvipsnames,color,table]{xcolor}", "\\begin{document}", "\\end{document}"].join("\n");
+
+  it.each(["original", "template"] as const)("%s: color を外して PDF が出る", (mode) => {
+    expect(build(own, "\\textcolor{red}{x}", mode)).toEqual([]);
+  }, 300_000);
+});
+
+// 前文に \newcommand{\x} がある論文（2201.04234 の lifetime.sty の形。issue #518）。
+const X_OWN = ["\\documentclass{article}", "\\newcommand{\\x}{x}", "\\begin{document}", "\\end{document}"].join("\n");
+
+describe.skipIf(!hasLuaTex)("luatexja が残す \\x（issue #518）", () => {
+  it.each(["original", "template"] as const)("前文の \\newcommand{\\x} が %s で組める", (mode) => {
+    expect(build(X_OWN, "$\\x$ 本文。", mode)).toEqual([]);
+  }, 300_000);
+});
