@@ -300,15 +300,15 @@ function assembleBody(chapters: string[]): string {
     .join("\n\n");
 }
 
-// \long でない前付けの命令。引数の中の空行（段落区切り）で Paragraph ended になる。⚠ landmines.md
-const SHORT_FRONT_COMMANDS = ["author", "title", "date"];
+// ⚠ landmines.md
+export const FRONT_COMMANDS: readonly string[] = ["author", "title", "date"];
 const BLANK_LINES = /\r?\n(?:[ \t]*\r?\n)+/g;
 
-// \author・\title・\date の引数の中の空行を改行 1 つに詰める（前文と本文の両方）。契約付録 §7
+// \author・\title・\date の引数の中の空行を改行 1 つに詰める（前文と本文の両方）。契約付録 §6
 export function joinFrontBlankLines(preamble: string): string {
-  // コメントの中の波括弧（``}'' など）で引数が閉じたと読まないよう、コメントを空白にした写しで区間を求める。
+  // ⚠ landmines.md
   const masked = preamble.replace(/(^|[^\\])((?:\\\\)*)%[^\n]*/g, (m, a: string, b: string) => a + b + " ".repeat(m.length - a.length - b.length));
-  const spans = SHORT_FRONT_COMMANDS.flatMap((n) => commandSpans(masked, n)).sort((a, b) => a[0] - b[0]);
+  const spans = FRONT_COMMANDS.flatMap((n) => commandSpans(masked, n)).sort((a, b) => a[0] - b[0]);
   let out = "";
   let at = 0;
   for (const [s, e] of spans) {

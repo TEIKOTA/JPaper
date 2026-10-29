@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, rmSync, writeFileSync, cpSync, readdirSync, read
 import path from "node:path";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { killTree, resolveCommand, spawnOptions } from "../../bin/spawn-cli.mjs";
-import { segmentAtLine, type SourceSpan } from "./assemble-latex.js";
+import { FRONT_COMMANDS, segmentAtLine, type SourceSpan } from "./assemble-latex.js";
 import { throwIfAborted } from "../runtime/cancellation.js";
 import { findUnsafeTexCommands, findUnsafeSupportCommands } from "./tex-safety.js";
 
@@ -59,7 +59,8 @@ function offendingName(message: string, rest: string): string | undefined {
   const env = UNDEFINED_ENV.exec(message);
   if (env) return env[1];
   const par = PARAGRAPH_ENDED.exec(message);
-  if (par) return par[1];
+  // 前付けの命令に限る。他の命令は訳文が引数の途中に空行を入れた翻訳起因でもありうる。契約付録 §6
+  if (par) return FRONT_COMMANDS.includes(par[1]!) ? par[1] : undefined;
   if (!UNDEFINED_CS.test(message)) return undefined;
   return CONTEXT_LINE.exec(rest.slice(0, 400))?.[1];
 }
