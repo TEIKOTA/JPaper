@@ -25,7 +25,7 @@ export interface FormalIssue {
 }
 
 // 形式検査の規則（閾値・対象の一覧・判定）を変えたら上げる。⚠ landmines.md
-export const FORMAL_CHECK_VERSION = 2;
+export const FORMAL_CHECK_VERSION = 3;
 
 // 通過した節の checkpoint に記録し、違えば形式検査をやり直す。契約付録 §8（形式検査の版）
 export const FORMAL_GATE = `${String(FORMAL_CHECK_VERSION)}:${FORMAL_ISSUE_KINDS.join(",")}`;
@@ -250,15 +250,42 @@ function mathBodies(text: string): string[] {
     .filter((b) => b !== "");
 }
 
-// 訳文が変えてよい差だけを潰す: 区切り・空白・間隔マクロと、数式内の地の文（\text 等）。
+// 訳文が変えてよい差だけを潰す: 区切り・空白・間隔マクロと、数式内の地の文（\text 等・\intertext）。
+// 契約付録 §3
 function normalizeMath(span: string): string {
-  return span
-    .replace(/^\$\$|\$\$$|^\$|\$$/g, "")
-    .replace(/^\\[[(]|\\[\])]$/g, "")
-    .replace(/^\\begin\{[^}]{0,200}\}|\\end\{[^}]{0,200}\}$/g, "")
-    .replace(/\\(?:text|mbox|textrm|textnormal)\s*\{[^{}]{0,200}\}/g, "\\text{}")
+  return blankProse(
+    span
+      .replace(/^\$\$|\$\$$|^\$|\$$/g, "")
+      .replace(/^\\[[(]|\\[\])]$/g, "")
+      .replace(/^\\begin\{[^}]{0,200}\}|\\end\{[^}]{0,200}\}$/g, ""),
+  )
     .replace(/\\(?:,|;|!|:|quad|qquad|thinspace|;)/g, "")
     .replace(/\s+/g, "");
+}
+
+const PROSE_CMD = /\\(text|mbox|textrm|textnormal|intertext)\s*\{/g;
+
+// 契約付録 §3
+function blankProse(s: string): string {
+  let out = "";
+  let from = 0;
+  PROSE_CMD.lastIndex = 0;
+  for (let m = PROSE_CMD.exec(s); m; m = PROSE_CMD.exec(s)) {
+    const start = PROSE_CMD.lastIndex;
+    let depth = 1;
+    let i = start;
+    for (; i < s.length && depth > 0; i++) {
+      if (s[i] === "\\") i++;
+      else if (s[i] === "{") depth++;
+      else if (s[i] === "}") depth--;
+    }
+    if (depth !== 0) break;
+    const inner = (s.slice(start, i - 1).match(/(?<!\\)\$[^$]*\$/g) ?? []).join("");
+    out += `${s.slice(from, m.index)}\\${m[1] === "intertext" ? "intertext" : "text"}{${inner}}`;
+    from = i;
+    PROSE_CMD.lastIndex = i;
+  }
+  return out + s.slice(from);
 }
 
 function countMath(text: string): number {
@@ -312,9 +339,30 @@ function multisetMismatch(src: string[], ja: string[]): boolean {
 // 差し戻しに載せる式の数と 1 件の長さ。プロンプトを膨らませないための上限。
 const MAX_LISTED_MATH = 3;
 const MAX_MATH_CHARS = 60;
+const CLIP_LEAD = 20;
 
-function clip(s: string): string {
-  return s.length > MAX_MATH_CHARS ? `${s.slice(0, MAX_MATH_CHARS)}…` : s;
+// 契約付録 §3
+function clip(s: string, other: string | undefined): string {
+  let at = 0;
+  if (other !== undefined) while (at < s.length && at < other.length && s[at] === other[at]) at++;
+  const from = Math.max(0, Math.min(at - CLIP_LEAD, s.length - MAX_MATH_CHARS));
+  const body = s.slice(from, from + MAX_MATH_CHARS);
+  return `${from > 0 ? "…" : ""}${body}${from + MAX_MATH_CHARS < s.length ? "…" : ""}`;
+}
+
+// 相手側で最も長く先頭が一致する式（同じ式の訳文側・原文側）。
+function nearest(s: string, pool: string[]): string | undefined {
+  let best: string | undefined;
+  let bestLen = -1;
+  for (const o of pool) {
+    let n = 0;
+    while (n < s.length && n < o.length && s[n] === o[n]) n++;
+    if (n > bestLen) {
+      bestLen = n;
+      best = o;
+    }
+  }
+  return best;
 }
 
 // multiset の差（src にしか無い / ja にしか無い）を実際の式として返す。
@@ -341,12 +389,12 @@ function describeMathDiff(src: string[], ja: string[]): string {
   const parts: string[] = [];
   if (missing.length > 0) {
     parts.push(
-      `訳文に無い数式: ${missing.slice(0, MAX_LISTED_MATH).map(clip).join(" / ")}${missing.length > MAX_LISTED_MATH ? ` ほか ${String(missing.length - MAX_LISTED_MATH)} 件` : ""}`,
+      `訳文に無い数式: ${missing.slice(0, MAX_LISTED_MATH).map((m) => clip(m, nearest(m, added))).join(" / ")}${missing.length > MAX_LISTED_MATH ? ` ほか ${String(missing.length - MAX_LISTED_MATH)} 件` : ""}`,
     );
   }
   if (added.length > 0) {
     parts.push(
-      `原文に無い数式: ${added.slice(0, MAX_LISTED_MATH).map(clip).join(" / ")}${added.length > MAX_LISTED_MATH ? ` ほか ${String(added.length - MAX_LISTED_MATH)} 件` : ""}`,
+      `原文に無い数式: ${added.slice(0, MAX_LISTED_MATH).map((a) => clip(a, nearest(a, missing))).join(" / ")}${added.length > MAX_LISTED_MATH ? ` ほか ${String(added.length - MAX_LISTED_MATH)} 件` : ""}`,
     );
   }
   return parts.join("。");
