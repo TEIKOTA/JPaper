@@ -456,12 +456,11 @@ describe("paracol 本文", () => {
 });
 
 describe("前文", () => {
-  it("和訳の前文に paracol・eso-pic・geometry・タイトルブロック・非フロート差し替えを足す", () => {
+  it("和訳の前文に paracol・geometry・タイトルブロック・非フロート差し替えを足す", () => {
     const pre = bilingualPreamble("\\documentclass{article}\n\\usepackage{x}\n\n");
     expect(pre.startsWith("\\PassOptionsToPackage{draft}{hyperref} % JPaper 注入: 対訳はリンクを作らない\n\\documentclass{article}\n\\usepackage{x}\n")).toBe(true);
     for (const s of [
       "\\usepackage{paracol}",
-      "\\usepackage{eso-pic}",
       "\\geometry{onecolumn,paperwidth=420mm,paperheight=297mm",
       "\\setlength{\\columnsep}{",
       "\\newcommand{\\jpTitleBlock}",
@@ -474,6 +473,8 @@ describe("前文", () => {
     ]) {
       expect(pre).toContain(s);
     }
+    // class が古い eso-pic のコードを抱えていると読めないので、eso-pic は読まない（issue #520）
+    expect(pre).not.toContain("eso-pic");
   });
 
   it("図表ブロックの 4 環境は開始で負の \\vspace を無効にする定義を入れ、正の量と \\vspace* は元の \\vspace へ渡す（#478）", () => {
@@ -503,8 +504,8 @@ describe("前文", () => {
     const body = out.mainTex.slice(out.mainTex.indexOf("\\begin{document}"));
     expect(body).toContain("\\newgeometry{onecolumn,paperwidth=420mm,paperheight=297mm");
     expect(body).toContain("\\pagestyle{empty}");
-    expect(body).toContain("\\AddToShipoutPictureFG{");
-    expect(body).not.toContain("\\AddToShipoutPictureFG*");
+    expect(body).toContain("\\AddToHook{shipout/foreground}{");
+    expect(out.mainTex).not.toContain("eso-pic");
     expect(body).toContain("原文 p.\\thepage");
     expect(body).toContain("和訳 p.\\thepage");
     expect(body).toContain("\\begin{paracol}{2}\n\\setlength{\\textwidth}{\\columnwidth}\n\\jpRobustNotes\nA\n\\switchcolumn\n和\n\\switchcolumn*\n\\end{paracol}\n\\end{document}\n");
