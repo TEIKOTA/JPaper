@@ -25,7 +25,7 @@ export interface FormalIssue {
 }
 
 // 形式検査の規則（閾値・対象の一覧・判定）を変えたら上げる。⚠ landmines.md
-export const FORMAL_CHECK_VERSION = 2;
+export const FORMAL_CHECK_VERSION = 3;
 
 // 通過した節の checkpoint に記録し、違えば形式検査をやり直す。契約付録 §8（形式検査の版）
 export const FORMAL_GATE = `${String(FORMAL_CHECK_VERSION)}:${FORMAL_ISSUE_KINDS.join(",")}`;
@@ -139,7 +139,10 @@ const NON_PROSE_ENVS = [
 // \index{あ×52} を足すと formalCheck が [] を返した。\printindex が無ければ
 // 1 文字も描画されない）。⚠ landmines.md
 const INVISIBLE_ARG_CMDS =
-  /\\(?:index|label|(?:eq|auto|page|c|C)?ref|cite[a-zA-Z]*|url|nolinkurl|path|input|include|hypersetup|(?:re|provide)?newcommand|def|pdfbookmark|pdfstringdef|typeout|message|special|write|selectlanguage|usepackage|documentclass|bibliography|bibliographystyle)\*?\s*(?:\[[^\]]{0,200}\])?\s*\{[^{}]{0,200}\}(?:\s*\{[^{}]{0,200}\})?/g;
+  /\\(?:index|label|(?:eq|auto|page|c|C)?ref|cite[a-zA-Z]*|url|nolinkurl|path|input|include|includegraphics|includepdf|hypersetup|(?:re|provide)?newcommand|def|pdfbookmark|pdfstringdef|typeout|message|special|write|selectlanguage|usepackage|documentclass|bibliography|bibliographystyle)\*?\s*(?:\[[^\]]{0,200}\])?\s*\{[^{}]{0,200}\}(?:\s*\{[^{}]{0,200}\})?/g;
+
+// \begin{…} / \end{…} の環境名（描画されない）。契約付録 §8
+const ENV_NAME = /\\(?:begin|end)\s*\{[^{}]{0,50}\}/g;
 
 // 環境ごとに左から 1 回だけ走査する（閉じが無ければ以降のどの開始位置でも見つからない）。
 // 正規表現の遅延一致だと閉じない \begin が並ぶ入力で二次になる。
@@ -170,6 +173,7 @@ function stripNonProseEnvs(tex: string): string {
 function proseOf(tex: string): string {
   return stripNonProseEnvs(stripLineComments(tex))
     .replace(INVISIBLE_ARG_CMDS, " ")
+    .replace(ENV_NAME, " ")
     .replace(/\\[a-zA-Z@]+\*?/g, " ")
     .replace(/[{}[\]$&%#_^~\\]/g, " ");
 }
