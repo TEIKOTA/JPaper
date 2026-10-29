@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { fetchArxivSource } from "./arxiv.js";
+import { DEFAULT_LIMITS } from "./limits.js";
 
 function okResponse(body: string): Response {
   return {
@@ -8,6 +9,39 @@ function okResponse(body: string): Response {
     arrayBuffer: async () => Buffer.from(body, "utf8"),
   } as unknown as Response;
 }
+
+// 本体の途中で切れる（undici の terminated）/ 最後まで届く、を fake で作る。
+function streamResponse(
+  status: number,
+  bytes: Uint8Array,
+  opts: { cut?: boolean; contentRange?: string; contentLength?: number; encoding?: string } = {},
+): Response {
+  const headers = new Headers();
+  let sent = false;
+  if (opts.contentLength !== undefined) headers.set("content-length", String(opts.contentLength));
+  if (opts.encoding) headers.set("content-encoding", opts.encoding);
+  if (opts.contentRange) headers.set("content-range", opts.contentRange);
+  return {
+    ok: true,
+    status,
+    headers,
+    // error() は積んだ chunk を捨てるので、chunk を読ませてから次の pull で切る。
+    body: new ReadableStream({
+      pull(c) {
+        if (sent) {
+          if (opts.cut) c.error(new TypeError("terminated"));
+          else c.close();
+          return;
+        }
+        sent = true;
+        if (bytes.byteLength > 0) c.enqueue(bytes);
+      },
+    }),
+  } as unknown as Response;
+}
+
+const rangeOf = (init?: RequestInit): string | undefined =>
+  (init?.headers as Record<string, string> | undefined)?.["Range"];
 
 describe("fetchArxivSource", () => {
   it("成功時に Buffer を返し User-Agent を付与する", async () => {
@@ -122,6 +156,302 @@ describe("fetchArxivSource", () => {
     });
     expect(buf.toString("utf8")).toBe("SRC");
     expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+
+  describe("途中で切れたら Range で続きを取る（#506）", () => {
+    const FULL = Uint8Array.from({ length: 10 }, (_, i) => i);
+    const common = {
+      sleep: async () => {},
+      now: () => 0,
+      state: { lastRequestAt: 0 },
+      maxQueueWaitMs: 1e9,
+    };
+
+    it("切れる → 206 で続き → 揃う。同じ endpoint・3 秒間隔を通す", async () => {
+      const calls: { url: string; range?: string }[] = [];
+      const fetchImpl = vi.fn(async (url: string, init?: RequestInit) => {
+        calls.push({ url, range: rangeOf(init) });
+        if (calls.length === 1) return streamResponse(200, FULL.slice(0, 4), { cut: true });
+        if (calls.length === 2) {
+          return streamResponse(206, FULL.slice(4, 7), { cut: true, contentRange: "bytes 4-9/10" });
+        }
+        return streamResponse(206, FULL.slice(7), { contentRange: "bytes 7-9/10" });
+      });
+      const sleeps: number[] = [];
+      const buf = await fetchArxivSource("2206.13089", {
+        ...common,
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+        sleep: async (ms) => {
+          sleeps.push(ms);
+        },
+        minIntervalMs: 3000,
+        retries: 0,
+      });
+      expect([...buf]).toEqual([...FULL]);
+      expect(calls.map((c) => c.range)).toEqual([undefined, "bytes=4-", "bytes=7-"]);
+      expect(new Set(calls.map((c) => c.url))).toEqual(
+        new Set(["https://export.arxiv.org/e-print/2206.13089"]),
+      );
+      // 各要求の前に 3 秒間隔の予約を通る（retries: 0 でも進んだ試行は数えない）。
+      expect(sleeps.filter((ms) => ms >= 3000)).toEqual([3000, 6000, 9000]);
+    });
+
+    it("Range が効かず 200 が返ったら、受け取った分を捨てて初めから取る", async () => {
+      let n = 0;
+      const fetchImpl = vi.fn(async () =>
+        ++n === 1
+          ? streamResponse(200, FULL.slice(0, 4), { cut: true })
+          : streamResponse(200, FULL),
+      );
+      const buf = await fetchArxivSource("2206.13089", {
+        ...common,
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+      });
+      expect([...buf]).toEqual([...FULL]);
+    });
+
+    it("Content-Range の開始が受け取った長さと違う 206 は足さず、初めから取る", async () => {
+      const ranges: (string | undefined)[] = [];
+      const fetchImpl = vi.fn(async (_url: string, init?: RequestInit) => {
+        ranges.push(rangeOf(init));
+        if (ranges.length === 1) return streamResponse(200, FULL.slice(0, 4), { cut: true });
+        if (ranges.length === 2) {
+          return streamResponse(206, FULL.slice(5), { contentRange: "bytes 5-9/10" });
+        }
+        return streamResponse(200, FULL);
+      });
+      const buf = await fetchArxivSource("2206.13089", {
+        ...common,
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+      });
+      expect([...buf]).toEqual([...FULL]);
+      expect(ranges).toEqual([undefined, "bytes=4-", undefined]);
+    });
+
+    it("上限サイズは続きを足した合計で検査する", async () => {
+      let n = 0;
+      const fetchImpl = vi.fn(async () =>
+        ++n === 1
+          ? streamResponse(200, FULL.slice(0, 6), { cut: true })
+          : streamResponse(206, FULL.slice(6), { contentRange: "bytes 6-9/10" }),
+      );
+      await expect(
+        fetchArxivSource("2206.13089", {
+          ...common,
+          fetchImpl: fetchImpl as unknown as typeof fetch,
+          limits: { ...DEFAULT_LIMITS, maxArchiveBytes: 8 },
+        }),
+      ).rejects.toMatchObject({ kind: "too-large" });
+    });
+
+    it("進まない切断は retries で打ち切る", async () => {
+      const fetchImpl = vi.fn(async () => streamResponse(200, new Uint8Array(0), { cut: true }));
+      await expect(
+        fetchArxivSource("2206.13089", {
+          ...common,
+          fetchImpl: fetchImpl as unknown as typeof fetch,
+          retries: 2,
+        }),
+      ).rejects.toMatchObject({ code: 2, kind: "upstream" });
+      expect(fetchImpl).toHaveBeenCalledTimes(3);
+    });
+
+    it("続きの要求への 416 は、受け取った分を捨てて初めから取る", async () => {
+      const ranges: (string | undefined)[] = [];
+      const fetchImpl = vi.fn(async (_url: string, init?: RequestInit) => {
+        ranges.push(rangeOf(init));
+        if (ranges.length === 1) return streamResponse(200, FULL.slice(0, 4), { cut: true });
+        if (ranges.length === 2) return { ok: false, status: 416 } as Response;
+        return streamResponse(200, FULL);
+      });
+      const buf = await fetchArxivSource("2206.13089", {
+        ...common,
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+      });
+      expect([...buf]).toEqual([...FULL]);
+      expect(ranges).toEqual([undefined, "bytes=4-", undefined]);
+    });
+
+    it("続きの前後で Content-Range の総サイズが変わったら、捨てて初めから取る", async () => {
+      const ranges: (string | undefined)[] = [];
+      const fetchImpl = vi.fn(async (_url: string, init?: RequestInit) => {
+        ranges.push(rangeOf(init));
+        if (ranges.length === 1) return streamResponse(200, FULL.slice(0, 2), { cut: true });
+        if (ranges.length === 2) {
+          return streamResponse(206, FULL.slice(2, 4), { cut: true, contentRange: "bytes 2-9/10" });
+        }
+        if (ranges.length === 3) {
+          return streamResponse(206, FULL.slice(4), { contentRange: "bytes 4-11/12" });
+        }
+        return streamResponse(200, FULL);
+      });
+      const buf = await fetchArxivSource("2206.13089", {
+        ...common,
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+      });
+      expect([...buf]).toEqual([...FULL]);
+      expect(ranges).toEqual([undefined, "bytes=2-", "bytes=4-", undefined]);
+    });
+
+    it("最後に総サイズと受け取った長さが一致しなければ、揃ったとみなさない", async () => {
+      const ranges: (string | undefined)[] = [];
+      const fetchImpl = vi.fn(async (_url: string, init?: RequestInit) => {
+        ranges.push(rangeOf(init));
+        if (ranges.length === 1) return streamResponse(200, FULL.slice(0, 4), { cut: true });
+        // 総サイズ 10 なのに 3 バイトで閉じる（短い 206）。
+        if (ranges.length === 2) {
+          return streamResponse(206, FULL.slice(4, 7), { contentRange: "bytes 4-9/10" });
+        }
+        return streamResponse(206, FULL.slice(7), { contentRange: "bytes 7-9/10" });
+      });
+      const buf = await fetchArxivSource("2206.13089", {
+        ...common,
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+      });
+      expect([...buf]).toEqual([...FULL]);
+      expect(ranges).toEqual([undefined, "bytes=4-", "bytes=7-"]);
+    });
+
+    it("受け取った分がある状態で中断されたら canceled で抜ける", async () => {
+      const c = new AbortController();
+      const fetchImpl = vi.fn(async () => {
+        let sent = false;
+        return {
+          ok: true,
+          status: 200,
+          headers: new Headers(),
+          body: new ReadableStream({
+            pull(ctl) {
+              if (!sent) {
+                sent = true;
+                ctl.enqueue(FULL.slice(0, 4));
+                return;
+              }
+              c.abort();
+              ctl.error(new TypeError("terminated"));
+            },
+          }),
+        } as unknown as Response;
+      });
+      await expect(
+        fetchArxivSource("2206.13089", {
+          ...common,
+          fetchImpl: fetchImpl as unknown as typeof fetch,
+          signal: c.signal,
+        }),
+      ).rejects.toMatchObject({ code: 6, kind: "canceled" });
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+    });
+
+    it("進む → 進まない 3 回を繰り返しても、試行の総数に上限がある", async () => {
+      let n = 0;
+      const fetchImpl = vi.fn(async (_url: string, init?: RequestInit) => {
+        n++;
+        if (n % 4 !== 1) return { ok: false, status: 503 } as Response;
+        const start = Number(/bytes=(\d+)-/.exec(rangeOf(init) ?? "")?.[1] ?? 0);
+        return streamResponse(start === 0 ? 200 : 206, new Uint8Array(1), {
+          cut: true,
+          contentRange: `bytes ${start}-${start}/1000`,
+        });
+      });
+      await expect(
+        fetchArxivSource("2206.13089", {
+          ...common,
+          fetchImpl: fetchImpl as unknown as typeof fetch,
+        }),
+      ).rejects.toMatchObject({ code: 2, kind: "upstream" });
+      expect(fetchImpl.mock.calls.length).toBeLessThanOrEqual(24);
+    });
+
+    it("最初の 200 の Content-Length を総サイズとして覚え、続きの 206 の総サイズと比べる", async () => {
+      const ranges: (string | undefined)[] = [];
+      const fetchImpl = vi.fn(async (_url: string, init?: RequestInit) => {
+        ranges.push(rangeOf(init));
+        if (ranges.length === 1) {
+          return streamResponse(200, FULL.slice(0, 4), { cut: true, contentLength: 10 });
+        }
+        if (ranges.length === 2) {
+          return streamResponse(206, FULL.slice(4, 8), { contentRange: "bytes 4-7/8" });
+        }
+        return streamResponse(200, FULL, { contentLength: 10 });
+      });
+      const buf = await fetchArxivSource("2206.13089", {
+        ...common,
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+      });
+      expect([...buf]).toEqual([...FULL]);
+      expect(ranges).toEqual([undefined, "bytes=4-", undefined]);
+    });
+
+    it("Content-Encoding があれば 200 の Content-Length は総サイズとして覚えない", async () => {
+      let n = 0;
+      const fetchImpl = vi.fn(async () =>
+        ++n === 1
+          ? streamResponse(200, FULL.slice(0, 4), { cut: true, contentLength: 10, encoding: "gzip" })
+          : streamResponse(206, FULL.slice(4, 8), { contentRange: "bytes 4-7/8" }),
+      );
+      const buf = await fetchArxivSource("2206.13089", {
+        ...common,
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+      });
+      expect([...buf]).toEqual([...FULL.slice(0, 8)]);
+    });
+
+    it("進まない失敗の数は連続で数える（進んだら 0 に戻す）", async () => {
+      const script: (() => Response)[] = [
+        () => streamResponse(200, FULL.slice(0, 4), { cut: true }),
+        () => ({ ok: false, status: 503 }) as Response,
+        () => ({ ok: false, status: 503 }) as Response,
+        () => streamResponse(206, FULL.slice(4, 7), { cut: true, contentRange: "bytes 4-9/10" }),
+        () => ({ ok: false, status: 503 }) as Response,
+        () => ({ ok: false, status: 503 }) as Response,
+        () => streamResponse(206, FULL.slice(7), { contentRange: "bytes 7-9/10" }),
+      ];
+      const fetchImpl = vi.fn(async () => script.shift()!());
+      const buf = await fetchArxivSource("2206.13089", {
+        ...common,
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+        retries: 3,
+      });
+      expect([...buf]).toEqual([...FULL]);
+    });
+
+    it("総サイズを超えて受け取ったら捨てて初めから取る（次の Range を送らない）", async () => {
+      const ranges: (string | undefined)[] = [];
+      const fetchImpl = vi.fn(async (_url: string, init?: RequestInit) => {
+        ranges.push(rangeOf(init));
+        if (ranges.length === 1) return streamResponse(200, FULL.slice(0, 4), { cut: true });
+        if (ranges.length === 2) {
+          return streamResponse(206, FULL.slice(4), { contentRange: "bytes 4-9/8" });
+        }
+        return streamResponse(200, FULL);
+      });
+      const buf = await fetchArxivSource("2206.13089", {
+        ...common,
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+      });
+      expect([...buf]).toEqual([...FULL]);
+      expect(ranges).toEqual([undefined, "bytes=4-", undefined]);
+    });
+
+    it("進み続けても続きの回数に上限がある", async () => {
+      const fetchImpl = vi.fn(async (_url: string, init?: RequestInit) => {
+        const start = Number(/bytes=(\d+)-/.exec(rangeOf(init) ?? "")?.[1] ?? 0);
+        return streamResponse(start === 0 ? 200 : 206, new Uint8Array(1), {
+          cut: true,
+          contentRange: `bytes ${start}-${start}/1000`,
+        });
+      });
+      await expect(
+        fetchArxivSource("2206.13089", {
+          ...common,
+          fetchImpl: fetchImpl as unknown as typeof fetch,
+          retries: 0,
+          limits: { ...DEFAULT_LIMITS, maxArchiveBytes: 1000 },
+        }),
+      ).rejects.toMatchObject({ code: 2, kind: "upstream" });
+      expect(fetchImpl.mock.calls.length).toBeLessThanOrEqual(24);
+    });
   });
 
   it("リトライ上限超過（429 継続）は exit 2", async () => {
