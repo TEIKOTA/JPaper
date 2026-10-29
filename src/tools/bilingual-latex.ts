@@ -358,15 +358,26 @@ const SETUP = [
   "\\setlength{\\columnsep}{32mm}",
   "\\setlength{\\parindent}{1em}",
   "\\makeatletter",
+  "\\newif\\ifjp@and",
+  "\\long\\def\\jp@scanand{\\expandafter\\jp@scan@and\\the\\toks@\\and\\jp@mark\\jp@end" +
+    "\\expandafter\\jp@scan@And\\the\\toks@\\And\\jp@mark\\jp@end\\expandafter\\jp@scan@AND\\the\\toks@\\AND\\jp@mark\\jp@end}",
+  "\\long\\def\\jp@scan@and#1\\and#2\\jp@end{\\def\\jp@t{#2}\\def\\jp@u{\\jp@mark}\\ifx\\jp@t\\jp@u\\else\\jp@andtrue\\fi}",
+  "\\long\\def\\jp@scan@And#1\\And#2\\jp@end{\\def\\jp@t{#2}\\def\\jp@u{\\jp@mark}\\ifx\\jp@t\\jp@u\\else\\jp@andtrue\\fi}",
+  "\\long\\def\\jp@scan@AND#1\\AND#2\\jp@end{\\def\\jp@t{#2}\\def\\jp@u{\\jp@mark}\\ifx\\jp@t\\jp@u\\else\\jp@andtrue\\fi}",
   "\\newcommand{\\jp@titleblock}[2]{%",
   "  \\par\\hrule height 4\\p@\\vskip 0.15in",
   "  {\\centering\\Large\\bfseries\\begingroup\\let\\thanks\\@gobble #1\\endgroup\\par}",
   "  \\vskip 0.2in\\hrule height 1\\p@\\vskip 0.1in",
-  // 著者の \\and / \\And / \\AND はタイトルの表組みの中でしか使えないので、ここでは区切りの空白にする。⚠ landmines.md
-  // jmlr2e の \name・\email・\addr は \maketitle の中でだけ定義されるので、未定義なら同じ意味で補う。⚠ landmines.md
-  "  {\\centering\\begingroup\\let\\thanks\\@gobble\\def\\and{\\unskip\\quad}\\let\\And\\and\\def\\AND{\\unskip\\par}" +
+  // 著者に \\and / \\And / \\AND があれば著者ごとに表組みに入れて横に並べ、無ければ従来どおり区切りの空白にする。⚠ landmines.md
+  // jmlr2e の \\name・\\email・\\addr は \\maketitle の中でだけ定義されるので、未定義なら同じ意味で補う。⚠ landmines.md
+  "  {\\centering\\begingroup\\let\\thanks\\@gobble" +
     "\\@ifundefined{name}{\\def\\name{\\normalsize\\bfseries}}{}\\@ifundefined{email}{\\def\\email{\\hfill\\small\\scshape}}{}" +
-    "\\@ifundefined{addr}{\\def\\addr{\\small\\itshape}}{}#2\\endgroup\\par}",
+    "\\@ifundefined{addr}{\\def\\addr{\\small\\itshape}}{}\\jp@andfalse\\expandafter\\toks@\\expandafter{#2}\\jp@scanand" +
+    "\\ifjp@and\\def\\jp@open{\\noindent\\begin{tabular}[t]{c}}\\def\\jp@close{\\end{tabular}}" +
+    "\\def\\and{\\end{tabular}\\hskip 1em plus 0.5em\\begin{tabular}[t]{c}}\\let\\And\\and" +
+    "\\def\\AND{\\end{tabular}\\par\\noindent\\begin{tabular}[t]{c}}" +
+    "\\else\\let\\jp@open\\relax\\let\\jp@close\\relax\\def\\and{\\unskip\\quad}\\let\\And\\and\\def\\AND{\\unskip\\par}\\fi" +
+    "\\jp@open #2\\jp@close\\endgroup\\par}",
   "  \\vskip 0.15in}",
   "\\newcommand{\\jpTitleBlock}[1]{\\jp@titleblock{#1}{\\@author}}",
   // ⚠ landmines.md

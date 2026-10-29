@@ -451,3 +451,56 @@ describe.skipIf(!hasAcmart)("acmart の論文の対訳を lualatex で組む（i
     expect(right).not.toMatch(/Left Uni|Leftabstract|Abstract/);
   }, 240_000);
 });
+
+// 著者欄の \and（issue #324・#529）: 対訳のタイトルブロックを lualatex で組み、1 ページ目の左の半分の行を返す。
+function buildAuthors(author: string, pre: string = "\\documentclass{article}\n"): { ok: boolean; log: string; lines: string[]; dir: string } {
+  const dir = mkdtempSync(path.join(tmpdir(), "jpaper-and-"));
+  const body = `\\title{Left Title}\n\n${author}\n\n\\maketitle\n\nIntro text.`;
+  const { mainTex } = assembleBilingual({
+    cleanLatex: `${pre}\\begin{document}\n\\end{document}\n`,
+    translatedMainTex: `${pre}\\usepackage{luatexja}\n\\begin{document}\n\\end{document}\n`,
+    source: [{ id: "seg-0000", tex: body }],
+    translated: [{ id: "seg-0000", tex: body.replace("Left Title", "右の表題") }],
+  });
+  writeFileSync(path.join(dir, "main.tex"), mainTex);
+  const r = spawnSync("lualatex", ["-interaction=nonstopmode", "-halt-on-error", "main.tex"], { cwd: dir, encoding: "utf8", timeout: 240_000 });
+  const text = spawnSync("pdftotext", ["-f", "1", "-l", "1", "-x", "0", "-y", "0", "-W", "595", "-H", "842", "-layout", "main.pdf", "-"], { cwd: dir, encoding: "utf8" }).stdout;
+  return { ok: r.status === 0, log: r.stdout.slice(-3000), lines: text.split("\n"), dir };
+}
+
+const hasLua = spawnSync("lualatex", ["--version"], { stdio: "ignore" }).status === 0;
+const FRONT = readFileSync(new URL("./fixtures/iccv-2107.03315-front.tex", import.meta.url), "utf8");
+const ICCV_AUTHOR = FRONT.slice(FRONT.indexOf("\\author"), FRONT.indexOf("\\maketitle")).trim().replace(/\n\s*\n/g, "\n");
+// 著者欄の空行は #517 の別の不具合（PR #526）なので、ここでは外して #529 だけを見る。
+
+describe.skipIf(!hasLua)("対訳のタイトルブロックの著者欄の \\and を lualatex で組む（issue #529）", () => {
+  it("複数行の著者が \\and で並ぶ著者欄は、著者ごとのまとまりが保たれる（2107.03315）", () => {
+    const { ok, log, lines, dir } = buildAuthors(ICCV_AUTHOR);
+    try {
+      expect(ok, log).toBe(true);
+      expect(log).not.toContain("Misplaced");
+      // メールの行に次の著者の名前が続かない・名前の行にメールが続かない。
+      for (const l of lines.filter((x) => x.includes("@"))) expect(l, l).not.toMatch(/Guillory|Shankar|Ebrahimi|Darrell|Schmidt/);
+      for (const l of lines.filter((x) => /Guillory|Shankar|Ebrahimi|Darrell|Schmidt/.test(x))) expect(l, l).not.toContain("@");
+      expect(lines.join("\n")).toContain("ludwigschmidt2@gmail.com");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 240_000);
+
+  it("1 行の著者が \\and で並ぶ著者欄（issue #324 の形）と、\\and の無い著者欄も組める", () => {
+    for (const [author, names, pre] of [
+      ["\\author{Ann Lee \\and Bob Kay \\and Cy Poe}", ["Ann Lee", "Bob Kay", "Cy Poe"], undefined],
+      ["\\author{Ann Lee, Bob Kay}", ["Ann Lee, Bob Kay"], undefined],
+      ["\\author{Ann Lee\\inst{1} \\and Bob Kay\\inst{2}}\\institute{Uni A \\and Uni B}", ["Ann Lee", "Bob Kay"], "\\documentclass{llncs}\n"],
+    ] as const) {
+      const { ok, log, lines, dir } = buildAuthors(author, pre);
+      try {
+        expect(ok, log).toBe(true);
+        for (const n of names) expect(lines.join("\n").replace(/ +/g, " "), n).toContain(n);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    }
+  }, 240_000);
+});

@@ -235,9 +235,9 @@
 
 ## `src/tools/bilingual-latex.ts` — 対訳のタイトルブロックで `\and` / `\And` / `\AND` を区切りの空白にする
 
-- **おかしく見える点**: タイトルブロックの著者欄でだけ、クラスが定義した `\and` を `\unskip\quad` に置き換えている。
-- **なぜ意図的か**: `\and` はタイトルの表組み（`\maketitle` の中の tabular）で使う前提の命令で、`\end{tabular}…\begin{tabular}` に展開される。対訳のタイトルブロックは著者を表の外で組むので、そのままだと `Misplaced \crcr` で対訳 PDF が落ちる（実測: llncs の 2606.22649・2605.18329 ほか 4 本）。
-- **正本ポインタ**: 契約付録 §8（対訳 PDF）、issue #324。回帰テストは `src/tools/bilingual-latex.test.ts`。
+- **おかしく見える点**: タイトルブロックの著者欄でだけ、クラスが定義した `\and` / `\And` / `\AND` を作り直している。著者の本文に `\and`・`\And`・`\AND` があるかを、`\toks@` に入れて区切りつき引数（`\jp@scan@and` など）で前もって調べ、あれば著者欄全体を `\begin{tabular}[t]{c}…\end{tabular}` で包んで `\and` を `\end{tabular}\hskip…\begin{tabular}[t]{c}` にし、無ければ `\and` を `\unskip\quad` にする。
+- **なぜ意図的か**: `\and` はタイトルの表組み（`\maketitle` の中の tabular）で使う前提の命令で、`\end{tabular}…\begin{tabular}` に展開される。対訳のタイトルブロックは著者を表の外で組むので、クラスの定義のままだと `Misplaced \crcr` で対訳 PDF が落ちる（実測: llncs の 2606.22649・2605.18329 ほか 4 本。issue #324）。`\and` を区切りの空白だけにすると、`名前\\ 所属\\ メール` と複数行で書く論文で前の著者の最後の行と次の著者の最初の行が 1 行につながる（実測: 2107.03315 の `dguillory@berkeley.edu Vaishaal Shankar`。issue #529）ので、`\and` があるときは表組みで包む。表組みは箱なので、著者の間のグルーで折り返せる（段は半分の幅）。`\and` が無い著者欄（`A, B, C` と 1 行に並べた形や 1 人の著者）は、表組みにすると折り返せず段の幅を超えるので、包まず従来の組み方にする。`\AND` は表組みを閉じて段落を改める。`\and` の有無の判定は区切りつき引数なので、波括弧の中の `\and` は数えない（その `\and` は表組みの外で展開されず、判定を外しても落ちるだけ）。`\expandafter\toks@\expandafter{#2}` は引数が `\@author` などマクロ 1 つであることに頼る（呼び出しは `\jpTitleBlock` と `\jp@fmhead` だけ）。
+- **正本ポインタ**: 契約付録 §8（対訳 PDF）、issue #324・#529。回帰テストは `src/tools/bilingual-latex.test.ts`・`src/tools/bilingual-latex.typeset.test.ts`。
 
 ## `src/tools/bilingual-latex.ts` — 対訳のタイトルブロックで未定義の `\name`・`\email`・`\addr` を補う
 
