@@ -456,6 +456,37 @@ describe.skipIf(!hasAcmart)("acmart の論文の対訳を lualatex で組む（i
   }, 240_000);
 });
 
+const hasCaption =
+  spawnSync("lualatex", ["--version"], { stdio: "ignore" }).status === 0 &&
+  spawnSync("kpsewhich", ["luatexja-preset.sty"], { encoding: "utf8" }).stdout.trim() !== "" &&
+  spawnSync("kpsewhich", ["caption.sty"], { encoding: "utf8" }).stdout.trim() !== "";
+
+describe.skipIf(!hasCaption)("\\caption の中の \\vspace を含む図表の対訳を lualatex で組む（issue #530）", () => {
+  it("caption パッケージの目次行への書き出しで \\vspace が展開されても、キャプションが左右の段に出る", () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "jpaper-capvs-"));
+    try {
+      const pre = "\\documentclass{article}\n\\usepackage{caption}\n";
+      const figure = (cap: string): string =>
+        `\\begin{figure}\n\\centering\nbody\n\\caption{${cap}\\vspace{-.3cm}\n}\n\\end{figure}\n\n\\begin{table}\n\\caption{${cap}\\vspace*{1mm}}\n\\end{table}`;
+      const { mainTex } = assembleBilingual({
+        cleanLatex: `${pre}\\begin{document}\n\\end{document}\n`,
+        translatedMainTex: `${pre}\\usepackage{luatexja}\n\\begin{document}\n\\end{document}\n`,
+        source: [{ id: "seg-0000", tex: figure("Left caption") }],
+        translated: [{ id: "seg-0000", tex: figure("Right caption") }],
+      });
+      writeFileSync(path.join(dir, "main.tex"), mainTex);
+      const r = spawnSync("lualatex", ["-interaction=nonstopmode", "-halt-on-error", "main.tex"], { cwd: dir, encoding: "utf8", timeout: 240_000 });
+      expect(r.status, r.stdout.slice(-3000)).toBe(0);
+      const text = (x: string): string =>
+        spawnSync("pdftotext", ["-x", x, "-y", "0", "-W", "595", "-H", "842", "-raw", "main.pdf", "-"], { cwd: dir, encoding: "utf8" }).stdout.replace(/\s+/g, " ");
+      expect(text("0")).toContain("Left caption");
+      expect(text("595")).toContain("Right caption");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 120_000);
+});
+
 // 2107.03315（ICCV 2021）の \begin{document} から \maketitle まで。本文に書いた \author の引数（74 行目付近）に空行がある。issue #517
 const ICCV_FRONT = readFileSync(new URL("./fixtures/iccv-2107.03315-front.tex", import.meta.url), "utf8");
 

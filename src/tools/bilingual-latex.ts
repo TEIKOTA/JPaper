@@ -418,7 +418,7 @@ const SETUP = [
   // ⚠ landmines.md
   "\\newcommand{\\jpNoAux}[1]{\\begingroup\\@fileswfalse#1\\endgroup}",
   // ⚠ landmines.md
-  "\\def\\jp@vspace@wrap{\\@ifstar{\\jp@vspace@s}{\\jp@vspace@n}}",
+  "\\protected\\def\\jp@vspace@wrap{\\@ifstar{\\jp@vspace@s}{\\jp@vspace@n}}",
   "\\def\\jp@clampvspace{\\ifx\\vspace\\jp@vspace@wrap\\else\\let\\jp@vspace\\vspace\\let\\vspace\\jp@vspace@wrap\\fi}",
   "\\def\\jp@vspace@n#1{\\jp@vspace@c{#1}{\\jp@vspace{#1}}}",
   "\\def\\jp@vspace@s#1{\\jp@vspace@c{#1}{\\jp@vspace*{#1}}}",
