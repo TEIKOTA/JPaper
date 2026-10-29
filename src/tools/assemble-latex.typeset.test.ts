@@ -4,6 +4,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from "no
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { assembleWithMap } from "./assemble-latex.js";
+import { sandboxEnv, stageBuild } from "./build-gate.js";
 
 // 共通テンプレートの組み立て結果を lualatex で実際に組む。lualatex と luatexja が無い環境では飛ばす。
 
@@ -105,5 +106,36 @@ describe.skipIf(!hasAcmartCountryCheck)("国名の無い acmart の所属を原�
   it("前文で \\makeatletter を開いたまま本文で @ 入りの命令を使う論文も、原文の前文で組める", () => {
     const own = ["\\documentclass{article}", "\\makeatletter", "\\newcommand{\\foo@bar}{X}", "\\begin{document}", "\\end{document}"].join("\n");
     expect(build(own, "\\foo@bar\n\\makeatother", "original")).toEqual([]);
+  }, 300_000);
+});
+
+// 同梱 .sty が siunitx を読んだ後に \newcommand{\unit} を定義する形（2201.04234 の lifetime.sty）。
+describe.skipIf(!hasLuaTex)("同梱 .sty の \\unit が siunitx v3 と衝突する論文を組む（issue #531）", () => {
+  it("siunitx を読む .sty と \\newcommand{\\unit} があっても PDF が出る", () => {
+    const src = mkdtempSync(path.join(tmpdir(), "jpaper-unit-src-"));
+    const dir = path.join(mkdtempSync(path.join(tmpdir(), "jpaper-unit-")), "b");
+    try {
+      writeFileSync(path.join(src, "life.sty"), "\\usepackage{siunitx}\n\\newcommand{\\unit}{\\boldsymbol{1}}\n");
+      const cleanLatex = [
+        "\\documentclass{article}",
+        "\\usepackage{amsmath,amssymb,bm}",
+        "\\usepackage{life}",
+        "\\begin{document}",
+        "\\end{document}",
+      ].join("\n");
+      const { mainTex } = assembleWithMap({ cleanLatex, segments: [{ id: "seg-0000", tex: "$\\unit$ と \\qty{3}{m}" }], mode: "original" });
+      stageBuild(dir, mainTex, { sourceDir: src, mainDir: src, figures: [] }, () => new Set<string>());
+      const r = spawnSync("lualatex", ["-interaction=nonstopmode", "-halt-on-error", "main.tex"], {
+        cwd: dir,
+        encoding: "utf8",
+        timeout: 240_000,
+        env: sandboxEnv(process.env, dir),
+      });
+      expect(r.stdout.split("\n").filter((l) => l.startsWith("!"))).toEqual([]);
+      expect(existsSync(path.join(dir, "main.pdf"))).toBe(true);
+    } finally {
+      rmSync(src, { recursive: true, force: true });
+      rmSync(path.dirname(dir), { recursive: true, force: true });
+    }
   }, 300_000);
 });

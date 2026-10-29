@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, rmSync, writeFileSync, cpSync, readdirSync, read
 import path from "node:path";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { killTree, resolveCommand, spawnOptions } from "../../bin/spawn-cli.mjs";
-import { segmentAtLine, type SourceSpan } from "./assemble-latex.js";
+import { releaseSiunitxNames, segmentAtLine, type SourceSpan } from "./assemble-latex.js";
 import { throwIfAborted } from "../runtime/cancellation.js";
 import { findUnsafeTexCommands, findUnsafeSupportCommands } from "./tex-safety.js";
 
@@ -231,6 +231,18 @@ export function unsafeSupportFiles(
   return bad;
 }
 
+// 同梱の .sty/.cls は siunitx v3 と衝突する \newcommand を書き換えて置く（latin1 は全バイトを保つ）。⚠ landmines.md
+function copySupportFile(from: string, to: string): void {
+  if (!/\.(sty|cls)$/i.test(from)) {
+    cpSync(from, to);
+    return;
+  }
+  const raw = readFileSync(from, "latin1");
+  const out = releaseSiunitxNames(raw);
+  if (out === raw) cpSync(from, to);
+  else writeFileSync(to, out, "latin1");
+}
+
 // build dir に main.tex＋支援ファイル(.sty/.cls/.bst/.bib/.bbl は srcpkg/ へ基底名で)＋main と同じ階層の唯一の .bbl(main.bbl として)＋図(main 相対で配置)を置く。
 export function stageBuild(
   buildDir: string,
@@ -246,13 +258,13 @@ export function stageBuild(
   const bases: string[] = [];
   for (const sty of collectSupportFiles(opts.sourceDir)) {
     const base = path.basename(sty);
-    cpSync(sty, path.join(pkgDir, base));
+    copySupportFile(sty, path.join(pkgDir, base));
     bases.push(base);
     // \documentclass{style/naturep} のようにディレクトリ付きで読む支援ファイルは、main からの相対位置にも置く。⚠ landmines.md
     const rel = path.relative(opts.mainDir, sty);
     if (rel.includes(path.sep) && !rel.startsWith("..") && !path.isAbsolute(rel)) {
       mkdirSync(path.dirname(path.join(buildDir, rel)), { recursive: true });
-      cpSync(sty, path.join(buildDir, rel));
+      copySupportFile(sty, path.join(buildDir, rel));
     }
   }
   const distributed = resolver(bases);

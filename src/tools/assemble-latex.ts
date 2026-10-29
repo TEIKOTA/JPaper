@@ -91,6 +91,18 @@ export function releaseLuatexjaNames(tex: string): string {
   );
 }
 
+// siunitx v3 が新しく定義した命令名（v2 には無かった）。
+const SIUNITX_V3_NAMES = ["unit", "qty", "qtylist", "qtyproduct", "qtyrange", "numproduct", "complexnum", "complexqty"];
+
+// 論文（本文・同梱 .sty）が \newcommand で定義する siunitx v3 の命令名を、定義済みでも通る \DeclareRobustCommand に替える。⚠ landmines.md
+export function releaseSiunitxNames(tex: string): string {
+  const names = SIUNITX_V3_NAMES.join("|");
+  return tex.replace(
+    new RegExp(`\\\\newcommand(\\*?)\\s*(\\{\\s*\\\\(?:${names})\\s*\\}|\\\\(?:${names})(?![A-Za-z@]))`, "g"),
+    "\\DeclareRobustCommand$1$2",
+  );
+}
+
 // 論文の \newcommand{\theH<カウンタ名>} を、カーネルが定義済みでも通る \providecommand に替える。⚠ landmines.md
 export function releaseCounterAnchorNames(tex: string): string {
   return tex.replace(
@@ -351,7 +363,7 @@ export function assembleWithMap(input: {
     if (i < parts.length - 1) out += "\n\n";
   });
   out += `\n${END_DOC}\n`;
-  return { mainTex: releaseCounterAnchorNames(releaseLuatexjaNames(out)), layout, sourceMap };
+  return { mainTex: releaseCounterAnchorNames(releaseSiunitxNames(releaseLuatexjaNames(out))), layout, sourceMap };
 }
 
 export function segmentAtLine(sourceMap: SourceSpan[], line: number): string | undefined {

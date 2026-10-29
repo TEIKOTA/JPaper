@@ -220,6 +220,12 @@
 - **なぜ意図的か**: 今の LaTeX カーネル（TeX Live 2025、形式版 2025-11-01）は `\@definecounter` でカウンタを作るたびに `\theH<名前>` を定義するので、古い hyperref 向けの回避策 `\newcommand{\theHalgorithm}{\arabic{algorithm}}` が `Command \theHalgorithm already defined` で組版を落とす（実測: 1406.2661。hyperref を読まない最小の文書でも同じ）。共通テンプレートも原前文を引き継ぐので同じ行で落ちる。`\theH…` は hyperref のアンカー名にだけ使われ、カーネルの定義も番号を出すだけなので、論文の定義を捨てても PDF の見た目は変わらない。`\DeclareRobustCommand` にすると `\xdef` の中で展開されず、アンカー名が壊れる。
 - **正本ポインタ**: issue #425。回帰テストは `src/tools/assemble-latex.test.ts`・`src/tools/bilingual-latex.test.ts`。
 
+## `src/tools/assemble-latex.ts`・`src/tools/build-gate.ts` — 論文の `\newcommand{\unit}` などを `\DeclareRobustCommand` に替える（本文と同梱 `.sty`）
+
+- **おかしく見える点**: 原文の `\newcommand` を、名前が siunitx v3 の新しい命令（`\unit` `\qty` `\qtylist` `\qtyproduct` `\qtyrange` `\numproduct` `\complexnum` `\complexqty`）のときだけ書き換える。本文（`releaseSiunitxNames`）に加え、同梱の `.sty`/`.cls` を `srcpkg/` へ置くときにも書き換え（`copySupportFile`）、原文の .sty を加工して置いている。
+- **なぜ意図的か**: 古い siunitx（v2）には `\unit` が無かったので、論文の `.sty` が `\usepackage{siunitx}` の後に `\newcommand{\unit}{\boldsymbol{1}}` を置いても組めた。今の TeX Live の siunitx v3 は `\unit` を定義するので `Command \unit already defined` で落ちる（実測: 2201.04234 の `lifetime.sty` 41 行目で siunitx を読み、321 行目で `\unit` を定義。JPaper は siunitx を注入していない）。衝突は論文自身の読み込みと配布パッケージの版の組で、JPaper の注入では起きない。`\DeclareRobustCommand` は定義済みでも上書きでき、論文が本文で使う意味（上の例では単位ベクトル）が勝つ。v2 にもあった `\num` `\si` `\SI` は、v2 の時代から衝突していたので対象にしない。
+- **正本ポインタ**: issue #531。回帰テストは `src/tools/assemble-latex.test.ts`・`src/tools/build-gate.test.ts`・`src/tools/assemble-latex.typeset.test.ts`。
+
 ## `src/tools/build-gate.ts` — サブディレクトリの支援ファイルを `srcpkg/` と main からの相対位置の両方に置く
 
 - **おかしく見える点**: 同梱の `.cls` / `.sty` などは `srcpkg/` へ基底名で置くのに、サブディレクトリにあるものだけ組版ディレクトリの同じ相対位置にも複製している。

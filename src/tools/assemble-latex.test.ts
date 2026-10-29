@@ -13,6 +13,7 @@ import {
   fuseCaptionParagraphs,
   releaseLuatexjaNames,
   releaseCounterAnchorNames,
+  releaseSiunitxNames,
   separateCjkAfterControlWords,
   classPackages,
 } from "./assemble-latex.js";
@@ -365,5 +366,15 @@ describe("classPackages", () => {
     expect(assembleWithMap({ cleanLatex: tex, segments: [{ id: "s", tex: "x" } as never], mode: "template" }).mainTex).toContain(
       "\\usepackage[round,authoryear]{natbib}",
     );
+  });
+});
+
+describe("releaseSiunitxNames", () => {
+  it("siunitx v3 の命令名の \\newcommand だけ \\DeclareRobustCommand に替える", () => {
+    expect(releaseSiunitxNames("\\newcommand{\\unit}{\\boldsymbol{1}}")).toBe("\\DeclareRobustCommand{\\unit}{\\boldsymbol{1}}");
+    expect(releaseSiunitxNames("\\newcommand\\qty[1]{x}")).toBe("\\DeclareRobustCommand\\qty[1]{x}");
+    expect(releaseSiunitxNames("\\newcommand*{ \\unit }{x}")).toBe("\\DeclareRobustCommand*{ \\unit }{x}");
+    const others = "\\newcommand{\\units}{x}\\newcommand\\unitary{y}\\newcommand{\\num}{z}";
+    expect(releaseSiunitxNames(others)).toBe(others);
   });
 });

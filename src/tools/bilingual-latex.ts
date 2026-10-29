@@ -3,6 +3,7 @@ import {
   extractPreamble,
   releaseCounterAnchorNames,
   releaseLuatexjaNames,
+  releaseSiunitxNames,
   sanitizeMath,
   separateCjkAfterControlWords,
 } from "./assemble-latex.js";
@@ -774,7 +775,7 @@ export function assembleBilingual(input: {
   const { pairs, fallbackSegments } = pairSegments(commented.source, commented.translated, profile);
   const { blocks, titled } = renderPairs(pairs, { left: extractPreamble(input.cleanLatex), right: preamble }, profile);
   const mainTex = releaseCounterAnchorNames(
-    releaseLuatexjaNames(`${bilingualPreamble(preamble, profile)}${BEGIN}\n${paracolBody(blocks)}\\end{document}\n`),
+    releaseSiunitxNames(releaseLuatexjaNames(`${bilingualPreamble(preamble, profile)}${BEGIN}\n${paracolBody(blocks)}\\end{document}\n`)),
   );
   const titleUnplaced = profile.maketitle && !titled && input.source.some((s) => TITLE_COMMANDS.test(stripComments(s.tex)));
   return { mainTex, pairs: blocks.length, fallbackSegments, titleUnplaced, commentMismatch: commented.commentMismatch };
