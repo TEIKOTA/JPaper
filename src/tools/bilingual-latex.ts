@@ -358,13 +358,15 @@ const SETUP = [
   "\\setlength{\\columnsep}{32mm}",
   "\\setlength{\\parindent}{1em}",
   "\\makeatletter",
+  // 著者欄の連続した \\ を、centering の段落でも空の行として扱う。⚠ landmines.md
+  "\\def\\jp@cr{\\ifhmode\\expandafter\\@centercr\\else\\leavevmode\\null\\par\\expandafter\\@xcentercr\\fi}",
   "\\newcommand{\\jp@titleblock}[2]{%",
   "  \\par\\hrule height 4\\p@\\vskip 0.15in",
   "  {\\centering\\Large\\bfseries\\begingroup\\let\\thanks\\@gobble #1\\endgroup\\par}",
   "  \\vskip 0.2in\\hrule height 1\\p@\\vskip 0.1in",
   // 著者の \\and / \\And / \\AND はタイトルの表組みの中でしか使えないので、ここでは区切りの空白にする。⚠ landmines.md
   // jmlr2e の \name・\email・\addr は \maketitle の中でだけ定義されるので、未定義なら同じ意味で補う。⚠ landmines.md
-  "  {\\centering\\begingroup\\let\\thanks\\@gobble\\def\\and{\\unskip\\quad}\\let\\And\\and\\def\\AND{\\unskip\\par}" +
+  "  {\\centering\\begingroup\\let\\thanks\\@gobble\\def\\and{\\unskip\\quad}\\let\\And\\and\\def\\AND{\\unskip\\par}\\let\\\\\\jp@cr" +
     "\\@ifundefined{name}{\\def\\name{\\normalsize\\bfseries}}{}\\@ifundefined{email}{\\def\\email{\\hfill\\small\\scshape}}{}" +
     "\\@ifundefined{addr}{\\def\\addr{\\small\\itshape}}{}#2\\endgroup\\par}",
   "  \\vskip 0.15in}",

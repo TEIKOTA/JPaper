@@ -310,6 +310,12 @@ describe("タイトル", () => {
     );
   });
 
+  it("著者欄の \\\\ は \\jp@cr に替えてから展開する（issue #539）", () => {
+    const pre = bilingualPreamble("");
+    expect(pre).toContain("\\def\\AND{\\unskip\\par}\\let\\\\\\jp@cr\\@ifundefined{name}");
+    expect(pre).toContain("\\def\\jp@cr{\\ifhmode\\expandafter\\@centercr\\else");
+  });
+
   it("著者欄では未定義の \\name・\\email・\\addr（jmlr2e の \\maketitle の中だけの命令）を補ってから展開する（issue #440）", () => {
     const pre = bilingualPreamble("");
     const author = pre.slice(pre.indexOf("\\def\\and{\\unskip\\quad}"), pre.indexOf("#2\\endgroup") + 2);
