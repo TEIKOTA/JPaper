@@ -115,3 +115,12 @@ describe.skipIf(!hasLuaTex)("xcolor に color オプションを渡す原文を�
     expect(build(own, "\\textcolor{red}{x}", mode)).toEqual([]);
   }, 300_000);
 });
+
+// 前文に \newcommand{\x} がある論文（2201.04234 の lifetime.sty の形。issue #518）。
+const X_OWN = ["\\documentclass{article}", "\\newcommand{\\x}{x}", "\\begin{document}", "\\end{document}"].join("\n");
+
+describe.skipIf(!hasLuaTex)("luatexja が残す \\x（issue #518）", () => {
+  it.each(["original", "template"] as const)("前文の \\newcommand{\\x} が %s で組める", (mode) => {
+    expect(build(X_OWN, "$\\x$ 本文。", mode)).toEqual([]);
+  }, 300_000);
+});
