@@ -50,7 +50,7 @@ const SUPPORT_EXT = /\.(sty|cls|bst|bib|bbl)$/i;
 const FATAL_TRAILER = /^==> Fatal error occurred/;
 const UNDEFINED_ENV = /LaTeX Error: Environment ([A-Za-z@*]+) undefined/;
 const UNDEFINED_CS = /^Undefined control sequence/;
-const PARAGRAPH_ENDED = /^Paragraph ended before \\([a-zA-Z@]+) was complete/;
+const PARAGRAPH_ENDED = /^Paragraph ended before \\([a-zA-Z@]+)\s+was complete/;
 // エラー直後の `l.<行> <文脈>` 行の末尾に、未定義だった制御綴りが出る。
 const CONTEXT_LINE = /^l\.\d+ .*?\\([a-zA-Z@]+)\s*$/m;
 

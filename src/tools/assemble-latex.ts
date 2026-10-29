@@ -295,7 +295,7 @@ export function sanitizeMath(tex: string): string {
 
 function assembleBody(chapters: string[]): string {
   return chapters
-    .map((c) => sanitizeMath(c).trim())
+    .map((c) => sanitizeMath(joinFrontBlankLines(c)).trim())
     .filter((c) => c !== "")
     .join("\n\n");
 }
@@ -304,9 +304,11 @@ function assembleBody(chapters: string[]): string {
 const SHORT_FRONT_COMMANDS = ["author", "title", "date"];
 const BLANK_LINES = /\r?\n(?:[ \t]*\r?\n)+/g;
 
-// 前文の \author・\title・\date の引数の中の空行を改行 1 つに詰める。契約付録 §7
+// \author・\title・\date の引数の中の空行を改行 1 つに詰める（前文と本文の両方）。契約付録 §7
 export function joinFrontBlankLines(preamble: string): string {
-  const spans = SHORT_FRONT_COMMANDS.flatMap((n) => commandSpans(preamble, n)).sort((a, b) => a[0] - b[0]);
+  // コメントの中の波括弧（``}'' など）で引数が閉じたと読まないよう、コメントを空白にした写しで区間を求める。
+  const masked = preamble.replace(/(^|[^\\])((?:\\\\)*)%[^\n]*/g, (m, a: string, b: string) => a + b + " ".repeat(m.length - a.length - b.length));
+  const spans = SHORT_FRONT_COMMANDS.flatMap((n) => commandSpans(masked, n)).sort((a, b) => a[0] - b[0]);
   let out = "";
   let at = 0;
   for (const [s, e] of spans) {
@@ -361,7 +363,7 @@ export function assembleWithMap(input: {
   const layout: Layout = input.mode ?? "original";
   let out = `${buildPreamble(input.cleanLatex, layout, input.title)}${BEGIN_DOC}\n`;
   const parts = input.segments
-    .map((s) => ({ id: s.id, tex: sanitizeMath(fuseCaptionParagraphs(separateCjkAfterControlWords(s.tex))).trim() }))
+    .map((s) => ({ id: s.id, tex: sanitizeMath(joinFrontBlankLines(fuseCaptionParagraphs(separateCjkAfterControlWords(s.tex)))).trim() }))
     .filter((p) => p.tex !== "");
   const sourceMap: SourceSpan[] = [];
   parts.forEach((p, i) => {

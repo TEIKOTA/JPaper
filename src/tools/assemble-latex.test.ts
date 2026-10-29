@@ -384,4 +384,16 @@ describe("joinFrontBlankLines（issue #517）", () => {
       expect(mainTex, mode).not.toMatch(/\\author\{[^}]*\n[ \t]*\n/);
     }
   });
+  it("本文（\\begin{document} の後）の訳文に写された空行も詰める", () => {
+    const tex = "\\documentclass{article}\n\\begin{document}\n\\author{A\n\nB}\n\\end{document}\n";
+    const body = "\\author{あ\n\nい}\n\n本文。";
+    for (const mode of ["original", "template"] as const) {
+      expect(assembleWithMap({ cleanLatex: tex, segments: [{ id: "s", tex: body }], mode }).mainTex, mode).toContain("\\author{あ\nい}\n\n本文。");
+      expect(assembleLatex({ cleanLatex: tex, chapters: [body], mode }).mainTex, mode).toContain("\\author{あ\nい}\n\n本文。");
+    }
+  });
+  it("コメントの中の波括弧で引数が閉じたと読まず、閉じ括弧までの空行を詰める", () => {
+    const pre = "\\author{A\n% omit up to the closing ``}\'\'.\n\nB}\n\n\\x";
+    expect(joinFrontBlankLines(pre)).toBe("\\author{A\n% omit up to the closing ``}\'\'.\nB}\n\n\\x");
+  });
 });
