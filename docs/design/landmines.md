@@ -214,11 +214,11 @@
 - **なぜ意図的か**: `luatexja-core.sty` はグループの外で `\edef\x{…}` をして `\x` を残す。論文の同梱 `.sty` の `\newcommand{\x}{x}` が `Command \x already defined` で落ちる（実測: 2201.04234 の `lifetime.sty`。原前文でも共通テンプレでも同じ）。luatexja の直後に未定義へ戻せば論文の定義が通る。luatexja を読む 2 箇所（`JP_FONT`・`templatePreamble`）の両方に置く。
 - **正本ポインタ**: 契約付録 §7、issue #518。回帰テストは `src/tools/assemble-latex.test.ts`・`src/tools/assemble-latex.typeset.test.ts`。
 
-## `src/tools/assemble-latex.ts` — 論文の `\newcommand{\mc}` / `\newcommand{\gt}` を `\DeclareRobustCommand` に替える
+## `src/tools/assemble-latex.ts`・`src/tools/build-gate.ts` — 論文の `\newcommand{\mc}` / `\newcommand{\gt}` を `\DeclareRobustCommand` に替える（本文と同梱 `.sty`）
 
-- **おかしく見える点**: 原文の `\newcommand` を、名前が `\mc` / `\gt` のときだけ書き換えている。
-- **なぜ意図的か**: luatexja はこの 2 つを和文書体の切り替えとして定義済みなので、論文が同じ名前を `\newcommand` すると `Command \mc already defined` で組版が落ちる（実測: 2011.03395 seg-0059 の `\newcommand{\mc}[1]{\mathcal{#1}}`）。`\DeclareRobustCommand` は定義済みでも上書きでき、論文の意味が勝つ。
-- **正本ポインタ**: 契約付録 §7、issue #320。回帰テストは `src/tools/assemble-latex.test.ts`。
+- **おかしく見える点**: 原文の `\newcommand` を、名前が `\mc` / `\gt` のときだけ書き換えている。本文（`releaseLuatexjaNames`）に加え、同梱の `.sty`/`.cls` を `srcpkg/` へ置くとき（`copySupportFile`）にも同じ関数で書き換え、原文の .sty を加工して置いている。
+- **なぜ意図的か**: luatexja はこの 2 つを和文書体の切り替えとして定義済みなので、論文が同じ名前を `\newcommand` すると `Command \mc already defined` で組版が落ちる（実測: 2011.03395 seg-0059 の `\newcommand{\mc}[1]{\mathcal{#1}}`、同梱 `.sty` では 2206.13089 の `style.sty` 56 行目 `\newcommand{\mc}{\mathcal}`）。`\DeclareRobustCommand` は定義済みでも上書きでき、論文の意味が勝つ。
+- **正本ポインタ**: 契約付録 §7、issue #320・#538。回帰テストは `src/tools/assemble-latex.test.ts`・`src/tools/build-gate.test.ts`・`src/tools/assemble-latex.typeset.test.ts`。
 
 ## `src/tools/assemble-latex.ts` — 論文の `\newcommand{\theH…}` を `\providecommand` に替える
 
