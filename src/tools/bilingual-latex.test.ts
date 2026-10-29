@@ -304,9 +304,9 @@ describe("タイトル", () => {
 
   it("タイトルブロックは題の \\thanks も潰す", () => {
     expect(bilingualPreamble("")).toContain("\\bfseries\\begingroup\\let\\thanks\\@gobble #1\\endgroup");
-    // 著者欄は表の外で組むので、\and 系が無ければ区切りの空白にし（issue #324）、あれば著者ごとの表組みにしてから展開する（issue #529）。
+    // 著者欄は表の外で組むので、\and 系が無ければ区切りの空白にし（issue #324）、あれば著者ごとの幅つきの箱（varwidth）にしてから展開する（issue #529）。
     expect(bilingualPreamble("")).toContain("\\else\\let\\jp@open\\relax\\let\\jp@close\\relax\\def\\and{\\unskip\\quad}\\let\\And\\and\\def\\AND{\\unskip\\par}\\fi");
-    expect(bilingualPreamble("")).toContain("\\def\\and{\\end{tabular}\\hskip 1em plus 0.5em\\begin{tabular}[t]{c}}\\let\\And\\and");
+    expect(bilingualPreamble("")).toContain("\\def\\and{\\end{varwidth}\\hskip 1em plus 0.5em\\jp@vw}\\let\\And\\and");
   });
 
   it("著者欄では未定義の \\name・\\email・\\addr（jmlr2e の \\maketitle の中だけの命令）を補ってから展開する（issue #440）", () => {

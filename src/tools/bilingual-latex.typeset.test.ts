@@ -453,7 +453,7 @@ describe.skipIf(!hasAcmart)("acmart の論文の対訳を lualatex で組む（i
 });
 
 // 著者欄の \and（issue #324・#529）: 対訳のタイトルブロックを lualatex で組み、1 ページ目の左の半分の行を返す。
-function buildAuthors(author: string, pre: string = "\\documentclass{article}\n"): { ok: boolean; log: string; lines: string[]; dir: string } {
+function buildAuthors(author: string, pre: string = "\\documentclass{article}\n"): { ok: boolean; log: string; lines: string[]; words: { w: string; x0: number; x1: number }[]; dir: string } {
   const dir = mkdtempSync(path.join(tmpdir(), "jpaper-and-"));
   const body = `\\title{Left Title}\n\n${author}\n\n\\maketitle\n\nIntro text.`;
   const { mainTex } = assembleBilingual({
@@ -465,7 +465,10 @@ function buildAuthors(author: string, pre: string = "\\documentclass{article}\n"
   writeFileSync(path.join(dir, "main.tex"), mainTex);
   const r = spawnSync("lualatex", ["-interaction=nonstopmode", "-halt-on-error", "main.tex"], { cwd: dir, encoding: "utf8", timeout: 240_000 });
   const text = spawnSync("pdftotext", ["-f", "1", "-l", "1", "-x", "0", "-y", "0", "-W", "595", "-H", "842", "-layout", "main.pdf", "-"], { cwd: dir, encoding: "utf8" }).stdout;
-  return { ok: r.status === 0, log: r.stdout.slice(-3000), lines: text.split("\n"), dir };
+  // 語の左端・右端（左の段の右端と右の段の左端の間の余白に語が掛からないかを見る）。
+  const bbox = spawnSync("pdftotext", ["-f", "1", "-l", "1", "-bbox", "main.pdf", "-"], { cwd: dir, encoding: "utf8" }).stdout;
+  const words = [...bbox.matchAll(/<word xMin="([\d.]+)" yMin="[\d.]+" xMax="([\d.]+)" yMax="[\d.]+">([^<]*)<\/word>/g)].map((m) => ({ w: m[3]!, x0: Number(m[1]), x1: Number(m[2]) }));
+  return { ok: r.status === 0, log: r.stdout.slice(-3000), lines: text.split("\n"), words, dir };
 }
 
 const hasLua = spawnSync("lualatex", ["--version"], { stdio: "ignore" }).status === 0;
@@ -501,6 +504,32 @@ describe.skipIf(!hasLua)("対訳のタイトルブロックの著者欄の \\and
       } finally {
         rmSync(dir, { recursive: true, force: true });
       }
+    }
+  }, 240_000);
+
+  it("1 行が段の幅より長い著者は、箱の中で折り返して反対の段に重ならない", () => {
+    const long = "Department of Computer Science and Engineering, School of Engineering and Applied Sciences, University of Somewhere Far Away, Springfield, Country";
+    const { ok, log, lines, words, dir } = buildAuthors(`\\author{Ann Lee\\\\ ${long} \\and Bob Kay\\\\ Y}`);
+    try {
+      expect(ok, log).toBe(true);
+      // 左の段の右端は約 550pt、右の段の左端は約 640pt。この間（段の間）に語が掛かれば、段からはみ出している。
+      expect(words.filter((x) => x.x1 > 560 && x.x0 < 630).map((x) => x.w)).toEqual([]);
+      expect(words.some((x) => x.w === "Country" && x.x1 < 560)).toBe(true);
+      expect(lines.join("\n")).toContain("Bob Kay");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 240_000);
+
+  it("\\AND は著者欄の段落を改める（\\And は横に並べる）", () => {
+    const { ok, log, lines, dir } = buildAuthors("\\author{Ann Lee\\\\ X \\And Bob Kay\\\\ Y \\AND Cy Poe\\\\ Z}");
+    try {
+      expect(ok, log).toBe(true);
+      const row = (n: string): string => lines.find((l) => l.includes(n)) ?? "";
+      expect(row("Ann Lee")).toContain("Bob Kay");
+      expect(row("Ann Lee")).not.toContain("Cy Poe");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
     }
   }, 240_000);
 });
