@@ -359,6 +359,8 @@ const SETUP = [
   "\\setlength{\\parindent}{1em}",
   "\\makeatletter",
   "\\newcommand{\\jp@titleblock}[2]{%",
+  // ⚠ landmines.md
+  "  \\global\\let\\maketitle\\relax",
   "  \\par\\hrule height 4\\p@\\vskip 0.15in",
   "  {\\centering\\Large\\bfseries\\begingroup\\let\\thanks\\@gobble #1\\endgroup\\par}",
   "  \\vskip 0.2in\\hrule height 1\\p@\\vskip 0.1in",
