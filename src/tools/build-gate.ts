@@ -292,7 +292,7 @@ export function sandboxEnv(base: NodeJS.ProcessEnv, buildDir: string): NodeJS.Pr
     BSTINPUTS: `${path.delimiter}${pkg}`,
     openout_any: "p",
     shell_escape: "f",
-    // 既定の 79 桁で折り返すと、長いパスのエラーが 2 行に割れて ERROR_LINE が読めない。契約付録 §6
+    // 契約付録 §6
     max_print_line: "10000",
   };
 }

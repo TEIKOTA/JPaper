@@ -63,6 +63,12 @@ describe("classifyLog", () => {
       "xcolor.sty:265: LaTeX Error: Unknown option 'color' for package xcolor.",
     ]);
   });
+  it("build 内の同梱パッケージ（絶対パスで出る）も basename だけにする", () => {
+    const log = "/work/build/srcpkg/lifetime.sty:109: LaTeX Error: Command \\x already defined.";
+    expect(classifyLog(log, MAP).structuralErrors).toEqual([
+      "lifetime.sty:109: LaTeX Error: Command \\x already defined.",
+    ]);
+  });
   it("原文にも存在する未定義環境は構造起因にする（本文行でも再訳に回さない）", () => {
     const log = "./main.tex:12: LaTeX Error: Environment frontmatter undefined.";
     const original = "\\documentclass{elsarticle}\n\\begin{document}\n\\begin{frontmatter}\\end{frontmatter}";
