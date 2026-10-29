@@ -399,3 +399,11 @@
 - **おかしく見える点**: Windows で `.cmd` を起動するなら `spawn(..., { shell: true })` で足りるのに、`.cmd` の中身を正規表現で読んで対象の JS のパスを取り出し、`process.execPath` で起動している。
 - **なぜ意図的か**: shell を介すと cmd.exe が引数を解釈し直す。claude には複数行の system prompt を `--append-system-prompt` の引数で渡しており、cmd.exe の引数は改行を運べず、`%`・`^`・`"` も別の意味になる。shell なしで `.cmd` を spawn すると Node は EINVAL で拒む（CVE-2024-27980 の対策）。exe は libuv が引数を正しくクォートする。
 - **正本ポインタ**: 契約付録 §5（Windows での外部コマンドの起動と停止）・issue #462。
+
+## `src/tools/assemble-latex.ts` — `joinFrontBlankLines` が前文と本文の `\author`・`\title`・`\date` の引数の空行を詰める
+
+- **おかしく見える点**: 原文をそのまま引き継ぐ前文・訳文なのに、この 3 つの命令の引数の中の空行だけを改行 1 つに書き換えている。
+- **なぜ意図的か**: これらは `\long` でないので、引数の中の空行（段落区切り）で `Paragraph ended before \author was complete.` になって組版が止まる（実測: 2107.03315。原文のまま pdflatex で組んでも同じ）。詰める命令は `\author`・`\title`・`\date` の 3 つに固定する（`FRONT_COMMANDS`。分類 `offendingName` も同じ集合に限る。`\label` や `\hspace` の引数の途中の空行は、訳文が入れうる翻訳起因なので構造起因にしない）。class が `\author` を `\long` にしていても（IEEEtran など）詰める。そこでは空行が段落区切りとして意図されていた場合に段落が 1 つに繋がるが、この 3 つの引数に段落を意図した空行が要る原文は見ていない。
+- **おかしく見える点（2）**: 引数の終わりを求めるときだけ、コメントを空白に潰した写しを使う。ソースのコメントに ``}'' があると（ICCV テンプレートの「closing ``}''」）、波括弧の対応表がそこで引数を閉じてしまい、空行が詰まらない。`Paragraph ended` の照合が `\s+` なのも、実ログが `\author  was`（空白 2 つ）だから（実測）。
+- **おかしく見える点（3）**: 対訳の `paragraphsOf` も、段落に割る前に同じ関数を通す。割った後では、引数の中の空行で `\author{` と `}` が別のペア（左右の別の段）に入り、どの段でも `Paragraph ended` で落ちる（実測: 2107.03315 の対訳 PDF）。
+- **正本ポインタ**: 契約付録 §6、issue #517。回帰テストは `src/tools/assemble-latex.test.ts`・`assemble-latex.typeset.test.ts`。

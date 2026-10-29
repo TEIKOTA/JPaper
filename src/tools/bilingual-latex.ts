@@ -1,6 +1,7 @@
 // 契約付録 §7・対訳 PDF ADR(20261006)。原文と訳文を段落ペアにして paracol の対訳 main.tex を組み立てる。
 import {
   extractPreamble,
+  joinFrontBlankLines,
   releaseCounterAnchorNames,
   releaseLuatexjaNames,
   releaseSiunitxNames,
@@ -154,7 +155,9 @@ export function unwrapTitleBlock(tex: string, profile: FrontMatterProfile = DEFA
 }
 
 export function paragraphsOf(tex: string, profile: FrontMatterProfile = DEFAULT_PROFILE): string[] {
-  return balanceParagraphs(splitParagraphs(sanitizeMath(separateCjkAfterControlWords(unwrapTitleBlock(tex, profile)))));
+  return balanceParagraphs(
+    splitParagraphs(sanitizeMath(separateCjkAfterControlWords(unwrapTitleBlock(joinFrontBlankLines(tex), profile)))),
+  );
 }
 
 const COMMENT_BEGIN = /\\begin\s*\{comment\}/;
@@ -786,7 +789,7 @@ export function assembleBilingual(input: {
   const profile = detectProfile(input.cleanLatex);
   const commented = commentOutCommentEnvs(input.source, input.translated);
   const { pairs, fallbackSegments } = pairSegments(commented.source, commented.translated, profile);
-  const { blocks, titled } = renderPairs(pairs, { left: extractPreamble(input.cleanLatex), right: preamble }, profile);
+  const { blocks, titled } = renderPairs(pairs, { left: joinFrontBlankLines(extractPreamble(input.cleanLatex)), right: preamble }, profile);
   const mainTex = releaseCounterAnchorNames(
     releaseSiunitxNames(releaseLuatexjaNames(`${bilingualPreamble(preamble, profile)}${BEGIN}\n${paracolBody(blocks)}\\end{document}\n`)),
   );

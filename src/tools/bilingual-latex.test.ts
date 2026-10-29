@@ -1089,3 +1089,17 @@ describe("comment 環境（issue #440）", () => {
     });
   });
 });
+
+describe("前付けの引数の空行（issue #517）", () => {
+  const doc = (pre: string): string => `\\documentclass{article}\n${pre}\\begin{document}\n\\end{document}\n`;
+  it("原文の前文の \\title の空行を詰めて、左のタイトルブロックに渡す", () => {
+    const { mainTex } = assembleBilingual({
+      cleanLatex: doc("\\title{T\n\nU}\n"),
+      translatedMainTex: doc("\\title{T U}\n"),
+      source: [{ id: "s", tex: "\\maketitle\n\nHello." }],
+      translated: [{ id: "s", tex: "\\maketitle\n\nこんにちは。" }],
+    });
+    expect(mainTex).toContain("\\jpTitleBlock{T\nU}");
+    expect(mainTex).not.toMatch(/\\jpTitleBlock\{[^}]*\n[ \t]*\n/);
+  });
+});
