@@ -140,6 +140,31 @@ describe.skipIf(!hasLuaTex)("同梱 .sty の \\unit が siunitx v3 と衝突す�
   }, 300_000);
 });
 
+// 同梱 .sty が luatexja の \mc を \newcommand する形（2206.13089 の style.sty 56 行目）。
+describe.skipIf(!hasLuaTex)("同梱 .sty の \\mc が luatexja と衝突する論文を組む（issue #538）", () => {
+  it.each(["original", "template"] as const)("%s: \\newcommand{\\mc}{\\mathcal} があっても PDF が出る", (mode) => {
+    const src = mkdtempSync(path.join(tmpdir(), "jpaper-mc-src-"));
+    const dir = path.join(mkdtempSync(path.join(tmpdir(), "jpaper-mc-")), "b");
+    try {
+      writeFileSync(path.join(src, "style.sty"), "\\newcommand{\\mc}{\\mathcal}\n\\newcommand{\\gt}{\\mathbf}\n");
+      const cleanLatex = ["\\documentclass{article}", "\\usepackage{amsmath,amssymb}", "\\usepackage{style}", "\\begin{document}", "\\end{document}"].join("\n");
+      const { mainTex } = assembleWithMap({ cleanLatex, segments: [{ id: "seg-0000", tex: "$\\mc{L}$ と $\\gt{x}$" }], mode });
+      stageBuild(dir, mainTex, { sourceDir: src, mainDir: src, figures: [] }, () => new Set<string>());
+      const r = spawnSync("lualatex", ["-interaction=nonstopmode", "-halt-on-error", "main.tex"], {
+        cwd: dir,
+        encoding: "utf8",
+        timeout: 240_000,
+        env: sandboxEnv(process.env, dir),
+      });
+      expect(r.stdout.split("\n").filter((l) => l.startsWith("!"))).toEqual([]);
+      expect(existsSync(path.join(dir, "main.pdf"))).toBe(true);
+    } finally {
+      rmSync(src, { recursive: true, force: true });
+      rmSync(path.dirname(dir), { recursive: true, force: true });
+    }
+  }, 300_000);
+});
+
 describe.skipIf(!hasLuaTex)("xcolor に color オプションを渡す原文を組む（issue #521）", () => {
   const own = ["\\documentclass{article}", "\\usepackage[svgnames,dvipsnames,color,table]{xcolor}", "\\begin{document}", "\\end{document}"].join("\n");
 
