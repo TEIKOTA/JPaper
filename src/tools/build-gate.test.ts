@@ -58,6 +58,19 @@ describe("classifyLog", () => {
     expect(c.failedSegments).toEqual([]);
     expect(c.structuralErrors).toEqual(["nips_2017.sty:42: Undefined control sequence."]);
   });
+  it("build の外の絶対パスは basename だけにする（ホストのパスを出さない・理由を押し出さない）", () => {
+    const log =
+      "/usr/local/texlive/2025/texmf-dist/tex/latex/xcolor/xcolor.sty:265: LaTeX Error: Unknown option 'color' for package xcolor.";
+    expect(classifyLog(log, MAP).structuralErrors).toEqual([
+      "xcolor.sty:265: LaTeX Error: Unknown option 'color' for package xcolor.",
+    ]);
+  });
+  it("build 内の同梱パッケージ（絶対パスで出る）も basename だけにする", () => {
+    const log = "/work/build/srcpkg/lifetime.sty:109: LaTeX Error: Command \\x already defined.";
+    expect(classifyLog(log, MAP).structuralErrors).toEqual([
+      "lifetime.sty:109: LaTeX Error: Command \\x already defined.",
+    ]);
+  });
   it("原文にも存在する未定義環境は構造起因にする（本文行でも再訳に回さない）", () => {
     const log = "./main.tex:12: LaTeX Error: Environment frontmatter undefined.";
     const original = "\\documentclass{elsarticle}\n\\begin{document}\n\\begin{frontmatter}\\end{frontmatter}";
@@ -178,6 +191,26 @@ describe("checkFigures", () => {
 });
 
 describe("stageBuild", () => {
+  it("同梱 .sty の \\newcommand{\\unit} は \\DeclareRobustCommand にして置く（siunitx v3 と衝突するため）", () => {
+    const src = mkTemp();
+    writeFileSync(path.join(src, "life.sty"), "\\usepackage{siunitx}\n\\newcommand{\\unit}{\\boldsymbol{1}}\n");
+    const build = path.join(mkTemp(), "b");
+    stageBuild(build, "MAIN", { sourceDir: src, mainDir: src, figures: [] }, () => new Set<string>());
+    expect(readFileSync(path.join(build, SRC_PKG_DIR, "life.sty"), "utf8")).toBe(
+      "\\usepackage{siunitx}\n\\DeclareRobustCommand{\\unit}{\\boldsymbol{1}}\n",
+    );
+  });
+
+  it("同梱 .sty の \\newcommand{\\mc}・\\newcommand{\\gt} は \\DeclareRobustCommand にして置く（luatexja と衝突するため）", () => {
+    const src = mkTemp();
+    writeFileSync(path.join(src, "style.sty"), "\\newcommand{\\mc}{\\mathcal}\n\\newcommand\\gt[1]{#1}\n\\newcommand{\\mcx}{x}\n");
+    const build = path.join(mkTemp(), "b");
+    stageBuild(build, "MAIN", { sourceDir: src, mainDir: src, figures: [] }, () => new Set<string>());
+    expect(readFileSync(path.join(build, SRC_PKG_DIR, "style.sty"), "utf8")).toBe(
+      "\\DeclareRobustCommand{\\mc}{\\mathcal}\n\\DeclareRobustCommand\\gt[1]{#1}\n\\newcommand{\\mcx}{x}\n",
+    );
+  });
+
   it("main.tex・支援ファイル(.sty/.bib は srcpkg/ へ再帰収集)・図(main 相対)を複製する", () => {
     const src = mkTemp();
     writeFileSync(path.join(src, "nips.sty"), "% sty");
@@ -296,6 +329,9 @@ describe("sandboxEnv", () => {
     const env = sandboxEnv({}, "/b");
     expect(env.shell_escape).toBe("f");
     expect(env.openout_any).toBe("p");
+  });
+  it("TeX のログを 79 桁で折り返さない（長いパスのエラーが 2 行に割れる）", () => {
+    expect(Number(sandboxEnv({}, "/b").max_print_line)).toBeGreaterThanOrEqual(1000);
   });
   it("既存の環境変数は保つ", () => {
     expect(sandboxEnv({ PATH: "/usr/bin" }, "/b").PATH).toBe("/usr/bin");
