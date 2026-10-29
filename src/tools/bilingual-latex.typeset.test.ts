@@ -599,14 +599,10 @@ describe.skipIf(!hasLualatex)("class が古い eso-pic のコードを抱えた�
 
 // \maketitle を 2 回呼ぶ CVPR の型（cvpr.cls は article の二段組を読み込み、\maketitle は定義しない。実例 2007.02915 の cvpr.tex。issue #532）。
 // article の \maketitle は 1 回目で自分を \relax にするので原文は 1 回だけ組むが、対訳は 1 回目をタイトルブロックに置き換える。
-const hasLua =
-  spawnSync("lualatex", ["--version"], { stdio: "ignore" }).status === 0 &&
-  spawnSync("kpsewhich", ["luatexja.sty"], { encoding: "utf8" }).stdout.trim() !== "";
-
 const CVPR_BODY = (title: string, abs: string): string =>
   `\\title{${title}}\n\\author{Ann Lee}\n\\maketitle\n\n%\\pagestyle{empty}\n\\maketitle\n\n${abs}\n\n\\section{Intro}\nBody paragraph.\n`;
 
-describe.skipIf(!hasLua)("\\maketitle を 2 回呼ぶ二段組の class の対訳を lualatex で組む（issue #532）", () => {
+describe.skipIf(!hasLualatex)("\\maketitle を 2 回呼ぶ二段組の class の対訳を lualatex で組む（issue #532）", () => {
   it("表題は左右 1 回ずつ 1 ページ目に出て、本文はその下から始まり、class のページ番号は出ない", () => {
     const dir = mkdtempSync(path.join(tmpdir(), "jpaper-cvpr-"));
     try {
