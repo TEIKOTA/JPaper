@@ -351,7 +351,6 @@ export const PAPER = "onecolumn,paperwidth=420mm,paperheight=297mm,top=18mm,bott
 const SETUP = [
   "% --- JPaper 注入: 対訳 (対訳 PDF ADR 20261006) ---",
   "\\usepackage{paracol}",
-  "\\usepackage{eso-pic}",
   "\\usepackage{xcolor}",
   "\\usepackage{geometry}",
   `\\geometry{${PAPER}}`,
@@ -482,10 +481,10 @@ const BEGIN = [
   `\\newgeometry{${PAPER}}`,
   "\\pagestyle{empty}",
   // ⚠ landmines.md
-  "\\AddToShipoutPictureFG{" +
-    "\\put(105mm,10mm){\\makebox(0,0){\\small 原文 p.\\thepage}}" +
-    "\\put(315mm,10mm){\\makebox(0,0){\\small 和訳 p.\\thepage}}" +
-    "\\put(210mm,0mm){\\color{black!25}\\rule{0.3pt}{297mm}}}",
+  "\\AddToHook{shipout/foreground}{\\begin{picture}(0,0)" +
+    "\\put(105mm,-287mm){\\makebox(0,0){\\small 原文 p.\\thepage}}" +
+    "\\put(315mm,-287mm){\\makebox(0,0){\\small 和訳 p.\\thepage}}" +
+    "\\put(210mm,-297mm){\\color{black!25}\\rule{0.3pt}{297mm}}\\end{picture}}",
 ].join("\n");
 
 export function titleBlock(left: string, right: string): string {
