@@ -25,34 +25,54 @@ const MIN_INTERVAL_MS = 3000;
 const MAX_QUEUE_WAIT_MS = 30_000;
 const DEFAULT_ENDPOINT = "https://export.arxiv.org/e-print/";
 const MAX_RETRIES = 3;
+// 契約付録 §8
+const MAX_RESUMES = 20;
 const globalState = { lastRequestAt: 0 };
 
 function isTransientStatus(status: number): boolean {
   return status === 429 || (status >= 500 && status <= 599);
 }
 
-// Content-Length は自己申告なので、実際に読んだ累積バイト数でも上限を掛ける。
-async function readCapped(res: Response, maxBytes: number): Promise<Buffer> {
+interface Received {
+  chunks: Buffer[];
+  total: number;
+  size: number | null;
+}
+
+function tooLarge(maxBytes: number): JpaperError {
+  return new JpaperError(2, "too-large", `arXiv 応答が上限 ${maxBytes} バイトを超えています`);
+}
+
+// 契約付録 §8
+async function readCapped(res: Response, maxBytes: number, acc: Received): Promise<void> {
   const declared = Number(res.headers?.get?.("content-length"));
-  if (Number.isFinite(declared) && declared > maxBytes) {
-    throw new JpaperError(2, "too-large", `arXiv 応答が上限 ${maxBytes} バイトを超えています`);
-  }
+  if (Number.isFinite(declared) && acc.total + declared > maxBytes) throw tooLarge(maxBytes);
   const body = res.body;
-  if (!body) return Buffer.from(await res.arrayBuffer());
-  const chunks: Buffer[] = [];
-  let total = 0;
+  if (!body) {
+    const buf = Buffer.from(await res.arrayBuffer());
+    if (acc.total + buf.byteLength > maxBytes) throw tooLarge(maxBytes);
+    acc.chunks.push(buf);
+    acc.total += buf.byteLength;
+    return;
+  }
   const reader = body.getReader();
   for (;;) {
     const { done, value } = await reader.read();
     if (done) break;
-    total += value.byteLength;
-    if (total > maxBytes) {
+    if (acc.total + value.byteLength > maxBytes) {
       await reader.cancel();
-      throw new JpaperError(2, "too-large", `arXiv 応答が上限 ${maxBytes} バイトを超えています`);
+      throw tooLarge(maxBytes);
     }
-    chunks.push(Buffer.from(value));
+    acc.chunks.push(Buffer.from(value));
+    acc.total += value.byteLength;
   }
-  return Buffer.concat(chunks);
+}
+
+// 契約付録 §8
+function parseContentRange(res: Response): { start: number; size: number | null } | null {
+  const m = /^bytes\s+(\d+)-\d*\/(\d+|\*)/i.exec(res.headers?.get?.("content-range") ?? "");
+  if (!m) return null;
+  return { start: Number(m[1]), size: m[2] === "*" ? null : Number(m[2]) };
 }
 
 export async function fetchArxivSource(
@@ -82,10 +102,17 @@ export async function fetchArxivSource(
     await Promise.race([sleep(ms), abortPromise(signal, "arXiv 取得の待機中")]);
   };
 
+  const acc: Received = { chunks: [], total: 0, size: null };
+  const discard = (): void => {
+    acc.chunks = [];
+    acc.total = 0;
+    acc.size = null;
+  };
   let lastErr: unknown;
-  for (let attempt = 0; attempt <= retries; attempt++) {
+  let failures = 0;
+  for (let attempt = 0; failures <= retries && attempt <= retries + MAX_RESUMES; attempt++) {
     throwIfAborted(signal, "arXiv 取得前");
-    if (attempt > 0) await waitFor(Math.min(10000, 1000 * 2 ** (attempt - 1)));
+    if (attempt > 0) await waitFor(Math.min(10000, 1000 * 2 ** Math.max(0, failures - 1)));
     // await 前に次スロットを予約し、並行呼び出しでも 3秒間隔を直列化する。
     const target = Math.max(now(), state.lastRequestAt + minInterval);
     const wait0 = target - now();
@@ -112,14 +139,59 @@ export async function fetchArxivSource(
     }
     state.lastRequestAt = Math.max(state.lastRequestAt, now()); // 発火遅延時は実時刻へ補正
 
+    const before = acc.total;
+    const noteFailure = (err: unknown): void => {
+      lastErr = err;
+      failures = acc.total > before ? 0 : failures + 1;
+    };
+
     try {
-      const res = await fetchImpl(`${endpoint}${id}`, {
-        headers: { "User-Agent": ua },
-        signal,
-      });
-      if (res.ok) return await readCapped(res, limits.maxArchiveBytes);
+      const headers: Record<string, string> = { "User-Agent": ua };
+      if (acc.total > 0) headers["Range"] = `bytes=${acc.total}-`;
+      const res = await fetchImpl(`${endpoint}${id}`, { headers, signal });
+      if (res.ok) {
+        const partial = res.status === 206;
+        const range = partial ? parseContentRange(res) : null;
+        const resumed = acc.total > 0;
+        if (resumed && !(range !== null && range.start === acc.total)) {
+          discard();
+          if (partial) {
+            await res.body?.cancel();
+            noteFailure(new Error("HTTP 206 の Content-Range が不一致"));
+            continue;
+          }
+        } else if (resumed && range!.size !== null && acc.size !== null && range!.size !== acc.size) {
+          discard();
+          await res.body?.cancel();
+          noteFailure(new Error("続きの前後で総サイズが変わった"));
+          continue;
+        } else if (!resumed && partial) {
+          await res.body?.cancel();
+          noteFailure(new Error("要求していない HTTP 206"));
+          continue;
+        }
+        if (range?.size != null) acc.size = range.size;
+        if (!partial && !res.headers?.get?.("content-encoding")) {
+          const declared = Number(res.headers?.get?.("content-length"));
+          if (res.headers?.get?.("content-length") != null && Number.isInteger(declared)) {
+            acc.size = declared;
+          }
+        }
+        await readCapped(res, limits.maxArchiveBytes, acc);
+        if (acc.size !== null && acc.total !== acc.size) {
+          if (acc.total > acc.size) discard();
+          noteFailure(new Error("受け取った長さが Content-Range の総サイズと一致しない"));
+          continue;
+        }
+        return Buffer.concat(acc.chunks);
+      }
+      if (res.status === 416 && acc.total > 0) {
+        discard();
+        noteFailure(new Error("HTTP 416"));
+        continue;
+      }
       if (isTransientStatus(res.status)) {
-        lastErr = new Error(`HTTP ${res.status}`);
+        noteFailure(new Error(`HTTP ${res.status}`));
         continue;
       }
       // 404 等は入力（存在しない ID）、それ以外の 4xx/5xx は上流側の問題。
@@ -129,7 +201,7 @@ export async function fetchArxivSource(
       if (e instanceof JpaperError) throw e;
       throwIfAborted(signal, "arXiv 取得中");
       if (isTransient(e)) {
-        lastErr = e;
+        noteFailure(e);
         continue;
       }
       // ネットワーク到達不能は利用者の入力ミスではない。監視で 5xx として見えるようにする。
