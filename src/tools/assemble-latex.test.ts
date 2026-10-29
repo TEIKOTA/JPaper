@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { budgetMs, fastestMs } from "../testing/timing.js";
 import {
   assembleLatex,
+  joinFrontBlankLines,
   assembleWithMap,
   segmentAtLine,
   extractPreamble,
@@ -373,6 +374,35 @@ describe("classPackages", () => {
     expect(assembleWithMap({ cleanLatex: tex, segments: [{ id: "s", tex: "x" } as never], mode: "template" }).mainTex).toContain(
       "\\usepackage[round,authoryear]{natbib}",
     );
+  });
+});
+
+describe("joinFrontBlankLines（issue #517）", () => {
+  const pre = "\\documentclass{article}\n\\author{A\\\\\n\n  B\n \n\nC}\n\\title{T\n\nU}\n\n\\usepackage{x}\n";
+  it("\\author・\\title の引数の中の空行を詰め、引数の外の空行は残す", () => {
+    expect(joinFrontBlankLines(pre)).toBe(
+      "\\documentclass{article}\n\\author{A\\\\\n  B\nC}\n\\title{T\nU}\n\n\\usepackage{x}\n",
+    );
+  });
+  it("両方のレイアウトの前文に効く", () => {
+    const tex = `${pre}\\begin{document}\nx\n\\end{document}\n`;
+    for (const mode of ["original", "template"] as const) {
+      const { mainTex } = assembleWithMap({ cleanLatex: tex, segments: [{ id: "s", tex: "x" } as never], mode });
+      expect(mainTex, mode).toContain("\\author{A\\\\\n  B\nC}");
+      expect(mainTex, mode).not.toMatch(/\\author\{[^}]*\n[ \t]*\n/);
+    }
+  });
+  it("本文（\\begin{document} の後）の訳文に写された空行も詰める", () => {
+    const tex = "\\documentclass{article}\n\\begin{document}\n\\author{A\n\nB}\n\\end{document}\n";
+    const body = "\\author{あ\n\nい}\n\n本文。";
+    for (const mode of ["original", "template"] as const) {
+      expect(assembleWithMap({ cleanLatex: tex, segments: [{ id: "s", tex: body }], mode }).mainTex, mode).toContain("\\author{あ\nい}\n\n本文。");
+      expect(assembleLatex({ cleanLatex: tex, chapters: [body], mode }).mainTex, mode).toContain("\\author{あ\nい}\n\n本文。");
+    }
+  });
+  it("コメントの中の波括弧で引数が閉じたと読まず、閉じ括弧までの空行を詰める", () => {
+    const pre = "\\author{A\n% omit up to the closing ``}\'\'.\n\nB}\n\n\\x";
+    expect(joinFrontBlankLines(pre)).toBe("\\author{A\n% omit up to the closing ``}\'\'.\nB}\n\n\\x");
   });
 });
 

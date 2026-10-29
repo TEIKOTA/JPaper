@@ -1,6 +1,7 @@
 // 契約付録 §7・対訳 PDF ADR(20261006)。原文と訳文を段落ペアにして paracol の対訳 main.tex を組み立てる。
 import {
   extractPreamble,
+  joinFrontBlankLines,
   releaseCounterAnchorNames,
   releaseLuatexjaNames,
   releaseSiunitxNames,
@@ -154,7 +155,9 @@ export function unwrapTitleBlock(tex: string, profile: FrontMatterProfile = DEFA
 }
 
 export function paragraphsOf(tex: string, profile: FrontMatterProfile = DEFAULT_PROFILE): string[] {
-  return balanceParagraphs(splitParagraphs(sanitizeMath(separateCjkAfterControlWords(unwrapTitleBlock(tex, profile)))));
+  return balanceParagraphs(
+    splitParagraphs(sanitizeMath(separateCjkAfterControlWords(unwrapTitleBlock(joinFrontBlankLines(tex), profile)))),
+  );
 }
 
 const COMMENT_BEGIN = /\\begin\s*\{comment\}/;
@@ -420,10 +423,11 @@ const SETUP = [
   "\\def\\jp@vspace@n#1{\\jp@vspace@c{#1}{\\jp@vspace{#1}}}",
   "\\def\\jp@vspace@s#1{\\jp@vspace@c{#1}{\\jp@vspace*{#1}}}",
   "\\def\\jp@vspace@c#1#2{\\skip@#1\\relax\\ifdim\\skip@<\\z@\\else#2\\fi}",
-  "\\renewenvironment{figure}[1][]{\\par\\vspace{1mm}\\begin{center}\\jp@clampvspace\\def\\@captype{figure}}{\\end{center}\\par\\vspace{1mm}}",
-  "\\renewenvironment{figure*}[1][]{\\par\\vspace{1mm}\\begin{center}\\jp@clampvspace\\def\\@captype{figure}}{\\end{center}\\par\\vspace{1mm}}",
-  "\\renewenvironment{table}[1][]{\\par\\vspace{1mm}\\begin{center}\\jp@clampvspace\\def\\@captype{table}}{\\end{center}\\par\\vspace{1mm}}",
-  "\\renewenvironment{table*}[1][]{\\par\\vspace{1mm}\\begin{center}\\jp@clampvspace\\def\\@captype{table}}{\\end{center}\\par\\vspace{1mm}}",
+  // ⚠ landmines.md
+  "\\renewenvironment{figure}[1][]{\\par\\vspace{1mm}\\begin{center}\\jp@clampvspace\\def\\@captype{figure}\\expandafter\\let\\csname @float@c@figure\\endcsname\\@caption}{\\end{center}\\par\\vspace{1mm}}",
+  "\\renewenvironment{figure*}[1][]{\\par\\vspace{1mm}\\begin{center}\\jp@clampvspace\\def\\@captype{figure}\\expandafter\\let\\csname @float@c@figure\\endcsname\\@caption}{\\end{center}\\par\\vspace{1mm}}",
+  "\\renewenvironment{table}[1][]{\\par\\vspace{1mm}\\begin{center}\\jp@clampvspace\\def\\@captype{table}\\expandafter\\let\\csname @float@c@table\\endcsname\\@caption}{\\end{center}\\par\\vspace{1mm}}",
+  "\\renewenvironment{table*}[1][]{\\par\\vspace{1mm}\\begin{center}\\jp@clampvspace\\def\\@captype{table}\\expandafter\\let\\csname @float@c@table\\endcsname\\@caption}{\\end{center}\\par\\vspace{1mm}}",
   "\\makeatother",
   "% --- JPaper 注入ここまで ---",
 ].join("\n");
@@ -785,7 +789,7 @@ export function assembleBilingual(input: {
   const profile = detectProfile(input.cleanLatex);
   const commented = commentOutCommentEnvs(input.source, input.translated);
   const { pairs, fallbackSegments } = pairSegments(commented.source, commented.translated, profile);
-  const { blocks, titled } = renderPairs(pairs, { left: extractPreamble(input.cleanLatex), right: preamble }, profile);
+  const { blocks, titled } = renderPairs(pairs, { left: joinFrontBlankLines(extractPreamble(input.cleanLatex)), right: preamble }, profile);
   const mainTex = releaseCounterAnchorNames(
     releaseSiunitxNames(releaseLuatexjaNames(`${bilingualPreamble(preamble, profile)}${BEGIN}\n${paracolBody(blocks)}\\end{document}\n`)),
   );

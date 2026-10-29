@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { detectProfile } from "./frontmatter.js";
 import { assembleBilingual, renderPairs } from "./bilingual-latex.js";
+import { assembleWithMap } from "./assemble-latex.js";
 
 // 段落の境目の条件分岐（issue #378・契約付録 §8）を、renderPairs の出力と修正前の組み立て（段落ごと左右に置く）の
 // 両方で pdflatex と paracol の最小文書に組み、組めたか・どの行がどの段で実行されたかを比べる。
@@ -371,6 +372,9 @@ const hasAcmart =
   spawnSync("lualatex", ["--version"], { stdio: "ignore" }).status === 0 &&
   spawnSync("kpsewhich", ["luatexja-preset.sty"], { encoding: "utf8" }).stdout.trim() !== "" &&
   spawnSync("kpsewhich", ["acmart.cls"], { encoding: "utf8" }).stdout.trim() !== "";
+const hasLuaJa =
+  spawnSync("lualatex", ["--version"], { stdio: "ignore" }).status === 0 &&
+  spawnSync("kpsewhich", ["luatexja-preset.sty"], { encoding: "utf8" }).stdout.trim() !== "";
 
 const ACM_FRONT = (title: string, inst: string, abs: string, kw: string): string =>
   [
@@ -481,6 +485,57 @@ describe.skipIf(!hasCaption)("\\caption の中の \\vspace を含む図表の対
       rmSync(dir, { recursive: true, force: true });
     }
   }, 120_000);
+});
+
+// 2107.03315（ICCV 2021）の \begin{document} から \maketitle まで。本文に書いた \author の引数（74 行目付近）に空行がある。issue #517
+const ICCV_FRONT = readFileSync(new URL("./fixtures/iccv-2107.03315-front.tex", import.meta.url), "utf8");
+
+describe.skipIf(!hasAcmart)("本文にある \\author の引数の空行を対訳で組む（issue #517、2107.03315）", () => {
+  it.each(["original", "template"] as const)("%s: 左右の段が空行を写していても PDF が出る", (mode) => {
+    const dir = mkdtempSync(path.join(tmpdir(), "jpaper-iccvbi-"));
+    try {
+      const clean = `\\documentclass{article}\n\\begin{document}\n${ICCV_FRONT}\n\\end{document}\n`;
+      const translatedMainTex = assembleWithMap({ cleanLatex: clean, segments: [{ id: "seg-0000", tex: ICCV_FRONT }], mode }).mainTex;
+      const { mainTex } = assembleBilingual({
+        cleanLatex: clean,
+        translatedMainTex,
+        source: [{ id: "seg-0000", tex: ICCV_FRONT }],
+        translated: [{ id: "seg-0000", tex: ICCV_FRONT }],
+      });
+      writeFileSync(path.join(dir, "main.tex"), mainTex);
+      const r = spawnSync("lualatex", ["-interaction=nonstopmode", "-halt-on-error", "main.tex"], { cwd: dir, encoding: "utf8", timeout: 240_000 });
+      expect(r.stdout.split("\n").filter((l) => l.startsWith("!")), r.stdout.slice(-2000)).toEqual([]);
+      expect(r.status).toBe(0);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 240_000);
+});
+
+// float の \restylefloat（issue #519）: 表のキャプションが \float@caption 経由で \@fs@capt を求める。lualatex で対訳を組み、左右の半分にキャプションが出るかを見る。
+describe.skipIf(!hasLuaJa || spawnSync("kpsewhich", ["float.sty"], { encoding: "utf8" }).stdout.trim() === "")("\\restylefloat の表を含む対訳を lualatex で組む（issue #519）", () => {
+  it("左右の段それぞれに表のキャプションが出る", () => {
+    const dir = process.env.JP_RESTYLE_DIR ?? mkdtempSync(path.join(tmpdir(), "jpaper-restyle-"));
+    try {
+      const pre = "\\documentclass{article}\n\\usepackage{float}\n\\restylefloat{table}\n";
+      const table = (cap: string): string => `\\begin{table}[H]\n\\centering\n\\begin{tabular}{ll}a & b\\end{tabular}\n\\caption{${cap}}\n\\end{table}`;
+      const { mainTex } = assembleBilingual({
+        cleanLatex: `${pre}\\begin{document}\n\\end{document}\n`,
+        translatedMainTex: `${pre}\\usepackage{luatexja}\n\\begin{document}\n\\end{document}\n`,
+        source: [{ id: "seg-0000", tex: `Before.\n\n${table("Leftcaption")}\n\nAfter.` }],
+        translated: [{ id: "seg-0000", tex: `Mae.\n\n${table("Rightcaption")}\n\nAto.` }],
+      });
+      writeFileSync(path.join(dir, "main.tex"), mainTex);
+      const r = spawnSync("lualatex", ["-interaction=nonstopmode", "-halt-on-error", "main.tex"], { cwd: dir, encoding: "utf8", timeout: 240_000 });
+      expect(r.status, r.stdout.slice(-2000)).toBe(0);
+      const text = (x: string): string =>
+        spawnSync("pdftotext", ["-x", x, "-y", "0", "-W", "595", "-H", "842", "-raw", "main.pdf", "-"], { cwd: dir, encoding: "utf8" }).stdout.replace(/\s+/g, " ");
+      expect(text("0")).toMatch(/Table 1: Leftcaption/);
+      expect(text("595")).toMatch(/Table 1: Rightcaption/);
+    } finally {
+      if (process.env.JP_RESTYLE_DIR === undefined) rmSync(dir, { recursive: true, force: true });
+    }
+  }, 300_000);
 });
 
 // 著者欄の \and（issue #324・#529）: 対訳のタイトルブロックを lualatex で組み、1 ページ目の左の半分の行を返す。

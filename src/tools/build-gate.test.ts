@@ -108,6 +108,33 @@ describe("classifyLog", () => {
     expect(c.failedSegments).toEqual([]);
     expect(c.structuralErrors).toHaveLength(2);
   });
+  describe("引数の途中で段落が終わったエラー（issue #517）", () => {
+    // TeX は制御綴りの後に空白を 1 つ足すので、実ログでは `\author` と `was` の間が 2 つ空く（2107.03315）。
+    const log = "./main.tex:25: Paragraph ended before \\author  was complete.\n./main.tex:25:  ==> Fatal error occurred, no output PDF file produced!\n";
+    it("命令が原文にもあるなら構造起因にする", () => {
+      const c = classifyLog(log, MAP, "\\author{A\n\nB}");
+      expect(c.failedSegments).toEqual([]);
+      expect(c.structuralErrors).toHaveLength(2);
+    });
+    it("前付け以外の命令（\\label・\\@hspace）は原文にあっても翻訳起因に残す", () => {
+      for (const name of ["label", "@hspace"]) {
+        const l = `./main.tex:25: Paragraph ended before \\${name}  was complete.\n`;
+        const c = classifyLog(l, MAP, `\\section{A}\\label{sec:a} \\hspace{1em} \\${name}`);
+        expect(c.failedSegments, name).toHaveLength(1);
+        expect(c.structuralErrors, name).toEqual([]);
+      }
+    });
+    it("\\title・\\date も構造起因にする", () => {
+      for (const name of ["title", "date"]) {
+        const c = classifyLog(`./main.tex:25: Paragraph ended before \\${name}  was complete.\n`, MAP, `\\${name}{A}`);
+        expect(c.failedSegments, name).toEqual([]);
+      }
+    });
+    it("原文に無い命令（訳文が持ち込んだ）や原文が空なら翻訳起因に残す", () => {
+      expect(classifyLog(log, MAP, "\\title{T}").failedSegments).toHaveLength(2);
+      expect(classifyLog(log, MAP).failedSegments).toHaveLength(2);
+    });
+  });
   describe("class・package のエラー（issue #476）", () => {
     const err = (ctx: string): string =>
       [

@@ -3,6 +3,7 @@ import { spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { classifyLog } from "./build-gate.js";
 import { assembleWithMap } from "./assemble-latex.js";
 import { sandboxEnv, stageBuild } from "./build-gate.js";
 
@@ -106,6 +107,39 @@ describe.skipIf(!hasAcmartCountryCheck)("国名の無い acmart の所属を原�
   it("前文で \\makeatletter を開いたまま本文で @ 入りの命令を使う論文も、原文の前文で組める", () => {
     const own = ["\\documentclass{article}", "\\makeatletter", "\\newcommand{\\foo@bar}{X}", "\\begin{document}", "\\end{document}"].join("\n");
     expect(build(own, "\\foo@bar\n\\makeatother", "original")).toEqual([]);
+  }, 300_000);
+});
+
+// 2107.03315（ICCV 2021）の形: \author の引数の中に空行がある。
+describe.skipIf(!hasLuaTex)("\\author の引数の中の空行（issue #517）", () => {
+  const own = ["\\documentclass{article}", "\\title{T}", "\\author{A\\\\", "", "B}", "\\begin{document}", "\\end{document}"].join("\n");
+  it.each(["original", "template"] as const)("%s: 空行を詰めて PDF が出る", (mode) => {
+    expect(build(own, "\\maketitle\n本文。", mode)).toEqual([]);
+  }, 300_000);
+});
+
+// 2107.03315（ICCV 2021）の \begin{document} から \maketitle まで。\author の引数（74 行目付近）に空行がある。
+const ICCV_FRONT = readFileSync(new URL("./fixtures/iccv-2107.03315-front.tex", import.meta.url), "utf8");
+describe.skipIf(!hasLuaTex)("本文にある \\author の引数の空行（issue #517、2107.03315）", () => {
+  const clean = `\\documentclass{article}\n\\begin{document}\n${ICCV_FRONT}\n\\end{document}\n`;
+  it.each(["original", "template"] as const)("%s: 訳文が空行を写していても PDF が出る", (mode) => {
+    expect(build(clean, ICCV_FRONT, mode)).toEqual([]);
+  }, 300_000);
+
+  it("空行が残った実ログは構造起因に分類される", () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "jpaper-iccv-"));
+    try {
+      const { mainTex, sourceMap } = assembleWithMap({ cleanLatex: clean, segments: [{ id: "seg-0000", tex: ICCV_FRONT }] });
+      // 詰めた後の main.tex に原文の空行を戻して、組版が止まったときのログを作る。
+      writeFileSync(path.join(dir, "main.tex"), mainTex.replace("Vaishaal Shankar", "\n\nVaishaal Shankar"));
+      const r = spawnSync("lualatex", ["-interaction=nonstopmode", "-file-line-error", "-halt-on-error", "main.tex"], { cwd: dir, encoding: "utf8", timeout: 240_000 });
+      const c = classifyLog(r.stdout, sourceMap, clean);
+      expect(r.stdout).toContain("Paragraph ended before \\author");
+      expect(c.failedSegments).toEqual([]);
+      expect(c.structuralErrors.length).toBeGreaterThan(0);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   }, 300_000);
 });
 
