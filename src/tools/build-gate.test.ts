@@ -1,6 +1,7 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { budgetMs, fastestMs } from "../testing/timing.js";
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync, existsSync, readdirSync, readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import {
@@ -16,6 +17,7 @@ import {
   probeLatexmk,
   describeLaunchError,
   LATEXMK_MISSING,
+  latexmkArgs,
 } from "./build-gate.js";
 import type { SourceSpan } from "./assemble-latex.js";
 import type { LatexRunner } from "./build-gate.js";
@@ -55,6 +57,19 @@ describe("classifyLog", () => {
     const c = classifyLog(log, MAP);
     expect(c.failedSegments).toEqual([]);
     expect(c.structuralErrors).toEqual(["nips_2017.sty:42: Undefined control sequence."]);
+  });
+  it("build の外の絶対パスは basename だけにする（ホストのパスを出さない・理由を押し出さない）", () => {
+    const log =
+      "/usr/local/texlive/2025/texmf-dist/tex/latex/xcolor/xcolor.sty:265: LaTeX Error: Unknown option 'color' for package xcolor.";
+    expect(classifyLog(log, MAP).structuralErrors).toEqual([
+      "xcolor.sty:265: LaTeX Error: Unknown option 'color' for package xcolor.",
+    ]);
+  });
+  it("build 内の同梱パッケージ（絶対パスで出る）も basename だけにする", () => {
+    const log = "/work/build/srcpkg/lifetime.sty:109: LaTeX Error: Command \\x already defined.";
+    expect(classifyLog(log, MAP).structuralErrors).toEqual([
+      "lifetime.sty:109: LaTeX Error: Command \\x already defined.",
+    ]);
   });
   it("原文にも存在する未定義環境は構造起因にする（本文行でも再訳に回さない）", () => {
     const log = "./main.tex:12: LaTeX Error: Environment frontmatter undefined.";
@@ -322,6 +337,9 @@ describe("sandboxEnv", () => {
     expect(env.shell_escape).toBe("f");
     expect(env.openout_any).toBe("p");
   });
+  it("TeX のログを 79 桁で折り返さない（長いパスのエラーが 2 行に割れる）", () => {
+    expect(Number(sandboxEnv({}, "/b").max_print_line)).toBeGreaterThanOrEqual(1000);
+  });
   it("既存の環境変数は保つ", () => {
     expect(sandboxEnv({ PATH: "/usr/bin" }, "/b").PATH).toBe("/usr/bin");
   });
@@ -545,4 +563,68 @@ describe("組版の道具を起動できない環境の障害（契約付録 §6
     expect(g.failedSegments).toEqual([]);
     expect(g.structuralErrors).toEqual([]);
   });
+});
+
+describe("latexmkArgs（契約付録 §8）", () => {
+  it("main.bbl があるときは -bibtex- を渡し、無いときは渡さない", () => {
+    const d = mkTemp();
+    expect(latexmkArgs(d)).not.toContain("-bibtex-");
+    writeFileSync(path.join(d, "main.bbl"), "");
+    expect(latexmkArgs(d)).toContain("-bibtex-");
+  });
+  it("利用者の rc を読まないよう -norc を先頭に渡す", () => {
+    expect(latexmkArgs(mkTemp())[0]).toBe("-norc");
+  });
+});
+
+const hasTex =
+  spawnSync("latexmk", ["-v"], { stdio: "ignore" }).status === 0 &&
+  spawnSync("lualatex", ["--version"], { stdio: "ignore" }).status === 0;
+
+describe.skipIf(!hasTex)("同梱 .bbl と壊れた .bst（実組版）", () => {
+  const MAIN = [
+    "\\documentclass{article}",
+    "\\begin{document}",
+    "See \\cite{a}.",
+    "\\bibliographystyle{broken}",
+    "\\bibliography{refs}",
+    "\\end{document}",
+  ].join("\n");
+  function setup(withBbl: boolean): string {
+    const src = mkTemp();
+    writeFileSync(path.join(src, "refs.bib"), "@misc{a, title={T}, author={X}, year={2020}}\n");
+    writeFileSync(path.join(src, "broken.bst"), "ENTRY {title} {} {}\nFUNCTION {x} { nosuchfunction }\nREAD\nITERATE {x}\n");
+    if (withBbl) writeFileSync(path.join(src, "paper.bbl"), "\\begin{thebibliography}{1}\n\\bibitem{a} X. T. 2020.\n\\end{thebibliography}\n");
+    const build = path.join(mkTemp(), "b");
+    stageBuild(build, MAIN, { sourceDir: src, mainDir: src, figures: [] }, () => new Set<string>());
+    return build;
+  }
+  it(".bbl を同梱すれば bibtex を走らせず、引用が解決して PDF ができる", async () => {
+    const build = setup(true);
+    const r = await defaultRunner(build);
+    expect(r.code).toBe(0);
+    expect(r.log).not.toMatch(/Citation .* undefined/);
+    expect(existsSync(path.join(build, "main.pdf"))).toBe(true);
+  }, 120_000);
+  it(".bbl が無ければ bibtex が走る（壊れた .bst で失敗する）", async () => {
+    const build = setup(false);
+    const r = await defaultRunner(build);
+    expect(r.code).not.toBe(0);
+  }, 120_000);
+  it("HOME の .latexmkrc が lualatex を壊していても読まれず、組める", async () => {
+    const build = setup(true);
+    const home = mkTemp();
+    writeFileSync(path.join(home, ".latexmkrc"), '$lualatex = "false";\n');
+    const saved = { HOME: process.env.HOME, XDG: process.env.XDG_CONFIG_HOME };
+    process.env.HOME = home;
+    delete process.env.XDG_CONFIG_HOME;
+    try {
+      const r = await defaultRunner(build);
+      expect(r.code).toBe(0);
+      expect(existsSync(path.join(build, "main.pdf"))).toBe(true);
+    } finally {
+      process.env.HOME = saved.HOME;
+      if (saved.XDG !== undefined) process.env.XDG_CONFIG_HOME = saved.XDG;
+    }
+  }, 120_000);
 });

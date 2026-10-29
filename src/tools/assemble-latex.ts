@@ -22,7 +22,9 @@ const END_DOC = "\\end{document}";
 // LuaTeX ネイティブ UTF-8＋luatexja がフォントを担うため原前文から外す。
 const DROP_PACKAGES = /^[ \t]*\\usepackage(?:\[[^\]]*\])?\{(?:inputenc|fontenc)\}[ \t]*\r?\n?/gm;
 
-const JP_FONT = "\\usepackage[ipaex]{luatexja-preset} % JPaper 注入: 日本語組版 (契約付録 §7)";
+// luatexja-core が残す \x を未定義に戻す。⚠ landmines.md
+const LUATEXJA_LEAK_RESET = "\\let\\x\\undefined";
+const JP_FONT = `\\usepackage[ipaex]{luatexja-preset} % JPaper 注入: 日本語組版 (契約付録 §7)\n${LUATEXJA_LEAK_RESET}`;
 const DOCUMENTCLASS_LINE = /\\documentclass\s*(?:\[[^\]]*\])?\s*\{[^}]*\}[^\n]*\n?/;
 
 const JP_INJECTION = [
@@ -247,6 +249,7 @@ function templatePreamble(originalPreamble: string, cleanLatex: string): string 
     "\\documentclass[a4paper]{article}",
     // ⚠ landmines.md
     "\\usepackage[ipaex]{luatexja-preset}",
+    LUATEXJA_LEAK_RESET,
     "\\title{}",
     "\\author{}",
     classShim(cleanLatex),
@@ -319,15 +322,121 @@ export function joinFrontBlankLines(preamble: string): string {
   return out + preamble.slice(at);
 }
 
+// xcolor v3 が受け付けない color オプションを \usepackage[…]{xcolor} から外す。⚠ landmines.md
+export function dropXcolorColorOption(preamble: string): string {
+  return preamble.replace(/(\\usepackage\s*\[)([^\]%]*)(\]\s*\{\s*xcolor\s*\})/g, (whole, head: string, opts: string, tail: string) => {
+    const kept = opts.split(",").filter((o) => o.trim() !== "color");
+    if (kept.length === opts.split(",").length) return whole;
+    const rest = kept.join(",");
+    return rest.trim() === "" ? `\\usepackage${tail.slice(1)}` : `${head}${rest}${tail}`;
+  });
+}
+
+const PKG_LINE = (name: string): RegExp =>
+  new RegExp(`^[ \\t]*\\\\(?:usepackage|RequirePackage)(?:\\[[^\\]]*\\])?\\{${name}\\}[^\\n]*(?:\\n|$)`, "m");
+const COND_TOKENS = /\\(?:if[A-Za-z@]*|else|or|fi)(?![A-Za-z@])/;
+const CREF_STATEMENT_HEAD = /[ \t]*\\[cC]ref[A-Za-z]*(?![A-Za-z@])/y;
+
+function skipBlank(s: string, i: number): number {
+  for (;;) {
+    while (i < s.length && /\s/.test(s[i]!)) i++;
+    if (s[i] !== "%") return i;
+    while (i < s.length && s[i] !== "\n") i++;
+  }
+}
+
+function groupEnd(s: string, i: number): number {
+  const square = s[i] === "[";
+  let depth = 0;
+  for (let j = i; j < s.length; j++) {
+    const c = s[j]!;
+    if (c === "\\") j++;
+    else if (c === "%") while (j < s.length && s[j] !== "\n") j++;
+    else if (c === "{") depth++;
+    else if (c === "}") {
+      depth--;
+      if (depth === 0 && !square) return j + 1;
+    } else if (c === "]" && square && depth === 0) return j + 1;
+  }
+  return -1;
+}
+
+interface Span {
+  start: number;
+  end: number;
+}
+
+function crefStatements(region: string): Span[] | null {
+  const spans: Span[] = [];
+  let depth = 0;
+  let atLineStart = true;
+  for (let i = 0; i < region.length; i++) {
+    if (atLineStart && depth === 0) {
+      CREF_STATEMENT_HEAD.lastIndex = i;
+      const m = CREF_STATEMENT_HEAD.exec(region);
+      if (m !== null) {
+        let end = i + m[0].length;
+        for (;;) {
+          const j = skipBlank(region, end);
+          if (region[j] !== "{" && region[j] !== "[") break;
+          const e = groupEnd(region, j);
+          if (e === -1) return null;
+          end = e;
+        }
+        const rest = /^[ \t]*(?:%[^\n]*)?(?:\n|$)/.exec(region.slice(end));
+        if (rest !== null) end += rest[0].length;
+        spans.push({ start: i, end });
+        i = end - 1;
+        atLineStart = region[end - 1] === "\n";
+        continue;
+      }
+    }
+    atLineStart = region[i] === "\n";
+    const c = region[i]!;
+    if (c === "\\") i++;
+    else if (c === "%") while (i + 1 < region.length && region[i + 1] !== "\n") i++;
+    else if (c === "{") depth++;
+    else if (c === "}") depth--;
+  }
+  return spans;
+}
+
+// 契約付録 §8 / ⚠ landmines.md
+export function placeCleverefAfterHyperref(preamble: string): string {
+  const clev = PKG_LINE("cleveref").exec(preamble);
+  const hyper = PKG_LINE("hyperref").exec(preamble);
+  if (clev === null || hyper === null || clev.index > hyper.index) return preamble;
+  const region = preamble.slice(clev.index + clev[0].length, hyper.index);
+  if (COND_TOKENS.test(region.replace(/(^|[^\\])%.*$/gm, "$1"))) return preamble;
+  const spans = crefStatements(region);
+  if (spans === null) return preamble;
+  let kept = "";
+  let moved = "";
+  let pos = 0;
+  for (const { start, end } of spans) {
+    kept += region.slice(pos, start);
+    const text = region.slice(start, end);
+    moved += text.endsWith("\n") ? text : `${text}\n`;
+    pos = end;
+  }
+  kept += region.slice(pos);
+  const hyperLine = hyper[0].endsWith("\n") ? hyper[0] : `${hyper[0]}\n`;
+  return `${preamble.slice(0, clev.index)}${kept}${hyperLine}${clev[0]}${moved}${preamble.slice(hyper.index + hyper[0].length)}`;
+}
+
 // title を渡すと前文の \title の主引数だけを差し替える（契約付録 §8）。
 export function buildPreamble(cleanLatex: string, mode: Layout, title?: string): string {
+  return dropXcolorColorOption(buildPreambleBase(cleanLatex, mode, title));
+}
+
+function buildPreambleBase(cleanLatex: string, mode: Layout, title?: string): string {
   const preamble = extractPreamble(cleanLatex);
   const original = joinFrontBlankLines(
     title === undefined ? preamble : replaceTitle(preamble, title, detectProfile(cleanLatex)),
   );
-  return mode === "original"
-    ? injectShared(neutralizePreamble(original))
-    : `${templatePreamble(original, cleanLatex)}\n`;
+  return placeCleverefAfterHyperref(
+    mode === "original" ? injectShared(neutralizePreamble(original)) : `${templatePreamble(original, cleanLatex)}\n`,
+  );
 }
 
 export function assembleLatex(input: AssembleInput): AssembleOutput {
