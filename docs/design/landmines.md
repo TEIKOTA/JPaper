@@ -66,6 +66,8 @@
 - **なぜ意図的か**: paracol の中のフロートはページ全幅に出て、左右 2 枚が縦に積まれて使えない（PoC で実測）。`\@captype` を設定した非フロートにすると `\caption` が効いたまま左右の半分にそれぞれ置け、図表番号も左右で一致する（paracol はカウンタを列ごとに持つ）。
 - **おかしく見える点（`\jp@clampvspace`）**: 図表ブロックの開始で `\vspace` を `\@ifstar` 付きの自前の定義に差し替え、負の量（`\skip@` に読んで `\ifdim` で判定）なら何もしない。正の量は元の `\vspace`（開始時点の定義。論文が再定義していればそれ）へ渡す。`\vspace*` も同じ。差し替えは既に差し替え済み（`\vspace` が `\jp@vspace@wrap`）なら何もしない（図表の入れ子で退避し直すと `\jp@vspace` が自分を指し、`TeX capacity exceeded` で対訳全体が落ちる。PR #481 のレビュー）。
 - **なぜ意図的か**: 元の浮動体なら図表の中の負の `\vspace`（`-2mm`〜`-5mm`）は float の余白を削るだけだが、非フロートのブロックでは前後の本文・キャプション・表に食い込んで文字が重なる（実測: 2004.00584。外して組み直すと消えた）。ブロックの中に閉じた差し替えなので、和訳 PDF（`assemble-latex.ts`）と、ブロックの外の `\vspace` には効かない。`\\[-2mm]` など `\vspace` 以外の負の間隔は対象外。
+- **おかしく見える点（`\protected\def\jp@vspace@wrap`）**: `\jp@vspace@wrap` だけ `\def` でなく `\protected\def` で定義している。
+- **なぜ意図的か**: LaTeX 標準の `\vspace` は robust だが、差し替えた定義は壊れやすい。caption パッケージは `\caption` の本文を目次行（`\addcontentsline`）へ `\protected@write` で書き出し、そこで本文を展開する。`\caption{… \vspace{-.3cm}}` のように本文に `\vspace` があると、`\@ifstar` の先読みが書き出しの閉じ括弧まで読み、`Argument of \caption@ydblarg has an extra }.` で対訳 PDF が落ちる（実測: 2107.04649。issue #530。`\protected` を外すと再現し、付けると組める）。
 - **正本ポインタ**: [対訳 PDF ADR](../adr/20261006-bilingual-side-by-side-pdf.md)（「図・表」）。
 
 ## `src/tools/bilingual-latex.ts` — `PAPER`（geometry のオプション）に `onecolumn` を入れている

@@ -482,7 +482,8 @@ describe("前文", () => {
       const m = pre.match(new RegExp(`\\\\renewenvironment\\{${env.replace("*", "\\*")}\\}\\[1\\]\\[\\]\\{([^\\n]*)`));
       expect(m?.[1], env).toContain("\\begin{center}\\jp@clampvspace\\def\\@captype{");
     }
-    expect(pre).toContain("\\def\\jp@vspace@wrap{\\@ifstar{\\jp@vspace@s}{\\jp@vspace@n}}");
+    // \caption の目次行への書き出しで展開されて壊れないよう protected にする（#530）
+    expect(pre).toContain("\\protected\\def\\jp@vspace@wrap{\\@ifstar{\\jp@vspace@s}{\\jp@vspace@n}}");
     // 図表が入れ子でも退避し直さない（2 回目で \jp@vspace が自分を指して無限再帰になる。PR #481 のレビュー）
     expect(pre).toContain("\\def\\jp@clampvspace{\\ifx\\vspace\\jp@vspace@wrap\\else\\let\\jp@vspace\\vspace\\let\\vspace\\jp@vspace@wrap\\fi}");
     expect(pre).toContain("\\def\\jp@vspace@n#1{\\jp@vspace@c{#1}{\\jp@vspace{#1}}}");
