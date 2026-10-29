@@ -74,11 +74,11 @@
 - **なぜ意図的か**: 原プリアンブルが二段組（`\documentclass[twocolumn]{article}`・IEEEtran conference 等）だと、paracol が `Environment paracol cannot work with ordinary two-column typesetting` で落ちる（実測）。本文先頭で `\onecolumn` を入れても、後の `\newgeometry` が二段組の設定に戻すので効かない（実測）。geometry 自身に一段組を指定すると組める（実測）。revtex の reprint のように出力ルーチンごと差し替えるクラスはこれでも組めないので、原プリアンブルで組めなければ共通テンプレで組み直す（`typesetBilingual`）。
 - **正本ポインタ**: 契約付録 §8（対訳 PDF）。
 
-## `src/tools/bilingual-latex.ts` — `BEGIN` のページ番号は星なしの `\AddToShipoutPictureFG`
+## `src/tools/bilingual-latex.ts` — `BEGIN` のページ番号と罫線は eso-pic でなく `shipout/foreground` フックで描く
 
-- **おかしく見える点**: eso-pic の `\AddToShipoutPictureFG*`（星付き）に直したくなる、あるいは星の有無に意味が無いように見える。
-- **なぜ意図的か**: 星付きは現在のページ（1 ページ目）にしか出ない。全ページに左右別のページ番号（原文 p.N／和訳 p.N）と中央の罫線を出すには星なしでなければならない。`\pagestyle{empty}` で通常のページ番号は消している。
-- **正本ポインタ**: [対訳 PDF ADR](../adr/20261006-bilingual-side-by-side-pdf.md)（Decision「ページ番号」）。
+- **おかしく見える点**: eso-pic の `\AddToShipoutPictureFG` で描けば座標が素直なのに、フックに `picture` 環境を入れ、y を負（`-287mm`・`-297mm`）にしている。eso-pic に戻したくなる。
+- **なぜ意図的か**: cvpr.cls など、class が古い eso-pic のコードを抱える（`\ProvidesPackage{eso-pic}` は無い）と、`\usepackage{eso-pic}` が `Command \ESO@isMEMOIR already defined` で止まり、共通テンプレートへの組み直しでも class のマクロ（`\eg` 等）が無く対訳が出なかった（実測: 2007.02915、issue #520）。`\usepackage{eso-pic}` を条件付きで読む案は、旧版のコードが `\AddToShipoutPictureFG` を定義しないので使えない。フックの原点は紙の左上で y は下向きに負なので、eso-pic の座標（左下原点）の y から紙の高さ 297mm を引いて描き直した。`\AddToHook` は星なしの `\AddToShipoutPictureFG` と同じく全ページに効く（星付きの `\AddToShipoutPictureFG*` は 1 ページ目だけなので使えない）。`\pagestyle{empty}` で通常のページ番号は消している。位置は eso-pic 版と同じ最小文書の 4 ページで PNG が完全一致（`cmp`）。
+- **正本ポインタ**: [対訳 PDF ADR](../adr/20261006-bilingual-side-by-side-pdf.md)（Decision「ページ番号」）、契約付録 §8（対訳 PDF）。
 
 ## `src/tools/bilingual-latex.ts` — `renderPairs` が `\maketitle` を `\jpTitleBlock` の左右ペアに置き換える
 
@@ -208,6 +208,12 @@
 - **なぜ意図的か**: `\caption` の引数は段落区切りを許さず、空行があると `Paragraph ended before \caption@prepareanchor was complete` で組版が落ちる。原文にこの空行がある論文は、現在の TeX Live では原文のままでも組めない（実測: 2011.03395 seg-0042 の表キャプション）。`%` 行にすれば段落区切りでなくなり、行数は変わらないのでエラー行から節への逆引きもずれない。
 - **正本ポインタ**: 契約付録 §7、issue #320。回帰テストは `src/tools/assemble-latex.test.ts`。
 
+## `src/tools/assemble-latex.ts` — luatexja を読んだ直後に `\let\x\undefined` を置く
+
+- **おかしく見える点**: 日本語フォントの直後で、何も使っていない `\x` を未定義にしている。
+- **なぜ意図的か**: `luatexja-core.sty` はグループの外で `\edef\x{…}` をして `\x` を残す。論文の同梱 `.sty` の `\newcommand{\x}{x}` が `Command \x already defined` で落ちる（実測: 2201.04234 の `lifetime.sty`。原前文でも共通テンプレでも同じ）。luatexja の直後に未定義へ戻せば論文の定義が通る。luatexja を読む 2 箇所（`JP_FONT`・`templatePreamble`）の両方に置く。
+- **正本ポインタ**: 契約付録 §7、issue #518。回帰テストは `src/tools/assemble-latex.test.ts`・`src/tools/assemble-latex.typeset.test.ts`。
+
 ## `src/tools/assemble-latex.ts` — 論文の `\newcommand{\mc}` / `\newcommand{\gt}` を `\DeclareRobustCommand` に替える
 
 - **おかしく見える点**: 原文の `\newcommand` を、名前が `\mc` / `\gt` のときだけ書き換えている。
@@ -219,6 +225,18 @@
 - **おかしく見える点**: 原文の `\newcommand` を、名前が `\theH` で始まるときだけ `\providecommand` に書き換え、論文の定義を捨ててカーネルの定義を残している。
 - **なぜ意図的か**: 今の LaTeX カーネル（TeX Live 2025、形式版 2025-11-01）は `\@definecounter` でカウンタを作るたびに `\theH<名前>` を定義するので、古い hyperref 向けの回避策 `\newcommand{\theHalgorithm}{\arabic{algorithm}}` が `Command \theHalgorithm already defined` で組版を落とす（実測: 1406.2661。hyperref を読まない最小の文書でも同じ）。共通テンプレートも原前文を引き継ぐので同じ行で落ちる。`\theH…` は hyperref のアンカー名にだけ使われ、カーネルの定義も番号を出すだけなので、論文の定義を捨てても PDF の見た目は変わらない。`\DeclareRobustCommand` にすると `\xdef` の中で展開されず、アンカー名が壊れる。
 - **正本ポインタ**: issue #425。回帰テストは `src/tools/assemble-latex.test.ts`・`src/tools/bilingual-latex.test.ts`。
+
+## `src/tools/assemble-latex.ts`・`src/tools/build-gate.ts` — 論文の `\newcommand{\unit}` などを `\DeclareRobustCommand` に替える（本文と同梱 `.sty`）
+
+- **おかしく見える点**: 原文の `\newcommand` を、名前が siunitx v3 の新しい命令（`\unit` `\qty` `\qtylist` `\qtyproduct` `\qtyrange` `\numproduct` `\complexnum` `\complexqty`）のときだけ書き換える。本文（`releaseSiunitxNames`）に加え、同梱の `.sty`/`.cls` を `srcpkg/` へ置くときにも書き換え（`copySupportFile`）、原文の .sty を加工して置いている。
+- **なぜ意図的か**: 古い siunitx（v2）には `\unit` が無かったので、論文の `.sty` が `\usepackage{siunitx}` の後に `\newcommand{\unit}{\boldsymbol{1}}` を置いても組めた。今の TeX Live の siunitx v3 は `\unit` を定義するので `Command \unit already defined` で落ちる（実測: 2201.04234 の `lifetime.sty` 41 行目で siunitx を読み、321 行目で `\unit` を定義。JPaper は siunitx を注入していない）。衝突は論文自身の読み込みと配布パッケージの版の組で、JPaper の注入では起きない。`\DeclareRobustCommand` は定義済みでも上書きでき、論文が本文で使う意味（上の例では単位ベクトル）が勝つ。v2 にもあった `\num` `\si` `\SI` は、v2 の時代から衝突していたので対象にしない。
+- **正本ポインタ**: issue #531。回帰テストは `src/tools/assemble-latex.test.ts`・`src/tools/build-gate.test.ts`・`src/tools/assemble-latex.typeset.test.ts`。
+
+## `src/tools/assemble-latex.ts` — cleveref の読み込み行と cref の命令の文だけを hyperref の後へ移す
+
+- **おかしく見える点**: 原文が `\usepackage{cleveref}` を `\usepackage{hyperref}` より前に書いているのに、組版用の前文では cleveref の読み込み行と、その後ろにある `\crefname`・`\crefalias` などの文（複数行も）だけを hyperref の直後へ移し、間にある他の行（別の `\usepackage` など）は動かしていない。
+- **なぜ意図的か**: 今の cleveref（0.21.4 以降）は hyperref より前に読むと `cleveref must be loaded after hyperref!` で止まる。古い論文では警告だった順序が多く、原前文でも共通テンプレートでも同じエラーになる（実測: 1610.02136。cleveref と hyperref の間に `\usepackage{tabularx}` と `\newcolumntype` がある）。cleveref の命令は cleveref の後でないと未定義なので一緒に動かす。間の行まで丸ごと動かしたり、間に `\usepackage` があるとき動かさなかったりすると、この実例で直らない（#507 の再発）。命令の文は波括弧の対応で終わりを決める（複数行の `\crefname{figure}%\n  {Fig.}{Figs.}` を割らない）。条件分岐が間にあるとき、閉じない文があるときは枝や括弧を壊さないよう動かさない。
+- **正本ポインタ**: 契約付録 §8、issue #507。回帰テストは `src/tools/assemble-latex.test.ts`（1610.02136 の 1〜24 行目の fixture を含む）。
 
 ## `src/tools/build-gate.ts` — サブディレクトリの支援ファイルを `srcpkg/` と main からの相対位置の両方に置く
 
@@ -304,6 +322,12 @@
 - **おかしく見える点**: 共通テンプレ（article）の前文に、原文に無い `\usepackage[…]{natbib}` を足している。オプションは原 class のオプションと本文中の `\biboptions` から組み立てる。
 - **なぜ意図的か**: elsarticle は `nonatbib` が無ければ natbib を自分で読み、`\biboptions` は本文末尾に書かれることもある（.spl 経由で効く）。class を article に差し替えると natbib が消え、`.bbl` の著者年ラベルが生のまま出る（実測: 1902.06543 の対訳）。
 - **正本ポインタ**: 契約付録 §7（共通テンプレ）、issue #326。回帰テストは `src/tools/assemble-latex.test.ts`。
+
+## `src/tools/assemble-latex.ts` — `dropXcolorColorOption` が原前文の `\usepackage[…]{xcolor}` から `color` オプションを外す
+
+- **おかしく見える点**: 原文が書いた xcolor のオプションを、組版用の前文で書き換えている。
+- **なぜ意図的か**: 今の xcolor（v3）は古い版にあった `color` を `Unknown option 'color' for package xcolor.` で拒む。原前文・共通テンプレのどちらも原文の前文を引き継ぐので、`buildPreamble` の戻り値の全体に掛けて両経路で外す（`svgnames`・`dvipsnames`・`table` などは残す）。`color` を別の意味で受ける将来の xcolor では外しすぎになる。
+- **正本ポインタ**: 契約付録 §7、issue #521。回帰テストは `src/tools/assemble-latex.test.ts`・`src/tools/assemble-latex.typeset.test.ts`。
 
 ## `src/tools/frontmatter.ts` — 型の判定の正規表現は任意引数・名前の長さに上限を置き、コメントは自前の 1 回の走査で落とす
 

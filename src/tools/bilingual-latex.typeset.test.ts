@@ -533,3 +533,66 @@ describe.skipIf(!hasLua)("対訳のタイトルブロックの著者欄の \\and
     }
   }, 240_000);
 });
+
+// 古い eso-pic のコードを抱えた class（issue #520）: cvpr.cls の 198-205 行目の形（2007.02915）を写した class で、
+// 対訳の前文が eso-pic を読むと `\ESO@isMEMOIR already defined` で止まる。ページ番号と罫線は eso-pic を読まずに描く。
+const hasLualatex = spawnSync("lualatex", ["--version"], { stdio: "ignore" }).status === 0 &&
+  spawnSync("kpsewhich", ["luatexja-preset.sty"], { encoding: "utf8" }).stdout.trim() !== "";
+
+const OLD_ESOPIC_CLS = [
+  "\\NeedsTeXFormat{LaTeX2e}",
+  "\\ProvidesClass{oldeso}[2021/01/01 old eso-pic inside a class]",
+  "\\LoadClass{article}",
+  "\\makeatletter",
+  "\\newcommand\\eg{e.g.}",
+  "\\newcommand{\\ESO@HookI}{} \\newcommand{\\ESO@HookII}{}",
+  "\\newcommand{\\ESO@HookIII}{}",
+  "\\newcommand{\\AddToShipoutPicture}{%",
+  "  \\@ifstar{\\g@addto@macro\\ESO@HookII}{\\g@addto@macro\\ESO@HookI}}",
+  "\\newcommand{\\ClearShipoutPicture}{\\global\\let\\ESO@HookI\\@empty}",
+  "\\newcommand\\ESO@isMEMOIR[1]{}",
+  "\\@ifclassloaded{memoir}{\\renewcommand\\ESO@isMEMOIR[1]{#1}}{}",
+  "\\makeatother",
+  "",
+].join("\n");
+
+function buildOldEso(): { ok: boolean; log: string; dir: string } {
+  const dir = mkdtempSync(path.join(tmpdir(), "jpaper-oldeso-"));
+  writeFileSync(path.join(dir, "oldeso.cls"), OLD_ESOPIC_CLS);
+  const pre = "\\documentclass{oldeso}\n";
+  const body = (t: string): string => `\\begin{document}\n${t}\n\\end{document}\n`;
+  const long = (w: string): string => Array.from({ length: 80 }, (_, i) => `${w}${i} lorem ipsum dolor sit amet.`).join(" ");
+  const { mainTex } = assembleBilingual({
+    cleanLatex: pre + body("A"),
+    translatedMainTex: `${pre}\\usepackage{luatexja}\n${body("B")}`,
+    source: [{ id: "seg-0000", tex: `Left \\eg ${long("L")}` }, { id: "seg-0001", tex: "Second left." }],
+    translated: [{ id: "seg-0000", tex: `右 \\eg ${long("R")}` }, { id: "seg-0001", tex: "二番目の右。" }],
+  });
+  writeFileSync(path.join(dir, "main.tex"), mainTex);
+  const r = spawnSync("lualatex", ["-interaction=nonstopmode", "-halt-on-error", "main.tex"], { cwd: dir, encoding: "utf8", timeout: 240_000 });
+  return { ok: r.status === 0, log: r.stdout.slice(-3000), dir };
+}
+
+describe.skipIf(!hasLualatex)("class が古い eso-pic のコードを抱えた文書の対訳を lualatex で組む（issue #520）", () => {
+  it("原前文のまま組め、ページ番号は左右の下端・罫線は中央に出る", () => {
+    const r = buildOldEso();
+    try {
+      expect(r.ok, r.log).toBe(true);
+      expect(r.log).not.toMatch(/ESO@isMEMOIR/);
+      const words = spawnSync("pdftotext", ["-f", "1", "-l", "1", "-bbox", "main.pdf", "-"], { cwd: r.dir, encoding: "utf8" }).stdout;
+      const at = (w: string): { x: number; y: number } => {
+        const m = new RegExp(`xMin="([\\d.]+)" yMin="([\\d.]+)"[^>]*>${w}</word>`).exec(words);
+        expect(m, w).not.toBeNull();
+        return { x: Number(m![1]), y: Number(m![2]) };
+      };
+      // 紙は 420mm × 297mm（1190.55pt × 841.89pt）。ページ番号は下端から 10mm の高さの中心、左は 105mm・右は 315mm の中心。
+      const l = at("原文");
+      const rt = at("和訳");
+      expect(Math.abs(l.y - (841.89 - 10 * 2.8346 - 6))).toBeLessThan(8);
+      expect(Math.abs(l.x - (105 * 2.8346 - 25))).toBeLessThan(10);
+      expect(Math.abs(rt.x - (315 * 2.8346 - 25))).toBeLessThan(10);
+    } finally {
+      rmSync(r.dir, { recursive: true, force: true });
+    }
+  }, 240_000);
+});
