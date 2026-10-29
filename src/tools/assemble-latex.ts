@@ -1,6 +1,7 @@
 // 契約付録 §7・組版レイアウト ADR(20260710)。訳文→main.tex 生成（原前文温存ハイブリッド）。
 import { detectProfile } from "./frontmatter.js";
 import { replaceTitle } from "./paper-title.js";
+import { commandSpans } from "./tex-spans.js";
 
 export type Layout = "original" | "template";
 
@@ -87,6 +88,18 @@ const LUATEXJA_NAMES = ["mc", "gt"];
 // 論文が \newcommand で定義し直す luatexja の命令名を、定義済みでも通る \DeclareRobustCommand に替える。⚠ landmines.md
 export function releaseLuatexjaNames(tex: string): string {
   const names = LUATEXJA_NAMES.join("|");
+  return tex.replace(
+    new RegExp(`\\\\newcommand(\\*?)\\s*(\\{\\s*\\\\(?:${names})\\s*\\}|\\\\(?:${names})(?![A-Za-z@]))`, "g"),
+    "\\DeclareRobustCommand$1$2",
+  );
+}
+
+// siunitx v3 が新しく定義した命令名（v2 には無かった）。
+const SIUNITX_V3_NAMES = ["unit", "qty", "qtylist", "qtyproduct", "qtyrange", "numproduct", "complexnum", "complexqty"];
+
+// 論文（本文・同梱 .sty）が \newcommand で定義する siunitx v3 の命令名を、定義済みでも通る \DeclareRobustCommand に替える。⚠ landmines.md
+export function releaseSiunitxNames(tex: string): string {
+  const names = SIUNITX_V3_NAMES.join("|");
   return tex.replace(
     new RegExp(`\\\\newcommand(\\*?)\\s*(\\{\\s*\\\\(?:${names})\\s*\\}|\\\\(?:${names})(?![A-Za-z@]))`, "g"),
     "\\DeclareRobustCommand$1$2",
@@ -297,9 +310,38 @@ export function sanitizeMath(tex: string): string {
 
 function assembleBody(chapters: string[]): string {
   return chapters
-    .map((c) => sanitizeMath(c).trim())
+    .map((c) => sanitizeMath(joinFrontBlankLines(c)).trim())
     .filter((c) => c !== "")
     .join("\n\n");
+}
+
+// ⚠ landmines.md
+export const FRONT_COMMANDS: readonly string[] = ["author", "title", "date"];
+const BLANK_LINES = /\r?\n(?:[ \t]*\r?\n)+/g;
+
+// \author・\title・\date の引数の中の空行を改行 1 つに詰める（前文と本文の両方）。契約付録 §6
+export function joinFrontBlankLines(preamble: string): string {
+  // ⚠ landmines.md
+  const masked = preamble.replace(/(^|[^\\])((?:\\\\)*)%[^\n]*/g, (m, a: string, b: string) => a + b + " ".repeat(m.length - a.length - b.length));
+  const spans = FRONT_COMMANDS.flatMap((n) => commandSpans(masked, n)).sort((a, b) => a[0] - b[0]);
+  let out = "";
+  let at = 0;
+  for (const [s, e] of spans) {
+    if (s < at) continue;
+    out += preamble.slice(at, s) + preamble.slice(s, e).replace(BLANK_LINES, "\n");
+    at = e;
+  }
+  return out + preamble.slice(at);
+}
+
+// xcolor v3 が受け付けない color オプションを \usepackage[…]{xcolor} から外す。⚠ landmines.md
+export function dropXcolorColorOption(preamble: string): string {
+  return preamble.replace(/(\\usepackage\s*\[)([^\]%]*)(\]\s*\{\s*xcolor\s*\})/g, (whole, head: string, opts: string, tail: string) => {
+    const kept = opts.split(",").filter((o) => o.trim() !== "color");
+    if (kept.length === opts.split(",").length) return whole;
+    const rest = kept.join(",");
+    return rest.trim() === "" ? `\\usepackage${tail.slice(1)}` : `${head}${rest}${tail}`;
+  });
 }
 
 const PKG_LINE = (name: string): RegExp =>
@@ -396,8 +438,14 @@ export function placeCleverefAfterHyperref(preamble: string): string {
 
 // title を渡すと前文の \title の主引数だけを差し替える（契約付録 §8）。
 export function buildPreamble(cleanLatex: string, mode: Layout, title?: string): string {
+  return dropXcolorColorOption(buildPreambleBase(cleanLatex, mode, title));
+}
+
+function buildPreambleBase(cleanLatex: string, mode: Layout, title?: string): string {
   const preamble = extractPreamble(cleanLatex);
-  const original = title === undefined ? preamble : replaceTitle(preamble, title, detectProfile(cleanLatex));
+  const original = joinFrontBlankLines(
+    title === undefined ? preamble : replaceTitle(preamble, title, detectProfile(cleanLatex)),
+  );
   return placeCleverefAfterHyperref(
     mode === "original" ? injectShared(neutralizePreamble(original)) : `${templatePreamble(original, cleanLatex)}\n`,
   );
@@ -436,7 +484,7 @@ export function assembleWithMap(input: {
   const layout: Layout = input.mode ?? "original";
   let out = `${buildPreamble(input.cleanLatex, layout, input.title)}${BEGIN_DOC}\n`;
   const parts = input.segments
-    .map((s) => ({ id: s.id, tex: sanitizeMath(fuseCaptionParagraphs(separateCjkAfterControlWords(s.tex))).trim() }))
+    .map((s) => ({ id: s.id, tex: sanitizeMath(joinFrontBlankLines(fuseCaptionParagraphs(separateCjkAfterControlWords(s.tex)))).trim() }))
     .filter((p) => p.tex !== "");
   const sourceMap: SourceSpan[] = [];
   parts.forEach((p, i) => {
@@ -446,7 +494,7 @@ export function assembleWithMap(input: {
     if (i < parts.length - 1) out += "\n\n";
   });
   out += `\n${END_DOC}\n`;
-  return { mainTex: releaseCounterAnchorNames(releaseLuatexjaNames(out)), layout, sourceMap };
+  return { mainTex: releaseCounterAnchorNames(releaseSiunitxNames(releaseLuatexjaNames(out))), layout, sourceMap };
 }
 
 export function segmentAtLine(sourceMap: SourceSpan[], line: number): string | undefined {

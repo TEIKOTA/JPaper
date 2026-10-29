@@ -304,23 +304,24 @@ describe("タイトル", () => {
 
   it("タイトルブロックは題の \\thanks も潰す", () => {
     expect(bilingualPreamble("")).toContain("\\bfseries\\begingroup\\let\\thanks\\@gobble #1\\endgroup");
-    // 著者欄は表の外で組むので、\and 系を区切りの空白にしてから展開する（issue #324）。
-    expect(bilingualPreamble("")).toContain(
-      "\\begingroup\\let\\thanks\\@gobble\\def\\and{\\unskip\\quad}\\let\\And\\and\\def\\AND{\\unskip\\par}",
-    );
+    // 著者欄は表の外で組むので、\and 系が無ければ区切りの空白にし（issue #324）、あれば著者ごとの幅つきの箱（varwidth）にしてから展開する（issue #529）。
+    expect(bilingualPreamble("")).toContain("\\else\\let\\jp@open\\relax\\let\\jp@close\\relax\\def\\and{\\unskip\\quad}\\let\\And\\and\\def\\AND{\\unskip\\par}\\fi");
+    expect(bilingualPreamble("")).toContain("\\def\\and{\\end{varwidth}\\hskip 1em plus 0.5em\\jp@vw}\\let\\And\\and");
   });
 
   it("著者欄の \\\\ は \\jp@cr に替えてから展開する（issue #539）", () => {
     const pre = bilingualPreamble("");
-    expect(pre).toContain("\\def\\AND{\\unskip\\par}\\let\\\\\\jp@cr\\@ifundefined{name}");
+    expect(pre).toContain("\\begingroup\\let\\\\\\jp@cr\\let\\thanks\\@gobble");
+    // varwidth の箱の中は \\centering が \\\\ を戻すので、箱の頭でも替える。
+    expect(pre).toContain("\\centering\\let\\\\\\jp@cr}");
     expect(pre).toContain("\\def\\jp@cr{\\ifhmode\\expandafter\\@centercr\\else");
   });
 
   it("著者欄では未定義の \\name・\\email・\\addr（jmlr2e の \\maketitle の中だけの命令）を補ってから展開する（issue #440）", () => {
     const pre = bilingualPreamble("");
-    const author = pre.slice(pre.indexOf("\\def\\and{\\unskip\\quad}"), pre.indexOf("#2\\endgroup") + 2);
+    const author = pre.slice(pre.indexOf("\\let\\thanks\\@gobble\\@ifundefined"), pre.indexOf("\\jp@close\\endgroup") + 2);
     for (const name of ["name", "email", "addr"]) expect(author).toContain(`\\@ifundefined{${name}}{\\def\\${name}{`);
-    expect(author.endsWith("{}#2")).toBe(true);
+    expect(author).toContain("\\jp@open #2");
   });
 
   it("acmart の前文にだけ、著者欄・要旨を段ごとに溜めて表題ブロックで出す手当てを入れる（issue #499）", () => {
@@ -462,12 +463,11 @@ describe("paracol 本文", () => {
 });
 
 describe("前文", () => {
-  it("和訳の前文に paracol・eso-pic・geometry・タイトルブロック・非フロート差し替えを足す", () => {
+  it("和訳の前文に paracol・geometry・タイトルブロック・非フロート差し替えを足す", () => {
     const pre = bilingualPreamble("\\documentclass{article}\n\\usepackage{x}\n\n");
     expect(pre.startsWith("\\PassOptionsToPackage{draft}{hyperref} % JPaper 注入: 対訳はリンクを作らない\n\\documentclass{article}\n\\usepackage{x}\n")).toBe(true);
     for (const s of [
       "\\usepackage{paracol}",
-      "\\usepackage{eso-pic}",
       "\\geometry{onecolumn,paperwidth=420mm,paperheight=297mm",
       "\\setlength{\\columnsep}{",
       "\\newcommand{\\jpTitleBlock}",
@@ -480,6 +480,8 @@ describe("前文", () => {
     ]) {
       expect(pre).toContain(s);
     }
+    // class が古い eso-pic のコードを抱えていると読めないので、eso-pic は読まない（issue #520）
+    expect(pre).not.toContain("eso-pic");
   });
 
   it("図表ブロックの 4 環境は開始で負の \\vspace を無効にする定義を入れ、正の量と \\vspace* は元の \\vspace へ渡す（#478）", () => {
@@ -488,7 +490,8 @@ describe("前文", () => {
       const m = pre.match(new RegExp(`\\\\renewenvironment\\{${env.replace("*", "\\*")}\\}\\[1\\]\\[\\]\\{([^\\n]*)`));
       expect(m?.[1], env).toContain("\\begin{center}\\jp@clampvspace\\def\\@captype{");
     }
-    expect(pre).toContain("\\def\\jp@vspace@wrap{\\@ifstar{\\jp@vspace@s}{\\jp@vspace@n}}");
+    // \caption の目次行への書き出しで展開されて壊れないよう protected にする（#530）
+    expect(pre).toContain("\\protected\\def\\jp@vspace@wrap{\\@ifstar{\\jp@vspace@s}{\\jp@vspace@n}}");
     // 図表が入れ子でも退避し直さない（2 回目で \jp@vspace が自分を指して無限再帰になる。PR #481 のレビュー）
     expect(pre).toContain("\\def\\jp@clampvspace{\\ifx\\vspace\\jp@vspace@wrap\\else\\let\\jp@vspace\\vspace\\let\\vspace\\jp@vspace@wrap\\fi}");
     expect(pre).toContain("\\def\\jp@vspace@n#1{\\jp@vspace@c{#1}{\\jp@vspace{#1}}}");
@@ -496,6 +499,14 @@ describe("前文", () => {
     expect(pre).toContain("\\def\\jp@vspace@c#1#2{\\skip@#1\\relax\\ifdim\\skip@<\\z@\\else#2\\fi}");
     // 差し替えは環境の中だけ。ブロックの外の \\vspace（前後の 1mm）は元のまま
     expect(pre).not.toMatch(/\n\\let\\vspace|\n\\renewcommand\{\\vspace\}/);
+  });
+
+  it("図表ブロックの 4 環境は開始で float の \\@float@c@<型> を素の \\@caption に向ける（#519）", () => {
+    const pre = bilingualPreamble("\\documentclass{article}\n");
+    for (const [env, type] of [["figure", "figure"], ["figure*", "figure"], ["table", "table"], ["table*", "table"]]) {
+      const m = pre.match(new RegExp(`\\\\renewenvironment\\{${env!.replace("*", "\\*")}\\}\\[1\\]\\[\\]\\{([^\\n]*)`));
+      expect(m?.[1], env).toContain(`\\def\\@captype{${type}}\\expandafter\\let\\csname @float@c@${type}\\endcsname\\@caption}`);
+    }
   });
 
   it("組み立てた main.tex は和訳の前文を使い、本文先頭で紙面と左右のページ番号を設定する", () => {
@@ -509,8 +520,8 @@ describe("前文", () => {
     const body = out.mainTex.slice(out.mainTex.indexOf("\\begin{document}"));
     expect(body).toContain("\\newgeometry{onecolumn,paperwidth=420mm,paperheight=297mm");
     expect(body).toContain("\\pagestyle{empty}");
-    expect(body).toContain("\\AddToShipoutPictureFG{");
-    expect(body).not.toContain("\\AddToShipoutPictureFG*");
+    expect(body).toContain("\\AddToHook{shipout/foreground}{");
+    expect(out.mainTex).not.toContain("eso-pic");
     expect(body).toContain("原文 p.\\thepage");
     expect(body).toContain("和訳 p.\\thepage");
     expect(body).toContain("\\begin{paracol}{2}\n\\setlength{\\textwidth}{\\columnwidth}\n\\jpRobustNotes\nA\n\\switchcolumn\n和\n\\switchcolumn*\n\\end{paracol}\n\\end{document}\n");
@@ -1085,5 +1096,19 @@ describe("comment 環境（issue #440）", () => {
       expect(out.commentMismatch).toEqual(["s2"]);
       expect(out.mainTex.split("\n")).toContain("残る訳文");
     });
+  });
+});
+
+describe("前付けの引数の空行（issue #517）", () => {
+  const doc = (pre: string): string => `\\documentclass{article}\n${pre}\\begin{document}\n\\end{document}\n`;
+  it("原文の前文の \\title の空行を詰めて、左のタイトルブロックに渡す", () => {
+    const { mainTex } = assembleBilingual({
+      cleanLatex: doc("\\title{T\n\nU}\n"),
+      translatedMainTex: doc("\\title{T U}\n"),
+      source: [{ id: "s", tex: "\\maketitle\n\nHello." }],
+      translated: [{ id: "s", tex: "\\maketitle\n\nこんにちは。" }],
+    });
+    expect(mainTex).toContain("\\jpTitleBlock{T\nU}");
+    expect(mainTex).not.toMatch(/\\jpTitleBlock\{[^}]*\n[ \t]*\n/);
   });
 });

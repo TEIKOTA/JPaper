@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { detectProfile } from "./frontmatter.js";
 import { assembleBilingual, renderPairs } from "./bilingual-latex.js";
+import { assembleWithMap } from "./assemble-latex.js";
 
 // 段落の境目の条件分岐（issue #378・契約付録 §8）を、renderPairs の出力と修正前の組み立て（段落ごと左右に置く）の
 // 両方で pdflatex と paracol の最小文書に組み、組めたか・どの行がどの段で実行されたかを比べる。
@@ -371,6 +372,9 @@ const hasAcmart =
   spawnSync("lualatex", ["--version"], { stdio: "ignore" }).status === 0 &&
   spawnSync("kpsewhich", ["luatexja-preset.sty"], { encoding: "utf8" }).stdout.trim() !== "" &&
   spawnSync("kpsewhich", ["acmart.cls"], { encoding: "utf8" }).stdout.trim() !== "";
+const hasLuaJa =
+  spawnSync("lualatex", ["--version"], { stdio: "ignore" }).status === 0 &&
+  spawnSync("kpsewhich", ["luatexja-preset.sty"], { encoding: "utf8" }).stdout.trim() !== "";
 
 const ACM_FRONT = (title: string, inst: string, abs: string, kw: string): string =>
   [
@@ -452,25 +456,253 @@ describe.skipIf(!hasAcmart)("acmart の論文の対訳を lualatex で組む（i
   }, 240_000);
 });
 
+const hasCaption =
+  spawnSync("lualatex", ["--version"], { stdio: "ignore" }).status === 0 &&
+  spawnSync("kpsewhich", ["luatexja-preset.sty"], { encoding: "utf8" }).stdout.trim() !== "" &&
+  spawnSync("kpsewhich", ["caption.sty"], { encoding: "utf8" }).stdout.trim() !== "";
+
+describe.skipIf(!hasCaption)("\\caption の中の \\vspace を含む図表の対訳を lualatex で組む（issue #530）", () => {
+  it("caption パッケージの目次行への書き出しで \\vspace が展開されても、キャプションが左右の段に出る", () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "jpaper-capvs-"));
+    try {
+      const pre = "\\documentclass{article}\n\\usepackage{caption}\n";
+      const figure = (cap: string): string =>
+        `\\begin{figure}\n\\centering\nbody\n\\caption{${cap}\\vspace{-.3cm}\n}\n\\end{figure}\n\n\\begin{table}\n\\caption{${cap}\\vspace*{1mm}}\n\\end{table}`;
+      const { mainTex } = assembleBilingual({
+        cleanLatex: `${pre}\\begin{document}\n\\end{document}\n`,
+        translatedMainTex: `${pre}\\usepackage{luatexja}\n\\begin{document}\n\\end{document}\n`,
+        source: [{ id: "seg-0000", tex: figure("Left caption") }],
+        translated: [{ id: "seg-0000", tex: figure("Right caption") }],
+      });
+      writeFileSync(path.join(dir, "main.tex"), mainTex);
+      const r = spawnSync("lualatex", ["-interaction=nonstopmode", "-halt-on-error", "main.tex"], { cwd: dir, encoding: "utf8", timeout: 240_000 });
+      expect(r.status, r.stdout.slice(-3000)).toBe(0);
+      const text = (x: string): string =>
+        spawnSync("pdftotext", ["-x", x, "-y", "0", "-W", "595", "-H", "842", "-raw", "main.pdf", "-"], { cwd: dir, encoding: "utf8" }).stdout.replace(/\s+/g, " ");
+      expect(text("0")).toContain("Left caption");
+      expect(text("595")).toContain("Right caption");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 120_000);
+});
+
+// 2107.03315（ICCV 2021）の \begin{document} から \maketitle まで。本文に書いた \author の引数（74 行目付近）に空行がある。issue #517
+const ICCV_FRONT = readFileSync(new URL("./fixtures/iccv-2107.03315-front.tex", import.meta.url), "utf8");
+
+describe.skipIf(!hasAcmart)("本文にある \\author の引数の空行を対訳で組む（issue #517、2107.03315）", () => {
+  it.each(["original", "template"] as const)("%s: 左右の段が空行を写していても PDF が出る", (mode) => {
+    const dir = mkdtempSync(path.join(tmpdir(), "jpaper-iccvbi-"));
+    try {
+      const clean = `\\documentclass{article}\n\\begin{document}\n${ICCV_FRONT}\n\\end{document}\n`;
+      const translatedMainTex = assembleWithMap({ cleanLatex: clean, segments: [{ id: "seg-0000", tex: ICCV_FRONT }], mode }).mainTex;
+      const { mainTex } = assembleBilingual({
+        cleanLatex: clean,
+        translatedMainTex,
+        source: [{ id: "seg-0000", tex: ICCV_FRONT }],
+        translated: [{ id: "seg-0000", tex: ICCV_FRONT }],
+      });
+      writeFileSync(path.join(dir, "main.tex"), mainTex);
+      const r = spawnSync("lualatex", ["-interaction=nonstopmode", "-halt-on-error", "main.tex"], { cwd: dir, encoding: "utf8", timeout: 240_000 });
+      expect(r.stdout.split("\n").filter((l) => l.startsWith("!")), r.stdout.slice(-2000)).toEqual([]);
+      expect(r.status).toBe(0);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 240_000);
+});
+
+// float の \restylefloat（issue #519）: 表のキャプションが \float@caption 経由で \@fs@capt を求める。lualatex で対訳を組み、左右の半分にキャプションが出るかを見る。
+describe.skipIf(!hasLuaJa || spawnSync("kpsewhich", ["float.sty"], { encoding: "utf8" }).stdout.trim() === "")("\\restylefloat の表を含む対訳を lualatex で組む（issue #519）", () => {
+  it("左右の段それぞれに表のキャプションが出る", () => {
+    const dir = process.env.JP_RESTYLE_DIR ?? mkdtempSync(path.join(tmpdir(), "jpaper-restyle-"));
+    try {
+      const pre = "\\documentclass{article}\n\\usepackage{float}\n\\restylefloat{table}\n";
+      const table = (cap: string): string => `\\begin{table}[H]\n\\centering\n\\begin{tabular}{ll}a & b\\end{tabular}\n\\caption{${cap}}\n\\end{table}`;
+      const { mainTex } = assembleBilingual({
+        cleanLatex: `${pre}\\begin{document}\n\\end{document}\n`,
+        translatedMainTex: `${pre}\\usepackage{luatexja}\n\\begin{document}\n\\end{document}\n`,
+        source: [{ id: "seg-0000", tex: `Before.\n\n${table("Leftcaption")}\n\nAfter.` }],
+        translated: [{ id: "seg-0000", tex: `Mae.\n\n${table("Rightcaption")}\n\nAto.` }],
+      });
+      writeFileSync(path.join(dir, "main.tex"), mainTex);
+      const r = spawnSync("lualatex", ["-interaction=nonstopmode", "-halt-on-error", "main.tex"], { cwd: dir, encoding: "utf8", timeout: 240_000 });
+      expect(r.status, r.stdout.slice(-2000)).toBe(0);
+      const text = (x: string): string =>
+        spawnSync("pdftotext", ["-x", x, "-y", "0", "-W", "595", "-H", "842", "-raw", "main.pdf", "-"], { cwd: dir, encoding: "utf8" }).stdout.replace(/\s+/g, " ");
+      expect(text("0")).toMatch(/Table 1: Leftcaption/);
+      expect(text("595")).toMatch(/Table 1: Rightcaption/);
+    } finally {
+      if (process.env.JP_RESTYLE_DIR === undefined) rmSync(dir, { recursive: true, force: true });
+    }
+  }, 300_000);
+});
+
+// 著者欄の \and（issue #324・#529）: 対訳のタイトルブロックを lualatex で組み、1 ページ目の左の半分の行を返す。
+function buildAuthors(author: string, pre: string = "\\documentclass{article}\n"): { ok: boolean; log: string; lines: string[]; words: { w: string; x0: number; x1: number }[]; dir: string } {
+  const dir = mkdtempSync(path.join(tmpdir(), "jpaper-and-"));
+  const body = `\\title{Left Title}\n\n${author}\n\n\\maketitle\n\nIntro text.`;
+  const { mainTex } = assembleBilingual({
+    cleanLatex: `${pre}\\begin{document}\n\\end{document}\n`,
+    translatedMainTex: `${pre}\\usepackage{luatexja}\n\\begin{document}\n\\end{document}\n`,
+    source: [{ id: "seg-0000", tex: body }],
+    translated: [{ id: "seg-0000", tex: body.replace("Left Title", "右の表題") }],
+  });
+  writeFileSync(path.join(dir, "main.tex"), mainTex);
+  const r = spawnSync("lualatex", ["-interaction=nonstopmode", "-halt-on-error", "main.tex"], { cwd: dir, encoding: "utf8", timeout: 240_000 });
+  const text = spawnSync("pdftotext", ["-f", "1", "-l", "1", "-x", "0", "-y", "0", "-W", "595", "-H", "842", "-layout", "main.pdf", "-"], { cwd: dir, encoding: "utf8" }).stdout;
+  // 語の左端・右端（左の段の右端と右の段の左端の間の余白に語が掛からないかを見る）。
+  const bbox = spawnSync("pdftotext", ["-f", "1", "-l", "1", "-bbox", "main.pdf", "-"], { cwd: dir, encoding: "utf8" }).stdout;
+  const words = [...bbox.matchAll(/<word xMin="([\d.]+)" yMin="[\d.]+" xMax="([\d.]+)" yMax="[\d.]+">([^<]*)<\/word>/g)].map((m) => ({ w: m[3]!, x0: Number(m[1]), x1: Number(m[2]) }));
+  return { ok: r.status === 0, log: r.stdout.slice(-3000), lines: text.split("\n"), words, dir };
+}
+
+const hasLua = spawnSync("lualatex", ["--version"], { stdio: "ignore" }).status === 0;
+const FRONT = readFileSync(new URL("./fixtures/iccv-2107.03315-front.tex", import.meta.url), "utf8");
+const ICCV_AUTHOR = FRONT.slice(FRONT.indexOf("\\author"), FRONT.indexOf("\\maketitle")).trim().replace(/\n\s*\n/g, "\n");
+// 著者欄の空行は #517 の別の不具合（PR #526）なので、ここでは外して #529 だけを見る。
+
+describe.skipIf(!hasLua)("対訳のタイトルブロックの著者欄の \\and を lualatex で組む（issue #529）", () => {
+  it("複数行の著者が \\and で並ぶ著者欄は、著者ごとのまとまりが保たれる（2107.03315）", () => {
+    const { ok, log, lines, dir } = buildAuthors(ICCV_AUTHOR);
+    try {
+      expect(ok, log).toBe(true);
+      expect(log).not.toContain("Misplaced");
+      // メールの行に次の著者の名前が続かない・名前の行にメールが続かない。
+      for (const l of lines.filter((x) => x.includes("@"))) expect(l, l).not.toMatch(/Guillory|Shankar|Ebrahimi|Darrell|Schmidt/);
+      for (const l of lines.filter((x) => /Guillory|Shankar|Ebrahimi|Darrell|Schmidt/.test(x))) expect(l, l).not.toContain("@");
+      expect(lines.join("\n")).toContain("ludwigschmidt2@gmail.com");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 240_000);
+
+  it("1 行の著者が \\and で並ぶ著者欄（issue #324 の形）と、\\and の無い著者欄も組める", () => {
+    for (const [author, names, pre] of [
+      ["\\author{Ann Lee \\and Bob Kay \\and Cy Poe}", ["Ann Lee", "Bob Kay", "Cy Poe"], undefined],
+      ["\\author{Ann Lee, Bob Kay}", ["Ann Lee, Bob Kay"], undefined],
+      ["\\author{Ann Lee\\inst{1} \\and Bob Kay\\inst{2}}\\institute{Uni A \\and Uni B}", ["Ann Lee", "Bob Kay"], "\\documentclass{llncs}\n"],
+    ] as const) {
+      const { ok, log, lines, dir } = buildAuthors(author, pre);
+      try {
+        expect(ok, log).toBe(true);
+        for (const n of names) expect(lines.join("\n").replace(/ +/g, " "), n).toContain(n);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    }
+  }, 240_000);
+
+  it("1 行が段の幅より長い著者は、箱の中で折り返して反対の段に重ならない", () => {
+    const long = "Department of Computer Science and Engineering, School of Engineering and Applied Sciences, University of Somewhere Far Away, Springfield, Country";
+    const { ok, log, lines, words, dir } = buildAuthors(`\\author{Ann Lee\\\\ ${long} \\and Bob Kay\\\\ Y}`);
+    try {
+      expect(ok, log).toBe(true);
+      // 左の段の右端は約 550pt、右の段の左端は約 640pt。この間（段の間）に語が掛かれば、段からはみ出している。
+      expect(words.filter((x) => x.x1 > 560 && x.x0 < 630).map((x) => x.w)).toEqual([]);
+      expect(words.some((x) => x.w === "Country" && x.x1 < 560)).toBe(true);
+      expect(lines.join("\n")).toContain("Bob Kay");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 240_000);
+
+  it("\\AND は著者欄の段落を改める（\\And は横に並べる）", () => {
+    const { ok, log, lines, dir } = buildAuthors("\\author{Ann Lee\\\\ X \\And Bob Kay\\\\ Y \\AND Cy Poe\\\\ Z}");
+    try {
+      expect(ok, log).toBe(true);
+      const row = (n: string): string => lines.find((l) => l.includes(n)) ?? "";
+      expect(row("Ann Lee")).toContain("Bob Kay");
+      expect(row("Ann Lee")).not.toContain("Cy Poe");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 240_000);
+});
+
+// 古い eso-pic のコードを抱えた class（issue #520）: cvpr.cls の 198-205 行目の形（2007.02915）を写した class で、
+// 対訳の前文が eso-pic を読むと `\ESO@isMEMOIR already defined` で止まる。ページ番号と罫線は eso-pic を読まずに描く。
+const hasLualatex = spawnSync("lualatex", ["--version"], { stdio: "ignore" }).status === 0 &&
+  spawnSync("kpsewhich", ["luatexja-preset.sty"], { encoding: "utf8" }).stdout.trim() !== "";
+
+const OLD_ESOPIC_CLS = [
+  "\\NeedsTeXFormat{LaTeX2e}",
+  "\\ProvidesClass{oldeso}[2021/01/01 old eso-pic inside a class]",
+  "\\LoadClass{article}",
+  "\\makeatletter",
+  "\\newcommand\\eg{e.g.}",
+  "\\newcommand{\\ESO@HookI}{} \\newcommand{\\ESO@HookII}{}",
+  "\\newcommand{\\ESO@HookIII}{}",
+  "\\newcommand{\\AddToShipoutPicture}{%",
+  "  \\@ifstar{\\g@addto@macro\\ESO@HookII}{\\g@addto@macro\\ESO@HookI}}",
+  "\\newcommand{\\ClearShipoutPicture}{\\global\\let\\ESO@HookI\\@empty}",
+  "\\newcommand\\ESO@isMEMOIR[1]{}",
+  "\\@ifclassloaded{memoir}{\\renewcommand\\ESO@isMEMOIR[1]{#1}}{}",
+  "\\makeatother",
+  "",
+].join("\n");
+
+function buildOldEso(): { ok: boolean; log: string; dir: string } {
+  const dir = mkdtempSync(path.join(tmpdir(), "jpaper-oldeso-"));
+  writeFileSync(path.join(dir, "oldeso.cls"), OLD_ESOPIC_CLS);
+  const pre = "\\documentclass{oldeso}\n";
+  const body = (t: string): string => `\\begin{document}\n${t}\n\\end{document}\n`;
+  const long = (w: string): string => Array.from({ length: 80 }, (_, i) => `${w}${i} lorem ipsum dolor sit amet.`).join(" ");
+  const { mainTex } = assembleBilingual({
+    cleanLatex: pre + body("A"),
+    translatedMainTex: `${pre}\\usepackage{luatexja}\n${body("B")}`,
+    source: [{ id: "seg-0000", tex: `Left \\eg ${long("L")}` }, { id: "seg-0001", tex: "Second left." }],
+    translated: [{ id: "seg-0000", tex: `右 \\eg ${long("R")}` }, { id: "seg-0001", tex: "二番目の右。" }],
+  });
+  writeFileSync(path.join(dir, "main.tex"), mainTex);
+  const r = spawnSync("lualatex", ["-interaction=nonstopmode", "-halt-on-error", "main.tex"], { cwd: dir, encoding: "utf8", timeout: 240_000 });
+  return { ok: r.status === 0, log: r.stdout.slice(-3000), dir };
+}
+
+describe.skipIf(!hasLualatex)("class が古い eso-pic のコードを抱えた文書の対訳を lualatex で組む（issue #520）", () => {
+  it("原前文のまま組め、ページ番号は左右の下端・罫線は中央に出る", () => {
+    const r = buildOldEso();
+    try {
+      expect(r.ok, r.log).toBe(true);
+      expect(r.log).not.toMatch(/ESO@isMEMOIR/);
+      const words = spawnSync("pdftotext", ["-f", "1", "-l", "1", "-bbox", "main.pdf", "-"], { cwd: r.dir, encoding: "utf8" }).stdout;
+      const at = (w: string): { x: number; y: number } => {
+        const m = new RegExp(`xMin="([\\d.]+)" yMin="([\\d.]+)"[^>]*>${w}</word>`).exec(words);
+        expect(m, w).not.toBeNull();
+        return { x: Number(m![1]), y: Number(m![2]) };
+      };
+      // 紙は 420mm × 297mm（1190.55pt × 841.89pt）。ページ番号は下端から 10mm の高さの中心、左は 105mm・右は 315mm の中心。
+      const l = at("原文");
+      const rt = at("和訳");
+      expect(Math.abs(l.y - (841.89 - 10 * 2.8346 - 6))).toBeLessThan(8);
+      expect(Math.abs(l.x - (105 * 2.8346 - 25))).toBeLessThan(10);
+      expect(Math.abs(rt.x - (315 * 2.8346 - 25))).toBeLessThan(10);
+    } finally {
+      rmSync(r.dir, { recursive: true, force: true });
+    }
+  }, 240_000);
+});
+
 // 著者欄に `\\ \\`（空の行）がある article の前付け（issue #539）。表題ブロックは著者を centering の段落で組むので、
 // 連続した `\\` が There's no line here to end で落ちた。lualatex で組めること・左右の表題ブロックに著者が出ることを確かめる。
 describe.skipIf(!hasAcmart)("著者欄の連続した \\\\ を持つ論文の対訳を組む（issue #539）", () => {
-  const head = (title: string, inst: string): string =>
+  const head = (title: string, inst: string, sep = ""): string =>
     [
       "\\documentclass{article}",
       `\\title{${title}}`,
-      "\\author{Ann\\quad \\\\ \\textbf{Zed}  \\\\ \\\\",
+      `\\author{Ann\\quad \\\\ \\textbf{Zed}  \\\\ \\\\${sep}`,
       `${inst}\\\\`,
       "{\\small \\texttt{x@example.org}}}",
       "",
     ].join("\n");
 
-  it("連続した \\\\ で落ちず、左右の表題ブロックに著者が出る", () => {
+  // \and があると著者ごとの varwidth の箱で組む（issue #529）。箱の中でも \\ を続けられる。
+  it.each(["", "\\and Bob"])("連続した \\\\ で落ちず、左右の表題ブロックに著者が出る（区切り: %j）", (sep) => {
     const dir = mkdtempSync(path.join(tmpdir(), "jpaper-cr-"));
     try {
       const { mainTex } = assembleBilingual({
-        cleanLatex: `${head("Left Title", "Left Uni")}\\begin{document}\n\\end{document}\n`,
-        translatedMainTex: `${head("Right Title", "Right Uni").replace("{article}", "{article}\n\\usepackage{luatexja}")}\\begin{document}\n\\end{document}\n`,
+        cleanLatex: `${head("Left Title", "Left Uni", sep)}\\begin{document}\n\\end{document}\n`,
+        translatedMainTex: `${head("Right Title", "Right Uni", sep).replace("{article}", "{article}\n\\usepackage{luatexja}")}\\begin{document}\n\\end{document}\n`,
         source: [{ id: "seg-0000", tex: "\\maketitle\n\\section{Intro}" }],
         translated: [{ id: "seg-0000", tex: "\\maketitle\n\\section{Intro}" }],
       });

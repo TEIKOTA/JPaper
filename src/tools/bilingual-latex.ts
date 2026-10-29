@@ -1,8 +1,10 @@
 // 契約付録 §7・対訳 PDF ADR(20261006)。原文と訳文を段落ペアにして paracol の対訳 main.tex を組み立てる。
 import {
   extractPreamble,
+  joinFrontBlankLines,
   releaseCounterAnchorNames,
   releaseLuatexjaNames,
+  releaseSiunitxNames,
   sanitizeMath,
   separateCjkAfterControlWords,
 } from "./assemble-latex.js";
@@ -153,7 +155,9 @@ export function unwrapTitleBlock(tex: string, profile: FrontMatterProfile = DEFA
 }
 
 export function paragraphsOf(tex: string, profile: FrontMatterProfile = DEFAULT_PROFILE): string[] {
-  return balanceParagraphs(splitParagraphs(sanitizeMath(separateCjkAfterControlWords(unwrapTitleBlock(tex, profile)))));
+  return balanceParagraphs(
+    splitParagraphs(sanitizeMath(separateCjkAfterControlWords(unwrapTitleBlock(joinFrontBlankLines(tex), profile)))),
+  );
 }
 
 const COMMENT_BEGIN = /\\begin\s*\{comment\}/;
@@ -351,8 +355,8 @@ export const PAPER = "onecolumn,paperwidth=420mm,paperheight=297mm,top=18mm,bott
 const SETUP = [
   "% --- JPaper 注入: 対訳 (対訳 PDF ADR 20261006) ---",
   "\\usepackage{paracol}",
-  "\\usepackage{eso-pic}",
   "\\usepackage{xcolor}",
+  "\\usepackage{varwidth}",
   "\\usepackage{geometry}",
   `\\geometry{${PAPER}}`,
   "\\setlength{\\columnsep}{32mm}",
@@ -360,15 +364,27 @@ const SETUP = [
   "\\makeatletter",
   // 著者欄の連続した \\ を、centering の段落でも空の行として扱う。⚠ landmines.md
   "\\def\\jp@cr{\\ifhmode\\expandafter\\@centercr\\else\\leavevmode\\null\\par\\expandafter\\@xcentercr\\fi}",
+  "\\newif\\ifjp@and",
+  "\\def\\jp@vw{\\begin{varwidth}[t]{\\linewidth}\\parindent\\z@\\centering\\let\\\\\\jp@cr}",
+  "\\long\\def\\jp@scanand{\\expandafter\\jp@scan@and\\the\\toks@\\and\\jp@mark\\jp@end" +
+    "\\expandafter\\jp@scan@And\\the\\toks@\\And\\jp@mark\\jp@end\\expandafter\\jp@scan@AND\\the\\toks@\\AND\\jp@mark\\jp@end}",
+  "\\long\\def\\jp@scan@and#1\\and#2\\jp@end{\\def\\jp@t{#2}\\def\\jp@u{\\jp@mark}\\ifx\\jp@t\\jp@u\\else\\jp@andtrue\\fi}",
+  "\\long\\def\\jp@scan@And#1\\And#2\\jp@end{\\def\\jp@t{#2}\\def\\jp@u{\\jp@mark}\\ifx\\jp@t\\jp@u\\else\\jp@andtrue\\fi}",
+  "\\long\\def\\jp@scan@AND#1\\AND#2\\jp@end{\\def\\jp@t{#2}\\def\\jp@u{\\jp@mark}\\ifx\\jp@t\\jp@u\\else\\jp@andtrue\\fi}",
   "\\newcommand{\\jp@titleblock}[2]{%",
   "  \\par\\hrule height 4\\p@\\vskip 0.15in",
   "  {\\centering\\Large\\bfseries\\begingroup\\let\\thanks\\@gobble #1\\endgroup\\par}",
   "  \\vskip 0.2in\\hrule height 1\\p@\\vskip 0.1in",
-  // 著者の \\and / \\And / \\AND はタイトルの表組みの中でしか使えないので、ここでは区切りの空白にする。⚠ landmines.md
+  // 著者に \\and / \\And / \\AND があれば著者ごとに幅つきの箱に入れて横に並べ、無ければ従来どおり区切りの空白にする。⚠ landmines.md
   // jmlr2e の \name・\email・\addr は \maketitle の中でだけ定義されるので、未定義なら同じ意味で補う。⚠ landmines.md
-  "  {\\centering\\begingroup\\let\\thanks\\@gobble\\def\\and{\\unskip\\quad}\\let\\And\\and\\def\\AND{\\unskip\\par}\\let\\\\\\jp@cr" +
+  "  {\\centering\\begingroup\\let\\\\\\jp@cr\\let\\thanks\\@gobble" +
     "\\@ifundefined{name}{\\def\\name{\\normalsize\\bfseries}}{}\\@ifundefined{email}{\\def\\email{\\hfill\\small\\scshape}}{}" +
-    "\\@ifundefined{addr}{\\def\\addr{\\small\\itshape}}{}#2\\endgroup\\par}",
+    "\\@ifundefined{addr}{\\def\\addr{\\small\\itshape}}{}\\jp@andfalse\\expandafter\\toks@\\expandafter{#2}\\jp@scanand" +
+    "\\ifjp@and\\def\\jp@open{\\noindent\\jp@vw}\\def\\jp@close{\\end{varwidth}}" +
+    "\\def\\and{\\end{varwidth}\\hskip 1em plus 0.5em\\jp@vw}\\let\\And\\and" +
+    "\\def\\AND{\\end{varwidth}\\par\\noindent\\jp@vw}" +
+    "\\else\\let\\jp@open\\relax\\let\\jp@close\\relax\\def\\and{\\unskip\\quad}\\let\\And\\and\\def\\AND{\\unskip\\par}\\fi" +
+    "\\jp@open #2\\jp@close\\endgroup\\par}",
   "  \\vskip 0.15in}",
   "\\newcommand{\\jpTitleBlock}[1]{\\jp@titleblock{#1}{\\@author}}",
   // ⚠ landmines.md
@@ -404,15 +420,16 @@ const SETUP = [
   // ⚠ landmines.md
   "\\newcommand{\\jpNoAux}[1]{\\begingroup\\@fileswfalse#1\\endgroup}",
   // ⚠ landmines.md
-  "\\def\\jp@vspace@wrap{\\@ifstar{\\jp@vspace@s}{\\jp@vspace@n}}",
+  "\\protected\\def\\jp@vspace@wrap{\\@ifstar{\\jp@vspace@s}{\\jp@vspace@n}}",
   "\\def\\jp@clampvspace{\\ifx\\vspace\\jp@vspace@wrap\\else\\let\\jp@vspace\\vspace\\let\\vspace\\jp@vspace@wrap\\fi}",
   "\\def\\jp@vspace@n#1{\\jp@vspace@c{#1}{\\jp@vspace{#1}}}",
   "\\def\\jp@vspace@s#1{\\jp@vspace@c{#1}{\\jp@vspace*{#1}}}",
   "\\def\\jp@vspace@c#1#2{\\skip@#1\\relax\\ifdim\\skip@<\\z@\\else#2\\fi}",
-  "\\renewenvironment{figure}[1][]{\\par\\vspace{1mm}\\begin{center}\\jp@clampvspace\\def\\@captype{figure}}{\\end{center}\\par\\vspace{1mm}}",
-  "\\renewenvironment{figure*}[1][]{\\par\\vspace{1mm}\\begin{center}\\jp@clampvspace\\def\\@captype{figure}}{\\end{center}\\par\\vspace{1mm}}",
-  "\\renewenvironment{table}[1][]{\\par\\vspace{1mm}\\begin{center}\\jp@clampvspace\\def\\@captype{table}}{\\end{center}\\par\\vspace{1mm}}",
-  "\\renewenvironment{table*}[1][]{\\par\\vspace{1mm}\\begin{center}\\jp@clampvspace\\def\\@captype{table}}{\\end{center}\\par\\vspace{1mm}}",
+  // ⚠ landmines.md
+  "\\renewenvironment{figure}[1][]{\\par\\vspace{1mm}\\begin{center}\\jp@clampvspace\\def\\@captype{figure}\\expandafter\\let\\csname @float@c@figure\\endcsname\\@caption}{\\end{center}\\par\\vspace{1mm}}",
+  "\\renewenvironment{figure*}[1][]{\\par\\vspace{1mm}\\begin{center}\\jp@clampvspace\\def\\@captype{figure}\\expandafter\\let\\csname @float@c@figure\\endcsname\\@caption}{\\end{center}\\par\\vspace{1mm}}",
+  "\\renewenvironment{table}[1][]{\\par\\vspace{1mm}\\begin{center}\\jp@clampvspace\\def\\@captype{table}\\expandafter\\let\\csname @float@c@table\\endcsname\\@caption}{\\end{center}\\par\\vspace{1mm}}",
+  "\\renewenvironment{table*}[1][]{\\par\\vspace{1mm}\\begin{center}\\jp@clampvspace\\def\\@captype{table}\\expandafter\\let\\csname @float@c@table\\endcsname\\@caption}{\\end{center}\\par\\vspace{1mm}}",
   "\\makeatother",
   "% --- JPaper 注入ここまで ---",
 ].join("\n");
@@ -484,10 +501,10 @@ const BEGIN = [
   `\\newgeometry{${PAPER}}`,
   "\\pagestyle{empty}",
   // ⚠ landmines.md
-  "\\AddToShipoutPictureFG{" +
-    "\\put(105mm,10mm){\\makebox(0,0){\\small 原文 p.\\thepage}}" +
-    "\\put(315mm,10mm){\\makebox(0,0){\\small 和訳 p.\\thepage}}" +
-    "\\put(210mm,0mm){\\color{black!25}\\rule{0.3pt}{297mm}}}",
+  "\\AddToHook{shipout/foreground}{\\begin{picture}(0,0)" +
+    "\\put(105mm,-287mm){\\makebox(0,0){\\small 原文 p.\\thepage}}" +
+    "\\put(315mm,-287mm){\\makebox(0,0){\\small 和訳 p.\\thepage}}" +
+    "\\put(210mm,-297mm){\\color{black!25}\\rule{0.3pt}{297mm}}\\end{picture}}",
 ].join("\n");
 
 export function titleBlock(left: string, right: string): string {
@@ -774,9 +791,9 @@ export function assembleBilingual(input: {
   const profile = detectProfile(input.cleanLatex);
   const commented = commentOutCommentEnvs(input.source, input.translated);
   const { pairs, fallbackSegments } = pairSegments(commented.source, commented.translated, profile);
-  const { blocks, titled } = renderPairs(pairs, { left: extractPreamble(input.cleanLatex), right: preamble }, profile);
+  const { blocks, titled } = renderPairs(pairs, { left: joinFrontBlankLines(extractPreamble(input.cleanLatex)), right: preamble }, profile);
   const mainTex = releaseCounterAnchorNames(
-    releaseLuatexjaNames(`${bilingualPreamble(preamble, profile)}${BEGIN}\n${paracolBody(blocks)}\\end{document}\n`),
+    releaseSiunitxNames(releaseLuatexjaNames(`${bilingualPreamble(preamble, profile)}${BEGIN}\n${paracolBody(blocks)}\\end{document}\n`)),
   );
   const titleUnplaced = profile.maketitle && !titled && input.source.some((s) => TITLE_COMMANDS.test(stripComments(s.tex)));
   return { mainTex, pairs: blocks.length, fallbackSegments, titleUnplaced, commentMismatch: commented.commentMismatch };

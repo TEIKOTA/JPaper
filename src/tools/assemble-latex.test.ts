@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { budgetMs, fastestMs } from "../testing/timing.js";
 import {
   assembleLatex,
+  joinFrontBlankLines,
   assembleWithMap,
   segmentAtLine,
   extractPreamble,
@@ -9,13 +10,16 @@ import {
   injectShared,
   prependLuatexCompat,
   stripDocumentClass,
+  dropXcolorColorOption,
   sanitizeMath,
   fuseCaptionParagraphs,
   releaseLuatexjaNames,
   releaseCounterAnchorNames,
+  releaseSiunitxNames,
   separateCjkAfterControlWords,
   classPackages,
   placeCleverefAfterHyperref,
+  buildPreamble,
 } from "./assemble-latex.js";
 
 const CLEAN = [
@@ -370,6 +374,71 @@ describe("classPackages", () => {
     expect(assembleWithMap({ cleanLatex: tex, segments: [{ id: "s", tex: "x" } as never], mode: "template" }).mainTex).toContain(
       "\\usepackage[round,authoryear]{natbib}",
     );
+  });
+});
+
+describe("joinFrontBlankLines（issue #517）", () => {
+  const pre = "\\documentclass{article}\n\\author{A\\\\\n\n  B\n \n\nC}\n\\title{T\n\nU}\n\n\\usepackage{x}\n";
+  it("\\author・\\title の引数の中の空行を詰め、引数の外の空行は残す", () => {
+    expect(joinFrontBlankLines(pre)).toBe(
+      "\\documentclass{article}\n\\author{A\\\\\n  B\nC}\n\\title{T\nU}\n\n\\usepackage{x}\n",
+    );
+  });
+  it("両方のレイアウトの前文に効く", () => {
+    const tex = `${pre}\\begin{document}\nx\n\\end{document}\n`;
+    for (const mode of ["original", "template"] as const) {
+      const { mainTex } = assembleWithMap({ cleanLatex: tex, segments: [{ id: "s", tex: "x" } as never], mode });
+      expect(mainTex, mode).toContain("\\author{A\\\\\n  B\nC}");
+      expect(mainTex, mode).not.toMatch(/\\author\{[^}]*\n[ \t]*\n/);
+    }
+  });
+  it("本文（\\begin{document} の後）の訳文に写された空行も詰める", () => {
+    const tex = "\\documentclass{article}\n\\begin{document}\n\\author{A\n\nB}\n\\end{document}\n";
+    const body = "\\author{あ\n\nい}\n\n本文。";
+    for (const mode of ["original", "template"] as const) {
+      expect(assembleWithMap({ cleanLatex: tex, segments: [{ id: "s", tex: body }], mode }).mainTex, mode).toContain("\\author{あ\nい}\n\n本文。");
+      expect(assembleLatex({ cleanLatex: tex, chapters: [body], mode }).mainTex, mode).toContain("\\author{あ\nい}\n\n本文。");
+    }
+  });
+  it("コメントの中の波括弧で引数が閉じたと読まず、閉じ括弧までの空行を詰める", () => {
+    const pre = "\\author{A\n% omit up to the closing ``}\'\'.\n\nB}\n\n\\x";
+    expect(joinFrontBlankLines(pre)).toBe("\\author{A\n% omit up to the closing ``}\'\'.\nB}\n\n\\x");
+  });
+});
+
+describe("releaseSiunitxNames", () => {
+  it("siunitx v3 の命令名の \\newcommand だけ \\DeclareRobustCommand に替える", () => {
+    expect(releaseSiunitxNames("\\newcommand{\\unit}{\\boldsymbol{1}}")).toBe("\\DeclareRobustCommand{\\unit}{\\boldsymbol{1}}");
+    expect(releaseSiunitxNames("\\newcommand\\qty[1]{x}")).toBe("\\DeclareRobustCommand\\qty[1]{x}");
+    expect(releaseSiunitxNames("\\newcommand*{ \\unit }{x}")).toBe("\\DeclareRobustCommand*{ \\unit }{x}");
+    const others = "\\newcommand{\\units}{x}\\newcommand\\unitary{y}\\newcommand{\\num}{z}";
+    expect(releaseSiunitxNames(others)).toBe(others);
+  });
+});
+
+describe("xcolor の color オプション（issue #521）", () => {
+  const XC = (opts: string) => `\\documentclass{article}\n\\usepackage[${opts}]{xcolor}\n\\begin{document}\nx\n\\end{document}\n`;
+
+  it.each(["original", "template"] as const)("%s: color だけを外し、ほかのオプションは残す", (mode) => {
+    const { mainTex } = assembleWithMap({ cleanLatex: XC("svgnames,dvipsnames,color,table"), segments: [{ id: "s", tex: "x" } as never], mode });
+    expect(mainTex).toContain("\\usepackage[svgnames,dvipsnames,table]{xcolor}");
+    expect(mainTex).not.toMatch(/\[[^\]]*\bcolor\b[^\]]*\]\{xcolor\}/);
+  });
+
+  it.each(["original", "template"] as const)("%s: cleveref の移動と color の除去は順序によらず同じ結果になる", (mode) => {
+    const tex = "\\documentclass{article}\n\\usepackage[svgnames,color]{xcolor}\n\\usepackage{cleveref}\n\\usepackage{hyperref}\n\\begin{document}\nx\n\\end{document}\n";
+    const out = buildPreamble(tex, mode);
+    expect(placeCleverefAfterHyperref(dropXcolorColorOption(out))).toBe(out);
+    expect(dropXcolorColorOption(placeCleverefAfterHyperref(out))).toBe(out);
+    expect(out).toContain("\\usepackage[svgnames]{xcolor}");
+    expect(out.indexOf("{hyperref}")).toBeLessThan(out.indexOf("{cleveref}"));
+  });
+
+  it("color だけなら角括弧ごと外す。色名の colorlet や他のオプションは触らない", () => {
+    expect(dropXcolorColorOption("\\usepackage[color]{xcolor}")).toBe("\\usepackage{xcolor}");
+    expect(dropXcolorColorOption("\\usepackage[ color , table ]{xcolor}")).toBe("\\usepackage[ table ]{xcolor}");
+    expect(dropXcolorColorOption("\\usepackage[colorlinks]{hyperref}")).toBe("\\usepackage[colorlinks]{hyperref}");
+    expect(dropXcolorColorOption("\\usepackage[usenames]{xcolor}")).toBe("\\usepackage[usenames]{xcolor}");
   });
 });
 

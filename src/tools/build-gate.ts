@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, rmSync, writeFileSync, cpSync, readdirSync, read
 import path from "node:path";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { killTree, resolveCommand, spawnOptions } from "../../bin/spawn-cli.mjs";
-import { segmentAtLine, type SourceSpan } from "./assemble-latex.js";
+import { FRONT_COMMANDS, releaseLuatexjaNames, releaseSiunitxNames, segmentAtLine, type SourceSpan } from "./assemble-latex.js";
 import { throwIfAborted } from "../runtime/cancellation.js";
 import { findUnsafeTexCommands, findUnsafeSupportCommands } from "./tex-safety.js";
 
@@ -50,13 +50,17 @@ const SUPPORT_EXT = /\.(sty|cls|bst|bib|bbl)$/i;
 const FATAL_TRAILER = /^==> Fatal error occurred/;
 const UNDEFINED_ENV = /LaTeX Error: Environment ([A-Za-z@*]+) undefined/;
 const UNDEFINED_CS = /^Undefined control sequence/;
+const PARAGRAPH_ENDED = /^Paragraph ended before \\([a-zA-Z@]+)\s+was complete/;
 // エラー直後の `l.<行> <文脈>` 行の末尾に、未定義だった制御綴りが出る。
 const CONTEXT_LINE = /^l\.\d+ .*?\\([a-zA-Z@]+)\s*$/m;
 
-// 未定義エラーの原因となった名前（環境名・制御綴り）。取れなければ undefined。
+// 未定義エラー・引数の途中で段落が終わったエラーの原因となった名前（環境名・制御綴り）。取れなければ undefined。
 function offendingName(message: string, rest: string): string | undefined {
   const env = UNDEFINED_ENV.exec(message);
   if (env) return env[1];
+  const par = PARAGRAPH_ENDED.exec(message);
+  // 前付けの命令に限る。他の命令は訳文が引数の途中に空行を入れた翻訳起因でもありうる。契約付録 §6
+  if (par) return FRONT_COMMANDS.includes(par[1]!) ? par[1] : undefined;
   if (!UNDEFINED_CS.test(message)) return undefined;
   return CONTEXT_LINE.exec(rest.slice(0, 400))?.[1];
 }
@@ -236,6 +240,18 @@ export function unsafeSupportFiles(
   return bad;
 }
 
+// 同梱の .sty/.cls は luatexja・siunitx v3 と衝突する \newcommand を書き換えて置く（latin1 は全バイトを保つ）。⚠ landmines.md
+function copySupportFile(from: string, to: string): void {
+  if (!/\.(sty|cls)$/i.test(from)) {
+    cpSync(from, to);
+    return;
+  }
+  const raw = readFileSync(from, "latin1");
+  const out = releaseSiunitxNames(releaseLuatexjaNames(raw));
+  if (out === raw) cpSync(from, to);
+  else writeFileSync(to, out, "latin1");
+}
+
 // build dir に main.tex＋支援ファイル(.sty/.cls/.bst/.bib/.bbl は srcpkg/ へ基底名で)＋main と同じ階層の唯一の .bbl(main.bbl として)＋図(main 相対で配置)を置く。
 export function stageBuild(
   buildDir: string,
@@ -251,13 +267,13 @@ export function stageBuild(
   const bases: string[] = [];
   for (const sty of collectSupportFiles(opts.sourceDir)) {
     const base = path.basename(sty);
-    cpSync(sty, path.join(pkgDir, base));
+    copySupportFile(sty, path.join(pkgDir, base));
     bases.push(base);
     // \documentclass{style/naturep} のようにディレクトリ付きで読む支援ファイルは、main からの相対位置にも置く。⚠ landmines.md
     const rel = path.relative(opts.mainDir, sty);
     if (rel.includes(path.sep) && !rel.startsWith("..") && !path.isAbsolute(rel)) {
       mkdirSync(path.dirname(path.join(buildDir, rel)), { recursive: true });
-      cpSync(sty, path.join(buildDir, rel));
+      copySupportFile(sty, path.join(buildDir, rel));
     }
   }
   const distributed = resolver(bases);

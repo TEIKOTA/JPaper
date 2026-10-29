@@ -3,7 +3,9 @@ import { spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { classifyLog } from "./build-gate.js";
 import { assembleWithMap } from "./assemble-latex.js";
+import { sandboxEnv, stageBuild } from "./build-gate.js";
 
 // 共通テンプレートの組み立て結果を lualatex で実際に組む。lualatex と luatexja が無い環境では飛ばす。
 
@@ -105,6 +107,103 @@ describe.skipIf(!hasAcmartCountryCheck)("国名の無い acmart の所属を原�
   it("前文で \\makeatletter を開いたまま本文で @ 入りの命令を使う論文も、原文の前文で組める", () => {
     const own = ["\\documentclass{article}", "\\makeatletter", "\\newcommand{\\foo@bar}{X}", "\\begin{document}", "\\end{document}"].join("\n");
     expect(build(own, "\\foo@bar\n\\makeatother", "original")).toEqual([]);
+  }, 300_000);
+});
+
+// 2107.03315（ICCV 2021）の形: \author の引数の中に空行がある。
+describe.skipIf(!hasLuaTex)("\\author の引数の中の空行（issue #517）", () => {
+  const own = ["\\documentclass{article}", "\\title{T}", "\\author{A\\\\", "", "B}", "\\begin{document}", "\\end{document}"].join("\n");
+  it.each(["original", "template"] as const)("%s: 空行を詰めて PDF が出る", (mode) => {
+    expect(build(own, "\\maketitle\n本文。", mode)).toEqual([]);
+  }, 300_000);
+});
+
+// 2107.03315（ICCV 2021）の \begin{document} から \maketitle まで。\author の引数（74 行目付近）に空行がある。
+const ICCV_FRONT = readFileSync(new URL("./fixtures/iccv-2107.03315-front.tex", import.meta.url), "utf8");
+describe.skipIf(!hasLuaTex)("本文にある \\author の引数の空行（issue #517、2107.03315）", () => {
+  const clean = `\\documentclass{article}\n\\begin{document}\n${ICCV_FRONT}\n\\end{document}\n`;
+  it.each(["original", "template"] as const)("%s: 訳文が空行を写していても PDF が出る", (mode) => {
+    expect(build(clean, ICCV_FRONT, mode)).toEqual([]);
+  }, 300_000);
+
+  it("空行が残った実ログは構造起因に分類される", () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "jpaper-iccv-"));
+    try {
+      const { mainTex, sourceMap } = assembleWithMap({ cleanLatex: clean, segments: [{ id: "seg-0000", tex: ICCV_FRONT }] });
+      // 詰めた後の main.tex に原文の空行を戻して、組版が止まったときのログを作る。
+      writeFileSync(path.join(dir, "main.tex"), mainTex.replace("Vaishaal Shankar", "\n\nVaishaal Shankar"));
+      const r = spawnSync("lualatex", ["-interaction=nonstopmode", "-file-line-error", "-halt-on-error", "main.tex"], { cwd: dir, encoding: "utf8", timeout: 240_000 });
+      const c = classifyLog(r.stdout, sourceMap, clean);
+      expect(r.stdout).toContain("Paragraph ended before \\author");
+      expect(c.failedSegments).toEqual([]);
+      expect(c.structuralErrors.length).toBeGreaterThan(0);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 300_000);
+});
+
+// 同梱 .sty が siunitx を読んだ後に \newcommand{\unit} を定義する形（2201.04234 の lifetime.sty）。
+describe.skipIf(!hasLuaTex)("同梱 .sty の \\unit が siunitx v3 と衝突する論文を組む（issue #531）", () => {
+  it("siunitx を読む .sty と \\newcommand{\\unit} があっても PDF が出る", () => {
+    const src = mkdtempSync(path.join(tmpdir(), "jpaper-unit-src-"));
+    const dir = path.join(mkdtempSync(path.join(tmpdir(), "jpaper-unit-")), "b");
+    try {
+      writeFileSync(path.join(src, "life.sty"), "\\usepackage{siunitx}\n\\newcommand{\\unit}{\\boldsymbol{1}}\n");
+      const cleanLatex = [
+        "\\documentclass{article}",
+        "\\usepackage{amsmath,amssymb,bm}",
+        "\\usepackage{life}",
+        "\\begin{document}",
+        "\\end{document}",
+      ].join("\n");
+      const { mainTex } = assembleWithMap({ cleanLatex, segments: [{ id: "seg-0000", tex: "$\\unit$ と \\qty{3}{m}" }], mode: "original" });
+      stageBuild(dir, mainTex, { sourceDir: src, mainDir: src, figures: [] }, () => new Set<string>());
+      const r = spawnSync("lualatex", ["-interaction=nonstopmode", "-halt-on-error", "main.tex"], {
+        cwd: dir,
+        encoding: "utf8",
+        timeout: 240_000,
+        env: sandboxEnv(process.env, dir),
+      });
+      expect(r.stdout.split("\n").filter((l) => l.startsWith("!"))).toEqual([]);
+      expect(existsSync(path.join(dir, "main.pdf"))).toBe(true);
+    } finally {
+      rmSync(src, { recursive: true, force: true });
+      rmSync(path.dirname(dir), { recursive: true, force: true });
+    }
+  }, 300_000);
+});
+
+// 同梱 .sty が luatexja の \mc を \newcommand する形（2206.13089 の style.sty 56 行目）。
+describe.skipIf(!hasLuaTex)("同梱 .sty の \\mc が luatexja と衝突する論文を組む（issue #538）", () => {
+  it.each(["original", "template"] as const)("%s: \\newcommand{\\mc}{\\mathcal} があっても PDF が出る", (mode) => {
+    const src = mkdtempSync(path.join(tmpdir(), "jpaper-mc-src-"));
+    const dir = path.join(mkdtempSync(path.join(tmpdir(), "jpaper-mc-")), "b");
+    try {
+      writeFileSync(path.join(src, "style.sty"), "\\newcommand{\\mc}{\\mathcal}\n\\newcommand{\\gt}{\\mathbf}\n");
+      const cleanLatex = ["\\documentclass{article}", "\\usepackage{amsmath,amssymb}", "\\usepackage{style}", "\\begin{document}", "\\end{document}"].join("\n");
+      const { mainTex } = assembleWithMap({ cleanLatex, segments: [{ id: "seg-0000", tex: "$\\mc{L}$ と $\\gt{x}$" }], mode });
+      stageBuild(dir, mainTex, { sourceDir: src, mainDir: src, figures: [] }, () => new Set<string>());
+      const r = spawnSync("lualatex", ["-interaction=nonstopmode", "-halt-on-error", "main.tex"], {
+        cwd: dir,
+        encoding: "utf8",
+        timeout: 240_000,
+        env: sandboxEnv(process.env, dir),
+      });
+      expect(r.stdout.split("\n").filter((l) => l.startsWith("!"))).toEqual([]);
+      expect(existsSync(path.join(dir, "main.pdf"))).toBe(true);
+    } finally {
+      rmSync(src, { recursive: true, force: true });
+      rmSync(path.dirname(dir), { recursive: true, force: true });
+    }
+  }, 300_000);
+});
+
+describe.skipIf(!hasLuaTex)("xcolor に color オプションを渡す原文を組む（issue #521）", () => {
+  const own = ["\\documentclass{article}", "\\usepackage[svgnames,dvipsnames,color,table]{xcolor}", "\\begin{document}", "\\end{document}"].join("\n");
+
+  it.each(["original", "template"] as const)("%s: color を外して PDF が出る", (mode) => {
+    expect(build(own, "\\textcolor{red}{x}", mode)).toEqual([]);
   }, 300_000);
 });
 
