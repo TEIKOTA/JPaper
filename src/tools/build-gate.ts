@@ -319,20 +319,27 @@ export function probeLatexmk(): string | undefined {
 
 export const BUILD_TIMEOUT_MS = 300_000;
 
+// 契約付録 §8
+export function latexmkArgs(buildDir: string): string[] {
+  return [
+    "-norc",
+    "-lualatex",
+    ...(existsSync(path.join(buildDir, "main.bbl")) ? ["-bibtex-"] : []),
+    "-no-shell-escape",
+    "-interaction=nonstopmode",
+    "-halt-on-error",
+    "-file-line-error",
+    "main.tex",
+  ];
+}
+
 // latexmk は子（lualatex）を起こす。detached でプロセスグループを作り、超過時はグループごと止める。
 // execFileSync の timeout は直接の子にしか届かず、孫が孤児として生き残るため。
 export const defaultRunner: LatexRunner = (buildDir, signal) =>
   new Promise<RunResult>((resolve) => {
     let cmd: { command: string; args: string[] };
     try {
-      cmd = resolveCommand("latexmk", [
-        "-lualatex",
-        "-no-shell-escape",
-        "-interaction=nonstopmode",
-        "-halt-on-error",
-        "-file-line-error",
-        "main.tex",
-      ]);
+      cmd = resolveCommand("latexmk", latexmkArgs(buildDir));
     } catch (e) {
       resolve({ code: 1, log: "", envError: describeLaunchError(e) });
       return;
