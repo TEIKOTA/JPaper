@@ -21,7 +21,9 @@ const END_DOC = "\\end{document}";
 // LuaTeX ネイティブ UTF-8＋luatexja がフォントを担うため原前文から外す。
 const DROP_PACKAGES = /^[ \t]*\\usepackage(?:\[[^\]]*\])?\{(?:inputenc|fontenc)\}[ \t]*\r?\n?/gm;
 
-const JP_FONT = "\\usepackage[ipaex]{luatexja-preset} % JPaper 注入: 日本語組版 (契約付録 §7)";
+// luatexja-core が残す \x を未定義に戻す。⚠ landmines.md
+const LUATEXJA_LEAK_RESET = "\\let\\x\\undefined";
+const JP_FONT = `\\usepackage[ipaex]{luatexja-preset} % JPaper 注入: 日本語組版 (契約付録 §7)\n${LUATEXJA_LEAK_RESET}`;
 const DOCUMENTCLASS_LINE = /\\documentclass\s*(?:\[[^\]]*\])?\s*\{[^}]*\}[^\n]*\n?/;
 
 const JP_INJECTION = [
@@ -246,6 +248,7 @@ function templatePreamble(originalPreamble: string, cleanLatex: string): string 
     "\\documentclass[a4paper]{article}",
     // ⚠ landmines.md
     "\\usepackage[ipaex]{luatexja-preset}",
+    LUATEXJA_LEAK_RESET,
     "\\title{}",
     "\\author{}",
     classShim(cleanLatex),

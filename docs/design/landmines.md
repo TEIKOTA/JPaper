@@ -208,6 +208,12 @@
 - **なぜ意図的か**: `\caption` の引数は段落区切りを許さず、空行があると `Paragraph ended before \caption@prepareanchor was complete` で組版が落ちる。原文にこの空行がある論文は、現在の TeX Live では原文のままでも組めない（実測: 2011.03395 seg-0042 の表キャプション）。`%` 行にすれば段落区切りでなくなり、行数は変わらないのでエラー行から節への逆引きもずれない。
 - **正本ポインタ**: 契約付録 §7、issue #320。回帰テストは `src/tools/assemble-latex.test.ts`。
 
+## `src/tools/assemble-latex.ts` — luatexja を読んだ直後に `\let\x\undefined` を置く
+
+- **おかしく見える点**: 日本語フォントの直後で、何も使っていない `\x` を未定義にしている。
+- **なぜ意図的か**: `luatexja-core.sty` はグループの外で `\edef\x{…}` をして `\x` を残す。論文の同梱 `.sty` の `\newcommand{\x}{x}` が `Command \x already defined` で落ちる（実測: 2201.04234 の `lifetime.sty`。原前文でも共通テンプレでも同じ）。luatexja の直後に未定義へ戻せば論文の定義が通る。luatexja を読む 2 箇所（`JP_FONT`・`templatePreamble`）の両方に置く。
+- **正本ポインタ**: 契約付録 §7、issue #518。回帰テストは `src/tools/assemble-latex.test.ts`・`src/tools/assemble-latex.typeset.test.ts`。
+
 ## `src/tools/assemble-latex.ts` — 論文の `\newcommand{\mc}` / `\newcommand{\gt}` を `\DeclareRobustCommand` に替える
 
 - **おかしく見える点**: 原文の `\newcommand` を、名前が `\mc` / `\gt` のときだけ書き換えている。
