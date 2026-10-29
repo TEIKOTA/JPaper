@@ -70,6 +70,10 @@ describe("injectShared", () => {
     expect(out.indexOf("luatexja-preset")).toBeGreaterThan(out.indexOf("\\documentclass"));
     expect(out.indexOf("luatexja-preset")).toBeLessThan(out.indexOf("\\usepackage{preprint}"));
   });
+  it("luatexja の直後に、漏れた \\x を未定義に戻す（issue #518）", () => {
+    const out = injectShared("\\documentclass{article}\n\\usepackage{y}\n");
+    expect(out).toMatch(/luatexja-preset\}[^\n]*\n\\let\\x\\undefined\n\\usepackage\{y\}/);
+  });
   it("\\documentclass が無ければ末尾に読む", () => {
     expect(injectShared("\\usepackage{x}")).toMatch(/\\usepackage\{x\}\n\\usepackage\[ipaex\]\{luatexja-preset\}/);
   });
