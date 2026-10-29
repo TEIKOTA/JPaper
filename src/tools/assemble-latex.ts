@@ -21,7 +21,9 @@ const END_DOC = "\\end{document}";
 // LuaTeX ネイティブ UTF-8＋luatexja がフォントを担うため原前文から外す。
 const DROP_PACKAGES = /^[ \t]*\\usepackage(?:\[[^\]]*\])?\{(?:inputenc|fontenc)\}[ \t]*\r?\n?/gm;
 
-const JP_FONT = "\\usepackage[ipaex]{luatexja-preset} % JPaper 注入: 日本語組版 (契約付録 §7)";
+// luatexja-core が残す \x を未定義に戻す。⚠ landmines.md
+const LUATEXJA_LEAK_RESET = "\\let\\x\\undefined";
+const JP_FONT = `\\usepackage[ipaex]{luatexja-preset} % JPaper 注入: 日本語組版 (契約付録 §7)\n${LUATEXJA_LEAK_RESET}`;
 const DOCUMENTCLASS_LINE = /\\documentclass\s*(?:\[[^\]]*\])?\s*\{[^}]*\}[^\n]*\n?/;
 
 const JP_INJECTION = [
@@ -85,6 +87,18 @@ const LUATEXJA_NAMES = ["mc", "gt"];
 // 論文が \newcommand で定義し直す luatexja の命令名を、定義済みでも通る \DeclareRobustCommand に替える。⚠ landmines.md
 export function releaseLuatexjaNames(tex: string): string {
   const names = LUATEXJA_NAMES.join("|");
+  return tex.replace(
+    new RegExp(`\\\\newcommand(\\*?)\\s*(\\{\\s*\\\\(?:${names})\\s*\\}|\\\\(?:${names})(?![A-Za-z@]))`, "g"),
+    "\\DeclareRobustCommand$1$2",
+  );
+}
+
+// siunitx v3 が新しく定義した命令名（v2 には無かった）。
+const SIUNITX_V3_NAMES = ["unit", "qty", "qtylist", "qtyproduct", "qtyrange", "numproduct", "complexnum", "complexqty"];
+
+// 論文（本文・同梱 .sty）が \newcommand で定義する siunitx v3 の命令名を、定義済みでも通る \DeclareRobustCommand に替える。⚠ landmines.md
+export function releaseSiunitxNames(tex: string): string {
+  const names = SIUNITX_V3_NAMES.join("|");
   return tex.replace(
     new RegExp(`\\\\newcommand(\\*?)\\s*(\\{\\s*\\\\(?:${names})\\s*\\}|\\\\(?:${names})(?![A-Za-z@]))`, "g"),
     "\\DeclareRobustCommand$1$2",
@@ -246,6 +260,7 @@ function templatePreamble(originalPreamble: string, cleanLatex: string): string 
     "\\documentclass[a4paper]{article}",
     // ⚠ landmines.md
     "\\usepackage[ipaex]{luatexja-preset}",
+    LUATEXJA_LEAK_RESET,
     "\\title{}",
     "\\author{}",
     classShim(cleanLatex),
@@ -297,6 +312,16 @@ function assembleBody(chapters: string[]): string {
     .map((c) => sanitizeMath(c).trim())
     .filter((c) => c !== "")
     .join("\n\n");
+}
+
+// xcolor v3 が受け付けない color オプションを \usepackage[…]{xcolor} から外す。⚠ landmines.md
+export function dropXcolorColorOption(preamble: string): string {
+  return preamble.replace(/(\\usepackage\s*\[)([^\]%]*)(\]\s*\{\s*xcolor\s*\})/g, (whole, head: string, opts: string, tail: string) => {
+    const kept = opts.split(",").filter((o) => o.trim() !== "color");
+    if (kept.length === opts.split(",").length) return whole;
+    const rest = kept.join(",");
+    return rest.trim() === "" ? `\\usepackage${tail.slice(1)}` : `${head}${rest}${tail}`;
+  });
 }
 
 const PKG_LINE = (name: string): RegExp =>
@@ -393,6 +418,10 @@ export function placeCleverefAfterHyperref(preamble: string): string {
 
 // title を渡すと前文の \title の主引数だけを差し替える（契約付録 §8）。
 export function buildPreamble(cleanLatex: string, mode: Layout, title?: string): string {
+  return dropXcolorColorOption(buildPreambleBase(cleanLatex, mode, title));
+}
+
+function buildPreambleBase(cleanLatex: string, mode: Layout, title?: string): string {
   const preamble = extractPreamble(cleanLatex);
   const original = title === undefined ? preamble : replaceTitle(preamble, title, detectProfile(cleanLatex));
   return placeCleverefAfterHyperref(
@@ -443,7 +472,7 @@ export function assembleWithMap(input: {
     if (i < parts.length - 1) out += "\n\n";
   });
   out += `\n${END_DOC}\n`;
-  return { mainTex: releaseCounterAnchorNames(releaseLuatexjaNames(out)), layout, sourceMap };
+  return { mainTex: releaseCounterAnchorNames(releaseSiunitxNames(releaseLuatexjaNames(out))), layout, sourceMap };
 }
 
 export function segmentAtLine(sourceMap: SourceSpan[], line: number): string | undefined {

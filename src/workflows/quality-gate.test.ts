@@ -930,3 +930,58 @@ describe("untranslated: keep-original の照合は地の文と同じ正規化を
     expect(untranslated(dict, s, j)).toEqual([]);
   });
 });
+
+describe("untranslated: 図の画像パスと環境名を地の文に数えない（#510）", () => {
+  const untr = (s: string, j: string) =>
+    formalCheck(s, j, []).filter((i) => i.kind === "untranslated").length;
+
+  const figures = (caption: string, n: number) =>
+    [
+      "\\begin{figure}[ht]",
+      ...Array.from(
+        { length: n },
+        (_, i) =>
+          `\\begin{subfigure}[t]{0.25\\textwidth}\\includegraphics[width=\\textwidth]{figures/gpt_div_redo/randhead/f1s_squadshifts-amazon_pairwise_gpt2-rand-head-${String(i)}.pdf}\\end{subfigure}`,
+      ),
+      `\\caption{${caption}}`,
+      "\\end{figure}",
+    ].join("\n");
+  const SRC_P =
+    "We track the effect of diversity in random initialization and data ordering for different portions of the training data.";
+  const JA_P = "ランダム初期化とデータ順序の多様性が、訓練データの各割合でどう効くかを調べる。";
+  const SRC_C = "ID vs OOD accuracy and agreement of models finetuned on SQuAD";
+  const JA_C = "SQuAD で微調整したモデルの ID と OOD の精度と一致率";
+
+  it("画像パスと subfigure の環境名が多い節の正しい訳を落とさない", () => {
+    const s = `\\subsubsection{Diversity in Full Finetuned GPT2}\n${SRC_P}\n${figures(SRC_C, 24)}`;
+    const j = `\\subsubsection{完全に微調整した GPT2 の多様性}\n${JA_P}\n${figures(JA_C, 24)}`;
+    expect(untr(s, j)).toBe(0);
+  });
+
+  it("図のキャプションだけの節（データセット名の並び）の正しい訳を落とさない", () => {
+    const names = ["Defocus Blur", "Elastic Transform", "Gaussian Noise", "Impulse Noise", "Motion Blur"];
+    const ja = ["焦点ぼけ", "弾性変形", "ガウスノイズ", "インパルスノイズ", "動きぼけ"];
+    const sub = (cap: string, i: number) =>
+      `\\begin{subfigure}{0.3\\textwidth}\\includegraphics[width=\\linewidth]{neurips_appendix_imgs/linear_correlations/cifar10c_${String(i)}_not_pretrained}\\caption{${cap}}\\end{subfigure}`;
+    const s = `\\subsection{Over randomly initialized models}\n\\begin{figure}[H]\n${names.map((n, i) => sub(`CIFAR10C ${n}`, i)).join("\n")}\n\\end{figure}`;
+    const j = `\\subsection{ランダム初期化したモデル}\n\\begin{figure}[H]\n${ja.map((n, i) => sub(`CIFAR10C ${n}`, i)).join("\n")}\n\\end{figure}`;
+    expect(untr(s, j)).toBe(0);
+  });
+
+  it("subfigure の環境名だけが多い節（キャプションは短い訳）を落とさない", () => {
+    const grid = (cap: string) =>
+      Array.from({ length: 70 }, () => `\\begin{subfigure}{0.3\\textwidth}\\caption{${cap}}\\end{subfigure}`).join("\n");
+    expect(untr(`\\begin{figure}\n${grid("Fog")}\n\\end{figure}`, `\\begin{figure}\n${grid("霧")}\n\\end{figure}`)).toBe(0);
+  });
+
+  it("図が多くても、地の文が未訳なら落とす（#169）", () => {
+    const s = `\\subsubsection{Diversity in Full Finetuned GPT2}\n${SRC_P} ${SRC_P}\n${figures(SRC_C, 24)}`;
+    expect(untr(s, s)).toBeGreaterThan(0);
+    expect(untr(s, `\\subsubsection{多様性}\n${figures(SRC_C, 24)}`)).toBeGreaterThan(0);
+  });
+
+  it("画像パスの引数に日本語を詰めても、未訳の検査は無効にならない", () => {
+    const eng = Array.from({ length: 12 }, (_, i) => `The proposed method improves accuracy in section ${String(i)}.`).join(" ");
+    expect(untr(eng, `${eng}\\includegraphics{${"あ".repeat(200)}}`)).toBeGreaterThan(0);
+  });
+});
