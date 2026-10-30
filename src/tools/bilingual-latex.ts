@@ -372,6 +372,8 @@ const SETUP = [
   "\\long\\def\\jp@scan@And#1\\And#2\\jp@end{\\def\\jp@t{#2}\\def\\jp@u{\\jp@mark}\\ifx\\jp@t\\jp@u\\else\\jp@andtrue\\fi}",
   "\\long\\def\\jp@scan@AND#1\\AND#2\\jp@end{\\def\\jp@t{#2}\\def\\jp@u{\\jp@mark}\\ifx\\jp@t\\jp@u\\else\\jp@andtrue\\fi}",
   "\\newcommand{\\jp@titleblock}[2]{%",
+  // ⚠ landmines.md
+  "  \\global\\let\\maketitle\\relax",
   "  \\par\\hrule height 4\\p@\\vskip 0.15in",
   "  {\\centering\\Large\\bfseries\\begingroup\\let\\thanks\\@gobble #1\\endgroup\\par}",
   "  \\vskip 0.2in\\hrule height 1\\p@\\vskip 0.1in",

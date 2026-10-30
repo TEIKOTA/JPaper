@@ -460,6 +460,17 @@ describe("paracol 本文", () => {
     expect(out.mainTex).toContain(`\\begin{paracol}{2}\n\\setlength{\\textwidth}{\\columnwidth}\n\\jpRobustNotes\n${titleBlock("T", "題")}\n\n`);
     expect(out.pairs).toBe(2);
   });
+
+  it("タイトルブロックは表題を組んだ後の \\maketitle を何もしない命令にする（issue #532）", () => {
+    const out = assembleBilingual({
+      cleanLatex: "\\documentclass{article}\\title{T}\\begin{document}\\maketitle\\end{document}",
+      translatedMainTex: "\\documentclass{article}\\title{題}\n\\begin{document}\n\\maketitle\n\\end{document}\n",
+      source: [{ id: "seg-0000", tex: "\\maketitle\n\n\\maketitle\n\nA" }],
+      translated: [{ id: "seg-0000", tex: "\\maketitle\n\n\\maketitle\n\n和" }],
+    });
+    const def = out.mainTex.indexOf("\\newcommand{\\jp@titleblock}");
+    expect(out.mainTex.slice(def, out.mainTex.indexOf("\\newcommand{\\jpTitleBlock}"))).toContain("\\global\\let\\maketitle\\relax");
+  });
 });
 
 describe("前文", () => {
