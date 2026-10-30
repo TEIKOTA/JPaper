@@ -683,6 +683,43 @@ describe.skipIf(!hasLualatex)("class が古い eso-pic のコードを抱えた�
   }, 240_000);
 });
 
+// 著者欄に `\\ \\`（空の行）がある article の前付け（issue #539）。表題ブロックは著者を centering の段落で組むので、
+// 連続した `\\` が There's no line here to end で落ちた。lualatex で組めること・左右の表題ブロックに著者が出ることを確かめる。
+describe.skipIf(!hasAcmart)("著者欄の連続した \\\\ を持つ論文の対訳を組む（issue #539）", () => {
+  const head = (title: string, inst: string, sep = ""): string =>
+    [
+      "\\documentclass{article}",
+      `\\title{${title}}`,
+      `\\author{Ann\\quad \\\\ \\textbf{Zed}  \\\\ \\\\${sep}`,
+      `${inst}\\\\`,
+      "{\\small \\texttt{x@example.org}}}",
+      "",
+    ].join("\n");
+
+  // \and があると著者ごとの varwidth の箱で組む（issue #529）。箱の中でも \\ を続けられる。
+  it.each(["", "\\and Bob"])("連続した \\\\ で落ちず、左右の表題ブロックに著者が出る（区切り: %j）", (sep) => {
+    const dir = mkdtempSync(path.join(tmpdir(), "jpaper-cr-"));
+    try {
+      const { mainTex } = assembleBilingual({
+        cleanLatex: `${head("Left Title", "Left Uni", sep)}\\begin{document}\n\\end{document}\n`,
+        translatedMainTex: `${head("Right Title", "Right Uni", sep).replace("{article}", "{article}\n\\usepackage{luatexja}")}\\begin{document}\n\\end{document}\n`,
+        source: [{ id: "seg-0000", tex: "\\maketitle\n\\section{Intro}" }],
+        translated: [{ id: "seg-0000", tex: "\\maketitle\n\\section{Intro}" }],
+      });
+      writeFileSync(path.join(dir, "main.tex"), mainTex);
+      const r = spawnSync("lualatex", ["-interaction=nonstopmode", "-halt-on-error", "main.tex"], { cwd: dir, encoding: "utf8", timeout: 120_000 });
+      expect(r.status, r.stdout.slice(-3000)).toBe(0);
+      const text = spawnSync("pdftotext", ["-f", "1", "-l", "1", "-raw", "main.pdf", "-"], { cwd: dir, encoding: "utf8" }).stdout;
+      // 著者欄は左右とも同じ \@author（前文の \author は 1 つ）から組まれる。
+      expect(text).toMatch(/Left Title/);
+      expect(text).toMatch(/Right Title/);
+      expect(text.match(/Zed/g)).toHaveLength(2);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 120_000);
+});
+
 // \maketitle を 2 回呼ぶ CVPR の型（cvpr.cls は article の二段組を読み込み、\maketitle は定義しない。実例 2007.02915 の cvpr.tex。issue #532）。
 // article の \maketitle は 1 回目で自分を \relax にするので原文は 1 回だけ組むが、対訳は 1 回目をタイトルブロックに置き換える。
 const CVPR_BODY = (title: string, abs: string): string =>

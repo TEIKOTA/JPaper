@@ -362,8 +362,10 @@ const SETUP = [
   "\\setlength{\\columnsep}{32mm}",
   "\\setlength{\\parindent}{1em}",
   "\\makeatletter",
+  // 著者欄の連続した \\ を、centering の段落でも空の行として扱う。⚠ landmines.md
+  "\\def\\jp@cr{\\ifhmode\\expandafter\\@centercr\\else\\leavevmode\\null\\par\\expandafter\\@xcentercr\\fi}",
   "\\newif\\ifjp@and",
-  "\\def\\jp@vw{\\begin{varwidth}[t]{\\linewidth}\\parindent\\z@\\centering}",
+  "\\def\\jp@vw{\\begin{varwidth}[t]{\\linewidth}\\parindent\\z@\\centering\\let\\\\\\jp@cr}",
   "\\long\\def\\jp@scanand{\\expandafter\\jp@scan@and\\the\\toks@\\and\\jp@mark\\jp@end" +
     "\\expandafter\\jp@scan@And\\the\\toks@\\And\\jp@mark\\jp@end\\expandafter\\jp@scan@AND\\the\\toks@\\AND\\jp@mark\\jp@end}",
   "\\long\\def\\jp@scan@and#1\\and#2\\jp@end{\\def\\jp@t{#2}\\def\\jp@u{\\jp@mark}\\ifx\\jp@t\\jp@u\\else\\jp@andtrue\\fi}",
@@ -377,7 +379,7 @@ const SETUP = [
   "  \\vskip 0.2in\\hrule height 1\\p@\\vskip 0.1in",
   // 著者に \\and / \\And / \\AND があれば著者ごとに幅つきの箱に入れて横に並べ、無ければ従来どおり区切りの空白にする。⚠ landmines.md
   // jmlr2e の \name・\email・\addr は \maketitle の中でだけ定義されるので、未定義なら同じ意味で補う。⚠ landmines.md
-  "  {\\centering\\begingroup\\let\\thanks\\@gobble" +
+  "  {\\centering\\begingroup\\let\\\\\\jp@cr\\let\\thanks\\@gobble" +
     "\\@ifundefined{name}{\\def\\name{\\normalsize\\bfseries}}{}\\@ifundefined{email}{\\def\\email{\\hfill\\small\\scshape}}{}" +
     "\\@ifundefined{addr}{\\def\\addr{\\small\\itshape}}{}\\jp@andfalse\\expandafter\\toks@\\expandafter{#2}\\jp@scanand" +
     "\\ifjp@and\\def\\jp@open{\\noindent\\jp@vw}\\def\\jp@close{\\end{varwidth}}" +

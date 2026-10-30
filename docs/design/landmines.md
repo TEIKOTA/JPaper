@@ -273,6 +273,12 @@
 - **なぜ意図的か**: jmlr2e は `\author{\name 著者 \email … \addr …}` と書かせるが、この 3 つを `\maketitle` の中でだけ定義する。対訳のタイトルブロックは `\maketitle` を使わず `\@author` を直接展開するので、そのままだと `Undefined control sequence` で対訳 PDF が落ちる（実測: 2011.03395）。定義済みの型（acmart の `\email{…}` など）はそのまま使う。
 - **正本ポインタ**: 契約付録 §8（対訳 PDF）、issue #440。回帰テストは `src/tools/bilingual-latex.test.ts`。
 
+## `src/tools/bilingual-latex.ts` — 対訳のタイトルブロックの著者欄で `\\` を `\jp@cr` に替える
+
+- **おかしく見える点**: タイトルブロックの著者欄でだけ、`\\` を `\@centercr` の呼び出しに包んだ `\jp@cr` に替えている。
+- **なぜ意図的か**: 著者欄は neurips などでは tabular の中で組まれるので、`\\ \\`（空の行）のように `\\` を続けて書ける。対訳のタイトルブロックは著者を `\centering` の段落で組み、そこでの `\\`（`\@centercr`）は段落を閉じるので、続けた 2 つ目が縦モードで `There's no line here to end.` になる（実測: 2404.01542）。`\jp@cr` は横モードでは `\@centercr` と同じ、縦モードでは空の行を置く。tabular の中の `\\` は tabular が定義し直すので影響しない。著者ごとの `varwidth` の箱（`\jp@vw`）は `\centering` で `\\` を戻すので、箱の頭でも替える。
+- **正本ポインタ**: 契約付録 §8（対訳 PDF）、issue #539。回帰テストは `src/tools/bilingual-latex.typeset.test.ts`。
+
 ## `src/tools/bilingual-latex.ts` — 右の段の `\newtheorem` を、定義済みなら読み飛ばす命令に置き換える
 
 - **おかしく見える点**: `provideCommands` が右（和訳）の段の `\newtheorem` / `\newtheorem*` を `\jpProvideTheorem` に書き換え、名前が定義済みなら引数ごと読み飛ばしている。

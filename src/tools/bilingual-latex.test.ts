@@ -309,6 +309,14 @@ describe("タイトル", () => {
     expect(bilingualPreamble("")).toContain("\\def\\and{\\end{varwidth}\\hskip 1em plus 0.5em\\jp@vw}\\let\\And\\and");
   });
 
+  it("著者欄の \\\\ は \\jp@cr に替えてから展開する（issue #539）", () => {
+    const pre = bilingualPreamble("");
+    expect(pre).toContain("\\begingroup\\let\\\\\\jp@cr\\let\\thanks\\@gobble");
+    // varwidth の箱の中は \\centering が \\\\ を戻すので、箱の頭でも替える。
+    expect(pre).toContain("\\centering\\let\\\\\\jp@cr}");
+    expect(pre).toContain("\\def\\jp@cr{\\ifhmode\\expandafter\\@centercr\\else");
+  });
+
   it("著者欄では未定義の \\name・\\email・\\addr（jmlr2e の \\maketitle の中だけの命令）を補ってから展開する（issue #440）", () => {
     const pre = bilingualPreamble("");
     const author = pre.slice(pre.indexOf("\\let\\thanks\\@gobble\\@ifundefined"), pre.indexOf("\\jp@close\\endgroup") + 2);
