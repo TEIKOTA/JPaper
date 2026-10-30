@@ -42,11 +42,60 @@ export function extractDocumentBody(latex: string): string {
   return latex.slice(from, end === -1 ? latex.length : end);
 }
 
+// 見出しを包む波括弧のグループの中では割らない。閉じる位置までがこの文字数を超えるグループは数えない。契約付録 §4
+const MAX_GROUP_CHARS = 2000;
+const HEADING_RE = /\\(?:sub)*section\*?\s*\{/g;
+
+// 上限内で閉じる波括弧のグループの内側にある見出しの添字を 1 回の走査で返す。⚠ landmines.md
+function headingsInsideGroups(latex: string, idx: number[]): Set<number> {
+  const diff = new Int32Array(idx.length + 1);
+  const lowerBound = (pos: number): number => {
+    let lo = 0;
+    let hi = idx.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (idx[mid]! < pos) lo = mid + 1;
+      else hi = mid;
+    }
+    return lo;
+  };
+  const open: number[] = [];
+  for (let i = 0; i < latex.length; i++) {
+    const c = latex.charCodeAt(i);
+    if (c === 0x5c) i++; // バックスラッシュと次の 1 文字
+    else if (c === 0x25) {
+      const nl = latex.indexOf("\n", i);
+      if (nl === -1) break;
+      i = nl;
+    } else if (c === 0x7b) open.push(i);
+    else if (c === 0x7d) {
+      const from = open.pop();
+      if (from === undefined || i - from > MAX_GROUP_CHARS) continue;
+      const lo = lowerBound(from + 1);
+      const hi = lowerBound(i);
+      if (lo < hi) {
+        diff[lo]!++;
+        diff[hi]!--;
+      }
+    }
+  }
+  const inside = new Set<number>();
+  let cover = 0;
+  for (let k = 0; k < idx.length; k++) {
+    cover += diff[k]!;
+    if (cover > 0) inside.add(idx[k]!);
+  }
+  return inside;
+}
+
 function splitBySections(latex: string): string[] {
-  const re = /\\(?:sub)*section\*?\s*\{/g;
-  const idx: number[] = [];
+  const re = new RegExp(HEADING_RE.source, "g");
+  const all: number[] = [];
   let m: RegExpExecArray | null;
-  while ((m = re.exec(latex)) !== null) idx.push(m.index);
+  while ((m = re.exec(latex)) !== null) all.push(m.index);
+  if (all.length === 0) return [latex];
+  const inside = headingsInsideGroups(latex, all);
+  const idx = all.filter((i) => !inside.has(i));
   if (idx.length === 0) return [latex];
   const chunks: string[] = [];
   const pre = latex.slice(0, idx[0]!);
