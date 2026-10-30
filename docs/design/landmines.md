@@ -90,6 +90,12 @@
 - **なぜ意図的か**: 学会クラス（neurips 等）の `\maketitle` は全幅で、脚注（`\thanks`・学会表記）の挿入物が後続の paracol と衝突して空白ページが出る（PoC で実測）。タイトルと著者を左右の半分にそれぞれ置く仕様なので、`\thanks` を無効にした著者とタイトルだけのブロックを各列に置く。タイトルは paracol の中に入れるので、本文先頭がタイトルでも空の paracol は作らない。本文に `\title` を書く論文（article・llncs・revtex で一般的）で前文だけを見ると左右とも空のタイトルになり、`\maketitle` が段落の先頭に単独で無いと左の列で `\maketitle` が実行される。article の `\maketitle` は実行後に `\title` / `\author` を `\relax` にするので、右の列ではタイトルが素の文字列で出る（いずれも実測）。前の部分を残すのは、`\author` が `\@author` を大域に定義してタイトルブロックがそれを使うため（`\title` / `\author` は何も出力しない）。環境の中の `\maketitle` は置き換えず、`titleUnplaced` で警告する。frontmatter 環境（elsarticle）のペアは `\maketitle` を探さずにタイトルとして扱う（下の `replaceFrontmatter`）。
 - **正本ポインタ**: [対訳 PDF ADR](../adr/20261006-bilingual-side-by-side-pdf.md)（Decision「タイトルと著者」）。
 
+## `src/tools/bilingual-latex.ts` — `SETUP` の `\jp@titleblock` が `\global\let\maketitle\relax` を実行する
+
+- **おかしく見える点**: タイトルを組むだけのマクロが、`\maketitle` を大域に `\relax` へ書き換えている。
+- **なぜ意図的か**: 対訳は最初の `\maketitle` だけをタイトルブロックに置き換える。cvpr.cls（article の二段組）の `cvpr.tex` のように `\maketitle` を 2 回書く原稿では、2 回目が paracol の中でそのまま動く。article の `\maketitle` は `\twocolumn[\@maketitle]` で改ページし、`\thispagestyle{plain}` で class のページ番号を出すので、1 ページ目が表題だけで終わり、2 ページ目の左の段に表題がもう一度出て、対訳のページ番号の上に「1」が重なる（実測: 2007.02915。issue #532）。原文では article の `\maketitle` が 1 回目で自分を `\relax` にするため 2 回目は何もしない。対訳では 1 回目が置き換わって `\relax` にならないので、タイトルブロックを組む側で同じ状態にする。frontmatter・acmart のタイトルブロックも `\jp@titleblock` を通るので同じく効く。
+- **正本ポインタ**: [契約付録 §8](./contract-appendix.md)（対訳 PDF の `\maketitle` の置き換え）。
+
 ## `src/tools/bilingual-latex.ts` — `ACMART_SETUP` が acmart の `\author`・`\affiliation`・`\email`・`\keywords`・`abstract` を対訳の中で置き換える
 
 - **おかしく見える点**: acmart の論文の対訳だけ、class の著者欄・要旨の命令を、段の番号（`\pcol@currcol`）ごとのマクロに溜める命令へ差し替え、`\jpTitleBlock` もそれを出す形に定義し直す。著者欄は acmart 本来の横並びではなく、名前・所属・メールアドレスを縦に並べる。
