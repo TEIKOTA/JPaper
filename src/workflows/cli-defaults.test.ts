@@ -64,8 +64,12 @@ describe("translatePaper: claude・codex の既定（契約付録 §5）", () =>
     return tar;
   }
 
-  // 記録が現れたら run を中断する。時間ではなく記録の完了で終わるので、起動の遅い runner でも揺れない（timeoutMs は止まらないときの保険）。
-  function abortWhenLogged(log: string): AbortSignal {
+  // 偽 CLI を起動する検査のテスト全体の上限。vitest の既定（5 秒）は遅い runner（#547 では 7.6 秒）で足りないので延ばし、run の保険（RUN_GUARD_MS）より長くする。
+  const TEST_TIMEOUT_MS = 30_000;
+  const RUN_GUARD_MS = 20_000;
+
+  // 記録が現れたら run を中断する。時間ではなく記録の完了で終わるので、起動の遅い runner でも揺れない（RUN_GUARD_MS は止まらないときの保険）。
+  function abortWhenLogged(log: string): { signal: AbortSignal; stop: () => void } {
     const ac = new AbortController();
     const t = setInterval(() => {
       if (existsSync(log)) {
@@ -74,7 +78,7 @@ describe("translatePaper: claude・codex の既定（契約付録 §5）", () =>
       }
     }, 20);
     t.unref();
-    return ac.signal;
+    return { signal: ac.signal, stop: () => clearInterval(t) };
   }
 
   const argAfter = (args: string[], flag: string): string | undefined => args[args.indexOf(flag) + 1];
@@ -94,7 +98,7 @@ describe("translatePaper: claude・codex の既定（契約付録 §5）", () =>
       expect(argAfter(args, "--model")).toBe(model);
       expect(argAfter(args, "--effort")).toBe(effort);
     }
-  });
+  }, TEST_TIMEOUT_MS);
 
   it.each([0, 2500])("codex: 未指定ならモデル一覧の最新の Sol と medium が codex CLI に渡る（偽 CLI の起動の遅れ %i ms）", async (startDelayMs) => {
     const d = mkdtempSync(path.join(os.tmpdir(), "jpaper-cli-defaults-"));
@@ -109,13 +113,18 @@ describe("translatePaper: claude・codex の既定（契約付録 §5）", () =>
     const log = fakeCli(d, "codex", startDelayMs);
     const errs: string[] = [];
     const db = new GlossaryDb();
-    await translatePaper({ kind: "path", path: paper(d) }, { provider: "codex", outDir: path.join(d, "out"), timeoutMs: 60_000, signal: abortWhenLogged(log) }, { db, onError: (m) => errs.push(m) });
-    db.close();
+    const watch = abortWhenLogged(log);
+    try {
+      await translatePaper({ kind: "path", path: paper(d) }, { provider: "codex", outDir: path.join(d, "out"), timeoutMs: RUN_GUARD_MS, signal: watch.signal }, { db, onError: (m) => errs.push(m) });
+    } finally {
+      watch.stop();
+      db.close();
+    }
     const args = readFileSync(log, "utf8").split("\n");
     expect(argAfter(args, "--model")).toBe("gpt-6.1-sol");
     expect(args).toContain('model_reasoning_effort="medium"');
     expect(errs.some((m) => m.includes("Sol 系を見つけられなかった"))).toBe(false);
-  });
+  }, TEST_TIMEOUT_MS);
 
   it("注入クライアントのときは既定を足さず、モデル一覧も読まない（警告しない）", async () => {
     const d = mkdtempSync(path.join(os.tmpdir(), "jpaper-cli-defaults-"));
