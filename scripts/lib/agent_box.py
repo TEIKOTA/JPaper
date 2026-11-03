@@ -49,6 +49,7 @@ INSPECT_LIMITS = {"memory": "1g", "pids": "256", "tmp_size": "256m"}  # 子と�
 # 起動に要る空き。Docker の volume と、ホストの ~/agents/ の clone・home には容量の上限を付けられないので、
 # 空きが下限を切ったら新しいセッションを始めない（作業中の子が使い切るのは防げない。ADR 20261014）。
 MIN_FREE_BYTES = 5 * 1024 ** 3
+ATTRIBUTION_KEYS = ("includeCoAuthoredBy", "attribution")
 UNITS = {"k": 1024, "m": 1024 ** 2, "g": 1024 ** 3}
 
 
@@ -203,6 +204,17 @@ class Box:
         return "https://github.com/%s.git" % match.group(1)
 
     # ---- 起動 ----
+    @staticmethod
+    def attribution_settings(path):
+        """ホストの settings.json から、commit・PR の属性表示のキーだけを返す（読めなければ空. docs/process/agent-containers.md）."""
+        try:
+            host = json.loads(path.read_text())
+        except (OSError, ValueError):
+            return {}
+        if not isinstance(host, dict):
+            return {}
+        return {key: host[key] for key in ATTRIBUTION_KEYS if key in host}
+
     def prepare_home(self, home, state):
         """ユーザー設定を読み取り専用で写す（D15）。ログイン情報・会話記録・memory は写さない."""
         source = Path.home() / ".claude"
@@ -213,7 +225,9 @@ class Box:
         if (source / "skills").is_dir():
             shutil.copytree(source / "skills", claude / "skills", dirs_exist_ok=True)
         # ユーザーレベルの hook はホストの path を指すので写さない。品質 hook は repo 側の設定で動く（D16）。
-        (claude / "settings.json").write_text(json.dumps({"permissions": {"defaultMode": "bypassPermissions"}}))
+        settings = {"permissions": {"defaultMode": "bypassPermissions"}}
+        settings.update(self.attribution_settings(source / "settings.json"))
+        (claude / "settings.json").write_text(json.dumps(settings))
         (home / ".claude.json").write_text(json.dumps({
             "hasCompletedOnboarding": True, "bypassPermissionsModeAccepted": True,
             "projects": {"/work": {"hasTrustDialogAccepted": True}}}))
