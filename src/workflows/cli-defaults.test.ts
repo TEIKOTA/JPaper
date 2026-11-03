@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from "vitest";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { translatePaper } from "./translate-paper.js";
@@ -40,15 +40,16 @@ describe("translatePaper: claude・codex の既定（契約付録 §5）", () =>
     expect(r.exitCode).not.toBe(0);
   });
 
-  // PATH に偽の CLI を置き、渡された引数を 1 行 1 引数でファイルへ書かせる。応答は失敗にし、run は期限（timeoutMs）で早く終わらせる。
-  function fakeCli(d: string, name: "claude" | "codex"): string {
+  // PATH に偽の CLI を置き、渡された引数を 1 行 1 引数でファイルへ書かせる（一時ファイルへ書いて rename するので、打ち切られても空の記録は残らない）。応答は失敗にする。
+  // startDelayMs は遅い runner の起動をまねる（読み込み前の待ち）。
+  function fakeCli(d: string, name: "claude" | "codex", startDelayMs = 0): string {
     const bin = path.join(d, "bin");
     const log = path.join(d, `${name}-args.txt`);
     const reply = name === "claude" ? `process.stdout.write('{"foo":1}');` : `fs.writeFileSync(argAfter("-o"), "not json");`;
     writeFakeCli(
       bin,
       name,
-      `await readStdin();\nfs.writeFileSync(${JSON.stringify(log)}, args.map((a) => a + "\\n").join(""));\n${reply}`,
+      `await readStdin();\nawait new Promise((r) => setTimeout(r, ${startDelayMs}));\nfs.writeFileSync(${JSON.stringify(log + ".tmp")}, args.map((a) => a + "\\n").join(""));\nfs.renameSync(${JSON.stringify(log + ".tmp")}, ${JSON.stringify(log)});\n${reply}`,
     );
     process.env.PATH = `${bin}${path.delimiter}${saved.PATH ?? ""}`;
     return log;
@@ -61,6 +62,19 @@ describe("translatePaper: claude・codex の既定（契約付録 §5）", () =>
       makeTar([{ name: "main.tex", content: "\\documentclass{a}\\begin{document}\\section{A}Alpha text.\\end{document}" }]),
     );
     return tar;
+  }
+
+  // 記録が現れたら run を中断する。時間ではなく記録の完了で終わるので、起動の遅い runner でも揺れない（timeoutMs は止まらないときの保険）。
+  function abortWhenLogged(log: string): AbortSignal {
+    const ac = new AbortController();
+    const t = setInterval(() => {
+      if (existsSync(log)) {
+        clearInterval(t);
+        ac.abort();
+      }
+    }, 20);
+    t.unref();
+    return ac.signal;
   }
 
   const argAfter = (args: string[], flag: string): string | undefined => args[args.indexOf(flag) + 1];
@@ -82,7 +96,7 @@ describe("translatePaper: claude・codex の既定（契約付録 §5）", () =>
     }
   });
 
-  it("codex: 未指定ならモデル一覧の最新の Sol と medium が codex CLI に渡る", async () => {
+  it.each([0, 2500])("codex: 未指定ならモデル一覧の最新の Sol と medium が codex CLI に渡る（偽 CLI の起動の遅れ %i ms）", async (startDelayMs) => {
     const d = mkdtempSync(path.join(os.tmpdir(), "jpaper-cli-defaults-"));
     dirs.push(d);
     const codexHome = path.join(d, "codex-home");
@@ -92,10 +106,10 @@ describe("translatePaper: claude・codex の既定（契約付録 §5）", () =>
       JSON.stringify({ models: [{ slug: "gpt-6-sol", visibility: "list" }, { slug: "gpt-6.1-sol", visibility: "list" }] }),
     );
     process.env.CODEX_HOME = codexHome;
-    const log = fakeCli(d, "codex");
+    const log = fakeCli(d, "codex", startDelayMs);
     const errs: string[] = [];
     const db = new GlossaryDb();
-    await translatePaper({ kind: "path", path: paper(d) }, { provider: "codex", outDir: path.join(d, "out"), timeoutMs: 1500 }, { db, onError: (m) => errs.push(m) });
+    await translatePaper({ kind: "path", path: paper(d) }, { provider: "codex", outDir: path.join(d, "out"), timeoutMs: 60_000, signal: abortWhenLogged(log) }, { db, onError: (m) => errs.push(m) });
     db.close();
     const args = readFileSync(log, "utf8").split("\n");
     expect(argAfter(args, "--model")).toBe("gpt-6.1-sol");
