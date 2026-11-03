@@ -66,6 +66,10 @@
 - **なぜ意図的か**: paracol の中のフロートはページ全幅に出て、左右 2 枚が縦に積まれて使えない（PoC で実測）。`\@captype` を設定した非フロートにすると `\caption` が効いたまま左右の半分にそれぞれ置け、図表番号も左右で一致する（paracol はカウンタを列ごとに持つ）。
 - **おかしく見える点（`\jp@clampvspace`）**: 図表ブロックの開始で `\vspace` を `\@ifstar` 付きの自前の定義に差し替え、負の量（`\skip@` に読んで `\ifdim` で判定）なら何もしない。正の量は元の `\vspace`（開始時点の定義。論文が再定義していればそれ）へ渡す。`\vspace*` も同じ。差し替えは既に差し替え済み（`\vspace` が `\jp@vspace@wrap`）なら何もしない（図表の入れ子で退避し直すと `\jp@vspace` が自分を指し、`TeX capacity exceeded` で対訳全体が落ちる。PR #481 のレビュー）。
 - **なぜ意図的か**: 元の浮動体なら図表の中の負の `\vspace`（`-2mm`〜`-5mm`）は float の余白を削るだけだが、非フロートのブロックでは前後の本文・キャプション・表に食い込んで文字が重なる（実測: 2004.00584。外して組み直すと消えた）。ブロックの中に閉じた差し替えなので、和訳 PDF（`assemble-latex.ts`）と、ブロックの外の `\vspace` には効かない。`\\[-2mm]` など `\vspace` 以外の負の間隔は対象外。
+- **おかしく見える点（`\protected\def\jp@vspace@wrap`）**: `\jp@vspace@wrap` だけ `\def` でなく `\protected\def` で定義している。
+- **なぜ意図的か**: LaTeX 標準の `\vspace` は robust だが、差し替えた定義は壊れやすい。caption パッケージは `\caption` の本文を目次行（`\addcontentsline`）へ `\protected@write` で書き出し、そこで本文を展開する。`\caption{… \vspace{-.3cm}}` のように本文に `\vspace` があると、`\@ifstar` の先読みが書き出しの閉じ括弧まで読み、`Argument of \caption@ydblarg has an extra }.` で対訳 PDF が落ちる（実測: 2107.04649。issue #530。`\protected` を外すと再現し、付けると組める）。
+- **おかしく見える点（`\@float@c@figure` / `\@float@c@table`）**: 4 環境の開始の末尾で、float パッケージが `\caption` の行き先に使う `\@float@c@<型>` を `\expandafter\let\csname …\endcsname\@caption` で素の `\@caption` に向ける（`\restylefloat*` と同じ形）。
+- **なぜ意図的か**: 原文が `\restylefloat{table}` を使うと `\caption` が `\float@caption` を通り、float の環境の冒頭（`\fst@table`）が定める `\@fs@capt` を求める。差し替えた環境は `\fst@table` を走らせないので `Undefined control sequence` で対訳 PDF が止まる（実測: 1610.02136。和訳 PDF は出る）。`\fst@table` を走らせるだけでは組めるが、`\float@caption` はキャプションを `\@floatcapt` の箱に溜めるだけで、取り出すのは float の `\float@end`（差し替えた環境は呼ばない）なので、キャプションが対訳から消える。素の `\@caption` に向ければキャプションがその場に出る。float を使わない論文では `\@float@c@<型>` を誰も見ないので害が無い。float の書式（ruled など）と `[H]` の配置は再現しない。
 - **正本ポインタ**: [対訳 PDF ADR](../adr/20261006-bilingual-side-by-side-pdf.md)（「図・表」）。
 
 ## `src/tools/bilingual-latex.ts` — `PAPER`（geometry のオプション）に `onecolumn` を入れている
@@ -74,17 +78,23 @@
 - **なぜ意図的か**: 原プリアンブルが二段組（`\documentclass[twocolumn]{article}`・IEEEtran conference 等）だと、paracol が `Environment paracol cannot work with ordinary two-column typesetting` で落ちる（実測）。本文先頭で `\onecolumn` を入れても、後の `\newgeometry` が二段組の設定に戻すので効かない（実測）。geometry 自身に一段組を指定すると組める（実測）。revtex の reprint のように出力ルーチンごと差し替えるクラスはこれでも組めないので、原プリアンブルで組めなければ共通テンプレで組み直す（`typesetBilingual`）。
 - **正本ポインタ**: 契約付録 §8（対訳 PDF）。
 
-## `src/tools/bilingual-latex.ts` — `BEGIN` のページ番号は星なしの `\AddToShipoutPictureFG`
+## `src/tools/bilingual-latex.ts` — `BEGIN` のページ番号と罫線は eso-pic でなく `shipout/foreground` フックで描く
 
-- **おかしく見える点**: eso-pic の `\AddToShipoutPictureFG*`（星付き）に直したくなる、あるいは星の有無に意味が無いように見える。
-- **なぜ意図的か**: 星付きは現在のページ（1 ページ目）にしか出ない。全ページに左右別のページ番号（原文 p.N／和訳 p.N）と中央の罫線を出すには星なしでなければならない。`\pagestyle{empty}` で通常のページ番号は消している。
-- **正本ポインタ**: [対訳 PDF ADR](../adr/20261006-bilingual-side-by-side-pdf.md)（Decision「ページ番号」）。
+- **おかしく見える点**: eso-pic の `\AddToShipoutPictureFG` で描けば座標が素直なのに、フックに `picture` 環境を入れ、y を負（`-287mm`・`-297mm`）にしている。eso-pic に戻したくなる。
+- **なぜ意図的か**: cvpr.cls など、class が古い eso-pic のコードを抱える（`\ProvidesPackage{eso-pic}` は無い）と、`\usepackage{eso-pic}` が `Command \ESO@isMEMOIR already defined` で止まり、共通テンプレートへの組み直しでも class のマクロ（`\eg` 等）が無く対訳が出なかった（実測: 2007.02915、issue #520）。`\usepackage{eso-pic}` を条件付きで読む案は、旧版のコードが `\AddToShipoutPictureFG` を定義しないので使えない。フックの原点は紙の左上で y は下向きに負なので、eso-pic の座標（左下原点）の y から紙の高さ 297mm を引いて描き直した。`\AddToHook` は星なしの `\AddToShipoutPictureFG` と同じく全ページに効く（星付きの `\AddToShipoutPictureFG*` は 1 ページ目だけなので使えない）。`\pagestyle{empty}` で通常のページ番号は消している。位置は eso-pic 版と同じ最小文書の 4 ページで PNG が完全一致（`cmp`）。
+- **正本ポインタ**: [対訳 PDF ADR](../adr/20261006-bilingual-side-by-side-pdf.md)（Decision「ページ番号」）、契約付録 §8（対訳 PDF）。
 
 ## `src/tools/bilingual-latex.ts` — `renderPairs` が `\maketitle` を `\jpTitleBlock` の左右ペアに置き換える
 
 - **おかしく見える点**: 原文と訳文の段落をそのまま並べる関数なのに、最初の `\maketitle`（コメント外・環境や波括弧の外）だけは消して、その位置にタイトルブロック（左=原文の前文と `\maketitle` までの本文にある最後の `\title`／右=和訳 main.tex の前文と本文の同じ範囲の `\title`）を差し込んでいる。`\maketitle` と同じ段落の前の部分（本文の `\title` / `\author`）は 1 行として残す。
 - **なぜ意図的か**: 学会クラス（neurips 等）の `\maketitle` は全幅で、脚注（`\thanks`・学会表記）の挿入物が後続の paracol と衝突して空白ページが出る（PoC で実測）。タイトルと著者を左右の半分にそれぞれ置く仕様なので、`\thanks` を無効にした著者とタイトルだけのブロックを各列に置く。タイトルは paracol の中に入れるので、本文先頭がタイトルでも空の paracol は作らない。本文に `\title` を書く論文（article・llncs・revtex で一般的）で前文だけを見ると左右とも空のタイトルになり、`\maketitle` が段落の先頭に単独で無いと左の列で `\maketitle` が実行される。article の `\maketitle` は実行後に `\title` / `\author` を `\relax` にするので、右の列ではタイトルが素の文字列で出る（いずれも実測）。前の部分を残すのは、`\author` が `\@author` を大域に定義してタイトルブロックがそれを使うため（`\title` / `\author` は何も出力しない）。環境の中の `\maketitle` は置き換えず、`titleUnplaced` で警告する。frontmatter 環境（elsarticle）のペアは `\maketitle` を探さずにタイトルとして扱う（下の `replaceFrontmatter`）。
 - **正本ポインタ**: [対訳 PDF ADR](../adr/20261006-bilingual-side-by-side-pdf.md)（Decision「タイトルと著者」）。
+
+## `src/tools/bilingual-latex.ts` — `SETUP` の `\jp@titleblock` が `\global\let\maketitle\relax` を実行する
+
+- **おかしく見える点**: タイトルを組むだけのマクロが、`\maketitle` を大域に `\relax` へ書き換えている。
+- **なぜ意図的か**: 対訳は最初の `\maketitle` だけをタイトルブロックに置き換える。cvpr.cls（article の二段組）の `cvpr.tex` のように `\maketitle` を 2 回書く原稿では、2 回目が paracol の中でそのまま動く。article の `\maketitle` は `\twocolumn[\@maketitle]` で改ページし、`\thispagestyle{plain}` で class のページ番号を出すので、1 ページ目が表題だけで終わり、2 ページ目の左の段に表題がもう一度出て、対訳のページ番号の上に「1」が重なる（実測: 2007.02915。issue #532）。原文では article の `\maketitle` が 1 回目で自分を `\relax` にするため 2 回目は何もしない。対訳では 1 回目が置き換わって `\relax` にならないので、タイトルブロックを組む側で同じ状態にする。frontmatter・acmart のタイトルブロックも `\jp@titleblock` を通るので同じく効く。
+- **正本ポインタ**: [契約付録 §8](./contract-appendix.md)（対訳 PDF の `\maketitle` の置き換え）。
 
 ## `src/tools/bilingual-latex.ts` — `ACMART_SETUP` が acmart の `\author`・`\affiliation`・`\email`・`\keywords`・`abstract` を対訳の中で置き換える
 
@@ -208,17 +218,35 @@
 - **なぜ意図的か**: `\caption` の引数は段落区切りを許さず、空行があると `Paragraph ended before \caption@prepareanchor was complete` で組版が落ちる。原文にこの空行がある論文は、現在の TeX Live では原文のままでも組めない（実測: 2011.03395 seg-0042 の表キャプション）。`%` 行にすれば段落区切りでなくなり、行数は変わらないのでエラー行から節への逆引きもずれない。
 - **正本ポインタ**: 契約付録 §7、issue #320。回帰テストは `src/tools/assemble-latex.test.ts`。
 
-## `src/tools/assemble-latex.ts` — 論文の `\newcommand{\mc}` / `\newcommand{\gt}` を `\DeclareRobustCommand` に替える
+## `src/tools/assemble-latex.ts` — luatexja を読んだ直後に `\let\x\undefined` を置く
 
-- **おかしく見える点**: 原文の `\newcommand` を、名前が `\mc` / `\gt` のときだけ書き換えている。
-- **なぜ意図的か**: luatexja はこの 2 つを和文書体の切り替えとして定義済みなので、論文が同じ名前を `\newcommand` すると `Command \mc already defined` で組版が落ちる（実測: 2011.03395 seg-0059 の `\newcommand{\mc}[1]{\mathcal{#1}}`）。`\DeclareRobustCommand` は定義済みでも上書きでき、論文の意味が勝つ。
-- **正本ポインタ**: 契約付録 §7、issue #320。回帰テストは `src/tools/assemble-latex.test.ts`。
+- **おかしく見える点**: 日本語フォントの直後で、何も使っていない `\x` を未定義にしている。
+- **なぜ意図的か**: `luatexja-core.sty` はグループの外で `\edef\x{…}` をして `\x` を残す。論文の同梱 `.sty` の `\newcommand{\x}{x}` が `Command \x already defined` で落ちる（実測: 2201.04234 の `lifetime.sty`。原前文でも共通テンプレでも同じ）。luatexja の直後に未定義へ戻せば論文の定義が通る。luatexja を読む 2 箇所（`JP_FONT`・`templatePreamble`）の両方に置く。
+- **正本ポインタ**: 契約付録 §7、issue #518。回帰テストは `src/tools/assemble-latex.test.ts`・`src/tools/assemble-latex.typeset.test.ts`。
+
+## `src/tools/assemble-latex.ts`・`src/tools/build-gate.ts` — 論文の `\newcommand{\mc}` / `\newcommand{\gt}` を `\DeclareRobustCommand` に替える（本文と同梱 `.sty`）
+
+- **おかしく見える点**: 原文の `\newcommand` を、名前が `\mc` / `\gt` のときだけ書き換えている。本文（`releaseLuatexjaNames`）に加え、同梱の `.sty`/`.cls` を `srcpkg/` へ置くとき（`copySupportFile`）にも同じ関数で書き換え、原文の .sty を加工して置いている。
+- **なぜ意図的か**: luatexja はこの 2 つを和文書体の切り替えとして定義済みなので、論文が同じ名前を `\newcommand` すると `Command \mc already defined` で組版が落ちる（実測: 2011.03395 seg-0059 の `\newcommand{\mc}[1]{\mathcal{#1}}`、同梱 `.sty` では 2206.13089 の `style.sty` 56 行目 `\newcommand{\mc}{\mathcal}`）。`\DeclareRobustCommand` は定義済みでも上書きでき、論文の意味が勝つ。
+- **正本ポインタ**: 契約付録 §7、issue #320・#538。回帰テストは `src/tools/assemble-latex.test.ts`・`src/tools/build-gate.test.ts`・`src/tools/assemble-latex.typeset.test.ts`。
 
 ## `src/tools/assemble-latex.ts` — 論文の `\newcommand{\theH…}` を `\providecommand` に替える
 
 - **おかしく見える点**: 原文の `\newcommand` を、名前が `\theH` で始まるときだけ `\providecommand` に書き換え、論文の定義を捨ててカーネルの定義を残している。
 - **なぜ意図的か**: 今の LaTeX カーネル（TeX Live 2025、形式版 2025-11-01）は `\@definecounter` でカウンタを作るたびに `\theH<名前>` を定義するので、古い hyperref 向けの回避策 `\newcommand{\theHalgorithm}{\arabic{algorithm}}` が `Command \theHalgorithm already defined` で組版を落とす（実測: 1406.2661。hyperref を読まない最小の文書でも同じ）。共通テンプレートも原前文を引き継ぐので同じ行で落ちる。`\theH…` は hyperref のアンカー名にだけ使われ、カーネルの定義も番号を出すだけなので、論文の定義を捨てても PDF の見た目は変わらない。`\DeclareRobustCommand` にすると `\xdef` の中で展開されず、アンカー名が壊れる。
 - **正本ポインタ**: issue #425。回帰テストは `src/tools/assemble-latex.test.ts`・`src/tools/bilingual-latex.test.ts`。
+
+## `src/tools/assemble-latex.ts`・`src/tools/build-gate.ts` — 論文の `\newcommand{\unit}` などを `\DeclareRobustCommand` に替える（本文と同梱 `.sty`）
+
+- **おかしく見える点**: 原文の `\newcommand` を、名前が siunitx v3 の新しい命令（`\unit` `\qty` `\qtylist` `\qtyproduct` `\qtyrange` `\numproduct` `\complexnum` `\complexqty`）のときだけ書き換える。本文（`releaseSiunitxNames`）に加え、同梱の `.sty`/`.cls` を `srcpkg/` へ置くときにも書き換え（`copySupportFile`）、原文の .sty を加工して置いている。
+- **なぜ意図的か**: 古い siunitx（v2）には `\unit` が無かったので、論文の `.sty` が `\usepackage{siunitx}` の後に `\newcommand{\unit}{\boldsymbol{1}}` を置いても組めた。今の TeX Live の siunitx v3 は `\unit` を定義するので `Command \unit already defined` で落ちる（実測: 2201.04234 の `lifetime.sty` 41 行目で siunitx を読み、321 行目で `\unit` を定義。JPaper は siunitx を注入していない）。衝突は論文自身の読み込みと配布パッケージの版の組で、JPaper の注入では起きない。`\DeclareRobustCommand` は定義済みでも上書きでき、論文が本文で使う意味（上の例では単位ベクトル）が勝つ。v2 にもあった `\num` `\si` `\SI` は、v2 の時代から衝突していたので対象にしない。
+- **正本ポインタ**: issue #531。回帰テストは `src/tools/assemble-latex.test.ts`・`src/tools/build-gate.test.ts`・`src/tools/assemble-latex.typeset.test.ts`。
+
+## `src/tools/assemble-latex.ts` — cleveref の読み込み行と cref の命令の文だけを hyperref の後へ移す
+
+- **おかしく見える点**: 原文が `\usepackage{cleveref}` を `\usepackage{hyperref}` より前に書いているのに、組版用の前文では cleveref の読み込み行と、その後ろにある `\crefname`・`\crefalias` などの文（複数行も）だけを hyperref の直後へ移し、間にある他の行（別の `\usepackage` など）は動かしていない。
+- **なぜ意図的か**: 今の cleveref（0.21.4 以降）は hyperref より前に読むと `cleveref must be loaded after hyperref!` で止まる。古い論文では警告だった順序が多く、原前文でも共通テンプレートでも同じエラーになる（実測: 1610.02136。cleveref と hyperref の間に `\usepackage{tabularx}` と `\newcolumntype` がある）。cleveref の命令は cleveref の後でないと未定義なので一緒に動かす。間の行まで丸ごと動かしたり、間に `\usepackage` があるとき動かさなかったりすると、この実例で直らない（#507 の再発）。命令の文は波括弧の対応で終わりを決める（複数行の `\crefname{figure}%\n  {Fig.}{Figs.}` を割らない）。条件分岐が間にあるとき、閉じない文があるときは枝や括弧を壊さないよう動かさない。
+- **正本ポインタ**: 契約付録 §8、issue #507。回帰テストは `src/tools/assemble-latex.test.ts`（1610.02136 の 1〜24 行目の fixture を含む）。
 
 ## `src/tools/build-gate.ts` — サブディレクトリの支援ファイルを `srcpkg/` と main からの相対位置の両方に置く
 
@@ -235,15 +263,21 @@
 
 ## `src/tools/bilingual-latex.ts` — 対訳のタイトルブロックで `\and` / `\And` / `\AND` を区切りの空白にする
 
-- **おかしく見える点**: タイトルブロックの著者欄でだけ、クラスが定義した `\and` を `\unskip\quad` に置き換えている。
-- **なぜ意図的か**: `\and` はタイトルの表組み（`\maketitle` の中の tabular）で使う前提の命令で、`\end{tabular}…\begin{tabular}` に展開される。対訳のタイトルブロックは著者を表の外で組むので、そのままだと `Misplaced \crcr` で対訳 PDF が落ちる（実測: llncs の 2606.22649・2605.18329 ほか 4 本）。
-- **正本ポインタ**: 契約付録 §8（対訳 PDF）、issue #324。回帰テストは `src/tools/bilingual-latex.test.ts`。
+- **おかしく見える点**: タイトルブロックの著者欄でだけ、クラスが定義した `\and` / `\And` / `\AND` を作り直している。著者の本文に `\and`・`\And`・`\AND` があるかを、`\toks@` に入れて区切りつき引数（`\jp@scan@and` など）で前もって調べ、あれば著者欄全体を `\begin{varwidth}[t]{\linewidth}`（`\jp@vw`。中は `\centering`・字下げなし）で包んで `\and` を `\end{varwidth}\hskip…\jp@vw` にし、無ければ `\and` を `\unskip\quad` にする。`varwidth` パッケージを前文に足している。
+- **なぜ意図的か**: `\and` はタイトルの表組み（`\maketitle` の中の tabular）で使う前提の命令で、`\end{tabular}…\begin{tabular}` に展開される。対訳のタイトルブロックは著者を表の外で組むので、クラスの定義のままだと `Misplaced \crcr` で対訳 PDF が落ちる（実測: llncs の 2606.22649・2605.18329 ほか 4 本。issue #324）。`\and` を区切りの空白だけにすると、`名前\\ 所属\\ メール` と複数行で書く論文で前の著者の最後の行と次の著者の最初の行が 1 行につながる（実測: 2107.03315 の `dguillory@berkeley.edu Vaishaal Shankar`。issue #529）ので、`\and` があるときは著者ごとの箱で包む。箱は `c` 列の tabular でなく `varwidth` にする。tabular の行は折り返せず、1 行が段（半分の幅）より長い所属があると反対の段に重なる（実測: PR #534 のレビュー。修正前の組み方では折り返していた入力）。`varwidth` は中身の自然な幅（最大 `\linewidth`）の箱になり、長い行だけ箱の中で折り返す。箱は著者の間のグルーでも折り返せる。`\and` が無い著者欄（`A, B, C` と 1 行に並べた形や 1 人の著者）は、包むと各行の組み方が変わるので、包まず従来の組み方にする。`\AND` は箱を閉じて段落を改める。`\and` の有無の判定は区切りつき引数なので、波括弧の中の `\and` は数えない。外側にも `\and` があって内側の波括弧にも `\and` がある形（`\author{A \and {B \and C}}`）は、内側の `\and` が箱を閉じて `Missing } inserted` で落ちる（修正前の組み方では組めた。実際の論文では見ていない。未対応）。`\expandafter\toks@\expandafter{#2}` は引数が `\@author` などマクロ 1 つであることに頼る（呼び出しは `\jpTitleBlock` と `\jp@fmhead` だけ）。`\and` の後ろに `#` がある著者欄は `\def\jp@t{#2}` で `Illegal parameter number` になりうる（見ていない）。
+- **正本ポインタ**: 契約付録 §8（対訳 PDF）、issue #324・#529。回帰テストは `src/tools/bilingual-latex.test.ts`・`src/tools/bilingual-latex.typeset.test.ts`。
 
 ## `src/tools/bilingual-latex.ts` — 対訳のタイトルブロックで未定義の `\name`・`\email`・`\addr` を補う
 
 - **おかしく見える点**: タイトルブロックの著者欄でだけ、未定義なら `\name`・`\email`・`\addr` を書体の切り替えとして定義している。
 - **なぜ意図的か**: jmlr2e は `\author{\name 著者 \email … \addr …}` と書かせるが、この 3 つを `\maketitle` の中でだけ定義する。対訳のタイトルブロックは `\maketitle` を使わず `\@author` を直接展開するので、そのままだと `Undefined control sequence` で対訳 PDF が落ちる（実測: 2011.03395）。定義済みの型（acmart の `\email{…}` など）はそのまま使う。
 - **正本ポインタ**: 契約付録 §8（対訳 PDF）、issue #440。回帰テストは `src/tools/bilingual-latex.test.ts`。
+
+## `src/tools/bilingual-latex.ts` — 対訳のタイトルブロックの著者欄で `\\` を `\jp@cr` に替える
+
+- **おかしく見える点**: タイトルブロックの著者欄でだけ、`\\` を `\@centercr` の呼び出しに包んだ `\jp@cr` に替えている。
+- **なぜ意図的か**: 著者欄は neurips などでは tabular の中で組まれるので、`\\ \\`（空の行）のように `\\` を続けて書ける。対訳のタイトルブロックは著者を `\centering` の段落で組み、そこでの `\\`（`\@centercr`）は段落を閉じるので、続けた 2 つ目が縦モードで `There's no line here to end.` になる（実測: 2404.01542）。`\jp@cr` は横モードでは `\@centercr` と同じ、縦モードでは空の行を置く。tabular の中の `\\` は tabular が定義し直すので影響しない。著者ごとの `varwidth` の箱（`\jp@vw`）は `\centering` で `\\` を戻すので、箱の頭でも替える。
+- **正本ポインタ**: 契約付録 §8（対訳 PDF）、issue #539。回帰テストは `src/tools/bilingual-latex.typeset.test.ts`。
 
 ## `src/tools/bilingual-latex.ts` — 右の段の `\newtheorem` を、定義済みなら読み飛ばす命令に置き換える
 
@@ -304,6 +338,12 @@
 - **おかしく見える点**: 共通テンプレ（article）の前文に、原文に無い `\usepackage[…]{natbib}` を足している。オプションは原 class のオプションと本文中の `\biboptions` から組み立てる。
 - **なぜ意図的か**: elsarticle は `nonatbib` が無ければ natbib を自分で読み、`\biboptions` は本文末尾に書かれることもある（.spl 経由で効く）。class を article に差し替えると natbib が消え、`.bbl` の著者年ラベルが生のまま出る（実測: 1902.06543 の対訳）。
 - **正本ポインタ**: 契約付録 §7（共通テンプレ）、issue #326。回帰テストは `src/tools/assemble-latex.test.ts`。
+
+## `src/tools/assemble-latex.ts` — `dropXcolorColorOption` が原前文の `\usepackage[…]{xcolor}` から `color` オプションを外す
+
+- **おかしく見える点**: 原文が書いた xcolor のオプションを、組版用の前文で書き換えている。
+- **なぜ意図的か**: 今の xcolor（v3）は古い版にあった `color` を `Unknown option 'color' for package xcolor.` で拒む。原前文・共通テンプレのどちらも原文の前文を引き継ぐので、`buildPreamble` の戻り値の全体に掛けて両経路で外す（`svgnames`・`dvipsnames`・`table` などは残す）。`color` を別の意味で受ける将来の xcolor では外しすぎになる。
+- **正本ポインタ**: 契約付録 §7、issue #521。回帰テストは `src/tools/assemble-latex.test.ts`・`src/tools/assemble-latex.typeset.test.ts`。
 
 ## `src/tools/frontmatter.ts` — 型の判定の正規表現は任意引数・名前の長さに上限を置き、コメントは自前の 1 回の走査で落とす
 
@@ -373,3 +413,17 @@
 - **おかしく見える点**: Windows で `.cmd` を起動するなら `spawn(..., { shell: true })` で足りるのに、`.cmd` の中身を正規表現で読んで対象の JS のパスを取り出し、`process.execPath` で起動している。
 - **なぜ意図的か**: shell を介すと cmd.exe が引数を解釈し直す。claude には複数行の system prompt を `--append-system-prompt` の引数で渡しており、cmd.exe の引数は改行を運べず、`%`・`^`・`"` も別の意味になる。shell なしで `.cmd` を spawn すると Node は EINVAL で拒む（CVE-2024-27980 の対策）。exe は libuv が引数を正しくクォートする。
 - **正本ポインタ**: 契約付録 §5（Windows での外部コマンドの起動と停止）・issue #462。
+
+## `src/tools/assemble-latex.ts` — `joinFrontBlankLines` が前文と本文の `\author`・`\title`・`\date` の引数の空行を詰める
+
+- **おかしく見える点**: 原文をそのまま引き継ぐ前文・訳文なのに、この 3 つの命令の引数の中の空行だけを改行 1 つに書き換えている。
+- **なぜ意図的か**: これらは `\long` でないので、引数の中の空行（段落区切り）で `Paragraph ended before \author was complete.` になって組版が止まる（実測: 2107.03315。原文のまま pdflatex で組んでも同じ）。詰める命令は `\author`・`\title`・`\date` の 3 つに固定する（`FRONT_COMMANDS`。分類 `offendingName` も同じ集合に限る。`\label` や `\hspace` の引数の途中の空行は、訳文が入れうる翻訳起因なので構造起因にしない）。class が `\author` を `\long` にしていても（IEEEtran など）詰める。そこでは空行が段落区切りとして意図されていた場合に段落が 1 つに繋がるが、この 3 つの引数に段落を意図した空行が要る原文は見ていない。
+- **おかしく見える点（2）**: 引数の終わりを求めるときだけ、コメントを空白に潰した写しを使う。ソースのコメントに ``}'' があると（ICCV テンプレートの「closing ``}''」）、波括弧の対応表がそこで引数を閉じてしまい、空行が詰まらない。`Paragraph ended` の照合が `\s+` なのも、実ログが `\author  was`（空白 2 つ）だから（実測）。
+- **おかしく見える点（3）**: 対訳の `paragraphsOf` も、段落に割る前に同じ関数を通す。割った後では、引数の中の空行で `\author{` と `}` が別のペア（左右の別の段）に入り、どの段でも `Paragraph ended` で落ちる（実測: 2107.03315 の対訳 PDF）。
+- **正本ポインタ**: 契約付録 §6、issue #517。回帰テストは `src/tools/assemble-latex.test.ts`・`assemble-latex.typeset.test.ts`。
+
+## `src/segment/segmenter.ts` — `splitBySections` が波括弧のグループの内側の見出しで割らず、グループの長さに上限を持つ
+
+- **おかしく見える点**: 見出しの正規表現で割れば済みそうなのに、本文全体の波括弧を走査して、閉じる波括弧が見つかったグループの内側の見出しを境界から外している。しかも閉じるまでが `MAX_GROUP_CHARS` を超えるグループは数えない。
+- **なぜ意図的か**: `\update{\subsection{…}}` を割ると開きの `\update{` が前の節に残り、節を空行でつなぐ組み立てで `\long` でない `\textcolor` の引数に空行が入って組版が落ちる（実測: 2201.04234）。上限が無いと、原文に閉じない `{` が 1 つあるだけで、その後ろの見出しがすべて境界から外れて 1 節になる。コメントと `\{` `\}` を数えないのは、数えると釣り合いが崩れて同じ事故になるため。verbatim の中の波括弧は区別しない（そこで釣り合わないと、その範囲の見出しだけ割れ方が変わる。落ちる形ではない）。
+- **正本ポインタ**: 契約付録 §4、issue #542。回帰テストは `src/segment/segmenter.test.ts`・`segmenter.typeset.test.ts`。

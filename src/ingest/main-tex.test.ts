@@ -52,6 +52,126 @@ describe("detectMainTex", () => {
     const d = tmp({ "a.tex": DOC, "b.tex": DOC });
     expect(() => detectMainTex(d)).toThrow(/一意に決定できません/);
   });
+
+  it("直下の原稿を、サブディレクトリの複製より優先する（2201.04234）", () => {
+    const d = tmp({
+      "iclr2022_conference.tex": DOC,
+      "ICLR 2022_ Prediction Accuracy on OOD Data/iclr2022_conference.tex": DOC,
+    });
+    expect(detectMainTex(d)).toBe("iclr2022_conference.tex");
+  });
+
+  it("rebuttal より、同名の .bbl がある原稿を選ぶ（2107.04649）", () => {
+    const d = tmp({
+      "linearfits_arxiv.tex": DOC,
+      "linearfits_arxiv.bbl": "\\begin{thebibliography}{}\\end{thebibliography}",
+      "rebuttal.tex": DOC,
+    });
+    expect(detectMainTex(d)).toBe("linearfits_arxiv.tex");
+  });
+
+  // 降格で b.tex 以外の直下の候補が外れ、残った直下の b.tex が深さで勝つ。
+  it.each(["rebuttal", "Response_to_reviewers", "paper-supp", "reply", "supplement", "supplementary"])(
+    "降格語 %s は深さと組んで決め手になる",
+    (name) => {
+      const d = tmp({ "b.tex": DOC, [`${name}.tex`]: DOC, "sub/x.tex": DOC });
+      expect(detectMainTex(d)).toBe("b.tex");
+    },
+  );
+
+  it("語の一部に過ぎない名前（suppression）は降格しない", () => {
+    const d = tmp({ "b.tex": DOC, "suppression.tex": DOC, "sub/x.tex": DOC });
+    expect(() => detectMainTex(d)).toThrow(/一意に決定できません/);
+  });
+
+  it(".bbl がどの候補にも無く、降格だけで 1 本に絞れるときは決めずに失敗する", () => {
+    const cases: Record<string, string>[] = [
+      { "dose_response.tex": DOC, "appendix.tex": DOC },
+      { "z_paper.tex": DOC, "rebuttal.tex": DOC },
+    ];
+    for (const files of cases) {
+      expect(() => detectMainTex(tmp(files))).toThrow(/一意に決定できません/);
+    }
+  });
+
+  it("降格も深さも効かないとき、同名の .bbl だけで決める", () => {
+    const d = tmp({ "a.tex": DOC, "a.bbl": "x", "b.tex": DOC });
+    expect(detectMainTex(d)).toBe("a.tex");
+  });
+
+  it("2201.04234: 複製に .bbl があってもなくても直下の原稿に決まる", () => {
+    const dup = "ICLR 2022_ Prediction Accuracy on OOD Data";
+    for (const dupBbl of [false, true]) {
+      const files: Record<string, string> = {
+        "iclr2022_conference.tex": DOC,
+        "iclr2022_conference.bbl": "x",
+        [`${dup}/iclr2022_conference.tex`]: DOC,
+      };
+      if (dupBbl) files[`${dup}/iclr2022_conference.bbl`] = "x";
+      expect(detectMainTex(tmp(files))).toBe("iclr2022_conference.tex");
+    }
+  });
+
+  it("同名の .bbl を持つ候補は、論文名の一部の response では降格しない", () => {
+    const d = tmp({ "frequency_response.tex": DOC, "frequency_response.bbl": "x", "appendix.tex": DOC });
+    expect(detectMainTex(d)).toBe("frequency_response.tex");
+  });
+
+  it("両方に .bbl があるときは名前で降格せず、決めずに失敗する", () => {
+    const d = tmp({
+      "frequency_response.tex": DOC,
+      "frequency_response.bbl": "x",
+      "appendix.tex": DOC,
+      "appendix.bbl": "x",
+    });
+    expect(() => detectMainTex(d)).toThrow(/一意に決定できません/);
+  });
+
+  it("全候補が .bbl を持つなら、降格語の名前でも外さず決めずに失敗する", () => {
+    const d = tmp({
+      "a.tex": DOC,
+      "a.bbl": "x",
+      "rebuttal.tex": DOC,
+      "rebuttal.bbl": "x",
+    });
+    expect(() => detectMainTex(d)).toThrow(/一意に決定できません/);
+  });
+
+  it("全候補が .bbl を持つとき、降格語の名前を外したうえで深さで決めない", () => {
+    // 降格が効くと rebuttal.tex が外れ、直下の a.tex が深さで勝ってしまう。
+    const d = tmp({
+      "a.tex": DOC,
+      "a.bbl": "x",
+      "rebuttal.tex": DOC,
+      "rebuttal.bbl": "x",
+      "sub/x.tex": DOC,
+      "sub/x.bbl": "x",
+    });
+    expect(() => detectMainTex(d)).toThrow(/一意に決定できません/);
+  });
+
+  it("浅い方に .bbl が無く深い方にあるときは決めずに失敗する", () => {
+    const cases: Record<string, string>[] = [
+      { "slides.tex": DOC, "paper/paper_full.tex": DOC, "paper/paper_full.bbl": "x" },
+      { "cover_letter.tex": DOC, "src/ms_final.tex": DOC, "src/ms_final.bbl": "x" },
+    ];
+    for (const files of cases) expect(() => detectMainTex(tmp(files))).toThrow(/一意に決定できません/);
+  });
+
+  it("浅い候補が名前で降格されて深い方だけが残るときは決めずに失敗する", () => {
+    const d = tmp({ "rebuttal.tex": DOC, "sub/final.tex": DOC });
+    expect(() => detectMainTex(d)).toThrow(/一意に決定できません/);
+  });
+
+  it("同じ階層で .bbl も名前の手掛かりも無い 2 本は失敗のまま", () => {
+    const d = tmp({ "a.tex": DOC, "sub/b.tex": DOC, "c.tex": DOC });
+    expect(() => detectMainTex(d)).toThrow(/一意に決定できません: .*a\.tex.*c\.tex/);
+  });
+
+  it("手掛かりが全候補に当たる（全部 rebuttal）ときは決めずに失敗", () => {
+    const d = tmp({ "rebuttal1.tex": DOC, "rebuttal2.tex": DOC });
+    expect(() => detectMainTex(d)).toThrow(/一意に決定できません/);
+  });
 });
 
 describe("expandInputs", () => {

@@ -1,6 +1,7 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { budgetMs, fastestMs } from "../testing/timing.js";
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync, existsSync, readdirSync, readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import {
@@ -16,6 +17,7 @@ import {
   probeLatexmk,
   describeLaunchError,
   LATEXMK_MISSING,
+  latexmkArgs,
 } from "./build-gate.js";
 import type { SourceSpan } from "./assemble-latex.js";
 import type { LatexRunner } from "./build-gate.js";
@@ -56,6 +58,19 @@ describe("classifyLog", () => {
     expect(c.failedSegments).toEqual([]);
     expect(c.structuralErrors).toEqual(["nips_2017.sty:42: Undefined control sequence."]);
   });
+  it("build の外の絶対パスは basename だけにする（ホストのパスを出さない・理由を押し出さない）", () => {
+    const log =
+      "/usr/local/texlive/2025/texmf-dist/tex/latex/xcolor/xcolor.sty:265: LaTeX Error: Unknown option 'color' for package xcolor.";
+    expect(classifyLog(log, MAP).structuralErrors).toEqual([
+      "xcolor.sty:265: LaTeX Error: Unknown option 'color' for package xcolor.",
+    ]);
+  });
+  it("build 内の同梱パッケージ（絶対パスで出る）も basename だけにする", () => {
+    const log = "/work/build/srcpkg/lifetime.sty:109: LaTeX Error: Command \\x already defined.";
+    expect(classifyLog(log, MAP).structuralErrors).toEqual([
+      "lifetime.sty:109: LaTeX Error: Command \\x already defined.",
+    ]);
+  });
   it("原文にも存在する未定義環境は構造起因にする（本文行でも再訳に回さない）", () => {
     const log = "./main.tex:12: LaTeX Error: Environment frontmatter undefined.";
     const original = "\\documentclass{elsarticle}\n\\begin{document}\n\\begin{frontmatter}\\end{frontmatter}";
@@ -92,6 +107,33 @@ describe("classifyLog", () => {
     const c = classifyLog(log, MAP, "\\begin{frontmatter}\\end{frontmatter}");
     expect(c.failedSegments).toEqual([]);
     expect(c.structuralErrors).toHaveLength(2);
+  });
+  describe("引数の途中で段落が終わったエラー（issue #517）", () => {
+    // TeX は制御綴りの後に空白を 1 つ足すので、実ログでは `\author` と `was` の間が 2 つ空く（2107.03315）。
+    const log = "./main.tex:25: Paragraph ended before \\author  was complete.\n./main.tex:25:  ==> Fatal error occurred, no output PDF file produced!\n";
+    it("命令が原文にもあるなら構造起因にする", () => {
+      const c = classifyLog(log, MAP, "\\author{A\n\nB}");
+      expect(c.failedSegments).toEqual([]);
+      expect(c.structuralErrors).toHaveLength(2);
+    });
+    it("前付け以外の命令（\\label・\\@hspace）は原文にあっても翻訳起因に残す", () => {
+      for (const name of ["label", "@hspace"]) {
+        const l = `./main.tex:25: Paragraph ended before \\${name}  was complete.\n`;
+        const c = classifyLog(l, MAP, `\\section{A}\\label{sec:a} \\hspace{1em} \\${name}`);
+        expect(c.failedSegments, name).toHaveLength(1);
+        expect(c.structuralErrors, name).toEqual([]);
+      }
+    });
+    it("\\title・\\date も構造起因にする", () => {
+      for (const name of ["title", "date"]) {
+        const c = classifyLog(`./main.tex:25: Paragraph ended before \\${name}  was complete.\n`, MAP, `\\${name}{A}`);
+        expect(c.failedSegments, name).toEqual([]);
+      }
+    });
+    it("原文に無い命令（訳文が持ち込んだ）や原文が空なら翻訳起因に残す", () => {
+      expect(classifyLog(log, MAP, "\\title{T}").failedSegments).toHaveLength(2);
+      expect(classifyLog(log, MAP).failedSegments).toHaveLength(2);
+    });
   });
   describe("class・package のエラー（issue #476）", () => {
     const err = (ctx: string): string =>
@@ -176,6 +218,26 @@ describe("checkFigures", () => {
 });
 
 describe("stageBuild", () => {
+  it("同梱 .sty の \\newcommand{\\unit} は \\DeclareRobustCommand にして置く（siunitx v3 と衝突するため）", () => {
+    const src = mkTemp();
+    writeFileSync(path.join(src, "life.sty"), "\\usepackage{siunitx}\n\\newcommand{\\unit}{\\boldsymbol{1}}\n");
+    const build = path.join(mkTemp(), "b");
+    stageBuild(build, "MAIN", { sourceDir: src, mainDir: src, figures: [] }, () => new Set<string>());
+    expect(readFileSync(path.join(build, SRC_PKG_DIR, "life.sty"), "utf8")).toBe(
+      "\\usepackage{siunitx}\n\\DeclareRobustCommand{\\unit}{\\boldsymbol{1}}\n",
+    );
+  });
+
+  it("同梱 .sty の \\newcommand{\\mc}・\\newcommand{\\gt} は \\DeclareRobustCommand にして置く（luatexja と衝突するため）", () => {
+    const src = mkTemp();
+    writeFileSync(path.join(src, "style.sty"), "\\newcommand{\\mc}{\\mathcal}\n\\newcommand\\gt[1]{#1}\n\\newcommand{\\mcx}{x}\n");
+    const build = path.join(mkTemp(), "b");
+    stageBuild(build, "MAIN", { sourceDir: src, mainDir: src, figures: [] }, () => new Set<string>());
+    expect(readFileSync(path.join(build, SRC_PKG_DIR, "style.sty"), "utf8")).toBe(
+      "\\DeclareRobustCommand{\\mc}{\\mathcal}\n\\DeclareRobustCommand\\gt[1]{#1}\n\\newcommand{\\mcx}{x}\n",
+    );
+  });
+
   it("main.tex・支援ファイル(.sty/.bib は srcpkg/ へ再帰収集)・図(main 相対)を複製する", () => {
     const src = mkTemp();
     writeFileSync(path.join(src, "nips.sty"), "% sty");
@@ -294,6 +356,9 @@ describe("sandboxEnv", () => {
     const env = sandboxEnv({}, "/b");
     expect(env.shell_escape).toBe("f");
     expect(env.openout_any).toBe("p");
+  });
+  it("TeX のログを 79 桁で折り返さない（長いパスのエラーが 2 行に割れる）", () => {
+    expect(Number(sandboxEnv({}, "/b").max_print_line)).toBeGreaterThanOrEqual(1000);
   });
   it("既存の環境変数は保つ", () => {
     expect(sandboxEnv({ PATH: "/usr/bin" }, "/b").PATH).toBe("/usr/bin");
@@ -518,4 +583,68 @@ describe("組版の道具を起動できない環境の障害（契約付録 §6
     expect(g.failedSegments).toEqual([]);
     expect(g.structuralErrors).toEqual([]);
   });
+});
+
+describe("latexmkArgs（契約付録 §8）", () => {
+  it("main.bbl があるときは -bibtex- を渡し、無いときは渡さない", () => {
+    const d = mkTemp();
+    expect(latexmkArgs(d)).not.toContain("-bibtex-");
+    writeFileSync(path.join(d, "main.bbl"), "");
+    expect(latexmkArgs(d)).toContain("-bibtex-");
+  });
+  it("利用者の rc を読まないよう -norc を先頭に渡す", () => {
+    expect(latexmkArgs(mkTemp())[0]).toBe("-norc");
+  });
+});
+
+const hasTex =
+  spawnSync("latexmk", ["-v"], { stdio: "ignore" }).status === 0 &&
+  spawnSync("lualatex", ["--version"], { stdio: "ignore" }).status === 0;
+
+describe.skipIf(!hasTex)("同梱 .bbl と壊れた .bst（実組版）", () => {
+  const MAIN = [
+    "\\documentclass{article}",
+    "\\begin{document}",
+    "See \\cite{a}.",
+    "\\bibliographystyle{broken}",
+    "\\bibliography{refs}",
+    "\\end{document}",
+  ].join("\n");
+  function setup(withBbl: boolean): string {
+    const src = mkTemp();
+    writeFileSync(path.join(src, "refs.bib"), "@misc{a, title={T}, author={X}, year={2020}}\n");
+    writeFileSync(path.join(src, "broken.bst"), "ENTRY {title} {} {}\nFUNCTION {x} { nosuchfunction }\nREAD\nITERATE {x}\n");
+    if (withBbl) writeFileSync(path.join(src, "paper.bbl"), "\\begin{thebibliography}{1}\n\\bibitem{a} X. T. 2020.\n\\end{thebibliography}\n");
+    const build = path.join(mkTemp(), "b");
+    stageBuild(build, MAIN, { sourceDir: src, mainDir: src, figures: [] }, () => new Set<string>());
+    return build;
+  }
+  it(".bbl を同梱すれば bibtex を走らせず、引用が解決して PDF ができる", async () => {
+    const build = setup(true);
+    const r = await defaultRunner(build);
+    expect(r.code).toBe(0);
+    expect(r.log).not.toMatch(/Citation .* undefined/);
+    expect(existsSync(path.join(build, "main.pdf"))).toBe(true);
+  }, 120_000);
+  it(".bbl が無ければ bibtex が走る（壊れた .bst で失敗する）", async () => {
+    const build = setup(false);
+    const r = await defaultRunner(build);
+    expect(r.code).not.toBe(0);
+  }, 120_000);
+  it("HOME の .latexmkrc が lualatex を壊していても読まれず、組める", async () => {
+    const build = setup(true);
+    const home = mkTemp();
+    writeFileSync(path.join(home, ".latexmkrc"), '$lualatex = "false";\n');
+    const saved = { HOME: process.env.HOME, XDG: process.env.XDG_CONFIG_HOME };
+    process.env.HOME = home;
+    delete process.env.XDG_CONFIG_HOME;
+    try {
+      const r = await defaultRunner(build);
+      expect(r.code).toBe(0);
+      expect(existsSync(path.join(build, "main.pdf"))).toBe(true);
+    } finally {
+      process.env.HOME = saved.HOME;
+      if (saved.XDG !== undefined) process.env.XDG_CONFIG_HOME = saved.XDG;
+    }
+  }, 120_000);
 });

@@ -103,3 +103,51 @@ describe("段落分割のコスト", () => {
     }
   });
 });
+
+describe("見出しを波括弧のグループで包む原文（issue #542）", () => {
+  // 2201.04234 の sections/appendix.tex 592 行目の形
+  const WRAPPED = [
+    "\\section{A}",
+    "aaa",
+    "",
+    "\\update{\\subsection{Details on \\figref{fig:intro}~(right) setup}} \\label{app:fig1_details}",
+    "",
+    "bbb",
+    "\\section{B}",
+    "ccc",
+  ].join("\n");
+  const doc = (body: string) => `\\begin{document}${body}\\end{document}`;
+
+  it("グループの中の見出しでは割らず、グループの外の次の見出しで割る", () => {
+    const segs = segment(doc(WRAPPED), 100000);
+    expect(segs.map((s) => s.latex.match(/\\section\{(.)\}/)?.[1])).toEqual(["A", "B"]);
+    expect(segs[0]!.latex).toContain("\\update{\\subsection{Details");
+    expect(segs[0]!.latex).toContain("}} \\label{app:fig1_details}");
+  });
+  it("各節の開き波括弧と閉じ波括弧が同じ節に入る", () => {
+    const depth = (t: string) => (t.match(/(?<!\\)\{/g)?.length ?? 0) - (t.match(/(?<!\\)\}/g)?.length ?? 0);
+    for (const s of segment(doc(WRAPPED), 100000)) expect(depth(s.latex)).toBe(0);
+  });
+  it("グループに包まれない見出しは従来どおり割る", () => {
+    const segs = segment(doc("\\section{A}a\\subsection{S}b\\subsection{T}c"), 100000);
+    expect(segs.length).toBe(3);
+  });
+  it("\\{ \\} とコメントの波括弧は数えない", () => {
+    const body = "\\section{A}a \\{ x % {\n\\subsection{S}b \\} y\n\\section{B}c";
+    expect(segment(doc(body), 100000).length).toBe(3);
+  });
+  it("閉じない波括弧があっても、上限を超えた先の見出しでは割る", () => {
+    const filler = "word ".repeat(1000);
+    const body = `\\section{A}\\foo{ ${filler}\\section{B}b ${filler}\\section{C}c`;
+    expect(segment(doc(body), 100000).length).toBeGreaterThan(1);
+  });
+  it("閉じない波括弧が前にあっても、後ろの見出しは割る", () => {
+    const body = "\\section{A}a { b\n\\section{B}c\n\\section{D}d";
+    expect(segment(doc(body), 100000).length).toBe(3);
+  });
+  it("閉じない波括弧を大量に並べても線形時間で終わる", () => {
+    const body = "\\section{A}{".repeat(20000);
+    const ms = fastestMs(1, () => segment(doc(body), 1e9));
+    expect(ms).toBeLessThan(budgetMs(2000));
+  });
+});
