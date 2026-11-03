@@ -2941,7 +2941,7 @@ fi
 expect 0 "issue #126: コンテナ隔離の起動・取り込み・片付け・guard fixtures" \
   env PYTHONDONTWRITEBYTECODE=1 python3 "$ROOT/tests/agent-box.py"
 # 片付けの各条件と、コンテナ内だけ guard を外す条件を外すと、対応する保護 test が落ちる（退行注入）
-for mutation in running dirty retained symlink reuse results artifacts keepdest follow discard boxlink statelink limits inspectlimits cache logs memory disk prunemerge prunehead pruneactive pruneother pruneremote prunename prunebase prunebaseref pruneold prunesearch dockerhint record startcheck stalelog; do
+for mutation in running dirty retained symlink reuse results artifacts keepdest follow discard boxlink statelink limits inspectlimits cache logs memory disk prunemerge prunehead pruneactive pruneother pruneremote prunename prunebase prunebaseref pruneold prunesearch dockerhint record startcheck stalelog attribution; do
   # 注入の失敗（exit 3）を red と数えないよう、assertion の失敗（exit 1）だけを期待する
   expect_code 1 "issue #126: ${mutation} の判定を外すと片付け・guard の保護が失われる（red）" \
     env PYTHONDONTWRITEBYTECODE=1 python3 "$ROOT/tests/agent-box.py" --case "$mutation" --mutation "$mutation"

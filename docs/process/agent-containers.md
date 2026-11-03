@@ -24,6 +24,8 @@
 | `/tmp` | tmpfs（子 1 GiB・検査 256 MiB、`exec` 可、inode 20 万）。**コンテナの終了で消える**。残したいものは `~/.agent-box/artifacts/` へ置く |
 | それ以外（`/usr`・`/etc`・`/var/tmp` 等） | 読み取り専用（`--read-only`）。ツールは image に入れる（子は元から非 root で、`apt install` は以前から使えない） |
 
+子の home の `.claude/settings.json` は `start` が新しく書く（権限は `bypassPermissions`）。ホストの `~/.claude/settings.json` からは commit・PR の属性表示のキー（`includeCoAuthoredBy`・`attribution`）だけを写し、ホストが共著者の行を off にしていれば子の commit にも付かない（#545）。キーが無い・読めない・壊れているときは写さずに進む。hook・権限など他の設定は写さない（D15・D16）。値の正本は `scripts/lib/agent_box.py` の `ATTRIBUTION_KEYS`。
+
 | 制限 | 子 | 検査 | 理由 |
 |---|---|---|---|
 | `--memory`（swap なし） | 3g | 1g | 子 3 個＋検査 1 個で最大 10 GiB。OrbStack の VM は約 11.7 GiB。tmpfs もこの中に数える |

@@ -77,6 +77,8 @@ MUTATIONS = {
     "record": [(" 2> ~/.agent-box/entrypoint.log;", " 2>/dev/null;")],
     "startcheck": [("        self.check_started(state, box)\n", "")],
     "stalelog": [('"exit-code", "entrypoint.log"):', '"exit-code"):')],
+    # #545: ホストの属性表示の設定を子の settings.json へ写さない退行
+    "attribution": [('        settings.update(self.attribution_settings(source / "settings.json"))\n', '')],
     "dockerenv": None,  # guard-bash.sh の /.dockerenv 条件（shell 側。test 内で写しを改変する）
 }
 CASES = {"running": "test_clean_protects_running_container", "dirty": "test_clean_protects_uncommitted_changes",
@@ -105,6 +107,7 @@ CASES = {"running": "test_clean_protects_running_container", "dirty": "test_clea
          "record": "test_entrypoint_failure_is_recorded_and_reported",
          "startcheck": "test_entrypoint_failure_is_recorded_and_reported",
          "stalelog": "test_stale_entrypoint_log_is_not_shown",
+         "attribution": "test_start_copies_host_attribution_settings",
          "dockerenv": "test_guard_stays_on_host_even_with_agent_box_env"}
 parser = argparse.ArgumentParser()
 parser.add_argument("--mutation", choices=sorted(MUTATIONS))
@@ -335,6 +338,27 @@ class AgentBox(unittest.TestCase):
         self.assertFalse((home / ".claude/.credentials.json").exists())
         self.assertNotIn("hooks", json.loads((home / ".claude/settings.json").read_text()))
         self.assertEqual((home / ".agent-box/prompt.md").read_text(), "fixture task\n")
+
+    def child_settings(self, session):
+        return json.loads((self.fixture / "agents/repo/.sessions" / session / "home/.claude/settings.json").read_text())
+
+    def test_start_copies_host_attribution_settings(self):
+        default = {"permissions": {"defaultMode": "bypassPermissions"}}
+        host = self.home / ".claude/settings.json"
+        self.start("s1")
+        self.assertEqual(self.child_settings("s1"), default)
+        host.write_text(json.dumps({"includeCoAuthoredBy": False, "attribution": {"commit": "", "pr": ""},
+                                    "hooks": {"Stop": []}, "permissions": {"defaultMode": "plan"}}))
+        self.start("s2")
+        self.assertEqual(self.child_settings("s2"), {**default, "includeCoAuthoredBy": False,
+                                                    "attribution": {"commit": "", "pr": ""}})
+        host.write_text(json.dumps({"hooks": {}, "model": "x"}))
+        self.start("s3")
+        self.assertEqual(self.child_settings("s3"), default)
+        for broken in ("{not json", "[1]", ""):
+            host.write_text(broken)
+            self.start("b" + str(len(broken)))
+            self.assertEqual(self.child_settings("b" + str(len(broken))), default)
 
     # ---- 起動の失敗の記録と検出（#175） ----
     def test_entrypoint_failure_is_recorded_and_reported(self):
