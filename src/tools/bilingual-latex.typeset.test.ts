@@ -402,10 +402,11 @@ function buildAcm(
   source: string,
   translated: string,
   type = "sigconf",
+  extra = "",
 ): { left: string; right: string; leftLines: string; words: { xMin: number; xMax: number; text: string }[] } {
   const dir = mkdtempSync(path.join(tmpdir(), "jpaper-acmbi-"));
   try {
-    const pre = `\\documentclass[${type}]{acmart}\n\\settopmatter{printacmref=false}\n`;
+    const pre = `\\documentclass[${type}]{acmart}\n\\settopmatter{printacmref=false}\n${extra}`;
     const { mainTex } = assembleBilingual({
       cleanLatex: `${pre}\\begin{document}\n\\end{document}\n`,
       translatedMainTex: `${pre}\\usepackage{luatexja}\n\\begin{document}\n\\end{document}\n`,
@@ -458,6 +459,19 @@ describe.skipIf(!hasAcmart)("acmart の論文の対訳を lualatex で組む（i
     const at = (t: string): { xMin: number; xMax: number } => built.words.find((w) => w.text === t)!;
     const center = (a: string, b: string): number => (at(a).xMin + at(b).xMax) / 2;
     expect(Math.abs(center("Uni", "USA") - center("Ann", "Lee"))).toBeLessThan(0.5);
+  }, 240_000);
+
+  it("anonymous の論文は、左右とも著者欄が「Anonymous Author(s)」だけになる（issue #505）", () => {
+    const front = ACM_FRONT("T", "Uni A", "Abs text.", "kw");
+    for (const [extra, subId] of [["", false], ["\\acmSubmissionID{1234}\n", true]] as const) {
+      const { left, right } = buildAcm(front, front, "sigconf,anonymous,review", extra);
+      for (const side of [left, right]) {
+        expect(side).toContain("Anonymous Author(s)");
+        expect(side).not.toMatch(/Ann Lee|Bob Kay|Uni A|Newark|example\.org/);
+        expect(side.includes("Submission Id: 1234"), side).toBe(subId);
+      }
+      expect(left.match(/Anonymous Author/g)).toHaveLength(1);
+    }
   }, 240_000);
 
   it("\\maketitle の後に書いた要旨・キーワードは、その段の表題ブロックの後にその場で出る", () => {
