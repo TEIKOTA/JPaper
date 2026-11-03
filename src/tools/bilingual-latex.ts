@@ -482,6 +482,12 @@ const ACMART_SETUP = [
   "  \\renewcommand{\\jpTitleBlock}[1]{\\jp@acm@side" +
     "{\\jp@titleblock{#1}{\\jp@acm@auL}\\global\\let\\jp@acm@doneL\\@empty\\jp@acm@fmL}" +
     "{\\jp@titleblock{#1}{\\jp@acm@auR}\\global\\let\\jp@acm@doneR\\@empty\\jp@acm@fmR}}%",
+  // anonymous は著者・所属・メールアドレスを溜めず、著者欄を acmart と同じ「Anonymous Author(s)」だけにする。⚠ landmines.md
+  "  \\if@ACM@anonymous",
+  "    \\renewcommand\\author[2][]{}\\renewcommand\\affiliation[2][]{}\\renewcommand\\email[2][]{}%",
+  "    \\def\\jp@acm@auL{\\par\\smallskip{\\large Anonymous Author(s)\\ifx\\@acmSubmissionID\\@empty\\else\\\\Submission Id: \\@acmSubmissionID\\fi}\\par}%",
+  "    \\let\\jp@acm@auR\\jp@acm@auL",
+  "  \\fi",
   "}",
   "\\makeatother",
   "",
