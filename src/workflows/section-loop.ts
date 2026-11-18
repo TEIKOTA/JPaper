@@ -58,6 +58,7 @@ export interface DocContext {
 
 interface Guard {
   guarded: ReturnType<typeof protectMath>;
+  hidden: Span[];
   kept: number | undefined;
   frozenMarks: number[];
   hiddenMarks: Set<number>;
@@ -85,7 +86,7 @@ function guardOf(segment: Segment): Guard {
   const hiddenMarks = new Set([...(kept === undefined ? [] : [kept]), ...frozenMarks]);
   const checkedSrc = removeSpans(segment.latex, hidden, " ");
   const checkedSpans = guarded.spans.map((s, i) => (hiddenMarks.has(i + 1) ? " " : s));
-  return { guarded, kept, frozenMarks, hiddenMarks, checkedSrc, checkedSpans };
+  return { guarded, hidden, kept, frozenMarks, hiddenMarks, checkedSrc, checkedSpans };
 }
 
 // 印のままの訳文（marked）を復元して形式検査にかける。
@@ -128,6 +129,52 @@ export function recheckFormal(
 ): FormalIssue[] | undefined {
   const r = formalOf(guardOf(segment), marked, glossarySlice);
   return r.restored.text === ja ? r.formal : undefined;
+}
+
+// 手で訳した節（--hand）の訳文を形式検査にかける。原文のまま残す区間（本文の \title・著者・所属・注記）は、
+// 訳文に原文と同じ文字列がちょうど 1 回あることを確かめてから検査から外す。evaluator は呼ばない。契約付録 §8（手で訳した節）
+export function handResult(segment: Segment, glossarySlice: ResolvedTerm[], ja: string): SectionLoopResult {
+  const g = guardOf(segment);
+  const keepSpan = segment.keep === undefined ? undefined : `${segment.keep.start}:${segment.keep.end}`;
+  let checked = ja;
+  const spanIssues: FormalIssue[] = [];
+  for (const [start, end] of g.hidden) {
+    const text = segment.latex.slice(start, end);
+    const at = checked.indexOf(text);
+    const once = at !== -1 && checked.indexOf(text, at + 1) === -1;
+    if (!once) {
+      const isTitle = keepSpan === `${start}:${end}`;
+      spanIssues.push({
+        kind: isTitle ? "title" : "author",
+        message: `${isTitle ? "論文タイトル" : "著者・所属・注記"}の区間は訳さず、原文と同じ文字列をちょうど 1 回置いてください: ${text.length > 80 ? `${text.slice(0, 80)}…` : text}`,
+      });
+      continue;
+    }
+    checked = `${checked.slice(0, at)} ${checked.slice(at + text.length)}`;
+  }
+  const formal = [...spanIssues, ...formalCheck(g.checkedSrc, checked, glossarySlice)];
+  if (formal.length === 0) {
+    return {
+      segmentId: segment.id,
+      ja,
+      passed: true,
+      failedKinds: [],
+      usedRevisions: 0,
+      maxRevisions: 0,
+      warnIssues: [],
+    };
+  }
+  return {
+    segmentId: segment.id,
+    ja,
+    passed: false,
+    failCode: 3,
+    failedKinds: [...new Set(formal.map((f) => f.kind))],
+    usedRevisions: 0,
+    maxRevisions: 0,
+    warnIssues: [],
+    lastIssues: { by: "formal", issues: formal, marks: [] },
+  };
 }
 
 export async function runSectionLoop(
