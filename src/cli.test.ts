@@ -26,6 +26,7 @@ const okResult: Result = {
     title: null,
     pdf: null,
     redaction: null,
+    hand: [],
     exitCode: 0,
   },
 };
@@ -858,5 +859,64 @@ describe("--redact-file（契約付録 §8 伏せ字）", () => {
       expect(code, p).toBe(2);
       expect(called).toBe(false);
     }
+  });
+});
+
+describe("--hand・--rebuild（契約付録 §8「手で訳した節」）", () => {
+  it("--hand のディレクトリを translate に渡す", async () => {
+    let got: TranslateOptions | undefined;
+    const code = await runCli(["node", "jpaper", "1706.03762", "--provider", "claude", "--hand", "/tmp/h"], {
+      stdout: () => {},
+      stderr: () => {},
+      translate: async (_i, o) => {
+        got = o;
+        return okResult;
+      },
+    });
+    expect(code).toBe(0);
+    expect(got?.hand).toBe("/tmp/h");
+  });
+
+  it("--rebuild は translate を呼ばずに組み直し、成功なら成果物のパスを出す", async () => {
+    const out: string[] = [];
+    const err: string[] = [];
+    let dirSeen: string | undefined;
+    const code = await runCli(["node", "jpaper", "--rebuild", "a/translation/build.failed/original"], {
+      stdout: (s) => out.push(s),
+      stderr: (s) => err.push(s),
+      translate: async () => {
+        throw new Error("translate を呼ばない");
+      },
+      rebuild: async (dir) => {
+        dirSeen = dir;
+        return { exitCode: 0, kind: "ja", pdfPath: "a/p-ja.pdf" };
+      },
+    });
+    expect(code).toBe(0);
+    expect(dirSeen).toBe("a/translation/build.failed/original");
+    expect(out.join("")).toBe("PDF: a/p-ja.pdf\n");
+    expect(err.join("")).toContain("対訳 PDF は作っていません");
+  });
+
+  it("--rebuild の失敗は 失敗[typeset] と終了コード 5。ほかの引数と一緒なら exit 2", async () => {
+    const err: string[] = [];
+    const code = await runCli(["node", "jpaper", "--rebuild", "d"], {
+      stdout: () => {},
+      stderr: (s) => err.push(s),
+      rebuild: async () => ({ exitCode: 5, kind: "bilingual", message: "! Undefined control sequence." }),
+    });
+    expect(code).toBe(5);
+    expect(err.join("")).toBe("失敗[typeset]: ! Undefined control sequence.\n");
+    let called = false;
+    const mixed = await runCli(["node", "jpaper", "--rebuild", "d", "--provider", "claude"], {
+      stdout: () => {},
+      stderr: () => {},
+      rebuild: async () => {
+        called = true;
+        return { exitCode: 0 };
+      },
+    });
+    expect(mixed).toBe(2);
+    expect(called).toBe(false);
   });
 });
