@@ -23,12 +23,20 @@ const FINAL_DIR: Record<"ja" | "bilingual", string> = { ja: "build", bilingual: 
 const NAME = /^[A-Za-z0-9._-]+-(ja|bilingual)\.pdf$/;
 const TEX_FILE = /\.tex$/i;
 
+function linkIsFile(p: string): boolean {
+  try {
+    return statSync(p).isFile();
+  } catch {
+    return false;
+  }
+}
+
 function walk(dir: string, out: { tex: string[]; links: string[] }): { tex: string[]; links: string[] } {
   for (const e of readdirSync(dir, { withFileTypes: true })) {
     const p = path.join(dir, e.name);
-    if (e.isSymbolicLink()) out.links.push(p);
+    if (e.isSymbolicLink() && !linkIsFile(p)) out.links.push(p);
     else if (e.isDirectory()) walk(p, out);
-    else if (e.isFile() && TEX_FILE.test(e.name)) out.tex.push(p);
+    else if ((e.isFile() || e.isSymbolicLink()) && TEX_FILE.test(e.name)) out.tex.push(p);
   }
   return out;
 }
@@ -86,7 +94,7 @@ export async function rebuildKept(dir: string, runner: LatexRunner = defaultRunn
       return {
         exitCode: 5,
         kind,
-        message: `シンボリックリンクを含むため実行しません: ${files.links
+        message: `ディレクトリへのシンボリックリンクか、リンク先の無いシンボリックリンクを含むため実行しません: ${files.links
           .slice(0, 5)
           .map((f) => path.relative(abs, f).split(path.sep).join("/"))
           .join(" / ")}`,
