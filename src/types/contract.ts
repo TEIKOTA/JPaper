@@ -290,6 +290,8 @@ export const RunSummary = z.object({
     })
     .nullable()
     .default(null),
+  // 手で訳した訳文（--hand）を形式検査に通して使った節の ID。契約付録 §8（手で訳した節）
+  hand: z.array(z.string()).default([]),
   exitCode: z.number().int(),
 });
 export type RunSummary = z.infer<typeof RunSummary>;

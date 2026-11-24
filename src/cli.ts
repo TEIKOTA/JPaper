@@ -1,4 +1,5 @@
 // 契約付録 §5・§6・§8。jpaper CLI（core API translatePaper の薄い皮）。
+import { rebuildKept } from "./workflows/rebuild.js";
 import { probeLatexmk } from "./tools/build-gate.js";
 import { detectInput } from "./ingest/detect-input.js";
 import { describeDotEnv, loadDotEnv } from "./env-file.js";
@@ -38,9 +39,11 @@ export interface CliDeps {
   web?: WebDeps;
   // 実行の頭の組版の道具の検査（テスト用）。既定は probeLatexmk。契約付録 §6
   latexProbe?: () => string | undefined;
+  // --rebuild（テスト用）。契約付録 §8（手で訳した節）
+  rebuild?: typeof rebuildKept;
 }
 
-export const VALUE_FLAGS = ["--provider", "--out", "--model", "--context-window", "--effort", "--concurrency", "--pages", "--redact-file"];
+export const VALUE_FLAGS = ["--provider", "--out", "--model", "--context-window", "--effort", "--concurrency", "--pages", "--redact-file", "--hand", "--rebuild"];
 export const BOOL_FLAGS = ["--think", "--no-think", "--no-bilingual", "--no-verify-terms", "--page-notes", "--no-page-notes", "--no-end-notes", "--yes"];
 const HELP_FLAGS = ["--help", "-h"];
 const HELP_HINT = "使い方は jpaper --help で表示できます\n";
@@ -48,6 +51,7 @@ const HELP_HINT = "使い方は jpaper --help で表示できます\n";
 // 契約付録 §5
 export const USAGE = `使い方: jpaper <input> --provider {ollama|claude|codex|openrouter} [オプション]
        jpaper web
+       jpaper --rebuild DIR
 
 論文の LaTeX ソース（または PDF）を和訳し、和訳 PDF と対訳 PDF を作る。
 jpaper web は Web アプリ（検索・翻訳・用語集）を http://127.0.0.1:5173 で立ち上げる（Ctrl+C で止める）。
@@ -77,6 +81,10 @@ Web アプリの依存が無ければ、先に jpaper の repo で pnpm install 
   --yes                 PDF の読むページが ${String(LARGE_PDF_PAGES)} を超えても確認せずに進む
   --redact-file PATH    伏せ字にする語のファイル（1 行 1 語。空行と # で始まる行は読まない）。
                         語は *** に置き換えてからどの LLM にも渡し、PDF のページ画像では白く塗る
+  --hand DIR            手で訳した節の訳文（DIR/<節 ID>.tex）を、LLM を呼ばずに形式検査だけで使う。
+                        訳し直す節の原文は <出力先>/.run/hand/<節 ID>.src.tex に置かれる
+  --rebuild DIR         組版に失敗して残した build（<出力先>/translation/build.failed/<original|template>、
+                        対訳は bilingual.failed/…）を、直した main.tex で組み直して成果物 PDF にする
   -h, --help            この使い方を表示する
 
 作業ディレクトリの .env を読む。実行の要約（JSON）と、和訳 PDF・対訳 PDF のパスを標準出力に出す。
@@ -271,6 +279,20 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number
   }
 
   try {
+    const rebuildAt = args.indexOf("--rebuild");
+    if (rebuildAt !== -1) {
+      const dir = args[rebuildAt + 1];
+      if (dir === undefined || dir.startsWith("--")) throw new JpaperError(2, "input", "--rebuild に値が必要です");
+      if (args.length !== 2) throw new JpaperError(2, "input", "--rebuild はほかの引数と一緒に使えません");
+      const r = await (deps.rebuild ?? rebuildKept)(dir);
+      if (r.exitCode === 0 && r.pdfPath !== undefined) {
+        stdout(`${r.kind === "bilingual" ? "対訳 PDF" : "PDF"}: ${r.pdfPath}\n`);
+        if (r.kind === "ja") stderr("対訳 PDF は作っていません（和訳 PDF を手で直した build から組んだため）\n");
+      } else {
+        stderr(`失敗[${r.exitCode === 1 ? "infra" : "typeset"}]: ${r.message ?? "組版に失敗しました"}\n`);
+      }
+      return r.exitCode;
+    }
     const positional: string[] = [];
     const flags = new Map<string, string>();
     for (let i = 0; i < args.length; i++) {
@@ -367,6 +389,7 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number
         ...(concurrency === undefined ? {} : { concurrency }),
         ...(pagesArg === undefined ? {} : { pages: pagesArg }),
         ...(redact === undefined ? {} : { redact }),
+        ...(flags.get("--hand") === undefined ? {} : { hand: flags.get("--hand") }),
         ...(allowLargePdf ? { allowLargePdf: true } : {}),
         ...(flags.has("--no-bilingual") ? { bilingual: false } : {}),
         ...(flags.has("--no-verify-terms") ? { verifyTerms: false } : {}),

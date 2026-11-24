@@ -121,3 +121,4 @@
 | 2026-10-17 | [Docker の起動を AI に許し、Linux で動かない repo には宣言つきで worktree を許す](./20261017-allow-orb-start-and-declared-worktree-exception.md) | accepted |
 | 2026-10-17 | [self-test の自動実行を PostToolUse から pre-push へ移す](./20261017-move-selftest-from-posttooluse-to-pre-push.md) | accepted（「push の前には必ず通る」の条項のみ 2026-10-17 に部分 supersede） |
 | 2026-10-17 | [checkout 中でない branch の push でも pre-push の検査を走らせ、self-test は流さない旨を表示する](./20261017-run-prepush-checks-for-non-current-branch.md) | accepted |
+| 2026-11-18 | [/jpaper で失敗したら、その場の Coding AI が失敗した LLM 呼び出しの代わりを務め、検査と組版は JPaper が通す](./20261118-let-coding-agent-stand-in-for-failed-llm-calls.md) | accepted |

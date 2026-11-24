@@ -48,7 +48,8 @@ describe("/jpaper skill（issue #424）", () => {
     expect(failure).toContain("了承を得たときだけ、`gh issue create --repo TEIKOTA/JPaper");
     expect(failure).toContain("gh issue list --repo TEIKOTA/JPaper --state all");
     expect(failure).toContain("gh pr list --repo TEIKOTA/JPaper --state all");
-    expect(failure).toContain("失敗したときに消える");
+    expect(failure).toContain("`translation/build.failed/<original|template>/`");
+    expect(failure).toContain("前に成功した実行のものなので、原因として読まない");
     const keys = /RunSummary`）の ((?:`[A-Za-z]+`・?)+)/.exec(failure)?.[1];
     expect(keys).toBeDefined();
     for (const k of [...keys!.matchAll(/`([A-Za-z]+)`/g)].map((m) => m[1]!)) expect(Object.keys(RunSummary.shape), k).toContain(k);
@@ -74,7 +75,7 @@ describe("/jpaper skill（issue #424）", () => {
   it("失敗の分け方の表が、すべての kind を扱う", () => {
     const table = text.slice(text.indexOf("### 原因で分ける"), text.indexOf("### issue に起票する"));
     const listed = [...table.matchAll(/^\| ((?:`[a-z-]+`・?)+)/gm)].flatMap((m) => [...m[1]!.matchAll(/`([a-z-]+)`/g)].map((k) => k[1]!));
-    expect([...listed].sort()).toEqual([...ErrorKind.options].sort());
+    expect([...new Set(listed)].sort()).toEqual([...ErrorKind.options].sort());
   });
 
   it("README の「Coding AI から使う」が両方の呼び方と skill を示す", () => {

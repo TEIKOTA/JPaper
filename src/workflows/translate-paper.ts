@@ -84,7 +84,7 @@ import {
 import { isMacroDefinitionsOnly } from "../segment/macro-only.js";
 import { findKatakanaDrift, describeDrift } from "../terminology/consistency.js";
 import { segmentBudgetFor, type Segment } from "../segment/segmenter.js";
-import { recheckFormal, runSectionLoop } from "./section-loop.js";
+import { handResult, recheckFormal, runSectionLoop } from "./section-loop.js";
 import {
   IngestCache,
   rebaseIngest,
@@ -165,6 +165,8 @@ export interface TranslateOptions {
   allowLargePdf?: boolean;
   // 伏せ字にする語（CLI は --redact-file から読む）。取り込みの段で *** に置き換え、どの LLM 呼び出しにも渡さない。契約付録 §8（伏せ字）
   redact?: readonly string[];
+  // 手で訳した節の訳文を置いたディレクトリ（<節 ID>.tex）。その節は LLM を呼ばずに形式検査だけで使う。契約付録 §8（手で訳した節）
+  hand?: string;
 }
 
 // subprocess プロバイダは無制限並列に耐えないため翻訳の同時実行数を制限する。
@@ -666,6 +668,8 @@ interface TypesetOutcome {
   message?: string;
   // 訳したタイトルを入れたまま組めたか（原題で組み直した・タイトルを渡していないなら false）。
   titleApplied: boolean;
+  // 翻訳起因で落ちた節の ID（組版のエラー行から逆引きしたもの）。
+  failedSegments?: string[];
 }
 
 // 節ループ・組版ゲートの失敗は例外ではなく戻り値で来るので、ここで構造化エラーに写す。
@@ -810,6 +814,26 @@ export function summarizeGateFailure(g: BuildGateResult): string {
   return g.envError ?? (parts.join(" | ") || "不明なビルド失敗");
 }
 
+// 組版に失敗した staging を <final>.failed/<layout> へ移して残す。main.tex が無い・危険なコマンドを含むなら残さない。契約付録 §8（手で訳した節）
+export const FAILED_BUILD_SUFFIX = ".failed";
+export const DELIVERABLE_INFO = "deliverable.json";
+function keepFailedBuild(buildDir: string, failedRoot: string, layout: Layout): void {
+  const dest = path.join(failedRoot, layout);
+  rmSync(dest, { recursive: true, force: true });
+  const main = path.join(buildDir, "main.tex");
+  if (existsSync(main) && findUnsafeTexCommands(readFileSync(main, "utf8")).length === 0) {
+    mkdirSync(failedRoot, { recursive: true });
+    renameSync(buildDir, dest);
+    return;
+  }
+  rmSync(buildDir, { recursive: true, force: true });
+}
+
+function writeDeliverableInfo(failedRoot: string, kind: "ja" | "bilingual", name: string): void {
+  if (!existsSync(failedRoot)) return;
+  writeFileSync(path.join(failedRoot, DELIVERABLE_INFO), `${JSON.stringify({ kind, name })}\n`);
+}
+
 // 全文組版ゲート: 原プリアンブル温存を試し、構造起因失敗のみ共通テンプレへ明示的にフォールバック（surface）。
 async function typeset(
   cleanLatex: string,
@@ -835,6 +859,9 @@ async function typeset(
   const discard = (): void => {
     rmSync(buildDir, { recursive: true, force: true });
   };
+  const failedRoot = `${finalDir}${FAILED_BUILD_SUFFIX}`;
+  rmSync(failedRoot, { recursive: true, force: true });
+  const keepFailed = (layout: Layout): void => keepFailedBuild(buildDir, failedRoot, layout);
   let titled = opts.titled;
   const build = (mode: Layout, withTitle: Titled | undefined): Promise<BuildGateResult> => {
     const { mainTex, sourceMap } = assembleWithMap({
@@ -897,12 +924,21 @@ async function typeset(
     // 翻訳起因のビルド失敗。再訳ループ(WP10)未実装のため明示的失敗として surface する。
     const m = `組版失敗(翻訳起因・要再訳): ${summarizeGateFailure(orig)}`;
     surface(m);
-    discard();
-    return { layout: "original", buildOk: false, exitCode: 5, message: m, titleApplied: titleApplied() };
+    keepFailed("original");
+    return {
+      layout: "original",
+      buildOk: false,
+      exitCode: 5,
+      message: m,
+      titleApplied: titleApplied(),
+      failedSegments: [...new Set(orig.failedSegments.map((f) => f.id))],
+    };
   }
   surface(`原プリアンブルで組めず共通テンプレへフォールバック: ${summarizeGateFailure(orig)}`);
+  keepFailed("original");
   const tmpl = await run("template");
   if (tmpl.buildOk) {
+    rmSync(failedRoot, { recursive: true, force: true });
     return {
       layout: "template",
       buildOk: true,
@@ -914,7 +950,7 @@ async function typeset(
   if (tmpl.envError !== undefined) return envFailure(tmpl.envError);
   const m = `組版失敗(テンプレでも不可): ${summarizeGateFailure(tmpl)}`;
   surface(m);
-  discard();
+  keepFailed("template");
   return { layout: "template", buildOk: false, exitCode: 5, message: m, titleApplied: titleApplied() };
 }
 
@@ -932,13 +968,17 @@ async function typesetBilingual(
 ): Promise<BilingualSummary> {
   const finalDir = path.join(opts.outDir, "translation", "bilingual");
   const buildDir = `${finalDir}.next`;
+  const failedRoot = `${finalDir}${FAILED_BUILD_SUFFIX}`;
+  rmSync(failedRoot, { recursive: true, force: true });
   let pairs = 0;
   let fallbackSegments = 0;
+  let tried: Layout = layout;
   const drop = (): void => {
     rmSync(buildDir, { recursive: true, force: true });
     rmSync(finalDir, { recursive: true, force: true });
   };
   const failed = (m: string): BilingualSummary => {
+    keepFailedBuild(buildDir, failedRoot, tried);
     drop();
     const message = `対訳 PDF の組版に失敗しました（和訳 PDF は出力済み）: ${m}`;
     surface(message);
@@ -987,9 +1027,12 @@ async function typesetBilingual(
     let g = await gate(b.mainTex);
     if (!g.buildOk && layout === "original" && g.envError === undefined) {
       surface(`対訳: 原プリアンブルで組めず共通テンプレで組み直します: ${summarizeGateFailure(g)}`);
+      keepFailedBuild(buildDir, failedRoot, "original");
+      tried = "template";
       g = await gate(assemble("template").mainTex);
     }
     if (!g.buildOk || g.pdfPath === undefined) return failed(summarizeGateFailure(g));
+    rmSync(failedRoot, { recursive: true, force: true });
     rmSync(finalDir, { recursive: true, force: true });
     renameSync(buildDir, finalDir);
     const pdfPath = path.join(finalDir, path.relative(buildDir, g.pdfPath));
@@ -1003,6 +1046,38 @@ async function typesetBilingual(
   }
 }
 
+function isDirectory(p: string): boolean {
+  try {
+    return statSync(p).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+// 契約付録 §8（手で訳した節）
+export const HAND_DIR = "hand";
+const HAND_SOURCE_SUFFIX = ".src.tex";
+
+function readHandDir(dir: string): Map<string, string> {
+  const m = new Map<string, string>();
+  for (const e of readdirSync(dir, { withFileTypes: true })) {
+    if (!e.isFile() || !e.name.endsWith(".tex") || e.name.endsWith(HAND_SOURCE_SUFFIX)) continue;
+    m.set(e.name.slice(0, -".tex".length), readFileSync(path.join(dir, e.name), "utf8"));
+  }
+  return m;
+}
+
+// 手で訳し直す節の原文を <runDir>/hand/<節 ID>.src.tex に置き、前の run の原文を消す。手で訳した <節 ID>.tex は消さない。
+function writeHandSources(runDir: string, segments: readonly { id: string; latex: string }[]): void {
+  const dir = path.join(runDir, HAND_DIR);
+  if (existsSync(dir)) {
+    for (const n of readdirSync(dir)) if (n.endsWith(HAND_SOURCE_SUFFIX)) rmSync(path.join(dir, n), { force: true });
+  }
+  if (segments.length === 0) return;
+  mkdirSync(dir, { recursive: true });
+  for (const s of segments) writeFileSync(path.join(dir, `${s.id}${HAND_SOURCE_SUFFIX}`), s.latex);
+}
+
 // 入口の検証。web は文字列由来の値（Number(req.query.x)）をそのまま渡してくるので、
 // 形が違うものは黙って既定へ倒さず input で拒否する（timeoutMs と同じ扱いに揃える）。
 function entryError(input: JpaperInput, opts: TranslateOptions): string | undefined {
@@ -1014,6 +1089,9 @@ function entryError(input: JpaperInput, opts: TranslateOptions): string | undefi
   }
   if (opts.outDir !== undefined && (typeof opts.outDir !== "string" || opts.outDir.trim() === "")) {
     return `outDir が不正です: ${outwardMessage(String(opts.outDir))}`;
+  }
+  if (opts.hand !== undefined && (typeof opts.hand !== "string" || !isDirectory(opts.hand))) {
+    return `hand のディレクトリがありません: ${outwardMessage(String(opts.hand))}`;
   }
   const c = opts.concurrency;
   if (c !== undefined && (typeof c !== "number" || !Number.isFinite(c) || c < 1)) {
@@ -1361,6 +1439,20 @@ export async function translatePaper(
       redactor,
     );
     const firstOcc = segmentFirstOccurrence(segments, ctx.resolved);
+    let hand = new Map<string, string>();
+    if (opts.hand !== undefined) {
+      try {
+        hand = readHandDir(opts.hand);
+      } catch (e) {
+        throw new JpaperError(2, "input", `hand のディレクトリを読めません: ${toRunError(e).message}`);
+      }
+      const ids = new Set(segments.map((s) => s.id));
+      const unknown = [...hand.keys()].filter((id) => !ids.has(id)).sort();
+      if (unknown.length > 0) {
+        notify(`手で訳した訳文のうち、この論文の節に無いものは使いません: ${unknown.slice(0, 10).join(", ")}`);
+      }
+    }
+    const handUsed: string[] = [];
 
     let doneSegments = 0;
     let donePassed = 0;
@@ -1400,16 +1492,24 @@ export async function translatePaper(
       const save = (v: SectionLoopCache): void => {
         if (v.passed) writeStep(runDir, seg.id, v, { invalidation, key: deps.cacheKey });
       };
-      return checkpoint(runDir, seg.id, SectionLoopCache, loop, {
-        invalidation,
-        cacheable: (r) => r.passed,
-        key: deps.cacheKey,
-      })
-        .then((r) =>
-          recheckCached(r, seg, slice, () => loop().then((v) => (save(v), v)), save, () =>
-            notify(`形式検査が変わったため、以前に通した ${seg.id} を訳し直します`),
-          ),
-        )
+      const handJa = hand.get(seg.id);
+      const settled: Promise<SectionLoopCache> =
+        handJa === undefined
+          ? checkpoint(runDir, seg.id, SectionLoopCache, loop, {
+              invalidation,
+              cacheable: (r) => r.passed,
+              key: deps.cacheKey,
+            }).then((r) =>
+              recheckCached(r, seg, slice, () => loop().then((v) => (save(v), v)), save, () =>
+                notify(`形式検査が変わったため、以前に通した ${seg.id} を訳し直します`),
+              ),
+            )
+          : Promise.resolve(handResult(seg, slice, handJa)).then((v) => {
+              save(v);
+              if (v.passed) handUsed.push(seg.id);
+              return v;
+            });
+      return settled
         .then((r) => {
           doneSegments++;
           if (r.passed) donePassed++;
@@ -1568,6 +1668,8 @@ export async function translatePaper(
     let typesetMessage: string | undefined;
     let bilingual: BilingualSummary = idleBilingual(opts);
     let exitCode = resolveExitCode(results.filter((r) => !r.passed).map((r) => r.failCode ?? 4));
+    // 手で訳し直す節（落ちた節と、組版のエラーから逆引きした翻訳起因の節）。契約付録 §8（手で訳した節）
+    const needsHand = new Set(results.filter((r) => !r.passed).map((r) => r.segmentId));
     if (failed === 0) {
       // 訳注を本文へ反映（初出脚注は pageNotes が true のときだけ、巻末一覧は endNotes が false でなければ）してから組版する。
       const formBySrc = new Map(ctx.resolved.map((r) => [r.src, r.form]));
@@ -1611,9 +1713,18 @@ export async function translatePaper(
       );
       ({ layout, buildOk, pdfPath, exitCode } = outcome);
       typesetMessage = outcome.message;
+      for (const id of outcome.failedSegments ?? []) needsHand.add(id);
       if (titled !== undefined && !outcome.titleApplied && outcome.buildOk) titleStatus = "failed";
       // 成果物 PDF は出力先の直下に <ID>_<slug>-ja.pdf / -bilingual.pdf で置く。契約付録 §8（成果物 PDF の名前）
       const slug = (titleStatus as TitleStatus) === "translated" ? titleSlug : undefined;
+      const translationDir = path.join(outDir, "translation");
+      if (buildOk === false) {
+        writeDeliverableInfo(
+          path.join(translationDir, `build${FAILED_BUILD_SUFFIX}`),
+          "ja",
+          deliverableName(ingested.paperId, slug, "ja"),
+        );
+      }
       if (buildOk === true && pdfPath !== undefined) {
         pdfPath = publishDeliverable(outDir, pdfPath, deliverableName(ingested.paperId, slug, "ja"), "ja");
         dropDeliverables(outDir, "bilingual");
@@ -1638,6 +1749,13 @@ export async function translatePaper(
           signal,
         );
       }
+      if (bilingual.status === "failed") {
+        writeDeliverableInfo(
+          path.join(translationDir, `bilingual${FAILED_BUILD_SUFFIX}`),
+          "bilingual",
+          deliverableName(ingested.paperId, slug, "bilingual"),
+        );
+      }
       if (bilingual.status === "ok" && bilingual.pdfPath !== undefined) {
         bilingual = {
           ...bilingual,
@@ -1650,6 +1768,14 @@ export async function translatePaper(
         };
       }
       progress({ phase: "typeset", done: 1, total: 1 });
+    }
+    try {
+      writeHandSources(
+        runDir,
+        segments.filter((s) => needsHand.has(s.id)),
+      );
+    } catch (e) {
+      notify(`手で訳し直す節の原文を書き出せませんでした: ${toRunError(e).message}`);
     }
 
     // 正本の確定は組版まで到達してから（契約付録 §2）。組版に失敗した run で
@@ -1706,6 +1832,7 @@ export async function translatePaper(
         redactor === undefined
           ? null
           : { terms: redactor.terms.length, replaced: ingested.redacted + (pdf?.redacted ?? 0) },
+      hand: [...handUsed].sort(),
       exitCode,
     });
     if (exitCode === 0) return { status: "ok", exitCode, pdfPath, summary };
