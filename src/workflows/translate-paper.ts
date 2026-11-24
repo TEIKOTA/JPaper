@@ -1455,17 +1455,22 @@ export async function translatePaper(
       if (unknown.length > 0) {
         notify(`手で訳した訳文のうち、この論文の節に無いものは使いません: ${unknown.slice(0, 10).join(", ")}`);
       }
+      const noSource: string[] = [];
       const stale: string[] = [];
       for (const [id, h] of read) {
         const seg = byId.get(id);
         if (seg === undefined) continue;
-        if (h.source === seg.latex) hand.set(id, h.ja);
+        if (h.source === undefined) noSource.push(id);
+        else if (h.source === seg.latex) hand.set(id, h.ja);
         else stale.push(id);
       }
-      if (stale.length > 0) {
+      if (noSource.length > 0) {
         notify(
-          `手で訳した訳文のうち、原文（${HAND_SOURCE_SUFFIX}）が無いか今の節の原文と違うものは使いません: ${stale.sort().slice(0, 10).join(", ")}`,
+          `手で訳した訳文のうち、原文（${HAND_SOURCE_SUFFIX}）が無いものは使いません（前の run で通った手訳は保存済みの訳を使います）: ${noSource.sort().slice(0, 10).join(", ")}`,
         );
+      }
+      if (stale.length > 0) {
+        notify(`手で訳した訳文のうち、原文（${HAND_SOURCE_SUFFIX}）が今の節の原文と違うものは使いません: ${stale.sort().slice(0, 10).join(", ")}`);
       }
     }
     const handUsed: string[] = [];
