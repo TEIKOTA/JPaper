@@ -1,6 +1,6 @@
 // 契約付録 §8（手で訳した節）。
 import { describe, it, expect, afterEach } from "vitest";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { handResult } from "./section-loop.js";
@@ -278,8 +278,11 @@ describe("組版に失敗した build を残して --rebuild で組み直す", (
     expect(bad).toEqual({ exitCode: 5, kind: "ja", message: "! LaTeX Error: File `x.png' not found." });
     expect(existsSync(path.join(outDir, "p-ja.pdf"))).toBe(false);
 
+    const staleBilingual = path.join(translationOf(outDir), "bilingual.failed", "original");
+    mkdirSync(staleBilingual, { recursive: true });
     const ok = await rebuildKept(path.join(failedRoot, "template"), okRunner);
     expect(ok).toEqual({ exitCode: 0, kind: "ja", pdfPath: path.join(outDir, "p-ja.pdf") });
+    expect(existsSync(path.dirname(staleBilingual))).toBe(false);
     expect(readFileSync(path.join(outDir, "p-ja.pdf"), "utf8")).toBe("%PDF");
     expect(existsSync(path.join(translationOf(outDir), "build", "main.tex"))).toBe(true);
     expect(existsSync(failedRoot)).toBe(false);
@@ -296,6 +299,27 @@ describe("組版に失敗した build を残して --rebuild で組み直す", (
     const r = await run({ kind: "path", path: tar }, { outDir }, { client: mkClient(), db });
     expect(r.exitCode).toBe(0);
     expect(existsSync(path.join(translationOf(outDir), "build.failed"))).toBe(false);
+    db.close();
+  });
+
+  it("組版に進まない run でも、前の訳から組んだ build.failed・bilingual.failed を消す（#553）", async () => {
+    const outDir = path.join(tmp(), "out");
+    const tar = makePaperTar();
+    const db = new GlossaryDb();
+    const failing: LatexRunner = () => ({ code: 1, log: "! LaTeX Error: File `x.png' not found." });
+    expect((await run({ kind: "path", path: tar }, { outDir }, { client: mkClient(), db, latexRunner: failing })).exitCode).toBe(5);
+    expect(existsSync(path.join(translationOf(outDir), "build.failed"))).toBe(true);
+    mkdirSync(path.join(translationOf(outDir), "bilingual.failed", "original"), { recursive: true });
+    let typeset = false;
+    const r = await run(
+      { kind: "path", path: tar },
+      { outDir },
+      { client: mkClient({ breakBeta: true }), db, cacheKey: Buffer.from("other"), latexRunner: (d) => ((typeset = true), okRunner(d)) },
+    );
+    expect(r.exitCode).toBe(3);
+    expect(typeset).toBe(false);
+    expect(existsSync(path.join(translationOf(outDir), "build.failed"))).toBe(false);
+    expect(existsSync(path.join(translationOf(outDir), "bilingual.failed"))).toBe(false);
     db.close();
   });
 
@@ -336,4 +360,43 @@ describe("組版に失敗した build を残して --rebuild で組み直す", (
     await expect(rebuildKept(path.join(outDir, "translation"), okRunner)).rejects.toMatchObject({ code: 2, kind: "input" });
     db.close();
   });
+
+  it.skipIf(process.platform === "win32")(
+    "build のシンボリックリンク: ファイルへのリンクは中身まで検査して組み、ディレクトリ・リンク先の無いリンクは組まない（#553）",
+    async () => {
+      const failing: LatexRunner = () => ({ code: 1, log: "! LaTeX Error: File `x.png' not found." });
+      const db = new GlossaryDb();
+      const keep = async (): Promise<string> => {
+        const outDir = path.join(tmp(), "out");
+        await run({ kind: "path", path: makePaperTar() }, { outDir }, { client: mkClient(), db, latexRunner: failing });
+        return path.join(translationOf(outDir), "build.failed", "template");
+      };
+      const shared = tmp();
+      writeFileSync(path.join(shared, "fig.pdf"), "%PDF");
+      writeFileSync(path.join(shared, "evil.tex"), "\\immediate\\write18{touch pwned}");
+      mkdirSync(path.join(shared, "dir"));
+
+      const figDir = await keep();
+      symlinkSync(path.join(shared, "fig.pdf"), path.join(figDir, "fig.pdf"));
+      expect((await rebuildKept(figDir, okRunner)).exitCode).toBe(0);
+
+      const evilDir = await keep();
+      symlinkSync(path.join(shared, "evil.tex"), path.join(evilDir, "evil.tex"));
+      let ran = false;
+      const evil = await rebuildKept(evilDir, (d) => ((ran = true), okRunner(d)));
+      expect(evil.exitCode).toBe(5);
+      expect(evil.message).toContain("evil.tex: ");
+      expect(ran).toBe(false);
+
+      for (const target of [path.join(shared, "dir"), path.join(shared, "missing")]) {
+        const dir = await keep();
+        symlinkSync(target, path.join(dir, "link"));
+        const r = await rebuildKept(dir, (d) => ((ran = true), okRunner(d)));
+        expect(r.exitCode, target).toBe(5);
+        expect(r.message).toContain("シンボリックリンク");
+        expect(ran).toBe(false);
+      }
+      db.close();
+    },
+  );
 });
