@@ -129,6 +129,14 @@ describe("handResult（手で訳した節の形式検査）", () => {
         expect(r.failedKinds).toContain("author");
       }
     });
+
+    it("長い区間を外した継ぎ目で短い区間の文字列ができても、短い区間の回数に数えない（#551）", () => {
+      const aff = "\\affiliation{\\institution{MIT}}";
+      const seamSeg: Segment = { id: "seg-0000", latex: `\\author{A B}${aff}\n\nAlpha text is here.`, tokens: 100 };
+      const r = handResult(seamSeg, [], `\\author{A${aff}B}\n\n甲の本文がここにある。`);
+      expect(r.passed).toBe(false);
+      expect(r.failedKinds).toContain("author");
+    });
   });
 });
 

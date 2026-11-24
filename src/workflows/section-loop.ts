@@ -131,6 +131,8 @@ export function recheckFormal(
   return r.restored.text === ja ? r.formal : undefined;
 }
 
+const SPAN_HOLE = "\uE000";
+
 // 手で訳した節（--hand）の訳文を形式検査にかける。原文のまま残す区間（本文の \title・著者・所属・注記）は、
 // 訳文に原文と同じ文字列が原文と同じ回数あることを確かめてから検査から外す。evaluator は呼ばない。契約付録 §8（手で訳した節）
 export function handResult(segment: Segment, glossarySlice: ResolvedTerm[], ja: string): SectionLoopResult {
@@ -154,8 +156,9 @@ export function handResult(segment: Segment, glossarySlice: ResolvedTerm[], ja: 
       });
       continue;
     }
-    checked = parts.join(" ");
+    checked = parts.join(SPAN_HOLE);
   }
+  checked = checked.replaceAll(SPAN_HOLE, " ");
   const formal = [...spanIssues, ...formalCheck(g.checkedSrc, checked, glossarySlice)];
   if (formal.length === 0) {
     return {
