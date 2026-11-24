@@ -149,10 +149,12 @@ describe("translatePaper の --hand", () => {
 
   it("形式検査に通らない手訳は落ちた節のままで、checkpoint にも chapters にも残らない", async () => {
     const outDir = path.join(tmp(), "out");
-    const handDir = tmp();
-    writeFileSync(path.join(handDir, "seg-0001.tex"), "手訳 $y$");
+    const tar = makePaperTar();
     const db = new GlossaryDb();
-    const r = await run({ kind: "path", path: makePaperTar() }, { outDir, hand: handDir }, { client: mkClient(), db });
+    expect((await run({ kind: "path", path: tar }, { outDir }, { client: mkClient({ breakBeta: true }), db })).exitCode).toBe(3);
+    const handDir = path.join(outDir, ".run", "hand");
+    writeFileSync(path.join(handDir, "seg-0001.tex"), "手訳 $y$");
+    const r = await run({ kind: "path", path: tar }, { outDir, hand: handDir }, { client: mkClient({ breakBeta: true }), db });
     expect(r.exitCode).toBe(3);
     expect(r.summary.hand).toEqual([]);
     expect(existsSync(path.join(outDir, "translation", "chapters", "seg-0001.tex"))).toBe(false);
@@ -163,25 +165,43 @@ describe("translatePaper の --hand", () => {
     db.close();
   });
 
-  it("通った節にも手訳を当てられ、その節は LLM を呼ばない。論文に無い節の手訳は使わずに知らせる", async () => {
+  it("原文（.src.tex）が無い・今の節と違う手訳と、論文に無い節の手訳は使わずに知らせる（#552）", async () => {
     const outDir = path.join(tmp(), "out");
     const tar = makePaperTar();
     const db = new GlossaryDb();
     expect((await run({ kind: "path", path: tar }, { outDir }, { client: mkClient(), db })).exitCode).toBe(0);
     const handDir = tmp();
-    writeFileSync(path.join(handDir, "seg-0000.tex"), "手で直した訳");
+    writeFileSync(path.join(handDir, "seg-0000.tex"), "原文の無い手訳");
+    writeFileSync(path.join(handDir, "seg-0001.tex"), "前の論文の手訳");
+    writeFileSync(path.join(handDir, "seg-0001.src.tex"), "\\section{Other}Gamma text.");
     writeFileSync(path.join(handDir, "seg-0099.tex"), "無い節");
-    writeFileSync(path.join(handDir, "seg-0001.src.tex"), "原文の写し");
     const errs: string[] = [];
-    const c2 = mkClient();
-    const r = await run({ kind: "path", path: tar }, { outDir, hand: handDir }, { client: c2, db, onError: (m) => errs.push(m) });
+    const r = await run({ kind: "path", path: tar }, { outDir, hand: handDir }, { client: mkClient(), db, onError: (m) => errs.push(m) });
     expect(r.exitCode).toBe(0);
-    expect(r.summary.hand).toEqual(["seg-0000"]);
-    expect(c2.calls.filter((x) => !x.system.includes("編纂者"))).toEqual([]);
-    expect(readFileSync(path.join(outDir, "translation", "chapters", "seg-0000.tex"), "utf8")).toBe("手で直した訳");
-    expect(errs.filter((e) => e.includes("この論文の節に無い"))).toEqual([
+    expect(r.summary.hand).toEqual([]);
+    for (const id of ["seg-0000", "seg-0001"]) {
+      expect(readFileSync(path.join(outDir, "translation", "chapters", `${id}.tex`), "utf8")).not.toContain("手訳");
+    }
+    expect(errs.filter((e) => e.startsWith("手で訳した訳文のうち"))).toEqual([
       "手で訳した訳文のうち、この論文の節に無いものは使いません: seg-0099",
+      "手で訳した訳文のうち、原文（.src.tex）が無いか今の節の原文と違うものは使いません: seg-0000, seg-0001",
     ]);
+    db.close();
+  });
+
+  it("別の論文が同じ出力先に来たら、前の論文の .run/hand を消す（#552）", async () => {
+    const outDir = path.join(tmp(), "out");
+    const db = new GlossaryDb();
+    expect((await run({ kind: "path", path: makePaperTar() }, { outDir }, { client: mkClient({ breakBeta: true }), db })).exitCode).toBe(3);
+    const handDir = path.join(outDir, ".run", "hand");
+    writeFileSync(path.join(handDir, "seg-0001.tex"), "前の論文の手訳");
+    const other = path.join(tmp(), "q.tar");
+    writeFileSync(
+      other,
+      makeTar([{ name: "main.tex", content: "\\documentclass{a}\\begin{document}\\section{Intro}Gamma text.\\end{document}" }]),
+    );
+    expect((await run({ kind: "path", path: other }, { outDir }, { client: mkClient(), db })).exitCode).toBe(0);
+    expect(existsSync(handDir)).toBe(false);
     db.close();
   });
 

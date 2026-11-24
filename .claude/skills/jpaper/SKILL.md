@@ -125,7 +125,7 @@ node bin/jpaper.mjs <入力> --provider <provider>
 ### 節を手で訳す
 
 1. `.run/hand/<節 ID>.src.tex`（原文）と、あれば `.run/failed-segments.json` の指摘・`translation/chapters/<節 ID>.tex`（今の訳）を読む。用語は出力先の `glossary.md`（無ければ `.run/steps/` の用語集）に合わせる。
-2. 訳文を `.run/hand/<節 ID>.tex` に書く。形式検査が見るので、次を守る。
+2. 訳文を `.run/hand/<節 ID>.tex` に書く（同じ所の `.src.tex` は消さず、書き換えない。JPaper は `.src.tex` が今の節の原文と同じときだけ手訳を使う）。形式検査が見るので、次を守る。
    - 地の文だけを訳す。数式・`\label`・`\ref`・`\cite`・図表の環境・命令の名前と引数の構造は原文のまま残す。見出し（`\section{…}` など）の題は訳す。
    - 本文の `\title{…}`・著者・所属・注記は訳さず、原文と同じ文字列をそのまま 1 回だけ置く。
    - 段落の数を原文に合わせる（対訳 PDF の左右がそろう）。
