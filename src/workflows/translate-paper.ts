@@ -1632,6 +1632,9 @@ export async function translatePaper(
     clearForeignContext(outDir, ingested.paperId);
     const chaptersDir = path.join(outDir, "translation", "chapters");
     rmSync(chaptersDir, { recursive: true, force: true }); // 縮小時の古い chapter を残さない
+    for (const kind of ["build", "bilingual"]) {
+      rmSync(path.join(outDir, "translation", `${kind}${FAILED_BUILD_SUFFIX}`), { recursive: true, force: true });
+    }
     mkdirSync(chaptersDir, { recursive: true });
     // 落ちたセグメントの訳文は書き出さない。汚染で落ちた run でも成果物ディレクトリに
     // \write18{...} 入りの .tex が残り、利用者が手で組版すれば発火した。
