@@ -509,6 +509,7 @@ function clearForeignContext(outDir: string, paperId: string): void {
   }
   rmSync(path.join(outDir, "translation", "build"), { recursive: true, force: true });
   rmSync(path.join(outDir, "translation", "bilingual"), { recursive: true, force: true });
+  rmSync(path.join(outDir, ".run", HAND_DIR), { recursive: true, force: true });
   dropDeliverables(outDir);
 }
 
@@ -1058,11 +1059,13 @@ function isDirectory(p: string): boolean {
 export const HAND_DIR = "hand";
 const HAND_SOURCE_SUFFIX = ".src.tex";
 
-function readHandDir(dir: string): Map<string, string> {
-  const m = new Map<string, string>();
+function readHandDir(dir: string): Map<string, { ja: string; source?: string }> {
+  const m = new Map<string, { ja: string; source?: string }>();
   for (const e of readdirSync(dir, { withFileTypes: true })) {
     if (!e.isFile() || !e.name.endsWith(".tex") || e.name.endsWith(HAND_SOURCE_SUFFIX)) continue;
-    m.set(e.name.slice(0, -".tex".length), readFileSync(path.join(dir, e.name), "utf8"));
+    const id = e.name.slice(0, -".tex".length);
+    const src = path.join(dir, `${id}${HAND_SOURCE_SUFFIX}`);
+    m.set(id, { ja: readFileSync(path.join(dir, e.name), "utf8"), source: existsSync(src) ? readFileSync(src, "utf8") : undefined });
   }
   return m;
 }
@@ -1439,17 +1442,35 @@ export async function translatePaper(
       redactor,
     );
     const firstOcc = segmentFirstOccurrence(segments, ctx.resolved);
-    let hand = new Map<string, string>();
+    const hand = new Map<string, string>();
     if (opts.hand !== undefined) {
+      let read: Map<string, { ja: string; source?: string }>;
       try {
-        hand = readHandDir(opts.hand);
+        read = readHandDir(opts.hand);
       } catch (e) {
         throw new JpaperError(2, "input", `hand のディレクトリを読めません: ${toRunError(e).message}`);
       }
-      const ids = new Set(segments.map((s) => s.id));
-      const unknown = [...hand.keys()].filter((id) => !ids.has(id)).sort();
+      const byId = new Map(segments.map((s) => [s.id, s]));
+      const unknown = [...read.keys()].filter((id) => !byId.has(id)).sort();
       if (unknown.length > 0) {
         notify(`手で訳した訳文のうち、この論文の節に無いものは使いません: ${unknown.slice(0, 10).join(", ")}`);
+      }
+      const noSource: string[] = [];
+      const stale: string[] = [];
+      for (const [id, h] of read) {
+        const seg = byId.get(id);
+        if (seg === undefined) continue;
+        if (h.source === undefined) noSource.push(id);
+        else if (h.source === seg.latex) hand.set(id, h.ja);
+        else stale.push(id);
+      }
+      if (noSource.length > 0) {
+        notify(
+          `手で訳した訳文のうち、原文（${HAND_SOURCE_SUFFIX}）が無いものは使いません（前の run で通った手訳は保存済みの訳を使います）: ${noSource.sort().slice(0, 10).join(", ")}`,
+        );
+      }
+      if (stale.length > 0) {
+        notify(`手で訳した訳文のうち、原文（${HAND_SOURCE_SUFFIX}）が今の節の原文と違うものは使いません: ${stale.sort().slice(0, 10).join(", ")}`);
       }
     }
     const handUsed: string[] = [];
