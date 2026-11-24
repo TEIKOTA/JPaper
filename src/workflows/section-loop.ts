@@ -132,25 +132,29 @@ export function recheckFormal(
 }
 
 // 手で訳した節（--hand）の訳文を形式検査にかける。原文のまま残す区間（本文の \title・著者・所属・注記）は、
-// 訳文に原文と同じ文字列がちょうど 1 回あることを確かめてから検査から外す。evaluator は呼ばない。契約付録 §8（手で訳した節）
+// 訳文に原文と同じ文字列が原文と同じ回数あることを確かめてから検査から外す。evaluator は呼ばない。契約付録 §8（手で訳した節）
 export function handResult(segment: Segment, glossarySlice: ResolvedTerm[], ja: string): SectionLoopResult {
   const g = guardOf(segment);
   const keepSpan = segment.keep === undefined ? undefined : `${segment.keep.start}:${segment.keep.end}`;
   let checked = ja;
   const spanIssues: FormalIssue[] = [];
+  const groups = new Map<string, { count: number; isTitle: boolean }>();
   for (const [start, end] of g.hidden) {
     const text = segment.latex.slice(start, end);
-    const at = checked.indexOf(text);
-    const once = at !== -1 && checked.indexOf(text, at + 1) === -1;
-    if (!once) {
-      const isTitle = keepSpan === `${start}:${end}`;
+    const prev = groups.get(text);
+    const isTitle = keepSpan === `${start}:${end}`;
+    groups.set(text, { count: (prev?.count ?? 0) + 1, isTitle: (prev?.isTitle ?? false) || isTitle });
+  }
+  for (const [text, { count, isTitle }] of [...groups].sort(([a], [b]) => b.length - a.length)) {
+    const parts = checked.split(text);
+    if (parts.length - 1 !== count) {
       spanIssues.push({
         kind: isTitle ? "title" : "author",
-        message: `${isTitle ? "論文タイトル" : "著者・所属・注記"}の区間は訳さず、原文と同じ文字列をちょうど 1 回置いてください: ${text.length > 80 ? `${text.slice(0, 80)}…` : text}`,
+        message: `${isTitle ? "論文タイトル" : "著者・所属・注記"}の区間は訳さず、原文と同じ文字列を原文と同じ回数（${count} 回）置いてください: ${text.length > 80 ? `${text.slice(0, 80)}…` : text}`,
       });
       continue;
     }
-    checked = `${checked.slice(0, at)} ${checked.slice(at + text.length)}`;
+    checked = parts.join(" ");
   }
   const formal = [...spanIssues, ...formalCheck(g.checkedSrc, checked, glossarySlice)];
   if (formal.length === 0) {

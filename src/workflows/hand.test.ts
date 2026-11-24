@@ -113,6 +113,22 @@ describe("handResult（手で訳した節の形式検査）", () => {
       expect(a.passed).toBe(false);
       expect(a.failedKinds).toContain("author");
     });
+
+    it("同じ文字列の所属が 2 つあれば、訳文にも 2 回置けば通り、1 回・3 回なら author で落ちる（#551）", () => {
+      const aff = "\\affiliation{\\institution{MIT}}";
+      const dupSeg: Segment = {
+        id: "seg-0000",
+        latex: `\\author{A}${aff}\\author{B}${aff}\n\n\\section{Intro}\nAlpha text is here.`,
+        tokens: 100,
+      };
+      const body = "\n\n\\section{序論}\n甲の本文がここにある。";
+      expect(handResult(dupSeg, [], `\\author{A}${aff}\\author{B}${aff}${body}`).passed).toBe(true);
+      for (const ja of [`\\author{A}${aff}\\author{B}${body}`, `\\author{A}${aff}\\author{B}${aff}${aff}${body}`]) {
+        const r = handResult(dupSeg, [], ja);
+        expect(r.passed, ja).toBe(false);
+        expect(r.failedKinds).toContain("author");
+      }
+    });
   });
 });
 
