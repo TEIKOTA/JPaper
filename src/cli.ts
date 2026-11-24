@@ -82,6 +82,7 @@ Web アプリの依存が無ければ、先に jpaper の repo で pnpm install 
   --redact-file PATH    伏せ字にする語のファイル（1 行 1 語。空行と # で始まる行は読まない）。
                         語は *** に置き換えてからどの LLM にも渡し、PDF のページ画像では白く塗る
   --hand DIR            手で訳した節の訳文（DIR/<節 ID>.tex）を、LLM を呼ばずに形式検査だけで使う。
+                        同じ DIR の <節 ID>.src.tex（訳したときの原文）が今の節と同じときだけ使う。
                         訳し直す節の原文は <出力先>/.run/hand/<節 ID>.src.tex に置かれる
   --rebuild DIR         組版に失敗して残した build（<出力先>/translation/build.failed/<original|template>、
                         対訳は bilingual.failed/…）を、直した main.tex で組み直して成果物 PDF にする
