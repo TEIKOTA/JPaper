@@ -82,7 +82,7 @@ export async function rebuildKept(dir: string, runner: LatexRunner = defaultRunn
   const lock = acquireRunLock(path.join(outDir, ".run"));
   try {
     const unsafe = [
-      ...texFiles(abs).flatMap((f) => findUnsafeTexCommands(readFileSync(f, "utf8")).map((c) => `${path.relative(abs, f)}: \\${c}`)),
+      ...texFiles(abs).flatMap((f) => findUnsafeTexCommands(readFileSync(f, "utf8")).map((c) => `${path.relative(abs, f).split(path.sep).join("/")}: \\${c}`)),
       ...unsafeSupportFiles(abs).map((u) => `${u.file}: ${u.commands.map((c) => `\\${c}`).join(", ")}`),
     ];
     if (unsafe.length > 0) {
